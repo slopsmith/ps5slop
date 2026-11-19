@@ -82,6 +82,10 @@ pub static FUNCTIONS: &[Function] = &[
         register_defaults_internal,
     ),
     f("sceAgcCreateShader", shader::create_shader),
+    // SharpEmu's `sceAgcCreateInterpolantMapping`.
+    f("#HV4j+E0MBHE", shader::create_interpolant_mapping),
+    f("sceAgcCreatePrimState", shader::create_prim_state),
+    f("sceAgcUpdatePrimState", shader::update_prim_state),
 ];
 
 /// Placeholders: they answer without doing the real work, and say so on

@@ -14,6 +14,7 @@ use crate::{CallError, Env, Function, Outcome};
 
 pub(super) static FUNCTIONS: &[Function] = &[
     f("sceAgcDcbResetQueue", dcb_reset_queue),
+    f("#qj7QZpgr9Uw", dcb_context_state_op),
     f("sceAgcAcbResetQueue", acb_reset_queue),
     f("sceAgcCbNop", cb_nop),
     f("sceAgcCbNopGetSize", cb_nop_size),
@@ -542,6 +543,30 @@ fn data_packet_payload_address(env: &mut Env) -> Result<Outcome, CallError> {
     };
     env.mem.write_u64(out, payload)?;
     ret(0)
+}
+
+/// SharpEmu's `DcbContextStateOperation(buffer, op)`: op 1 (push) as the
+/// console wrote it, the others in SharpEmu's NOP-tagged form.
+fn dcb_context_state_op(env: &mut Env) -> Result<Outcome, CallError> {
+    const IT_CONTEXT_CONTROL: u32 = 0x28;
+    const IT_CLEAR_STATE: u32 = 0x12;
+    const NOP_CONTEXT_STATE: u32 = 0x1A;
+    let (buffer, op) = (env.arg(0), env.arg(1) as u32);
+    if buffer == 0 || op > 3 {
+        return ret(0);
+    }
+    if op == 1 {
+        return ret(emit(
+            env,
+            buffer,
+            &[pm4(3, IT_CONTEXT_CONTROL, 0), 0, 0x8001_8001, pm4(2, IT_CLEAR_STATE, 0), 1],
+        )?);
+    }
+    let mut packet = vec![pm4(5, IT_NOP, NOP_CONTEXT_STATE), op, 0, 0, 0];
+    if op == 3 {
+        packet.extend([pm4(5, IT_NOP, 0), 0, 0, 0, 0]);
+    }
+    ret(emit(env, buffer, &packet)?)
 }
 
 #[cfg(test)]

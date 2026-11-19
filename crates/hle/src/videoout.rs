@@ -40,6 +40,9 @@ struct Port {
     buffers: Vec<Option<(u64, Layout)>>,
     front: Option<usize>,
     flips: u64,
+    /// The last flip's argument and when it happened.
+    last_arg: u64,
+    last_flip: Option<Instant>,
 }
 
 pub struct VideoOut {
@@ -167,6 +170,7 @@ fn untile(raw: &[u8], l: Layout) -> Vec<u8> {
 pub static FUNCTIONS: &[Function] = &[
     f("sceVideoOutOpen", open),
     f("sceVideoOutClose", close),
+    f("sceVideoOutGetFlipStatus", flip_status),
     f("sceVideoOutSetFlipRate", with_handle),
     f("sceVideoOutSetBufferAttribute2", set_buffer_attribute2),
     f("sceVideoOutRegisterBuffers2", register_buffers2),
@@ -321,6 +325,8 @@ impl Kernel {
             }
             port.front = front;
             port.flips += 1;
+            port.last_arg = arg;
+            port.last_flip = Some(Instant::now());
         }
         self.trigger_event(FLIP_EVENT, EVENT_FILTER, arg);
         if let Some(listener) = lock(&self.videoout.listener).as_ref() {
@@ -373,6 +379,28 @@ fn delete_flip_event(env: &mut Env) -> Result<Outcome, CallError> {
 fn output_status(env: &mut Env) -> Result<Outcome, CallError> {
     env.mem.write(env.arg(1), &1u32.to_le_bytes())?;
     Ok(Outcome::Return(0))
+}
+
+/// `sceVideoOutGetFlipStatus(handle, status)` in OpenOrbis's
+/// `OrbisVideoOutFlipStatus` layout; flips are never pending.
+fn flip_status(env: &mut Env) -> Result<Outcome, CallError> {
+    if !is_open(env) {
+        return ret(ERROR_INVALID_HANDLE);
+    }
+    let start = env.kernel.videoout.start;
+    let (count, arg, time, front) = {
+        let port = lock(&env.kernel.videoout.port);
+        let time = port.last_flip.map_or(0, |t| t.duration_since(start).as_micros() as u64);
+        (port.flips, port.last_arg, time, port.front.map_or(-1, |i| i as i32))
+    };
+    let mut b = [0u8; 0x40];
+    b[0..8].copy_from_slice(&count.to_le_bytes());
+    b[8..16].copy_from_slice(&time.to_le_bytes());
+    b[16..24].copy_from_slice(&time.to_le_bytes());
+    b[24..32].copy_from_slice(&arg.to_le_bytes());
+    b[0x38..0x3c].copy_from_slice(&front.to_le_bytes());
+    env.mem.write(env.arg(1), &b)?;
+    ret(0)
 }
 
 #[cfg(test)]

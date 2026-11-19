@@ -76,6 +76,11 @@ pub static FUNCTIONS: &[Function] = &[
     },
     Function {
         library: "libSceAppContent",
+        name: "sceAppContentDownloadDataGetAvailableSpaceKb",
+        func: temporary_data_space,
+    },
+    Function {
+        library: "libSceAppContent",
         name: "sceAppContentAppParamGetInt",
         func: app_param_int,
     },

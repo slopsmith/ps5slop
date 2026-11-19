@@ -328,10 +328,36 @@ impl Ctx<'_> {
         if !vex.l || scalar(i.op, self.pfx()) {
             return self.sse_op();
         }
+        if i.op == 0x5a && matches!(self.pfx(), Pfx::None | Pfx::P66) {
+            return self.convert_wide();
+        }
         if !in_lane(i.op, self.pfx()) {
             return Ok(false);
         }
         self.by_halves(Self::sse_op)
+    }
+
+    /// VEX.256 `vcvtps2pd ymm, xmm/m128` and `vcvtpd2ps xmm, ymm/m256`.
+    fn convert_wide(&mut self) -> Res<bool> {
+        let d = self.insn.reg as usize;
+        if self.pfx() == Pfx::None {
+            let s = lanes::<4>(self.src128(false)?);
+            self.cpu.xmm[d] = s.map(|x| f32_to_f64(x as u32));
+            return Ok(true);
+        }
+        let src = match self.rm() {
+            Loc::Reg(r) => self.cpu.xmm[r as usize],
+            Loc::Mem(a) => {
+                let mut v = [0u64; 4];
+                for (k, w) in v.iter_mut().enumerate() {
+                    *w = self.load(a + 8 * k as u64, 8)?;
+                }
+                v
+            }
+        };
+        let r = src.map(f64_to_f32);
+        self.cpu.xmm[d] = [r[0] as u64 | (r[1] as u64) << 32, r[2] as u64 | (r[3] as u64) << 32, 0, 0];
+        Ok(true)
     }
 
     /// Runs a 256-bit in-lane operation as two 128-bit ones.

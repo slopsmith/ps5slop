@@ -46,6 +46,8 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceSaveDataUmount", umount),
     f("sceSaveDataUmount2", umount2),
     f("sceSaveDataGetMountInfo", get_mount_info),
+    f("sceSaveDataSetParam", set_param),
+    f("sceSaveDataGetParam", get_param),
     f("sceSaveDataDirNameSearch", dir_name_search),
     // Name unknown; Minecraft passes it the same condition and result.
     f("#X4MYzukPc3g", dir_name_search),
@@ -282,6 +284,48 @@ fn dir_name_search(env: &mut Env) -> Result<Outcome, CallError> {
         .write(result + RESULT_HITS, &(found.len() as u32).to_le_bytes())?;
     env.mem
         .write(result + RESULT_SET, &(set as u32).to_le_bytes())?;
+    ret(0)
+}
+
+/// The host file holding parameter block `kind` of the save mounted at the
+/// mount point named at `at`.
+fn param_file(env: &Env, at: u64, kind: u64) -> Result<Option<std::path::PathBuf>, CallError> {
+    let Some((_, slot)) = mount_point(env, at)? else {
+        return Ok(None);
+    };
+    let mounted = lock(&env.kernel.saves.mounted);
+    Ok(mounted[slot].as_ref().map(|m| m.host.join("sce_sys").join(format!("param{kind}.bin"))))
+}
+
+/// `sceSaveDataSetParam(mount_point, kind, buf, size)`: the bytes are kept
+/// as they are, one file per kind (kind 0 is the whole title/detail block).
+fn set_param(env: &mut Env) -> Result<Outcome, CallError> {
+    let (kind, buf, size) = (env.arg(1), env.arg(2), env.arg(3).min(0x10000) as usize);
+    let Some(file) = param_file(env, env.arg(0), kind)? else {
+        return ret(ERROR_NOT_MOUNTED);
+    };
+    let mut data = vec![0u8; size];
+    env.mem.read(buf, &mut data)?;
+    let written = file.parent().map(std::fs::create_dir_all).transpose().and_then(|_| std::fs::write(&file, &data));
+    if written.is_err() {
+        return Err(CallError::Abort("cannot write save data parameters"));
+    }
+    ret(0)
+}
+
+/// `sceSaveDataGetParam(mount_point, kind, buf, size, &got)`: what
+/// `SetParam` stored, zero-filled when there is none.
+fn get_param(env: &mut Env) -> Result<Outcome, CallError> {
+    let (kind, buf, size, got) = (env.arg(1), env.arg(2), env.arg(3).min(0x10000) as usize, env.arg(4));
+    let Some(file) = param_file(env, env.arg(0), kind)? else {
+        return ret(ERROR_NOT_MOUNTED);
+    };
+    let mut data = std::fs::read(file).unwrap_or_default();
+    data.resize(size, 0);
+    env.mem.write(buf, &data)?;
+    if got != 0 {
+        env.mem.write_u64(got, size as u64)?;
+    }
     ret(0)
 }
 

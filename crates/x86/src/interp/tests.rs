@@ -462,3 +462,17 @@ fn extended_values_round_to_the_nearest_double() {
     assert_eq!(from_extended(1 << 63 | 1 << 10, 0x3fff), 1.0);
     assert_eq!(from_extended(1 << 63, 0x3fff + 1024), f64::INFINITY);
 }
+
+#[test]
+fn wide_float_conversions_cross_lanes() {
+    let (mut cpu, mem) = machine(
+        "vcvtps2pd ymm1, xmm0; vcvtpd2ps xmm2, ymm1",
+        &[0xc5, 0xfc, 0x5a, 0xc8, 0xc5, 0xfd, 0x5a, 0xd1],
+    );
+    let f = |x: f32| x.to_bits() as u64;
+    cpu.xmm[0] = [f(1.5) | f(-2.0) << 32, f(3.25) | f(0.5) << 32, 0, 0];
+    cpu.xmm[2] = [!0; 4];
+    steps(&mut cpu, &mem, 2);
+    assert_eq!(cpu.xmm[1], [1.5f64, -2.0, 3.25, 0.5].map(f64::to_bits));
+    assert_eq!(cpu.xmm[2], [cpu.xmm[0][0], cpu.xmm[0][1], 0, 0]);
+}

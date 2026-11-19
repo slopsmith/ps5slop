@@ -14,7 +14,16 @@ const BUFFER: u64 = 0x31_0000;
 const BUFFER_DWORDS: u64 = 1024;
 
 /// Builders whose output differs from the console on purpose, and why.
+/// Checked instead by `packets.rs`'s harness, which has the measured stack.
+const STACK_LEFTOVERS: &str = "output includes unknown stack slots";
+
 const KNOWN_DIFFERENT: &[(&str, &str)] = &[
+    ("sceAgcDcbAtomicGds", STACK_LEFTOVERS),
+    ("sceAgcAcbAtomicGds", STACK_LEFTOVERS),
+    ("sceAgcCbReleaseMem", STACK_LEFTOVERS),
+    ("sceAgcDcbAtomicMem", STACK_LEFTOVERS),
+    ("sceAgcDcbDmaData", STACK_LEFTOVERS),
+    ("sceAgcDcbWaitRegMem", STACK_LEFTOVERS),
     (
         "sceAgcCbBranch",
         "most of its arguments are on the stack, which held garbage when it was measured",
@@ -91,7 +100,11 @@ fn run(case: &Case) -> Option<Vec<u8>> {
         Vfs::default(),
     );
     let mut cpu = Cpu::default();
-    cpu.regs[x86::cpu::reg::RSP] = 0x10_0000 + PAGE_SIZE - 8;
+    let sp = 0x10_0000 + PAGE_SIZE - 0x40;
+    cpu.regs[x86::cpu::reg::RSP] = sp;
+    // The measuring harness's stack held 0 and then 1 above the return address.
+    kernel.memory().write_u64(sp + 8, 0).unwrap();
+    kernel.memory().write_u64(sp + 16, 1).unwrap();
     const ORDER: [usize; 6] = [7, 6, 2, 1, 8, 9];
     cpu.regs[ORDER[0]] = DESCRIPTOR;
     for (i, &a) in case.args.iter().take(5).enumerate() {
