@@ -61,3 +61,9 @@ Reason: not every module is a candidate. Ones that reach into the kernel or hard
 ps5slop may open fake-signed `.pkg` files as a convenience, deriving the keys from the package's passcode (supplied by the user; all zeros for OpenOrbis builds). No Sony key material is embedded or used. Fake packages without a known passcode, and retail packages, stay out. The loader still runs from an unpacked `app0` folder. Details in [packages.md](packages.md).
 
 Reason: vic wants to run his own and other homebrew packages directly. The passcode route needs nothing but what is in the package plus the passcode, which the package's builder chose; verified against vic's own package.
+
+## 2026-11-19: Supported inputs: fake-signed packages and dumped folders
+
+ps5slop takes two inputs: fake-signed packages (FPKG), opened with the all-zeros passcode by default, and already extracted `app0` folders (dumps). Retail Sony-signed packages are not supported.
+
+Reason: many dumping tools produce FPKGs, and folders are what other dumpers and our own builds give. The important line is that we never decrypt retail game data ourselves, and we cannot: retail packages need keys we do not have and will not embed.

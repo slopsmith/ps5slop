@@ -44,7 +44,7 @@ Sources disagree on step 3: the psdevwiki PKG page (vic's saved copy) says the s
 
 - Reading the PKG header and its clear metadata (title, content ID, icons) needs no keys.
 - A fake-signed package opens with its passcode (the user supplies it, all zeros by default), with no Sony keys. This is allowed as a convenience feature (see [decisions.md](decisions.md)).
-- The loader itself still takes an unpacked `app0` folder: `eboot.bin`, `sce_module/`, `sce_sys/`. Opening a package means extracting (or mounting) it into that form.
+- Supported inputs are fake-signed packages (passcode all zeros unless the user gives another) and dumped `app0` folders (`eboot.bin`, `sce_module/`, `sce_sys/`). The loader works on the folder form; a package is extracted (or mounted) into it.
 
 ## PS5
 
