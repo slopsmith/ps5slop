@@ -4,8 +4,9 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use loader::elf::Container;
+use loader::image::NoImports;
 use loader::nid::nid;
-use loader::{Dynamic, ElfFile};
+use loader::{Dynamic, ElfFile, Image};
 
 /// Inspects Orbis executables and modules (plain ELF or fake-signed SELF).
 #[derive(Parser)]
@@ -25,6 +26,13 @@ enum Command {
         /// A file of symbol names, one per line, to label the NIDs they hash to.
         #[arg(long)]
         names: Option<PathBuf>,
+    },
+    /// Lays the file out at a base address and applies its relocations, with
+    /// no imports provided, then reports what is missing.
+    Load {
+        file: PathBuf,
+        #[arg(long, default_value = "0x400000", value_parser = parse_hex)]
+        base: u64,
     },
 }
 
@@ -120,6 +128,46 @@ fn run(cli: Cli) -> loader::Result<()> {
                 }
             }
         }
+        Command::Load { file, base } => {
+            let elf = ElfFile::parse(std::fs::read(file)?)?;
+            let d = Dynamic::parse(&elf)?;
+            let img = Image::load(&elf, &d, base, 1, &mut NoImports)?;
+            println!(
+                "image: {:#x}..{:#x}, entry {:#x}",
+                img.base,
+                img.base + img.bytes.len() as u64,
+                img.entry
+            );
+            for r in &img.regions {
+                let p = r.protection;
+                let prot: String = [(p.read, 'r'), (p.write, 'w'), (p.execute, 'x')]
+                    .iter()
+                    .map(|&(on, c)| if on { c } else { '-' })
+                    .collect();
+                println!(
+                    "  {:#10x}..{:#10x} {prot}",
+                    img.base + r.offset,
+                    img.base + r.offset + r.size
+                );
+            }
+            if let Some(t) = img.tls {
+                println!(
+                    "tls: {:#x} bytes ({:#x} initialised), align {:#x}",
+                    t.size, t.init_size, t.align
+                );
+            }
+            if let Some(p) = img.proc_param {
+                println!("proc param at {p:#x}");
+            }
+            let mut by_lib: BTreeMap<&str, usize> = BTreeMap::new();
+            for m in &img.missing {
+                *by_lib.entry(m.library.as_str()).or_default() += 1;
+            }
+            println!("{} imports missing", img.missing.len());
+            for (lib, n) in by_lib {
+                println!("  {lib}: {n}");
+            }
+        }
     }
     Ok(())
 }
@@ -129,4 +177,9 @@ fn flags(f: u32) -> String {
         .iter()
         .map(|&(bit, c)| if f & bit != 0 { c } else { '-' })
         .collect()
+}
+
+fn parse_hex(s: &str) -> Result<u64, String> {
+    let digits = s.strip_prefix("0x").unwrap_or(s);
+    u64::from_str_radix(digits, 16).map_err(|e| e.to_string())
 }
