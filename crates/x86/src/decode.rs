@@ -40,6 +40,9 @@ pub struct Mem {
     pub rip_relative: bool,
     pub addr32: bool,
     pub seg: Option<Seg>,
+    /// The SIB index field with REX.X, even when it is 4: a vector index for
+    /// VSIB addressing (gathers), where 4 does not mean "no index".
+    pub vsib_index: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -67,6 +70,17 @@ pub struct Insn {
     pub imm: i64,
     /// ENTER's second immediate.
     pub imm2: u8,
+    /// Set for VEX-encoded instructions.
+    pub vex: Option<Vex>,
+}
+
+/// The fields a VEX prefix adds beyond REX and the implied 66/F3/F2.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Vex {
+    /// 256-bit operation (VEX.L).
+    pub l: bool,
+    /// The extra source register (VEX.vvvv, already un-inverted).
+    pub vvvv: u8,
 }
 
 impl Insn {
@@ -239,14 +253,51 @@ pub fn decode<E>(mut fetch: impl FnMut(usize) -> Result<u8, E>) -> Result<Insn, 
         insn.rex = 0;
         b = next(&mut i)?;
     }
-    if matches!(b, 0xc4 | 0xc5 | 0x62) {
+    let mut vex_map = None;
+    if matches!(b, 0xc4 | 0xc5) {
+        if insn.rex != 0 || insn.opsize_prefix || insn.rep != Rep::None || insn.lock {
+            return Err(DecodeError::Invalid);
+        }
+        let b1 = next(&mut i)?;
+        let (rxb, map, b2) = if b == 0xc5 {
+            ((!b1 >> 7) << 2, 1, b1)
+        } else {
+            (((!b1) >> 5) & 7, b1 & 0x1f, next(&mut i)?)
+        };
+        let w = if b == 0xc4 { b2 >> 7 } else { 0 };
+        insn.rex = 0x40 | w << 3 | rxb;
+        insn.vex = Some(Vex {
+            l: b2 & 4 != 0,
+            vvvv: (!b2 >> 3) & 0xf,
+        });
+        match b2 & 3 {
+            1 => insn.opsize_prefix = true,
+            2 => insn.rep = Rep::Rep,
+            3 => insn.rep = Rep::Repne,
+            _ => {}
+        }
+        vex_map = Some(match map {
+            1 => Map::M0F,
+            2 => Map::M0F38,
+            3 => Map::M0F3A,
+            _ => return Err(DecodeError::Invalid),
+        });
+        b = next(&mut i)?;
+    } else if b == 0x62 {
         return Err(DecodeError::Unsupported);
     }
     let r = (insn.rex >> 2) & 1;
     let x = (insn.rex >> 1) & 1;
     let rb = insn.rex & 1;
 
-    let (has_modrm, imm) = if b == 0x0f {
+    let (has_modrm, imm) = if let Some(map) = vex_map {
+        insn.map = map;
+        match map {
+            Map::M0F => map0f(b).ok_or(DecodeError::Invalid)?,
+            Map::M0F38 => (true, Imm::None),
+            _ => (true, Imm::B),
+        }
+    } else if b == 0x0f {
         b = next(&mut i)?;
         match b {
             0x38 => {
@@ -297,6 +348,7 @@ pub fn decode<E>(mut fetch: impl FnMut(usize) -> Result<u8, E>) -> Result<Insn, 
             if rm == 4 {
                 let sib = next(&mut i)?;
                 let index = ((sib >> 3) & 7) | (x << 3);
+                mem.vsib_index = Some(index);
                 if index != 4 {
                     mem.index = Some(index);
                 }
@@ -471,6 +523,46 @@ mod tests {
     }
 
     #[test]
+    fn decodes_two_and_three_byte_vex() {
+        let i = dec("vzeroupper", &[0xc5, 0xf8, 0x77]);
+        assert_eq!(
+            (i.map, i.op, i.len, i.vex),
+            (Map::M0F, 0x77, 3, Some(Vex { l: false, vvvv: 0 }))
+        );
+        let i = dec("vaddps ymm1, ymm2, ymm3", &[0xc5, 0xec, 0x58, 0xcb]);
+        assert_eq!(
+            (i.reg, i.rm, i.vex.unwrap().vvvv, i.vex.unwrap().l),
+            (1, 3, 2, true)
+        );
+        let i = dec(
+            "vpaddq ymm9, ymm10, ymmword ptr [r11]",
+            &[0xc4, 0x41, 0x2d, 0xd4, 0x0b],
+        );
+        assert_eq!(
+            (
+                i.reg,
+                i.vex.unwrap().vvvv,
+                i.mem.unwrap().base,
+                i.opsize_prefix
+            ),
+            (9, 10, Some(11), true)
+        );
+        let i = dec(
+            "vfmadd231ps xmm0, xmm1, xmm2",
+            &[0xc4, 0xe2, 0x71, 0xb8, 0xc2],
+        );
+        assert_eq!((i.map, i.op, i.vex.unwrap().vvvv), (Map::M0F38, 0xb8, 1));
+        let i = dec(
+            "vpermq ymm0, ymm1, 0x1b",
+            &[0xc4, 0xe3, 0xfd, 0x00, 0xc1, 0x1b],
+        );
+        assert_eq!(
+            (i.map, i.imm, i.rex_w(), i.len),
+            (Map::M0F3A, 0x1b, true, 6)
+        );
+    }
+
+    #[test]
     fn rejects_invalid_unsupported_and_too_long_instructions() {
         assert_eq!(
             decode(|i| [0x06].get(i).copied().ok_or(())),
@@ -478,7 +570,10 @@ mod tests {
         );
         assert_eq!(decode(|_| Ok::<u8, ()>(0x66)), Err(DecodeError::TooLong));
         assert_eq!(
-            decode(|i| [0xc5, 0xf8, 0x77].get(i).copied().ok_or(())),
+            decode(|i| [0x62, 0xf1, 0x7c, 0x48, 0x58, 0xc1]
+                .get(i)
+                .copied()
+                .ok_or(())),
             Err(DecodeError::Unsupported)
         );
     }

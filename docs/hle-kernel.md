@@ -11,16 +11,33 @@ How guest code reaches host code, and what we implement. `crates/hle`.
 
 A JIT can keep the same scheme: a trap region is just memory it never maps executable.
 
+## Threads
+
+Each guest thread runs the interpreter on its own host thread (see [decisions.md](decisions.md)). `hle::Kernel` holds what they share: the stub table, the kernel objects, the thread records, the guest's stdout and stderr, and the process's exit state. A thread checks for process exit every 65,536 instructions, and a host function that blocks (a mutex, a join, a condition variable) wakes every 20 ms to check too. The process ends at `exit`, at the first guest error in any thread, or when its last thread ends.
+
+A host function can also redirect the CPU instead of returning (`Outcome::Resume`): `pthread_once` uses that to call the guest's init routine with a return address in our trap region, so the host takes over again when the routine returns.
+
+## errno
+
+Each thread's errno lives in its thread control block, at the thread pointer plus `0x800` (our choice); `__error()` returns its address. POSIX-style functions that fail set it and return -1. The values are FreeBSD's (`hle::errno`), assumed rather than verified for Orbis. The pthread functions return error numbers directly, as POSIX says.
+
 ## Implemented
 
-| Library | Function | Behaviour | Status |
+| Library | Functions | Behaviour | Status |
 | --- | --- | --- | --- |
-| libkernel | `write(fd, buf, len)` | fd 1 and 2 go to the host's stdout and stderr; other fds return -1; writes over 1 MiB are cut short | Our own test programs only. Whether libkernel exports `write` under this name, and its error convention (-1 and errno, or an `SCE_KERNEL_ERROR` code), is unverified |
-| libkernel | `exit(status)` | Ends the process | Same |
-| libkernel | `mmap(addr, len, prot, flags, fd, off)` | Anonymous mappings only, FreeBSD flag values (`MAP_FIXED` 0x10, `MAP_ANON` 0x1000); without `MAP_FIXED` they go to the lowest free range from `0x10_0000_0000` (shadPS4's PS4 user area); failures return `MAP_FAILED` without errno | Called by vic's OpenOrbis build with these flags |
-| libkernel | `munmap(addr, len)` | Whole mappings only | Untested by a real program yet |
-| libkernel | `__stack_chk_fail()` | Stops the process: "stack smashing detected" | |
-| libkernel | `__stack_chk_guard` (variable) | A fixed non-zero canary in the HLE data region (`0xFF_8000_0000`) | Used by vic's OpenOrbis build |
+| libkernel | `write`, `_write` | fd 1 and 2 go to the host's stdout and stderr; other fds return -1; writes over 1 MiB are cut short | vic's homebrew logs through `_write`. Error convention unverified |
+| libkernel | `exit` | Ends the process | |
+| libkernel | `__error` | The calling thread's errno address | |
+| libkernel | `ioctl` | Always fails with `ENOTTY` | vic's homebrew asks for a terminal size and carries on |
+| libkernel | `mmap`, `munmap` | Anonymous mappings only, FreeBSD flag values (`MAP_FIXED` 0x10, `MAP_ANON` 0x1000); without `MAP_FIXED` from `0x10_0000_0000` (shadPS4's PS4 user area); failures return `MAP_FAILED` without errno; `munmap` only whole mappings | `mmap` called by vic's homebrew |
+| libkernel | `pthread_mutex_*`, `pthread_mutexattr_{init,destroy,settype}` | Error-checking by default (FreeBSD's default), recursive and normal types | Unit tests and the `threads` test program |
+| libkernel | `pthread_cond_{init,destroy,wait,timedwait,signal,broadcast}` | `signal` wakes all waiters (allowed: POSIX permits spurious wake-ups); `timedwait` takes a CLOCK_REALTIME deadline | `threads` test program |
+| libkernel | `pthread_rwlock_{init,destroy,rdlock,wrlock,unlock}` | | Untested by a program |
+| libkernel | `pthread_key_{create,delete}`, `pthread_{get,set}specific` | Destructors are not run | Unit test |
+| libkernel | `pthread_once` | The routine runs as a guest call; other callers wait | `threads` test program |
+| libkernel | `pthread_create`, `join`, `detach`, `exit`, `self`, `equal` | `pthread_t` is the thread pointer; attributes are ignored and every thread gets a 1 MiB stack (the Orbis default is unknown) | `threads` test program, 30 runs out of 30 |
+| libkernel | `__stack_chk_fail`, `__stack_chk_guard` (variable) | Stops the process / a fixed non-zero canary in the HLE data region (`0xFF_8000_0000`) | `__stack_chk_guard` used by vic's homebrew |
+| libSceSysmodule | `sceSysmoduleLoadModule`, `sceSysmoduleLoadModuleInternal` | Succeed without doing anything: every library is provided by the HLE layer | Called by vic's homebrew |
 
 **Variables.** Some imports are data, not functions: libkernel's `__stack_chk_guard` is read through its GOT entry, although OpenOrbis's stub declares it a function. So the symbol type cannot be trusted; the HLE layer knows its variables by name and binds them to readable memory in a data region next to the trap region.
 
@@ -39,13 +56,16 @@ Status: matches both sources and gets vic's OpenOrbis `eboot.bin` through its st
 
 ## How far vic's OpenOrbis build gets
 
-As of 2026-11-19, `ps5slop run` on `ps4build/pkg_scratch` (vic's PS4 package store, built with OpenOrbis) runs through `_start`, the libc's start-up code, the stack canary, the x87 and SSE set-up, and its first `mmap`, and stops at its first `ioctl(1, 0x5413, ...)`. `0x5413` is Linux's `TIOCGWINSZ`, so OpenOrbis's libc (musl) apparently asks a terminal-size question with Linux's numbering; what libkernel answers on a console is unknown (presumably an error, since there is no terminal).
+As of 2026-11-19, `ps5slop run` on `ps4build/pkg_scratch` (vic's PS4 package store, built with OpenOrbis on his own `orbitengine`) runs through `_start`, libc start-up, its first `mmap` and a failed `ioctl(1, TIOCGWINSZ)`, into `main`, and prints its own log:
+
+```
+INFO: ../subprojects/orbitengine/src/setup.cpp:15: Setting exception handler
+INFO: ../subprojects/orbitengine/src/setup.cpp:31: Running platform setup
+INFO: ../subprojects/orbitengine/platforms/orbis/src/setup.cpp:14: Loading all needed modules
+```
+
+It then loads system modules (which succeeds) and stops at `sceCommonDialogInitialize` in libSceCommonDialog. From here it needs system services (common dialogs, user service, pads) and PS4 graphics through `libScePigletv2VSH` (the PS4's OpenGL ES), which is outside our PS5 GPU plan.
 
 ## What a real executable needs next
 
-Through libc start-up the program imports about 60 libkernel functions: pthreads (mutexes, condition variables, keys, `pthread_once`, `pthread_create`), files (`open`, `read`, `fstat`, `lseek`, `mkdir`), sockets, signals, time (`nanosleep`, `sceKernelGetProcessTimeCounter`), `sysconf`, `ioctl`. Two pieces of design come before most of them:
-
-- **errno:** libkernel's `__error()` returns a per-thread pointer; failing functions must set it.
-- **Calls back into guest code:** `pthread_once` and `pthread_create` run guest functions. The HLE layer needs a way to call a guest function and continue when it returns (a return trap that resumes the host function), and threads need more than one CPU state.
-
-Then the process parameters in `PT_SCE_PROCPARAM`, module start functions and init arrays.
+Libraries beyond libkernel (system services, pads, video out), the process parameters in `PT_SCE_PROCPARAM`, module start functions and init arrays, thread attributes, key destructors, and file and socket I/O.
