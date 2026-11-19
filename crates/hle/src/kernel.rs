@@ -1,9 +1,20 @@
 //! libkernel. Which of these names libkernel really exports, and with which
 //! error conventions, is unverified (see `docs/hle-kernel.md`).
 
-use crate::{CallError, Env, Function, Outcome};
+use crate::{CallError, Env, Function, Outcome, Variable};
+
+pub static VARIABLES: &[Variable] = &[Variable {
+    library: "libkernel",
+    name: "__stack_chk_guard",
+    init: &0x2f8a_1c3e_5d7b_9e00u64.to_le_bytes(),
+}];
 
 pub static FUNCTIONS: &[Function] = &[
+    Function {
+        library: "libkernel",
+        name: "__stack_chk_fail",
+        func: stack_chk_fail,
+    },
     Function {
         library: "libkernel",
         name: "write",
@@ -44,4 +55,9 @@ fn write(env: &mut Env) -> Result<Outcome, CallError> {
 /// `exit(status)`.
 fn exit(env: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Exit(env.arg(0) as i32))
+}
+
+/// `__stack_chk_fail()`: the guest found its stack canary overwritten.
+fn stack_chk_fail(_: &mut Env) -> Result<Outcome, CallError> {
+    Err(CallError::Abort("stack smashing detected"))
 }
