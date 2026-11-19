@@ -8,7 +8,7 @@ mod tables;
 mod translate;
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use a64::{Asm, Reg, Shift, Size, Width};
@@ -87,6 +87,57 @@ struct BlockInfo {
     verified: u32,
 }
 
+/// What a vCPU needs to enter and leave the VM without the machine's lock.
+/// Only `Machine::sync`, under that lock, changes the tables and these.
+struct Shared {
+    /// The address space id and region generation the tables mirror; the
+    /// generation is `u64::MAX` while the two change.
+    id: AtomicU64,
+    generation: AtomicU64,
+    /// The table pool new entries use, and the root table of each pool.
+    active: AtomicUsize,
+    roots: [AtomicUsize; 2],
+    /// vCPUs inside the VM with each pool.
+    users: [AtomicU32; 2],
+    /// Bumped when the tables change, so vCPUs flush their TLBs.
+    epoch: AtomicU64,
+    running: [AtomicBool; layout::MAX_VCPUS],
+}
+
+static SHARED: Shared = Shared {
+    id: AtomicU64::new(0),
+    generation: AtomicU64::new(u64::MAX),
+    active: AtomicUsize::new(0),
+    roots: [const { AtomicUsize::new(0) }; 2],
+    users: [const { AtomicU32::new(0) }; 2],
+    epoch: AtomicU64::new(0),
+    running: [const { AtomicBool::new(false) }; layout::MAX_VCPUS],
+};
+
+impl Shared {
+    /// Takes the active pool for an entry when the tables mirror `mem` and
+    /// were last flushed at `epoch`; `None` means the slow path under the
+    /// lock is needed. The caller gives the pool back with `users[pool]`.
+    fn try_use(&self, mem: &Memory, epoch: Option<u64>) -> Option<usize> {
+        let sc = Ordering::SeqCst;
+        if self.generation.load(sc) != mem.generation()
+            || self.id.load(sc) != mem.id()
+            || Some(self.epoch.load(sc)) != epoch
+        {
+            return None;
+        }
+        let pool = self.active.load(sc);
+        self.users[pool].fetch_add(1, sc);
+        // `sync` bumps the epoch before it switches pools, so a pool that
+        // is still active with the same epoch was not rebuilt meanwhile.
+        if self.active.load(sc) == pool && Some(self.epoch.load(sc)) == epoch {
+            return Some(pool);
+        }
+        self.users[pool].fetch_sub(1, sc);
+        None
+    }
+}
+
 /// The process's VM and its runtime region. HVF allows one VM per process.
 pub struct Machine {
     vm: Vm,
@@ -95,14 +146,7 @@ pub struct Machine {
     mapped: Vec<(u64, u64)>,
     /// The address space (its id) and region generation last mirrored.
     generation: Option<(usize, u64)>,
-    roots: [usize; 2],
-    active: usize,
-    /// Running vCPUs that entered with each table pool.
-    users: [u32; 2],
-    /// Bumped when the tables change, so vCPUs flush their TLBs.
-    epoch: u64,
     vcpus: [Option<VcpuKicker>; layout::MAX_VCPUS],
-    running: [bool; layout::MAX_VCPUS],
     code_next: usize,
     blocks: HashMap<u64, BlockInfo>,
     /// Check blocks against the interpreter before trusting them.
@@ -187,12 +231,7 @@ impl Machine {
             runtime,
             mapped: Vec::new(),
             generation: None,
-            roots: [0; 2],
-            active: 0,
-            users: [0; 2],
-            epoch: 0,
             vcpus: [None; layout::MAX_VCPUS],
-            running: [false; layout::MAX_VCPUS],
             code_next: layout::CODE_CACHE,
             blocks: HashMap::new(),
             verify: std::env::var_os("PS5SLOP_JIT_VERIFY").is_some(),
@@ -203,7 +242,8 @@ impl Machine {
             natives: Vec::new(),
         };
         for pool in 0..2 {
-            m.roots[pool] = tables::Tables::new(m.runtime.as_mut_slice(), pool).root;
+            let root = tables::Tables::new(m.runtime.as_mut_slice(), pool).root;
+            SHARED.roots[pool].store(root, Ordering::SeqCst);
         }
         Ok(m)
     }
@@ -225,8 +265,9 @@ impl Machine {
             }
             self.forget_code();
         }
-        let pool = 1 - self.active;
-        if self.users[pool] > 0 {
+        let sc = Ordering::SeqCst;
+        let pool = 1 - SHARED.active.load(sc);
+        if SHARED.users[pool].load(sc) > 0 {
             return Ok(false);
         }
         let regions: Vec<_> = mem.regions().into_iter().filter(|r| !r.trap).collect();
@@ -259,9 +300,12 @@ impl Machine {
                 return Err(Error(-2));
             }
         }
-        self.roots[pool] = t.root;
-        self.active = pool;
-        self.epoch += 1;
+        SHARED.roots[pool].store(t.root, sc);
+        SHARED.epoch.fetch_add(1, sc);
+        SHARED.active.store(pool, sc);
+        SHARED.generation.store(u64::MAX, sc);
+        SHARED.id.store(generation.0 as u64, sc);
+        SHARED.generation.store(generation.1, sc);
         self.generation = Some(generation);
         self.kick_running();
         Ok(true)
@@ -290,7 +334,7 @@ impl Machine {
     fn kick_running(&self) {
         for (slot, k) in self.vcpus.iter().enumerate() {
             if let Some(k) = k
-                && self.running[slot]
+                && SHARED.running[slot].load(Ordering::SeqCst)
             {
                 k.kick();
             }
@@ -669,8 +713,9 @@ impl Cpu {
 
     /// Runs hand-written code at virtual address `pc`, after a TLB flush,
     /// until it leaves the VM.
-    pub fn run(&mut self, m: &Machine, pc: u64) -> Result<Exit, Error> {
-        self.enter(m.roots[m.active], RESUME_FLUSH, Some((pc, CPSR_EL1H)), 0)
+    pub fn run(&mut self, _m: &Machine, pc: u64) -> Result<Exit, Error> {
+        let root = SHARED.roots[SHARED.active.load(Ordering::SeqCst)].load(Ordering::SeqCst);
+        self.enter(root, RESUME_FLUSH, Some((pc, CPSR_EL1H)), 0)
     }
 
     /// Enters the VM at runtime offset `at` with TTBR0 at `root` and NZCV
@@ -718,7 +763,7 @@ impl Cpu {
 
     pub fn release(self, m: &mut Machine) {
         m.vcpus[self.slot] = None;
-        m.running[self.slot] = false;
+        SHARED.running[self.slot].store(false, Ordering::SeqCst);
     }
 }
 

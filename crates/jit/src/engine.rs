@@ -11,7 +11,7 @@ use x86::Cpu as X86;
 use x86::cpu::flags;
 
 use crate::translate::{AF_AUX, FS_BASE, HVC_INTERP, HVC_MISS, ICOUNT, PF_RESULT, RIP};
-use crate::{CPSR_EL1H, Cpu, DISPATCH, ENTRY_FLUSH, Exit, RESUME_FLUSH, machine};
+use crate::{CPSR_EL1H, Cpu, DISPATCH, ENTRY_FLUSH, Exit, RESUME_FLUSH, SHARED, machine};
 
 /// Instructions the interpreter may run in a row before trying translated
 /// code again.
@@ -30,6 +30,19 @@ struct Engine {
     epoch: Option<u64>,
     /// The instruction counter's value at the last exit.
     icount: u64,
+    /// What the vCPU holds since the last `store`, so `load` sets only
+    /// what changed: general registers, FS base, RFLAGS and MXCSR.
+    shadow: Option<Shadow>,
+    /// Whether FPSR may hold flags `store` already folded into MXCSR.
+    fpsr_dirty: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Shadow {
+    regs: [u64; 16],
+    fs_base: u64,
+    rflags: u64,
+    mxcsr: u32,
 }
 
 static TRANSLATED: AtomicU64 = AtomicU64::new(0);
@@ -150,8 +163,8 @@ impl Drop for Engine {
     fn drop(&mut self) {
         if let Ok(mut m) = machine() {
             m.vcpus[self.cpu.slot] = None;
-            m.running[self.cpu.slot] = false;
         }
+        SHARED.running[self.cpu.slot].store(false, Ordering::SeqCst);
     }
 }
 
@@ -194,6 +207,8 @@ pub fn run(cpu: &mut X86, mem: &Memory, stop: &dyn Fn() -> bool) -> x86::Exit {
                     cpu,
                     epoch: None,
                     icount: 0,
+                    shadow: None,
+                    fpsr_dirty: true,
                 })),
                 _ => Slot::Unavailable,
             };
@@ -248,21 +263,27 @@ enum Entry {
 
 impl Engine {
     /// Puts `x` into the vCPU and returns its flags as NZCV bits.
-    fn load(&self, x: &X86) -> Result<u64, crate::Error> {
+    fn load(&mut self, x: &X86) -> Result<u64, crate::Error> {
+        let old = self.shadow.take();
         for (i, &v) in x.regs.iter().enumerate() {
-            self.cpu.set_reg(i as u8, v)?;
+            if old.is_none_or(|o| o.regs[i] != v) {
+                self.cpu.set_reg(i as u8, v)?;
+            }
         }
         self.cpu.set_reg(RIP.0, x.rip)?;
-        self.cpu.set_reg(FS_BASE.0, x.fs_base)?;
-        let ymm: Vec<u8> = x
-            .xmm
-            .iter()
-            .flatten()
-            .flat_map(|q| q.to_le_bytes())
-            .collect();
+        if old.is_none_or(|o| o.fs_base != x.fs_base) {
+            self.cpu.set_reg(FS_BASE.0, x.fs_base)?;
+        }
         // SAFETY: the vCPU's context block holds exactly the 16 YMM registers,
-        // and only this thread's vCPU uses it.
-        unsafe { std::ptr::copy_nonoverlapping(ymm.as_ptr(), self.cpu.context, ymm.len()) };
+        // as 64-bit lanes in little-endian order, and only this thread's
+        // vCPU uses it.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                x.xmm.as_ptr().cast::<u8>(),
+                self.cpu.context,
+                crate::layout::YMM_SIZE,
+            )
+        };
         let df = if x.rflags & flags::DF != 0 {
             u64::MAX
         } else {
@@ -270,13 +291,20 @@ impl Engine {
         };
         // SAFETY: the direction flag's slot is inside the same context block.
         unsafe { (self.cpu.context.add(crate::layout::DF_OFFSET) as *mut u64).write_unaligned(df) };
-        self.cpu.vcpu.set_reg(hvf::reg::FPCR, fpcr(x.mxcsr))?;
-        self.cpu.vcpu.set_reg(hvf::reg::FPSR, 0)?;
+        if old.is_none_or(|o| o.mxcsr != x.mxcsr) {
+            self.cpu.vcpu.set_reg(hvf::reg::FPCR, fpcr(x.mxcsr))?;
+        }
+        if self.fpsr_dirty {
+            self.cpu.vcpu.set_reg(hvf::reg::FPSR, 0)?;
+            self.fpsr_dirty = false;
+        }
         let f = x.rflags;
-        let pf_result = if f & flags::PF != 0 { 0 } else { 1 };
-        let af = if f & flags::AF != 0 { 0x10 } else { 0 };
-        self.cpu.set_reg(PF_RESULT.0, pf_result)?;
-        self.cpu.set_reg(AF_AUX.0, pf_result ^ af)?;
+        if old.is_none_or(|o| (o.rflags ^ f) & (flags::PF | flags::AF) != 0) {
+            let pf_result = if f & flags::PF != 0 { 0 } else { 1 };
+            let af = if f & flags::AF != 0 { 0x10 } else { 0 };
+            self.cpu.set_reg(PF_RESULT.0, pf_result)?;
+            self.cpu.set_reg(AF_AUX.0, pf_result ^ af)?;
+        }
         let mut nzcv = 0;
         for (bit, flag) in [(N, flags::SF), (Z, flags::ZF), (V, flags::OF)] {
             if f & flag != 0 {
@@ -290,23 +318,26 @@ impl Engine {
     }
 
     /// Copies the vCPU's registers and flags into `x` (not RIP).
-    fn store(&self, x: &mut X86) -> Result<(), crate::Error> {
+    fn store(&mut self, x: &mut X86) -> Result<(), crate::Error> {
         let cpsr = self.cpsr()?;
         for i in 0..16 {
             x.regs[i] = self.cpu.reg(i as u8)?;
         }
         let fpsr = self.cpu.vcpu.reg(hvf::reg::FPSR)?;
         x.mxcsr |= mxcsr_flags(fpsr);
-        let mut ymm = [0u8; crate::layout::YMM_SIZE];
+        self.fpsr_dirty = fpsr != 0;
         // SAFETY: as in `load`.
-        unsafe { std::ptr::copy_nonoverlapping(self.cpu.context, ymm.as_mut_ptr(), ymm.len()) };
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                self.cpu.context,
+                x.xmm.as_mut_ptr().cast::<u8>(),
+                crate::layout::YMM_SIZE,
+            )
+        };
         // SAFETY: as in `load`.
         let df = unsafe {
             (self.cpu.context.add(crate::layout::DF_OFFSET) as *const u64).read_unaligned()
         };
-        for (k, q) in ymm.as_chunks::<8>().0.iter().enumerate() {
-            x.xmm[k / 4][k % 4] = u64::from_le_bytes(*q);
-        }
         let pf_result = self.cpu.reg(PF_RESULT.0)?;
         let af_aux = self.cpu.reg(AF_AUX.0)?;
         let mut f = x.rflags & !(flags::ARITH | flags::DF);
@@ -328,6 +359,12 @@ impl Engine {
             f |= flags::AF;
         }
         x.rflags = f;
+        self.shadow = Some(Shadow {
+            regs: x.regs,
+            fs_base: x.fs_base,
+            rflags: f,
+            mxcsr: x.mxcsr,
+        });
         Ok(())
     }
 
@@ -337,19 +374,26 @@ impl Engine {
 
     /// Enters the VM once, with the tables brought up to date first.
     fn enter(&mut self, mem: &Memory, entry: Entry) -> Result<Exit, crate::Error> {
-        let (root, pool, flush) = loop {
+        let sc = Ordering::SeqCst;
+        self.shadow = None;
+        SHARED.running[self.cpu.slot].store(true, sc);
+        let (pool, flush) = loop {
+            if let Some(pool) = SHARED.try_use(mem, self.epoch) {
+                break (pool, false);
+            }
             let mut m = machine()?;
             if m.sync(mem)? {
-                let flush = self.epoch != Some(m.epoch);
-                self.epoch = Some(m.epoch);
-                let pool = m.active;
-                m.users[pool] += 1;
-                m.running[self.cpu.slot] = true;
-                break (m.roots[pool], pool, flush);
+                let epoch = SHARED.epoch.load(sc);
+                let flush = self.epoch != Some(epoch);
+                self.epoch = Some(epoch);
+                let pool = SHARED.active.load(sc);
+                SHARED.users[pool].fetch_add(1, sc);
+                break (pool, flush);
             }
             drop(m);
             std::thread::yield_now();
         };
+        let root = SHARED.roots[pool].load(sc);
         let exit = match entry {
             Entry::Dispatch(nzcv) => {
                 let at = if flush { ENTRY_FLUSH } else { DISPATCH };
@@ -357,10 +401,8 @@ impl Engine {
             }
             Entry::Resume { pc, cpsr } => self.cpu.enter(root, RESUME_FLUSH, Some((pc, cpsr)), 0),
         };
-        let mut m = machine()?;
-        m.users[pool] -= 1;
-        m.running[self.cpu.slot] = false;
-        drop(m);
+        SHARED.users[pool].fetch_sub(1, sc);
+        SHARED.running[self.cpu.slot].store(false, sc);
         let icount = self.cpu.reg(ICOUNT.0)?;
         TRANSLATED.fetch_add(icount.wrapping_sub(self.icount), Ordering::Relaxed);
         self.icount = icount;
