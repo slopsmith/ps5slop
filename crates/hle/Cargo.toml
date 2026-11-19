@@ -1,0 +1,12 @@
+[package]
+name = "hle"
+description = "Host implementations of Orbis system library functions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+loader = { path = "../loader" }
+memory = { path = "../memory" }
+x86 = { path = "../x86" }
