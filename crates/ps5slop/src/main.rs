@@ -27,6 +27,9 @@ enum Command {
         dump_frame: Option<PathBuf>,
         #[arg(long, value_name = "SECONDS", default_value_t = 5.0)]
         after: f64,
+        /// Runs guest code in the JIT instead of the interpreter.
+        #[arg(long)]
+        jit: bool,
     },
 }
 
@@ -36,6 +39,7 @@ fn main() -> ExitCode {
         headless,
         dump_frame,
         after,
+        jit,
     } = Cli::parse().command;
     let path = if path.is_dir() {
         path.join("eboot.bin")
@@ -70,6 +74,7 @@ fn main() -> ExitCode {
             app0,
         )
         .and_then(|booted| {
+            booted.kernel.use_jit(jit);
             if let Some(out) = dump_frame {
                 dump_after(booted.kernel.clone(), out, after);
             }

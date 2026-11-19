@@ -24,6 +24,8 @@ use present::Presenter;
 const FIRST_SIZE: (u32, u32) = (1920, 1080);
 /// How often controllers are polled.
 const PAD_POLL: Duration = Duration::from_millis(8);
+/// How often the title's instruction rates are refreshed.
+const TITLE_INTERVAL: Duration = Duration::from_millis(500);
 
 enum Wake {
     Frame,
@@ -60,6 +62,7 @@ pub fn run(booted: Booted) -> Result<i32, Error> {
         flips: 0,
         keys: PadInput::default(),
         sent: PadInput::default(),
+        rate_at: (Instant::now(), kernel.instructions()),
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("ps5slop: window: {e}");
@@ -83,6 +86,8 @@ struct App {
     /// What the keyboard holds, and what the guest was last given.
     keys: PadInput,
     sent: PadInput,
+    /// When the title was last refreshed, and the instruction counts then.
+    rate_at: (Instant, (u64, u64)),
 }
 
 /// The pad button a key stands for, as `ORBIS_PAD_BUTTON_*` bits.
@@ -123,6 +128,26 @@ impl App {
         self.keys.l2 = if self.keys.buttons & L2 != 0 { 255 } else { 0 };
         self.keys.r2 = if self.keys.buttons & R2 != 0 { 255 } else { 0 };
         self.update_pad();
+    }
+
+    /// Shows the guest's instruction rates (interpreted and translated) in the
+    /// title, every [`TITLE_INTERVAL`].
+    fn retitle(&mut self) {
+        let (at, (interp, jit)) = self.rate_at;
+        let elapsed = at.elapsed();
+        if elapsed < TITLE_INTERVAL {
+            return;
+        }
+        let now = self.kernel.instructions();
+        let mips = |a: u64, b: u64| (b - a) as f64 / elapsed.as_secs_f64() / 1e6;
+        if let Some(w) = &self.window {
+            w.set_title(&format!(
+                "ps5slop | interpreter {:.1} MIPS | JIT {:.1} MIPS",
+                mips(interp, now.0),
+                mips(jit, now.1)
+            ));
+        }
+        self.rate_at = (Instant::now(), now);
     }
 
     /// Gives the guest the keyboard and controller state, if it changed.
@@ -185,6 +210,7 @@ impl ApplicationHandler<Wake> for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.update_pad();
+        self.retitle();
         event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + PAD_POLL));
     }
 
