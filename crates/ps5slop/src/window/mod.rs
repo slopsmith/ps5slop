@@ -12,7 +12,7 @@ use hle::{Kernel, PadInput};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
@@ -32,29 +32,66 @@ enum Wake {
     GuestDone,
 }
 
-/// Runs `booted` on a new thread and shows its frames until it exits or
-/// the window closes (which ends it), and returns its exit status.
+/// What the main thread waits for before it opens a window.
+enum Start {
+    VideoOpened,
+    GuestDone,
+}
+
+/// Runs `booted` on a new thread. Once the title opens its video output, a
+/// window shows its frames until the guest exits or the window closes (which
+/// ends it). Returns the guest's exit status.
 pub fn run(booted: Booted) -> Result<i32, Error> {
     let kernel = booted.kernel.clone();
+    let (start, started) = std::sync::mpsc::channel();
+    let opened = Mutex::new(start.clone());
+    kernel.set_open_listener(Box::new(move || {
+        let _ = opened
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .send(Start::VideoOpened);
+    }));
+    let proxy: Arc<Mutex<Option<EventLoopProxy<Wake>>>> = Arc::default();
+    let result = Arc::new(Mutex::new(None));
+    let (slot, done_proxy) = (result.clone(), proxy.clone());
+    let guest = std::thread::spawn(move || {
+        *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(booted.run());
+        let _ = start.send(Start::GuestDone);
+        if let Some(p) = done_proxy
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            let _ = p.send_event(Wake::GuestDone);
+        }
+    });
+    let take = |guest: std::thread::JoinHandle<()>| {
+        let _ = guest.join();
+        result
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+            .unwrap_or(Ok(0))
+    };
+    if !matches!(started.recv(), Ok(Start::VideoOpened)) {
+        return take(guest);
+    }
     let event_loop = match EventLoop::<Wake>::with_user_event().build() {
         Ok(l) => l,
         Err(e) => {
             eprintln!("ps5slop: cannot open a window ({e}), running without one");
-            return booted.run();
+            return take(guest);
         }
     };
     gamepad::init();
-    let proxy = event_loop.create_proxy();
-    let frames = proxy.clone();
+    let frames = event_loop.create_proxy();
     kernel.set_flip_listener(Box::new(move || {
         let _ = frames.send_event(Wake::Frame);
     }));
-    let result = Arc::new(Mutex::new(None));
-    let slot = result.clone();
-    let guest = std::thread::spawn(move || {
-        *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(booted.run());
-        let _ = proxy.send_event(Wake::GuestDone);
-    });
+    *proxy.lock().unwrap_or_else(|e| e.into_inner()) = Some(event_loop.create_proxy());
+    if guest.is_finished() {
+        let _ = event_loop.create_proxy().send_event(Wake::GuestDone);
+    }
     let mut app = App {
         kernel: kernel.clone(),
         window: None,
@@ -70,12 +107,7 @@ pub fn run(booted: Booted) -> Result<i32, Error> {
     if !kernel.has_exited() {
         kernel.exit(Ok(0));
     }
-    let _ = guest.join();
-    result
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .take()
-        .unwrap_or(Ok(0))
+    take(guest)
 }
 
 struct App {

@@ -46,6 +46,7 @@ pub struct VideoOut {
     port: Mutex<Port>,
     start: Instant,
     listener: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    on_open: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
 impl Default for VideoOut {
@@ -54,6 +55,7 @@ impl Default for VideoOut {
             port: Mutex::default(),
             start: Instant::now(),
             listener: Mutex::new(None),
+            on_open: Mutex::new(None),
         }
     }
 }
@@ -68,6 +70,12 @@ pub struct Frame {
 }
 
 impl Kernel {
+    /// Calls `listener` (from the guest thread) when the title opens its
+    /// video output.
+    pub fn set_open_listener(&self, listener: Box<dyn Fn() + Send + Sync>) {
+        *lock(&self.videoout.on_open) = Some(listener);
+    }
+
     /// Calls `listener` (from the flipping guest thread) after every flip.
     pub fn set_flip_listener(&self, listener: Box<dyn Fn() + Send + Sync>) {
         *lock(&self.videoout.listener) = Some(listener);
@@ -190,6 +198,10 @@ fn open(env: &mut Env) -> Result<Outcome, CallError> {
         open: true,
         ..Port::default()
     };
+    drop(port);
+    if let Some(listener) = lock(&env.kernel.videoout.on_open).as_ref() {
+        listener();
+    }
     ret(HANDLE)
 }
 
