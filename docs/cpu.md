@@ -67,7 +67,9 @@ The CPU sits behind one interface (run a thread until it calls into HLE, faults 
 `crates/x86`: a decoder for 64-bit mode and an interpreter that runs one instruction at a time. It assumes user mode and long mode throughout, so there are no segments beyond the FS and GS bases, no paging and no privilege changes; 86slopper's interpreter, which covers real, protected and kernel mode, shares only its general shape (decode, then execute with eagerly computed flags).
 
 - **Decoder:** legacy prefixes, REX, the one-byte, `0F`, `0F38` and `0F3A` maps, ModRM and SIB, RIP-relative addressing, `67` for 32-bit addresses. VEX, EVEX and XOP are recognised and reported as unsupported.
-- **Instructions:** the integer subset compiled C uses: moves and extensions, the ALU group, shifts and rotates (including `shld`/`shrd`), multiply and divide, `push`/`pop`/`call`/`ret`/`leave`, branches and loops, `setcc`/`cmovcc`, bit tests and scans (`bsf`, `bsr`, `tzcnt`, `lzcnt`, `popcnt`), `xchg`, `xadd`, `cmpxchg`, `bswap`, string instructions with `rep`, `cpuid` (vendor string only), `rdtsc` (host time). Not yet: SSE, AVX, x87, `enter`, `lock`ed atomicity across threads.
+- **SSE/SSE2:** XMM registers (stored 256 bits wide for AVX later) and MXCSR; moves, logic, integer SIMD, shuffles and unpacks, packed and scalar float arithmetic, conversions, compares, `ldmxcsr`/`stmxcsr`, fences. Float results follow x86's NaN rules (first-operand propagation, the negative "indefinite" NaN for invalid operations); MXCSR's rounding mode applies to conversions but not yet to arithmetic, and exception flags are not raised.
+- **x87:** only `fwait`, `fninit`, `fnclex`, and loading and storing the control and status words.
+- **Instructions:** the integer subset compiled C uses: moves and extensions, the ALU group, shifts and rotates (including `shld`/`shrd`), multiply and divide, `push`/`pop`/`call`/`ret`/`leave`, branches and loops, `setcc`/`cmovcc`, bit tests and scans (`bsf`, `bsr`, `tzcnt`, `lzcnt`, `popcnt`), `xchg`, `xadd`, `cmpxchg`, `bswap`, string instructions with `rep`, `cpuid` (see below), `rdtsc` (host time). Not yet: AVX, most of x87, MMX, SSSE3/SSE4, `enter`, `lock`ed atomicity across threads.
 - **Faults:** a faulting instruction leaves the state as it was before it, and the run loop gets the fault and its address. Unimplemented instructions are reported by map and opcode.
 - **Memory:** goes through `crates/memory` with a guest-protection check on every access; nothing is optimised yet.
 
@@ -79,10 +81,18 @@ There is no public x86-64 suite in the style of SingleStepTests (those stop at t
 
 `scripts/fetch-references` puts them in `references/src/FEX` (pinned commit, not committed); `ps5slop-asmtest` (in `nix develop`, which provides nasm) assembles each test as FEX does and runs it the way FEX's host runner does: code at `0x10000`, all registers zero, RFLAGS `0x202`, scratch memory at `0xE000_0000`, plus the memory each test asks for, until `hlt`. Then it compares the registers the test names. It skips FEX's disabled and known-failing lists, 32-bit tests, tests that need features Zen 2 lacks (3DNow!, AVX-VNNI, VAES, SHA512, ...) and tests that make Linux system calls. Results go to `target/asmtest/report.tsv`.
 
-**Measured on 2026-11-19 (FEX `be66e03d`):** of 2,291 tests, 70 are skipped and 2,221 run. 568 pass (25.6%), **none give a wrong result, fault or time out**, and 1,653 stop at an instruction we do not implement yet. By area: Primary 186/197, PrimaryGroup 151/156, Atomics 12/12, TwoByte 106/220; SSE, VEX/AVX, x87 and MMX are at zero. The most wanted missing pieces, by tests blocked: VEX (739), `0F 28` movaps (291), x87 `DB`/`D9`/`DD` (317), `0F 6F` movq/movdqa (96), `9B` fwait (68).
+**Measured on 2026-11-19 (FEX `be66e03d`):** of 2,291 tests, 70 are skipped and 2,221 run.
+
+| Interpreter | Pass | Wrong, fault or timeout | Unimplemented |
+| --- | --- | --- | --- |
+| Integer only | 568 (25.6%) | 0 | 1,653 |
+| + SSE/SSE2 (XMM registers checked) | 777 (35.0%) | 0 | 1,444 |
+| + x87 control words | 784 (35.3%) | 0 | 1,437 |
+
+With SSE: Primary 189/197, PrimaryGroup 151/156, OpSize 103/110, REP 35/40, REPNE 21/27, TwoByte 144/219; VEX/AVX, x87, MMX and the `0F38`/`0F3A` maps (SSSE3, SSE4) are at zero. The most wanted missing pieces, by tests blocked: VEX (740), x87 `DB`/`D9`/`DD`/`9B` (385), `0F 6F` MMX `movq` (97), `0F C7` (24).
 
 The first run found four bugs that unit tests had not: string instructions and `loop` ignored the `67` address-size prefix, a REX byte followed by another prefix was rejected instead of ignored, `shld`/`shrd` with a zero count did not zero-extend a 32-bit register, and CPUID reported no features. All four are fixed.
 
-Unchecked so far: tests whose expected values include XMM or MMX registers can only pass once we model those registers.
+Unchecked so far: tests whose expected values include MMX registers.
 
 **Other tests:** unit tests whose encodings come from llvm-mc, and our test programs (`scripts/run-test-programs`).
