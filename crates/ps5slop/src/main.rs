@@ -33,7 +33,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut process = match Process::load(file) {
+    let process = match Process::load(file) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("ps5slop: {e}");
@@ -46,7 +46,7 @@ fn main() -> ExitCode {
             process.unimplemented.len()
         );
     }
-    let status = process.run(&mut std::io::stdout(), &mut std::io::stderr());
+    let status = process.run(Box::new(std::io::stdout()), Box::new(std::io::stderr()));
     match status {
         Ok(code) => ExitCode::from(code as u8),
         Err(e) => {

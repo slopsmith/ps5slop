@@ -53,12 +53,7 @@ fn write(env: &mut Env) -> Result<Outcome, CallError> {
     let (fd, buf, len) = (env.arg(0) as i32, env.arg(1), env.arg(2).min(MAX_WRITE));
     let mut data = vec![0u8; len as usize];
     env.mem.read(buf, &mut data)?;
-    let sink: &mut dyn std::io::Write = match fd {
-        1 => &mut *env.stdout,
-        2 => &mut *env.stderr,
-        _ => return Ok(Outcome::Return(-1i64 as u64)),
-    };
-    match sink.write_all(&data).and_then(|_| sink.flush()) {
+    match env.kernel.write_output(fd, &data) {
         Ok(()) => Ok(Outcome::Return(len)),
         Err(_) => Ok(Outcome::Return(-1i64 as u64)),
     }

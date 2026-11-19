@@ -5,7 +5,6 @@
 //! so a call reports which function is missing instead of jumping to 0.
 
 use std::collections::HashMap;
-use std::io::Write;
 
 use loader::dynamic::Import;
 use loader::image::Resolver;
@@ -15,6 +14,9 @@ use x86::Cpu;
 use x86::cpu::reg::*;
 
 mod kernel;
+mod process;
+
+pub use process::{Kernel, Thread, ThreadError, TlsTemplate};
 
 /// Where the trap region starts. Our choice, below 2^40 and away from where
 /// PS4 titles put things (see `docs/memory.md`).
@@ -36,6 +38,9 @@ const MAX_STUBS: u64 = 0x10_0000;
 pub enum Outcome {
     /// Return to the guest with this value in RAX.
     Return(u64),
+    /// Continue the guest as the host function left the CPU (for example
+    /// after setting it up to call a guest function).
+    Resume,
     /// The process exits with this status.
     Exit(i32),
 }
@@ -89,12 +94,12 @@ impl From<Fault> for CallError {
     }
 }
 
-/// What a host function sees: the guest state and its arguments.
+/// What a host function sees: the calling thread's state and the process.
 pub struct Env<'a> {
     pub cpu: &'a mut Cpu,
-    pub mem: &'a mut Memory,
-    pub stdout: &'a mut dyn Write,
-    pub stderr: &'a mut dyn Write,
+    pub mem: &'a Memory,
+    pub kernel: &'a Kernel,
+    pub thread: Thread,
 }
 
 impl Env<'_> {
@@ -208,7 +213,7 @@ impl Hle {
     }
 
     /// Maps the trap region that holds every stub handed out so far.
-    pub fn map(&self, mem: &mut Memory) -> Result<(), MapError> {
+    pub fn map(&self, mem: &Memory) -> Result<(), MapError> {
         let len = (self.stubs.len() as u64 * STUB_SIZE)
             .next_multiple_of(PAGE_SIZE)
             .max(PAGE_SIZE);
@@ -262,48 +267,65 @@ mod tests {
 
     use super::*;
 
-    fn guest() -> (Cpu, Memory) {
+    /// Output written by the guest, shared with the test.
+    #[derive(Clone, Default)]
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A kernel around `hle` with a stack and a data page, and a CPU whose
+    /// stack holds the return address 0x40_1234.
+    fn guest(hle: Hle) -> (std::sync::Arc<Kernel>, Cpu, Captured) {
         let mem = Memory::new(1 << 40).unwrap();
         mem.map(0x10_0000, PAGE_SIZE, Prot::RW, "stack").unwrap();
         mem.map(0x20_0000, PAGE_SIZE, Prot::RW, "data").unwrap();
+        hle.map(&mem).unwrap();
         let mut cpu = Cpu::default();
         cpu.regs[RSP] = 0x10_0000 + PAGE_SIZE - 8;
         mem.write_u64(cpu.regs[RSP], 0x40_1234).unwrap();
-        (cpu, mem)
+        let out = Captured::default();
+        let kernel = Kernel::new(
+            hle,
+            mem,
+            TlsTemplate::default(),
+            Box::new(out.clone()),
+            Box::new(std::io::sink()),
+        );
+        cpu.fs_base = kernel.new_tls(&kernel.memory()).unwrap();
+        (kernel, cpu, out)
     }
 
-    fn call(
-        hle: &Hle,
-        stub: u64,
-        cpu: &mut Cpu,
-        mem: &mut Memory,
-        out: &mut Vec<u8>,
-    ) -> Result<Outcome, CallError> {
-        let mut err = Vec::new();
+    fn call(kernel: &Kernel, stub: u64, cpu: &mut Cpu) -> Result<Outcome, CallError> {
+        let mem = kernel.memory();
+        let thread = Thread { tcb: cpu.fs_base };
         let mut env = Env {
             cpu,
-            mem,
-            stdout: out,
-            stderr: &mut err,
+            mem: &mem,
+            kernel,
+            thread,
         };
-        hle.call(stub, &mut env)
+        kernel.hle.call(stub, &mut env)
     }
 
     #[test]
     fn write_copies_guest_bytes_to_stdout_and_returns() {
         let mut hle = Hle::new();
         let stub = hle.stub_by_name("libkernel", "write");
-        let (mut cpu, mut mem) = guest();
-        mem.write(0x20_0000, b"hi\n").unwrap();
+        let (kernel, mut cpu, out) = guest(hle);
+        kernel.memory().write(0x20_0000, b"hi\n").unwrap();
         cpu.regs[RDI] = 1;
         cpu.regs[RSI] = 0x20_0000;
         cpu.regs[RDX] = 3;
-        let mut out = Vec::new();
-        assert_eq!(
-            call(&hle, stub, &mut cpu, &mut mem, &mut out).unwrap(),
-            Outcome::Return(3)
-        );
-        assert_eq!(out, b"hi\n");
+        assert_eq!(call(&kernel, stub, &mut cpu).unwrap(), Outcome::Return(3));
+        assert_eq!(*out.0.lock().unwrap(), b"hi\n");
         assert_eq!(
             (cpu.rip, cpu.regs[RAX], cpu.regs[RSP]),
             (0x40_1234, 3, 0x10_0000 + PAGE_SIZE)
@@ -314,12 +336,9 @@ mod tests {
     fn exit_reports_the_status() {
         let mut hle = Hle::new();
         let stub = hle.stub_by_name("libkernel", "exit");
-        let (mut cpu, mut mem) = guest();
+        let (kernel, mut cpu, _) = guest(hle);
         cpu.regs[RDI] = 7;
-        assert_eq!(
-            call(&hle, stub, &mut cpu, &mut mem, &mut Vec::new()).unwrap(),
-            Outcome::Exit(7)
-        );
+        assert_eq!(call(&kernel, stub, &mut cpu).unwrap(), Outcome::Exit(7));
     }
 
     #[test]
@@ -330,9 +349,9 @@ mod tests {
             hle.unimplemented(),
             [("libSceFoo".to_owned(), "AAAAAAAAAAA".to_owned())]
         );
-        let (mut cpu, mut mem) = guest();
+        let (kernel, mut cpu, _) = guest(hle);
         assert!(matches!(
-            call(&hle, stub, &mut cpu, &mut mem, &mut Vec::new()),
+            call(&kernel, stub, &mut cpu),
             Err(CallError::Unimplemented { .. })
         ));
     }
@@ -342,9 +361,8 @@ mod tests {
         let mut hle = Hle::new();
         let guard = hle.stub_by_name("libkernel", "__stack_chk_guard");
         assert_eq!(hle.stub_by_name("libkernel", "__stack_chk_guard"), guard);
-        let mut mem = Memory::new(1 << 40).unwrap();
-        hle.map(&mut mem).unwrap();
-        assert_ne!(mem.read_u64(guard).unwrap(), 0);
+        let (kernel, _, _) = guest(hle);
+        assert_ne!(kernel.memory().read_u64(guard).unwrap(), 0);
     }
 
     #[test]
@@ -360,12 +378,12 @@ mod tests {
     fn bad_buffers_are_errors_not_crashes() {
         let mut hle = Hle::new();
         let stub = hle.stub_by_name("libkernel", "write");
-        let (mut cpu, mut mem) = guest();
+        let (kernel, mut cpu, _) = guest(hle);
         cpu.regs[RDI] = 1;
         cpu.regs[RSI] = 0x9999_0000;
         cpu.regs[RDX] = 4;
         assert!(matches!(
-            call(&hle, stub, &mut cpu, &mut mem, &mut Vec::new()),
+            call(&kernel, stub, &mut cpu),
             Err(CallError::Memory(_))
         ));
     }
