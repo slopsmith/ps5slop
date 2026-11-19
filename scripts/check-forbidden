@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Fails if a revision tracks files that look like user-supplied console
+# material (system modules, signed or packaged executables, dumps, keys).
+# Usage: scripts/check-forbidden [REVSET]   (default: @)
+# See docs/legal.md.
+set -euo pipefail
+
+rev="${1:-@}"
+root="$(jj root)"
+max_bytes=$((4 * 1024 * 1024))
+status=0
+
+flag() {
+	echo "forbidden: $1: $2" >&2
+	status=1
+}
+
+while IFS= read -r path; do
+	lower="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
+	case "$lower" in
+	*.sprx | *.prx | *.sdll | *.sexe | *.self | *.sself | *.pkg | *.pfs | */eboot.bin | eboot.bin)
+		flag "$path" "file name of a console executable, module or package"
+		continue
+		;;
+	references/* | games/* | firmware/* | keys/* | dumps/*)
+		flag "$path" "inside a directory reserved for user-supplied material"
+		continue
+		;;
+	esac
+
+	file="$root/$path"
+	[ -f "$file" ] || continue
+
+	size="$(wc -c <"$file" | tr -d ' ')"
+	if [ "$size" -gt "$max_bytes" ]; then
+		flag "$path" "larger than $max_bytes bytes; ask before committing large binaries"
+		continue
+	fi
+
+	magic="$(head -c 4 "$file" | od -An -tx1 | tr -d ' \n')"
+	case "$magic" in
+	4f153d1d)
+		flag "$path" "PS4 SELF header"
+		;;
+	5414f5ee)
+		flag "$path" "PS5 SELF header"
+		;;
+	7f434e54)
+		flag "$path" "console package header"
+		;;
+	7f464948)
+		flag "$path" "PS5 finalized package header"
+		;;
+	7f454c46)
+		# ELF e_type in the OS-specific range (ET_LOOS..ET_HIOS) is how
+		# console executables and modules mark themselves.
+		etype="$(dd if="$file" bs=1 skip=16 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+		case "$etype" in
+		??fe) flag "$path" "ELF with an OS-specific e_type (0xfe..)" ;;
+		esac
+		;;
+	esac
+done < <(jj file list -r "$rev")
+
+if [ "$status" -eq 0 ]; then
+	echo "check-forbidden: ok ($rev)"
+fi
+exit "$status"
