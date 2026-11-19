@@ -26,4 +26,20 @@ Reason: Rosetta is general-purpose only through macOS 27. FEX was not designed f
 
 Games may be analysed locally (instruction mix, imports). System modules may be analysed to some extent: their metadata, such as symbol tables, is fine. Decompiling how modules work, and using the outputs of decompilation, is out of line. Details in [legal.md](legal.md).
 
-Open: whether symbol tables taken from modules may be committed, or only generated on the user's machine. Until vic decides, nothing taken from a module is committed.
+Open: whether symbol tables taken from modules may be committed. (Settled in the entry below.)
+
+## 2026-11-19: Module symbol tables may be committed in HLE code
+
+Symbol metadata taken from user-dumped modules (exported NIDs, library and module names and versions) may be committed as part of the HLE OS code. This narrows the "no tables copied from a dump" rule for this one kind of table; code, data tables, constants and structure layouts from modules stay out.
+
+Reason: it is interface metadata, which the HLE layer needs to know what it has to provide. Note that the export tables appear to hold only NIDs, not names (shadPS4's loader parses exports as `NID#LIB#MOD` and gets names from a separate database), so a firmware dump tells us which functions exist, not what they are called.
+
+## 2026-11-19: OpenOrbis for cross-compiling test programs only
+
+Our test programs may be built with OpenOrbis (or similar toolchains) to run on vic's PS4 and on our layer. The toolchain and its output are not a reference for formats or behaviour, and our own loader and test-ELF tool are written from public facts.
+
+Reason: OpenOrbis is known to work on the PS4 (vic has built homebrew with it), but where its stub lists came from is undocumented, so it may be tainted.
+
+## 2026-11-19: First test programs come from our own tool
+
+A small Rust tool turns an ELF built with `clang -target x86_64-unknown-freebsd` into the Sony layout (`ET_SCE_DYNEXEC`, `PT_SCE_DYNLIBDATA`, `NID#LIB#MOD` imports for names we choose). We own every byte of it. Its accuracy rests on the public format facts in [loader.md](loader.md); the PS4 conformance programs will catch mistakes.

@@ -5,7 +5,7 @@ These are hard rules. If something is not clearly covered, stop and ask vic befo
 ## What never enters the repo
 
 - Proprietary Sony material of any kind: firmware, system modules (`.sprx`, `.prx` and similar), keys, game binaries (encrypted or decrypted), game assets, shader binaries and GPU microcode.
-- Reverse-engineered parts of proprietary modules: disassembly or decompiler output, function-by-function ports, and tables, constants or structures copied out of a dump.
+- Reverse-engineered parts of proprietary modules: disassembly or decompiler output, function-by-function ports, and tables, constants or structures copied out of a dump. The one exception is symbol metadata, below.
 - Anything a user supplies: their dumped games, firmware files and keys. These live outside the repo or under gitignored paths (`games/`, `firmware/`, `keys/`, `dumps/`, `references/`).
 - Leaked SDK material: headers, samples, documentation or tools from Sony's official SDK. Not even "just to check a struct layout".
 - Links to places that host any of the above.
@@ -29,8 +29,12 @@ Clean room. We implement the Orbis library and kernel interfaces from public doc
 Locally, on the user's own dumps, and with nothing but our conclusions entering the repo:
 
 - **Games:** fine to analyse, for example counting instruction classes to see what the CPU must support, or logging which imports a game uses.
-- **System modules, to some extent:** reading their metadata (which libraries and NIDs a module exports, its imports, its sections) is fine. Whether such a table may be committed, or only generated on the user's machine from their own files, is still open (see [decisions.md](decisions.md)).
+- **System modules, to some extent:** reading their metadata (which libraries and NIDs a module exports, library and module names and versions, imports) is fine, and such symbol tables may be committed as part of the HLE OS code. Nothing else from a module is committed: no code, data tables, constants or structure layouts.
 - **Out of line:** decompiling or disassembling how a module works, and using any output of that, even indirectly. Our implementation must never be informed by it.
+
+## Toolchains for test programs
+
+Toolchains whose origins may be tainted, such as OpenOrbis (see [test-targets.md](test-targets.md)), may be used to cross-compile our own test programs. They are not a reference: we do not learn formats or library behaviour from their sources, their stub libraries or the binaries they produce. The test programs' outputs on a console and on our layer are what we compare.
 
 ## Other projects
 

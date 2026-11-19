@@ -10,6 +10,7 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 | 2026-11-19 | shadPS4 `src/core/address_space.cpp`, `src/core/tls.cpp`, `src/core/cpu_patches.cpp` (summary) | PS4 address layout, TLS on macOS, Rosetta bugs | Facts only ([memory.md](memory.md), [cpu.md](cpu.md)). No code. |
 | 2026-11-19 | FEX `Config.json.in`, `OpcodeDispatcher.h`, `unittests/InstructionCountCI` (summary) | TSO options, AVX on 128-bit hosts, instruction counts | Facts only ([cpu.md](cpu.md)). No code. |
 | 2026-11-19 | Prosperity `delta/cpu/fex_backend.cc` (summary) | How FEXCore is embedded | Facts only. No code. |
+| 2026-11-19 | shadPS4 `src/core/module.cpp` `Module::LoadSymbols` (read directly) | Whether exports carry names | Fact only: exports are `NID#LIB#MOD`, names come from aerolib ([loader.md](loader.md)). No code. |
 
 Add a row whenever someone reads another project's source for this repo.
 

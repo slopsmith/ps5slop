@@ -38,9 +38,14 @@ Imports do not name functions. Each imported symbol is a string `NID#LIB#MOD`:
 
 Status: algorithm read from shadPS4's `module.cpp`; we will check it with our own test binaries, whose names we choose.
 
-**Rule:** we compute NIDs only from names we know from public documentation or from our own test programs. We never import a name-to-NID database (aerolib, ps4libdoc, generated stub lists): those were extracted from Sony modules.
+**Rules:**
 
-So an import we have no name for stays an opaque NID. The HLE layer can still log it and fail loudly.
+- We compute NIDs only from names we know from public documentation or from our own test programs. We never import a name-to-NID database (aerolib, ps4libdoc, generated stub lists): their names come from leaked or extracted material.
+- Symbol tables read from user-dumped modules (exported NIDs, library and module names and versions) may be committed as part of the HLE code (see [legal.md](legal.md)).
+
+Exports seem to carry NIDs only: shadPS4's loader (`Module::LoadSymbols`) parses exported symbols as `NID#LIB#MOD`, the same as imports, and looks names up in its separate aerolib database. So a module's table tells us which functions a library exports, not their names. PS4 only, from an emulator; PS5 unverified.
+
+An import we have no name for stays an opaque NID. The HLE layer can still log it and fail loudly.
 
 ## Open questions
 
