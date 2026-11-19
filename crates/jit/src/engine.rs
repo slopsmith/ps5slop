@@ -194,6 +194,24 @@ pub fn kick_all() {
     }
 }
 
+/// FPCR for MXCSR `mxcsr`: AH and NEP give x86's NaN, min/max and scalar
+/// rules (86slopper's `docs/sse-neon.md`); DAZ, FTZ and RC map across.
+fn fpcr(mxcsr: u32) -> u64 {
+    const AH: u64 = 1 << 1;
+    const NEP: u64 = 1 << 2;
+    let daz = (mxcsr >> 6 & 1) as u64;
+    let ftz = (mxcsr >> 15 & 1) as u64;
+    let rc = (mxcsr >> 13 & 3) as u64;
+    let rmode = (rc & 1) << 1 | rc >> 1;
+    AH | NEP | daz | ftz << 24 | rmode << 22
+}
+
+/// MXCSR exception flags for FPSR's cumulative flags.
+fn mxcsr_flags(fpsr: u64) -> u32 {
+    let bit = |n: u32| (fpsr >> n & 1) as u32;
+    bit(0) | bit(7) << 1 | bit(1) << 2 | bit(2) << 3 | bit(3) << 4 | bit(4) << 5
+}
+
 fn parity_even(v: u64) -> bool {
     (v as u8).count_ones().is_multiple_of(2)
 }
@@ -224,6 +242,8 @@ impl Engine {
         // SAFETY: the vCPU's context block holds exactly the 16 YMM registers,
         // and only this thread's vCPU uses it.
         unsafe { std::ptr::copy_nonoverlapping(ymm.as_ptr(), self.cpu.context, ymm.len()) };
+        self.cpu.vcpu.set_reg(hvf::reg::FPCR, fpcr(x.mxcsr))?;
+        self.cpu.vcpu.set_reg(hvf::reg::FPSR, 0)?;
         let f = x.rflags;
         let pf_result = if f & flags::PF != 0 { 0 } else { 1 };
         let af = if f & flags::AF != 0 { 0x10 } else { 0 };
@@ -247,6 +267,8 @@ impl Engine {
         for i in 0..16 {
             x.regs[i] = self.cpu.reg(i as u8)?;
         }
+        let fpsr = self.cpu.vcpu.reg(hvf::reg::FPSR)?;
+        x.mxcsr |= mxcsr_flags(fpsr);
         let mut ymm = [0u8; crate::layout::CONTEXT_SIZE];
         // SAFETY: as in `load`.
         unsafe { std::ptr::copy_nonoverlapping(self.cpu.context, ymm.as_mut_ptr(), ymm.len()) };
@@ -352,6 +374,13 @@ impl Engine {
                 Exit::Hvc(HVC_INTERP) => {
                     count_exit(Count::Interp);
                     self.cpu.reg(RIP.0)?
+                }
+                Exit::Fault { elr: pc, .. } | Exit::Stage2 { pc } if crate::in_native(pc) => {
+                    count_exit(Count::Fault);
+                    let rip = self.cpu.reg(RIP.0)?;
+                    self.store(x)?;
+                    x.rip = rip;
+                    return Ok(x86::Exit::Trap(rip));
                 }
                 Exit::Fault { elr: pc, .. } | Exit::Stage2 { pc } => {
                     count_exit(Count::Fault);

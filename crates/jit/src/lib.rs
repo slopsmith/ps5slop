@@ -43,7 +43,35 @@ const EMPTY: u64 = u64::MAX;
 const ENTRY_FLUSH: usize = layout::CODE;
 const RESUME_FLUSH: usize = layout::CODE + 0x40;
 const DISPATCH: usize = layout::CODE + 0x80;
-const TEST_CODE: usize = layout::CODE + 0x200;
+const NATIVE_MEMSET: usize = layout::CODE + 0x200;
+const NATIVE_MEMMOVE: usize = layout::CODE + 0x400;
+const NATIVE_END: usize = layout::CODE + 0x800;
+const TEST_CODE: usize = layout::CODE + 0x1000;
+
+/// Library functions with a native version inside the VM, which guest calls
+/// reach without leaving it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Native {
+    Memset,
+    /// `memmove`, which also serves `memcpy`.
+    Memmove,
+}
+
+/// Makes calls to the host function at trap address `addr` run `native`
+/// inside the VM (not in verify mode, which checks the host versions).
+pub fn set_native(addr: u64, native: Native) {
+    if let Ok(mut m) = machine()
+        && !m.verify
+    {
+        let place = match native {
+            Native::Memset => NATIVE_MEMSET,
+            Native::Memmove => NATIVE_MEMMOVE,
+        };
+        m.natives.retain(|&(a, _)| a != addr);
+        m.natives.push((addr, place));
+        m.enter(addr, place);
+    }
+}
 
 /// Runs of each block verify mode checks against the interpreter. Verify
 /// mode keeps the lookup table empty, so every block exits on its own.
@@ -61,7 +89,7 @@ pub struct Machine {
     runtime: GuestMemory,
     /// Guest ranges currently mapped at stage 2.
     mapped: Vec<(u64, u64)>,
-    /// The reservation and region generation last mirrored.
+    /// The address space (its id) and region generation last mirrored.
     generation: Option<(usize, u64)>,
     roots: [usize; 2],
     active: usize,
@@ -81,6 +109,8 @@ pub struct Machine {
     cache_full: bool,
     /// Branches waiting for the block at a RIP to exist: runtime offsets.
     chain_wanted: HashMap<u64, Vec<usize>>,
+    /// Trap addresses served by native library functions in the VM.
+    natives: Vec<(u64, usize)>,
 }
 
 // SAFETY: the VM is process-wide and HVF's VM calls may come from any thread;
@@ -162,6 +192,7 @@ impl Machine {
             by_place: BTreeMap::new(),
             cache_full: false,
             chain_wanted: HashMap::new(),
+            natives: Vec::new(),
         };
         for pool in 0..2 {
             m.roots[pool] = tables::Tables::new(m.runtime.as_mut_slice(), pool).root;
@@ -173,7 +204,7 @@ impl Machine {
     /// mappings, and TTBR0 tables rebuilt in the pool no running vCPU uses.
     /// False if that pool is still in use, so the caller should retry.
     pub fn sync(&mut self, mem: &Memory) -> Result<bool, Error> {
-        let generation = (mem.host_base() as usize, mem.generation());
+        let generation = (mem.id() as usize, mem.generation());
         if self.generation == Some(generation) {
             return Ok(true);
         }
@@ -184,6 +215,7 @@ impl Machine {
             for (start, end) in self.mapped.drain(..) {
                 self.vm.unmap(start, (end - start) as usize)?;
             }
+            self.forget_code();
         }
         let pool = 1 - self.active;
         if self.users[pool] > 0 {
@@ -218,6 +250,26 @@ impl Machine {
         self.generation = Some(generation);
         self.kick_running();
         Ok(true)
+    }
+
+    /// Drops every translation, for a new address space whose code may
+    /// differ at the same addresses. Native functions stay.
+    fn forget_code(&mut self) {
+        self.blocks.clear();
+        self.by_place.clear();
+        self.chain_wanted.clear();
+        self.code_next = layout::CODE_CACHE;
+        self.cache_full = false;
+        let rt = self.runtime.as_mut_slice();
+        for e in 0..layout::LOOKUP_ENTRIES {
+            let at = layout::LOOKUP + e * 16;
+            rt[at..at + 8].copy_from_slice(&EMPTY.to_le_bytes());
+        }
+        if !self.verify {
+            for (addr, place) in self.natives.clone() {
+                self.enter(addr, place);
+            }
+        }
     }
 
     fn kick_running(&self) {
@@ -393,8 +445,117 @@ fn write_runtime(rt: &mut [u8]) {
     a.bind(miss);
     a.hvc(translate::HVC_MISS);
     let code = a.finish();
-    assert!(DISPATCH + code.len() * 4 <= TEST_CODE);
+    assert!(DISPATCH + code.len() * 4 <= NATIVE_MEMSET);
     put(rt, DISPATCH, code);
+    let code = native_memset();
+    assert!(NATIVE_MEMSET + code.len() * 4 <= NATIVE_MEMMOVE);
+    put(rt, NATIVE_MEMSET, code);
+    let code = native_memmove();
+    assert!(NATIVE_MEMMOVE + code.len() * 4 <= NATIVE_END);
+    put(rt, NATIVE_MEMMOVE, code);
+}
+
+/// Returns from a native library function as the guest's `ret` would, with
+/// RAX = RDI (what `memset` and `memmove` return), and dispatches.
+fn native_return(a: &mut Asm, at: usize) {
+    a.mov(Size::X, Reg(0), Reg(7));
+    a.ldr(Width::X, translate::RIP, Reg(4), 0);
+    a.add_imm(Size::X, Reg(4), Reg(4), 8);
+    a.b_offset(((DISPATCH as i64 - (at + a.pos() * 4) as i64) / 4) as i32);
+}
+
+/// `memset(rdi, sil, rdx)` on guest registers, 16 bytes at a time.
+fn native_memset() -> Vec<u32> {
+    let (p, n, v, k) = (Reg(19), Reg(20), Reg(21), Reg(22));
+    let mut a = Asm::new();
+    let (wide, tail, done) = (a.label(), a.label(), a.label());
+    a.mov(Size::X, p, Reg(7));
+    a.mov(Size::X, n, Reg(2));
+    a.uxtb(v, Reg(6));
+    a.mov_imm(Size::X, k, 0x0101_0101_0101_0101);
+    a.mul(Size::X, v, v, k);
+    a.bind(wide);
+    a.cmp_imm(Size::X, n, 16);
+    a.b_cond(a64::Cond::Lo, tail);
+    a.stp(Size::X, v, v, p, 0);
+    a.add_imm(Size::X, p, p, 16);
+    a.sub_imm(Size::X, n, n, 16);
+    a.b(wide);
+    a.bind(tail);
+    a.cbz(Size::X, n, done);
+    a.str(Width::B, v, p, 0);
+    a.add_imm(Size::X, p, p, 1);
+    a.sub_imm(Size::X, n, n, 1);
+    a.b(tail);
+    a.bind(done);
+    native_return(&mut a, NATIVE_MEMSET);
+    a.finish()
+}
+
+/// `memmove(rdi, rsi, rdx)` on guest registers: forward unless the
+/// destination starts inside the source, 16 bytes at a time.
+fn native_memmove() -> Vec<u32> {
+    let (d, s, n, x, y) = (Reg(19), Reg(18), Reg(20), Reg(21), Reg(22));
+    let mut a = Asm::new();
+    let (fwd, fwd1, back, back16, back1, done) = (
+        a.label(),
+        a.label(),
+        a.label(),
+        a.label(),
+        a.label(),
+        a.label(),
+    );
+    a.mov(Size::X, d, Reg(7));
+    a.mov(Size::X, s, Reg(6));
+    a.mov(Size::X, n, Reg(2));
+    a.sub(Size::X, x, d, s);
+    a.cmp(Size::X, x, n);
+    a.b_cond(a64::Cond::Lo, back);
+    a.bind(fwd);
+    a.cmp_imm(Size::X, n, 16);
+    a.b_cond(a64::Cond::Lo, fwd1);
+    a.ldp(Size::X, x, y, s, 0);
+    a.stp(Size::X, x, y, d, 0);
+    a.add_imm(Size::X, s, s, 16);
+    a.add_imm(Size::X, d, d, 16);
+    a.sub_imm(Size::X, n, n, 16);
+    a.b(fwd);
+    a.bind(fwd1);
+    a.cbz(Size::X, n, done);
+    a.ldr(Width::B, x, s, 0);
+    a.str(Width::B, x, d, 0);
+    a.add_imm(Size::X, s, s, 1);
+    a.add_imm(Size::X, d, d, 1);
+    a.sub_imm(Size::X, n, n, 1);
+    a.b(fwd1);
+    a.bind(back);
+    a.add(Size::X, s, s, n);
+    a.add(Size::X, d, d, n);
+    a.bind(back16);
+    a.cmp_imm(Size::X, n, 16);
+    a.b_cond(a64::Cond::Lo, back1);
+    a.sub_imm(Size::X, s, s, 16);
+    a.sub_imm(Size::X, d, d, 16);
+    a.ldp(Size::X, x, y, s, 0);
+    a.stp(Size::X, x, y, d, 0);
+    a.sub_imm(Size::X, n, n, 16);
+    a.b(back16);
+    a.bind(back1);
+    a.cbz(Size::X, n, done);
+    a.sub_imm(Size::X, s, s, 1);
+    a.sub_imm(Size::X, d, d, 1);
+    a.ldr(Width::B, x, s, 0);
+    a.str(Width::B, x, d, 0);
+    a.sub_imm(Size::X, n, n, 1);
+    a.b(back1);
+    a.bind(done);
+    native_return(&mut a, NATIVE_MEMMOVE);
+    a.finish()
+}
+
+/// Whether runtime virtual address `pc` is inside a native library function.
+fn in_native(pc: u64) -> bool {
+    (layout::va(NATIVE_MEMSET)..layout::va(NATIVE_END)).contains(&pc)
 }
 
 /// A vCPU, usable only on the thread that made it.

@@ -114,6 +114,8 @@ pub struct RegionInfo {
 }
 
 struct Shared {
+    /// Unique to this reservation in the process.
+    id: u64,
     base: NonNull<u8>,
     size: u64,
     regions: RwLock<BTreeMap<u64, Region>>,
@@ -202,6 +204,10 @@ impl Memory {
         }
         Ok(Self {
             shared: Arc::new(Shared {
+                id: {
+                    static NEXT: AtomicU64 = AtomicU64::new(1);
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                },
                 base: NonNull::new(p.cast()).expect("mmap returned null"),
                 size,
                 regions: RwLock::new(BTreeMap::new()),
@@ -215,6 +221,11 @@ impl Memory {
 
     pub fn size(&self) -> u64 {
         self.shared.size
+    }
+
+    /// A number no other address space in this process has.
+    pub fn id(&self) -> u64 {
+        self.shared.id
     }
 
     /// A number that changes whenever regions are mapped, unmapped or

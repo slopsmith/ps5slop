@@ -207,6 +207,7 @@ impl Kernel {
         if self.jit.load(Ordering::Relaxed) {
             jit::kick_all();
             jit::report(&self.memory());
+            crate::report_calls();
         }
     }
 
@@ -214,6 +215,19 @@ impl Kernel {
     /// interpreter. Set before the guest starts.
     pub fn use_jit(&self, on: bool) {
         self.jit.store(on, Ordering::Relaxed);
+        if !on {
+            return;
+        }
+        let natives = [
+            ("memset", jit::Native::Memset),
+            ("memcpy", jit::Native::Memmove),
+            ("memmove", jit::Native::Memmove),
+        ];
+        for (name, native) in natives {
+            if let Some(addr) = self.hle.bound(crate::libc::LIBRARY, name) {
+                jit::set_native(addr, native);
+            }
+        }
     }
 
     /// Guest instructions run so far: (interpreted, translated).

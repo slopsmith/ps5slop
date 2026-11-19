@@ -318,6 +318,12 @@ impl Hle {
         TRAP_BASE + index as u64 * STUB_SIZE
     }
 
+    /// The stub address an imported function already has, by library and name.
+    pub fn bound(&self, library: &str, name: &str) -> Option<u64> {
+        let index = *self.stub_index.get(&(nid(name), library.to_owned()))?;
+        Some(TRAP_BASE + index as u64 * STUB_SIZE)
+    }
+
     /// The stub address of a function by name.
     pub fn stub_by_name(&mut self, library: &str, name: &str) -> u64 {
         self.stub(&nid(name), library)
@@ -364,6 +370,7 @@ impl Hle {
             name: None,
             library: stub.library.clone(),
         })?;
+        count_call(f);
         let out = (f.func)(env)?;
         if let Outcome::Return(v) = out {
             let sp = env.cpu.regs[RSP];
@@ -372,6 +379,36 @@ impl Hle {
             env.cpu.regs[RAX] = v;
         }
         Ok(out)
+    }
+}
+
+/// Host calls by function, counted in statistics mode (`PS5SLOP_JIT_STATS`).
+fn calls() -> Option<&'static std::sync::Mutex<HashMap<&'static str, u64>>> {
+    static CALLS: std::sync::OnceLock<Option<std::sync::Mutex<HashMap<&'static str, u64>>>> =
+        std::sync::OnceLock::new();
+    CALLS
+        .get_or_init(|| std::env::var_os("PS5SLOP_JIT_STATS").map(|_| Default::default()))
+        .as_ref()
+}
+
+fn count_call(f: &Function) {
+    if let Some(c) = calls() {
+        *c.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(f.name)
+            .or_default() += 1;
+    }
+}
+
+/// Prints the host calls statistics mode counted, most frequent first.
+pub fn report_calls() {
+    let Some(c) = calls() else { return };
+    let c = c.lock().unwrap_or_else(|e| e.into_inner());
+    let mut v: Vec<_> = c.iter().collect();
+    v.sort_by(|a, b| b.1.cmp(a.1));
+    eprintln!("  host calls:");
+    for (name, n) in v.iter().take(20) {
+        eprintln!("    {n:>12}  {name}");
     }
 }
 

@@ -1454,6 +1454,23 @@ impl Asm {
         self.emit(0x6e20_b800 | size << 22 | (rn.0 as u32) << 5 | rd.0 as u32)
     }
 
+    /// SCVTF on four singles or two doubles.
+    pub fn scvtf_v(&mut self, double: bool, rd: V, rn: V) {
+        self.emit(0x4e21_d800 | (double as u32) << 22 | (rn.0 as u32) << 5 | rd.0 as u32)
+    }
+
+    /// FCVTZS on four singles or two doubles.
+    pub fn fcvtzs_v(&mut self, double: bool, rd: V, rn: V) {
+        self.emit(0x4ea1_b800 | (double as u32) << 22 | (rn.0 as u32) << 5 | rd.0 as u32)
+    }
+
+    /// FRINT32X (`exact`: the current rounding mode) or FRINT32Z (toward
+    /// zero), on four singles or two doubles.
+    pub fn frint32_v(&mut self, exact: bool, double: bool, rd: V, rn: V) {
+        let base = if exact { 0x6e21_e800 } else { 0x4e21_e800 };
+        self.emit(base | (double as u32) << 22 | (rn.0 as u32) << 5 | rd.0 as u32)
+    }
+
     /// MOVI: every byte of `rd` = `imm`.
     pub fn movi_b(&mut self, rd: V, imm: u8) {
         let imm = imm as u32;

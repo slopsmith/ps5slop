@@ -16,6 +16,17 @@ const CASES: &[Case] = &[
     ("dup v2.2d, x3", |a| a.dup_gen(3, V(2), r(3))),
     ("neg v0.4s, v1.4s", |a| a.neg_v(2, V(0), V(1))),
     ("neg v2.2d, v3.2d", |a| a.neg_v(3, V(2), V(3))),
+    ("scvtf v0.4s, v1.4s", |a| a.scvtf_v(false, V(0), V(1))),
+    ("fcvtzs v0.4s, v1.4s", |a| a.fcvtzs_v(false, V(0), V(1))),
+    ("frint32x v0.4s, v1.4s", |a| {
+        a.frint32_v(true, false, V(0), V(1))
+    }),
+    ("frint32z v0.4s, v1.4s", |a| {
+        a.frint32_v(false, false, V(0), V(1))
+    }),
+    ("bsl v2.16b, v3.16b, v4.16b", |a| {
+        a.vec3(true, true, 1, 0b00011, V(2), V(3), V(4))
+    }),
     ("ldr d16, [x28, #64]", |a| a.ldr_d(V(16), r(28), 64)),
     ("str d17, [x9, #8]", |a| a.str_d(V(17), r(9), 8)),
     ("fmov d16, x9", |a| a.fmov_dx(V(16), r(9))),

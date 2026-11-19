@@ -136,6 +136,10 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         (Map::Primary, 0xc6 | 0xc7) if i.ext() == 0 => (false, none),
         (Map::Primary, 0xe8 | 0xe9 | 0xeb) => (true, none),
         (Map::Primary, 0xf7) if i.ext() == 0 && i.osize() >= 4 => (false, writes),
+        (Map::Primary, 0xf6 | 0xf7) if i.ext() == 2 => (false, none),
+        (Map::Primary, 0xf6 | 0xf7) if i.ext() == 3 => (false, writes),
+        (Map::Primary, 0x69 | 0x6b) if i.osize() >= 4 => (false, writes),
+        (Map::Primary, 0x98) if i.osize() >= 4 => (false, none),
         (Map::Primary, 0xff) if matches!(i.ext(), 0 | 1) && i.osize() >= 4 => (
             false,
             FlagUse {
@@ -492,11 +496,32 @@ impl Translator {
                 self.get(B, i.reg, size, rex);
                 self.alu(Alu::And, size, flags);
             }
+            (Map::Primary, 0xf6 | 0xf7) if i.ext() == 2 => {
+                let size = if i.op == 0xf6 { 1 } else { i.osize() };
+                self.get_rm(i, size, next);
+                self.a.mvn(Size::X, T, A);
+                self.set_rm(i, size, T);
+            }
+            (Map::Primary, 0xf6 | 0xf7) if i.ext() == 3 => {
+                let size = if i.op == 0xf6 { 1 } else { i.osize() };
+                self.get_rm(i, size, next);
+                self.a.mov(Size::X, B, A);
+                self.a.mov_imm(Size::X, A, 0);
+                self.alu(Alu::Sub, size, flags);
+                self.set_rm(i, size, T);
+            }
             (Map::Primary, 0xf7) => {
                 let size = i.osize();
                 self.get_rm(i, size, next);
                 self.a.mov_imm(Size::X, B, i.imm as u64 & mask(size));
                 self.alu(Alu::And, size, flags);
+            }
+            (Map::Primary, 0x98) => {
+                if i.osize() == 8 {
+                    self.a.sxtw(r(0), r(0));
+                } else {
+                    self.a.sxth(Size::W, r(0), r(0));
+                }
             }
             (Map::Primary, 0x88..=0x8b) => {
                 let size = if i.op & 1 == 0 { 1 } else { i.osize() };
@@ -605,10 +630,14 @@ impl Translator {
                 }
                 self.set_rm(i, size, T);
             }
-            (Map::M0F, 0xaf) => {
+            (Map::M0F, 0xaf) | (Map::Primary, 0x69 | 0x6b) => {
                 let size = i.osize();
                 self.get_rm(i, size, next);
-                self.get(B, i.reg, size, rex);
+                if i.map == Map::M0F {
+                    self.get(B, i.reg, size, rex);
+                } else {
+                    self.a.mov_imm(Size::X, B, i.imm as u64 & mask(size));
+                }
                 if size == 8 {
                     self.a.mul(Size::X, T, A, B);
                     if flags {
