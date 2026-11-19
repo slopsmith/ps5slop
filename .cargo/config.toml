@@ -1,0 +1,7 @@
+# Nix's toolchain comes first on PATH here; its ld64 produces binaries whose
+# panics cannot unwind on macOS 27, and its cc lacks the macOS SDK.
+[target.aarch64-apple-darwin]
+linker = "/usr/bin/cc"
+
+[env]
+CC_aarch64_apple_darwin = "/usr/bin/cc"

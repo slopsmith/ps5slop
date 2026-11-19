@@ -1,0 +1,21 @@
+/target
+/result*
+/.claude/worktrees
+
+# Reference material: source trees, specs, notes. Never committed.
+/references
+
+# User-supplied material. Never committed (see docs/legal.md).
+/games
+/firmware
+/keys
+/dumps
+*.sprx
+*.prx
+*.sdll
+*.sexe
+*.self
+*.sself
+*.pkg
+*.pfs
+eboot.bin
