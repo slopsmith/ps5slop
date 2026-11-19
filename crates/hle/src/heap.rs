@@ -31,20 +31,30 @@ impl Heap {
     /// Allocates `size` bytes (16-byte aligned, zeroed on first use) or
     /// returns `None` when the address space is full.
     pub fn alloc(&self, mem: &Memory, size: u64) -> Option<u64> {
-        let size = size.max(1).next_multiple_of(ALIGN);
+        self.alloc_aligned(mem, size, ALIGN)
+    }
+
+    /// Allocates `size` bytes at a multiple of `align`, a power of two.
+    pub fn alloc_aligned(&self, mem: &Memory, size: u64, align: u64) -> Option<u64> {
+        let size = size.max(1).checked_next_multiple_of(ALIGN)?;
+        let align = align.max(ALIGN);
         let mut s = lock(&self.state);
         if s.end == 0 {
             s.end = HEAP_BASE;
         }
+        let fits = |start: u64, len: u64| {
+            let at = start.next_multiple_of(align);
+            at + size <= start + len
+        };
         let fit = s
             .free
             .iter()
-            .find(|&(_, &len)| len >= size)
+            .find(|&(&a, &l)| fits(a, l))
             .map(|(&a, &l)| (a, l));
-        let (addr, len) = match fit {
+        let (start, len) = match fit {
             Some(f) => f,
             None => {
-                let grow = size.next_multiple_of(CHUNK);
+                let grow = size.checked_add(align)?.next_multiple_of(CHUNK);
                 let at = s.end;
                 mem.map(at, grow, Prot::RW, "host heap").ok()?;
                 s.end += grow;
@@ -56,12 +66,21 @@ impl Heap {
                 (start, len)
             }
         };
-        s.free.remove(&addr);
-        if len > size {
-            s.free.insert(addr + size, len - size);
+        let addr = start.next_multiple_of(align);
+        s.free.remove(&start);
+        if addr > start {
+            s.free.insert(start, addr - start);
+        }
+        if start + len > addr + size {
+            s.free.insert(addr + size, start + len - addr - size);
         }
         s.used.insert(addr, size);
         Some(addr)
+    }
+
+    /// The usable size of the allocation at `addr`, if it is one.
+    pub fn size_of(&self, addr: u64) -> Option<u64> {
+        lock(&self.state).used.get(&addr).copied()
     }
 
     /// Frees an allocation; unknown addresses are ignored.
@@ -104,5 +123,16 @@ mod tests {
         assert_eq!(heap.alloc(&mem, 50).unwrap(), a);
         let big = heap.alloc(&mem, 3 << 20).unwrap();
         mem.write(big + (3 << 20) - 1, &[7]).unwrap();
+    }
+
+    #[test]
+    fn aligned_allocations_keep_the_gap_before_them_free() {
+        let mem = Memory::new(1 << 40).unwrap();
+        let heap = Heap::default();
+        let small = heap.alloc(&mem, 16).unwrap();
+        let aligned = heap.alloc_aligned(&mem, 100, 0x1000).unwrap();
+        assert_eq!(aligned % 0x1000, 0);
+        assert_eq!(heap.size_of(aligned), Some(112));
+        assert_eq!(heap.alloc(&mem, 16).unwrap(), small + 16);
     }
 }

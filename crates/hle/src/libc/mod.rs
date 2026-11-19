@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use crate::{CallError, DATA_BASE, Env, Function, Outcome, Variable};
 
 mod format;
+mod malloc;
 mod math;
 mod stdio;
 mod stdlib;
@@ -54,6 +55,7 @@ pub fn functions() -> impl Iterator<Item = &'static Function> {
     string::FUNCTIONS
         .iter()
         .chain(format::FUNCTIONS)
+        .chain(malloc::FUNCTIONS)
         .chain(math::FUNCTIONS)
         .chain(stdio::FUNCTIONS)
         .chain(stdlib::FUNCTIONS)
