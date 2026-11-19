@@ -24,6 +24,14 @@ Each such fact in the docs names its source. Facts with no public source are mar
 
 Clean room. We implement the Orbis library and kernel interfaces from public documentation, observed behaviour and notes written by someone who did not read the proprietary code. We do not translate proprietary code into ours, even loosely.
 
+## Analysing user-supplied binaries
+
+Locally, on the user's own dumps, and with nothing but our conclusions entering the repo:
+
+- **Games:** fine to analyse, for example counting instruction classes to see what the CPU must support, or logging which imports a game uses.
+- **System modules, to some extent:** reading their metadata (which libraries and NIDs a module exports, its imports, its sections) is fine. Whether such a table may be committed, or only generated on the user's machine from their own files, is still open (see [decisions.md](decisions.md)).
+- **Out of line:** decompiling or disassembling how a module works, and using any output of that, even indirectly. Our implementation must never be informed by it.
+
 ## Other projects
 
 Before reading another emulator's code, check its license (see [references.md](references.md)). Reading for ideas is fine for any open-source license. Copying code needs a license compatible with GPL-2.0-or-later (or a deliberate decision to move the project to GPLv3, recorded in [decisions.md](decisions.md)). Record what we read and what we took in [references.md](references.md).

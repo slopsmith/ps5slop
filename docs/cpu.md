@@ -1,11 +1,11 @@
 # CPU
 
-How the game's x86-64 code runs on Apple Silicon. This is a proposal under discussion, not a decision (see [decisions.md](decisions.md)).
+How the game's x86-64 code runs on Apple Silicon. The strategy is decided (see [decisions.md](decisions.md)); the JIT's shape is not.
 
 ## What has to run
 
 - **ISA:** user-mode x86-64 as a Zen 2 runs it: integer with REX, SSE to SSE4.2, AVX and AVX2 (VEX), and probably FMA3, BMI1/2, F16C, LZCNT/POPCNT, MOVBE. x87 only where compilers still emit it. No privileged instructions, no segmentation beyond the FS base (TLS).
-- **How much of it games use:** unknown. Nobody has published an instruction-mix survey of PS5 binaries. A local scan of a dumped game (aggregate counts per instruction class, nothing committed) would answer it; whether that is fine under [legal.md](legal.md) is a question for vic.
+- **How much of it games use:** unknown. Nobody has published an instruction-mix survey of PS5 binaries. A local scan of a dumped game (aggregate counts per instruction class, nothing committed) will answer it; [legal.md](legal.md) allows that.
 - **Threads:** games run dozens of threads, so the memory model matters: x86 is TSO, ARM is weaker.
 
 ## The options
@@ -52,10 +52,12 @@ Against it:
 
 Without HVF, translated code runs in our process with guest addresses offset by a base register (one extra add on some accesses), TSO through acquire/release accesses, and faults through signals.
 
-## Proposal
+## Plan
 
 1. **Interpreter first,** in Rust, user-mode x86-64 only, running in our process with a base-offset address space. It runs our own test programs from day one, it is the oracle for everything after it, and it lets the loader and HLE work start without waiting for a JIT. Guest memory accesses that may race use acquire/release ordering.
 2. **Decide the JIT later, with data,** once a commercial title reaches its first GPU submission under the interpreter. By then we can measure: interpreter speed, the instruction mix, the rate of HLE calls (which decides whether HVF's exit cost hurts), and whether games need fixed addresses.
-3. **Lean:** our own JIT, running inside an HVF VM for TSO and the address layout, with the hottest HLE functions handled inside the VM. FEX stays the fallback if our own JIT turns out too slow to build; a time-boxed experiment building FEXCore on macOS would make that fallback real. Rosetta is an oracle only.
+3. **Our own JIT.** A JIT is necessary; only its timing is deferred. Whether it runs inside an HVF VM (for TSO and the address layout, with the hottest HLE functions handled inside the VM) is decided at the decision point. Rosetta is an oracle only.
 
-The CPU sits behind one interface (run a thread until it calls into HLE, faults or is interrupted), so the interpreter, our JIT or FEX can be swapped without touching the loader or HLE code.
+FEX is not a fallback: it was not designed for macOS, and forcing it in would mean porting and maintaining it alone. We may still read it for ideas (MIT) and use its tests as an oracle.
+
+The CPU sits behind one interface (run a thread until it calls into HLE, faults or is interrupted), so the interpreter and the JIT can be swapped without touching the loader or HLE code.
