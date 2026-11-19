@@ -249,10 +249,10 @@ impl Ctx<'_> {
             Map::Primary => self.primary()?,
             Map::M0F => self.map0f()?,
             Map::M0F38 | Map::M0F3A => {
-                return Err(CpuFault::Unimplemented {
-                    map: i.map,
-                    op: i.op,
-                });
+                if !self.ext()? {
+                    return self.unimplemented();
+                }
+                Exit::Continue
             }
         };
         if exit == Exit::Continue || exit == Exit::Syscall {
@@ -935,6 +935,7 @@ impl Ctx<'_> {
     }
 }
 
+mod ext;
 mod sse;
 
 #[cfg(test)]

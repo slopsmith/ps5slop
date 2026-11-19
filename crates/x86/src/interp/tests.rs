@@ -339,3 +339,72 @@ fn vex_128_clears_the_upper_half_and_legacy_sse_keeps_it() {
     assert_eq!(cpu.xmm[4], [0; 4]);
     assert_eq!(cpu.xmm[5], [0, 0, 3, 4]);
 }
+
+#[test]
+fn fused_multiply_add_rounds_once() {
+    let (mut cpu, mut mem) = machine(
+        "vfmadd231ps xmm0, xmm1, xmm2",
+        &[0xc4, 0xe2, 0x71, 0xb8, 0xc2],
+    );
+    let a = 1.0f32 + f32::EPSILON;
+    let c = -(1.0f32 + 2.0 * f32::EPSILON);
+    cpu.xmm[1] = [a.to_bits() as u64, 0, 0, 0];
+    cpu.xmm[2] = [a.to_bits() as u64, 0, 0, 0];
+    cpu.xmm[0] = [c.to_bits() as u64, 0, 0, 0];
+    steps(&mut cpu, &mut mem, 1);
+    let r = f32::from_bits(cpu.xmm[0][0] as u32);
+    assert_eq!(r, f32::EPSILON * f32::EPSILON);
+}
+
+#[test]
+fn broadcast_fills_every_lane() {
+    let (mut cpu, mut mem) = machine("vpbroadcastd ymm3, xmm4", &[0xc4, 0xe2, 0x7d, 0x58, 0xdc]);
+    cpu.xmm[4] = [0x1234_5678, 0, 0, 0];
+    steps(&mut cpu, &mut mem, 1);
+    assert_eq!(cpu.xmm[3], [0x1234_5678_1234_5678; 4]);
+}
+
+#[test]
+fn pdep_scatters_low_bits_into_the_mask() {
+    let (mut cpu, mut mem) = machine("pdep rax, rbx, rcx", &[0xc4, 0xe2, 0xe3, 0xf5, 0xc1]);
+    cpu.regs[RBX] = 0b1011;
+    cpu.regs[RCX] = 0b1111_0000_0000;
+    steps(&mut cpu, &mut mem, 1);
+    assert_eq!(cpu.regs[RAX], 0b1011_0000_0000);
+}
+
+#[test]
+fn blendv_takes_its_mask_from_any_register_named_by_the_immediate() {
+    let (mut cpu, mut mem) = machine(
+        "vblendvps xmm0, xmm1, xmm2, xmm9",
+        &[0xc4, 0xe3, 0x71, 0x4a, 0xc2, 0x90],
+    );
+    cpu.xmm[1] = [0x1111_1111_1111_1111; 4];
+    cpu.xmm[2] = [0x2222_2222_2222_2222; 4];
+    cpu.xmm[9] = [0x8000_0000_0000_0000, 0x0000_0000_8000_0000, 0, 0];
+    steps(&mut cpu, &mut mem, 1);
+    assert_eq!(
+        cpu.xmm[0],
+        [0x2222_2222_1111_1111, 0x1111_1111_2222_2222, 0, 0]
+    );
+}
+
+#[test]
+fn gather_loads_masked_elements_and_clears_the_mask() {
+    let (mut cpu, mut mem) = machine(
+        "vpgatherdd xmm0, dword ptr [rdi + xmm4*4], xmm5",
+        &[0xc4, 0xe2, 0x51, 0x90, 0x04, 0xa7],
+    );
+    for k in 0..8u32 {
+        mem.write(DATA + 4 * k as u64, &(100 + k).to_le_bytes())
+            .unwrap();
+    }
+    cpu.regs[RDI] = DATA;
+    cpu.xmm[4] = [3 | 1 << 32, 7, 0, 0];
+    cpu.xmm[5] = [0x8000_0000_8000_0000, 0x8000_0000, 0, 0];
+    cpu.xmm[0] = [0, 0xdead_beef << 32, 0, 0];
+    steps(&mut cpu, &mut mem, 1);
+    assert_eq!(cpu.xmm[0][0], 103 | 101 << 32);
+    assert_eq!(cpu.xmm[0][1], 107 | 0xdead_beef << 32);
+    assert_eq!(cpu.xmm[5], [0; 4]);
+}

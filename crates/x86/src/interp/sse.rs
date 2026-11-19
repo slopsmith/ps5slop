@@ -15,7 +15,7 @@ const F32_INDEFINITE: u32 = 0xffc0_0000;
 const F64_INDEFINITE: u64 = 0xfff8_0000_0000_0000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Pfx {
+pub(super) enum Pfx {
     None,
     P66,
     F3,
@@ -23,7 +23,7 @@ enum Pfx {
 }
 
 /// Packed lanes as a little-endian `u128`.
-fn lanes<const N: usize>(v: u128) -> [u64; N] {
+pub(super) fn lanes<const N: usize>(v: u128) -> [u64; N] {
     let bits = 128 / N;
     let m = if bits == 64 {
         u64::MAX
@@ -33,7 +33,7 @@ fn lanes<const N: usize>(v: u128) -> [u64; N] {
     core::array::from_fn(|i| (v >> (i * bits)) as u64 & m)
 }
 
-fn join<const N: usize>(l: [u64; N]) -> u128 {
+pub(super) fn join<const N: usize>(l: [u64; N]) -> u128 {
     let bits = 128 / N;
     let m = if bits == 64 {
         u64::MAX as u128
@@ -45,34 +45,34 @@ fn join<const N: usize>(l: [u64; N]) -> u128 {
         .fold(0, |acc, (i, &x)| acc | (x as u128 & m) << (i * bits))
 }
 
-fn map2<const N: usize>(a: u128, b: u128, f: impl Fn(u64, u64) -> u64) -> u128 {
+pub(super) fn map2<const N: usize>(a: u128, b: u128, f: impl Fn(u64, u64) -> u64) -> u128 {
     let (a, b) = (lanes::<N>(a), lanes::<N>(b));
     join::<N>(core::array::from_fn(|i| f(a[i], b[i])))
 }
 
-fn sx(v: u64, bits: u32) -> i64 {
+pub(super) fn sx(v: u64, bits: u32) -> i64 {
     ((v << (64 - bits)) as i64) >> (64 - bits)
 }
 
-fn sat_s(v: i64, bits: u32) -> u64 {
+pub(super) fn sat_s(v: i64, bits: u32) -> u64 {
     let max = (1i64 << (bits - 1)) - 1;
     v.clamp(-max - 1, max) as u64
 }
 
-fn sat_u(v: i64, bits: u32) -> u64 {
+pub(super) fn sat_u(v: i64, bits: u32) -> u64 {
     v.clamp(0, (1i64 << bits) - 1) as u64
 }
 
-fn quiet32(a: u32) -> u32 {
+pub(super) fn quiet32(a: u32) -> u32 {
     a | 0x0040_0000
 }
 
-fn quiet64(a: u64) -> u64 {
+pub(super) fn quiet64(a: u64) -> u64 {
     a | 0x0008_0000_0000_0000
 }
 
 /// An SSE binary operation on f32 with x86 NaN rules.
-fn f32op(a: u32, b: u32, f: impl Fn(f32, f32) -> f32) -> u32 {
+pub(super) fn f32op(a: u32, b: u32, f: impl Fn(f32, f32) -> f32) -> u32 {
     let (fa, fb) = (f32::from_bits(a), f32::from_bits(b));
     if fa.is_nan() {
         return quiet32(a);
@@ -88,7 +88,7 @@ fn f32op(a: u32, b: u32, f: impl Fn(f32, f32) -> f32) -> u32 {
     }
 }
 
-fn f64op(a: u64, b: u64, f: impl Fn(f64, f64) -> f64) -> u64 {
+pub(super) fn f64op(a: u64, b: u64, f: impl Fn(f64, f64) -> f64) -> u64 {
     let (fa, fb) = (f64::from_bits(a), f64::from_bits(b));
     if fa.is_nan() {
         return quiet64(a);
@@ -163,7 +163,7 @@ fn f32_to_f64(a: u32) -> u64 {
 
 /// Rounds per MXCSR.RC (or truncates), then converts to a signed integer of
 /// `bits`; out of range and NaN give the integer indefinite (most negative).
-fn to_int(f: f64, rc: u32, truncate: bool, bits: u32) -> u64 {
+pub(super) fn to_int(f: f64, rc: u32, truncate: bool, bits: u32) -> u64 {
     let r = if truncate {
         f.trunc()
     } else {
@@ -199,7 +199,7 @@ fn cmp_pred(a: f64, b: f64, p: u8) -> bool {
 }
 
 impl Ctx<'_> {
-    fn pfx(&self) -> Pfx {
+    pub(super) fn pfx(&self) -> Pfx {
         match (self.insn.rep, self.insn.opsize_prefix) {
             (Rep::Rep, _) => Pfx::F3,
             (Rep::Repne, _) => Pfx::F2,
@@ -259,14 +259,14 @@ impl Ctx<'_> {
         Ok(())
     }
 
-    fn load128(&self, addr: u64, aligned: bool) -> Res<u128> {
+    pub(super) fn load128(&self, addr: u64, aligned: bool) -> Res<u128> {
         self.check_align(addr, aligned)?;
         let mut b = [0u8; 16];
         self.mem.read(addr + 16 * self.half as u64, &mut b)?;
         Ok(u128::from_le_bytes(b))
     }
 
-    fn store128(&mut self, addr: u64, v: u128, aligned: bool) -> Res<()> {
+    pub(super) fn store128(&mut self, addr: u64, v: u128, aligned: bool) -> Res<()> {
         self.check_align(addr, aligned)?;
         self.mem
             .write(addr + 16 * self.half as u64, &v.to_le_bytes())?;
@@ -274,7 +274,7 @@ impl Ctx<'_> {
     }
 
     /// The `xmm/m128` source operand.
-    fn src128(&self, aligned: bool) -> Res<u128> {
+    pub(super) fn src128(&self, aligned: bool) -> Res<u128> {
         match self.rm() {
             Loc::Reg(r) => Ok(self.xget(r)),
             Loc::Mem(a) => self.load128(a, aligned),
@@ -282,7 +282,7 @@ impl Ctx<'_> {
     }
 
     /// The low `bytes` of the `xmm/m` source operand (scalar forms).
-    fn src_low(&self, bytes: u8) -> Res<u64> {
+    pub(super) fn src_low(&self, bytes: u8) -> Res<u64> {
         match self.rm() {
             Loc::Reg(r) => Ok(self.xget(r) as u64 & alu::mask(bytes)),
             Loc::Mem(a) => self.load(a + 16 * self.half as u64, bytes),
@@ -291,7 +291,7 @@ impl Ctx<'_> {
 
     /// Writes the low `bytes` of register `r`; the rest comes from `r` itself
     /// (legacy SSE) or from VEX.vvvv.
-    fn set_low(&mut self, r: u8, bytes: u8, v: u64) {
+    pub(super) fn set_low(&mut self, r: u8, bytes: u8, v: u64) {
         let m = alu::mask(bytes) as u128;
         let base = match self.insn.vex {
             Some(x) => self.xget(x.vvvv),
@@ -324,12 +324,16 @@ impl Ctx<'_> {
         if !in_lane(i.op, self.pfx()) {
             return Ok(false);
         }
+        self.by_halves(Self::sse_op)
+    }
+
+    /// Runs a 256-bit in-lane operation as two 128-bit ones.
+    pub(super) fn by_halves(&mut self, op: fn(&mut Self) -> Res<bool>) -> Res<bool> {
         self.wide = true;
-        let first = self.sse_op();
-        let result = match first {
+        let result = match op(self) {
             Ok(true) => {
                 self.half = 1;
-                self.sse_op()
+                op(self)
             }
             other => other,
         };
