@@ -34,7 +34,7 @@ Locally, on the user's own dumps, and with nothing but our conclusions entering 
 
 ## Toolchains for test programs
 
-Toolchains whose origins may be tainted, such as OpenOrbis (see [test-targets.md](test-targets.md)), may be used to cross-compile our own test programs. They are not a reference: we do not learn formats or library behaviour from their sources, their stub libraries or the binaries they produce. The test programs' outputs on a console and on our layer are what we compare.
+Open-source toolchains such as OpenOrbis may be used to build test programs and, unless there is reason to believe they derive from Sony's SDK, as a reference for formats and interfaces. Name databases (NID-to-name lists) from any source stay out.
 
 ## Other projects
 

@@ -34,7 +34,7 @@ Symbol metadata taken from user-dumped modules (exported NIDs, library and modul
 
 Reason: it is interface metadata, which the HLE layer needs to know what it has to provide. Note that the export tables appear to hold only NIDs, not names (shadPS4's loader parses exports as `NID#LIB#MOD` and gets names from a separate database), so a firmware dump tells us which functions exist, not what they are called.
 
-## 2026-11-19: OpenOrbis for cross-compiling test programs only
+## 2026-11-19: OpenOrbis for cross-compiling test programs only (superseded below)
 
 Our test programs may be built with OpenOrbis (or similar toolchains) to run on vic's PS4 and on our layer. The toolchain and its output are not a reference for formats or behaviour, and our own loader and test-ELF tool are written from public facts.
 
@@ -73,3 +73,9 @@ Reason: many dumping tools produce FPKGs, and folders are what other dumpers and
 The interpreter is measured against FEX-Emu's handwritten x86-64 ASM tests (MIT), fetched into `references/` and run by `ps5slop-asmtest`. CPUID reports Zen 2's features, implemented or not.
 
 Reason: no public hardware-generated x86-64 suite exists; FEX runs these tests natively on x86-64 hardware in CI, so their expected values are hardware-checked. Reporting the full Zen 2 feature set makes missing instructions show up as failures instead of hidden fallbacks.
+
+## 2026-11-19: OpenOrbis may be used as a reference
+
+OpenOrbis (its sources, its startup code and the binaries it builds) may be used as a reference for formats and interfaces. We still never import its NID-to-name lists or any other name database (see [loader.md](loader.md)).
+
+Reason: nothing suggests OpenOrbis derives from Sony's SDK; the earlier caution was only that the origin of its library stub lists is undocumented. vic's rule is to stop using a source when there is reason to believe it comes from proprietary SDK material.
