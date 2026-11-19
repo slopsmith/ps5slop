@@ -1,0 +1,35 @@
+# Memory
+
+What the guest expects from its address space, and what macOS lets us give it. Proposal stage; nothing is implemented.
+
+## What the guest expects
+
+| Fact | Source | Status |
+| --- | --- | --- |
+| Orbis allocates in 16 KiB pages | shadPS4 uses `GUEST_PAGE_BITS = 14` for the PS4; the PS5 radv patches use matching alignments | PS4: from an emulator. PS5: unverified |
+| Executables load at `0x400000`; "system managed" `0x400000..0x7_FFFF_BFFF`, "system reserved" up to `0xF_BFFF_FFFF`, user area from `0x10_0000_0000`, GPU addresses below 2^40 | shadPS4 `address_space.cpp` | PS4 only, from an emulator. PS5 layout unknown |
+| Two kinds of memory: **direct memory** (physical, allocated with `sceKernelAllocateDirectMemory`, mapped with `sceKernelMapDirectMemory`, with CPU and GPU protection bits) and **flexible memory** (ordinary virtual memory) | The PS5 radv patches call the direct-memory functions | Names observed; semantics unverified |
+| TLS is reached through the FS base (`mov reg, fs:[0]`) | shadPS4 `tls.cpp` | PS4, from an emulator |
+
+Open: whether games depend on fixed addresses (by asking for them, or by assuming where the executable lands), or only on the APIs handing back addresses in certain ranges. ET_SCE_DYNEXEC executables carry relocations, so they may load anywhere; unverified. Our own test programs and vic's PS4 can answer parts of this for the PS4.
+
+## What macOS gives a native arm64 process
+
+Measured on vic's M4 Pro, macOS 27.3, 2026-11-19, with `experiments/address-space-probe/run.sh`:
+
+- Page size is 16 KiB. `mmap` and `mprotect` reject 4 KiB granularity (also seen by the CPU research pass).
+- `0..4 GiB` is `__PAGEZERO`. Linking with `-Wl,-pagezero_size,0x4000` builds, but the process is killed at exec (status 137; tried by hand, not in the probe). So `0x400000` cannot be host memory in our process.
+- The dyld shared cache occupies roughly `0x1_8000_0000..0x3_7000_0000`.
+- A reserved guard region spans `0xF_C000_0000..0x70_0000_0000` (385 GiB): `MAP_FIXED` at `0x10_0000_0000` fails. Its purpose is unknown to us.
+- `MAP_FIXED` at `0x8_0000_0000`, `0x100_0000_0000` and `0x7F00_0000_0000` worked. Our own executable and its heap land just above 4 GiB, so `0x1_0000_0000` was taken.
+
+So "guest address = host address" does not work in-process for the PS4-style layout. Two ways out:
+
+1. **Base offset.** Guest memory is one large reservation at a host base; host address = base + guest address. The interpreter does this for free. A JIT keeps the base in a register.
+2. **HVF.** Our own stage-1 tables map guest VA directly, at any address and with 4 KiB or 16 KiB granules (`hv_vm_config_set_ipa_granule`, macOS 26+; max IPA is 40 bits on this machine). See [cpu.md](cpu.md#hypervisorframework).
+
+Either way the guest's whole address space is one host reservation we own. That keeps the GPU side simple: GPU-visible ranges are host memory that Metal can wrap with `newBufferWithBytesNoCopy`, as 86slopper does for VRAM. Whether the same pages can be mapped into an HVF VM and wrapped by Metal at once is plausible but untested; check with an experiment before relying on it.
+
+## Page size
+
+If Orbis really uses 16 KiB pages, macOS's 16 KiB pages match and protections can be applied page for page. If some guest behaviour needs 4 KiB granularity (sub-16 KiB protections, guard pages), the base-offset route has to emulate it in software, while the HVF route can use a 4 KiB granule.

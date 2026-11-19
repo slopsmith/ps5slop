@@ -19,3 +19,4 @@
 *.pkg
 *.pfs
 eboot.bin
+experiments/*/vmmap.txt
