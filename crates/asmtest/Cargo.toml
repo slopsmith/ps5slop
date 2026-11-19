@@ -1,0 +1,16 @@
+[package]
+name = "asmtest"
+description = "Runs FEX-Emu's hardware-checked x86-64 ASM tests against our interpreter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ps5slop-asmtest"
+path = "src/main.rs"
+
+[dependencies]
+memory = { path = "../memory" }
+x86 = { path = "../x86" }
+serde_json = "1"
