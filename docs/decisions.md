@@ -158,6 +158,12 @@ Reason: some PS5 imports have no public name to hash. The NID is what the title 
 
 Reason: Sony's libc reads through these as pointers (it faulted at the small counters we used before), as FreeBSD's pthread types are pointers.
 
+## 2026-11-20: Shaders go through our own `gfx10` crate, straight to MSL
+
+GFX10 machine code is decoded by a new crate, `gfx10`, checked against `llvm-mc --disassemble -mcpu=gfx1013`, and translated directly to MSL text with a straight register model: one Metal thread per lane, registers as locals, lane masks reduced to this lane's bit, branches as a `switch` in a loop, scalar and buffer loads from a binding of all guest memory. Details in [shaders.md](shaders.md).
+
+Reason: no IR library in between (SPIR-V plus SPIRV-Cross would pull in Apache-2.0 code, see gpu.md), and a per-lane model is the shortest path to Balatro's shaders, which use no cross-lane operations. Guest-memory loads instead of per-buffer bindings because Balatro's vertex programs build their V#s at run time. Opcode data comes from Mesa ACO (MIT), the stage conventions from SharpEmu-mac (GPL-2.0-or-later); LLVM is used only as a tool.
+
 ## 2026-11-20: Run packages in place, through a read-only file system backend
 
 `ps5slop run GAME.pkg` serves `/app0` (and the loader's reads of `eboot.bin` and modules) straight from the package's PFS image, through an `ImageFs` mount in the guest file system. We do not extract packages to a cache folder.
