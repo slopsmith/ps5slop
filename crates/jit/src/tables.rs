@@ -40,6 +40,22 @@ impl<'a> Tables<'a> {
         t
     }
 
+    /// Continues adding to the tables at `root` in pool `pool`, whose free
+    /// space starts at `next`.
+    pub fn resume(runtime: &'a mut [u8], pool: usize, root: usize, next: usize) -> Self {
+        Self {
+            runtime,
+            next,
+            end: layout::TABLES[pool].1,
+            root,
+        }
+    }
+
+    /// Where the pool's free space starts.
+    pub fn next(&self) -> usize {
+        self.next
+    }
+
     fn alloc(&mut self) -> Option<usize> {
         if self.next + PAGE_BYTES as usize > self.end {
             return None;
@@ -55,9 +71,15 @@ impl<'a> Tables<'a> {
         u64::from_le_bytes(self.runtime[at..at + 8].try_into().expect("8 bytes"))
     }
 
+    /// Writes a descriptor in one store, after everything written before it,
+    /// so a vCPU walking the tables meanwhile sees whole, initialised entries.
     fn set(&mut self, table: usize, index: u64, v: u64) {
         let at = table + index as usize * 8;
-        self.runtime[at..at + 8].copy_from_slice(&v.to_le_bytes());
+        let slot: &mut [u8; 8] = (&mut self.runtime[at..at + 8]).try_into().expect("8 bytes");
+        std::sync::atomic::fence(std::sync::atomic::Ordering::Release);
+        // SAFETY: `slot` is 8 bytes inside the runtime region, 8-aligned
+        // (tables are page-aligned), and only the host writes descriptors.
+        unsafe { (slot.as_mut_ptr() as *mut u64).write_volatile(v.to_le()) };
     }
 
     /// The next-level table under `table[index]`, made if missing.
@@ -96,6 +118,43 @@ impl<'a> Tables<'a> {
             va += PAGE_BYTES;
         }
         true
+    }
+}
+
+impl Tables<'_> {
+    /// Makes guest `start..end` (4 KiB aligned, mapped by `map` as one
+    /// range) invalid. Tables that become empty are not freed.
+    pub fn unmap(&mut self, start: u64, end: u64) {
+        let mut va = start;
+        while va < end {
+            let idx = |shift: u32| (va >> shift) & 0x1ff;
+            let next_block = (va / BLOCK_SIZE + 1) * BLOCK_SIZE;
+            let l1 = self.entry(self.root, idx(39));
+            if l1 & TABLE != TABLE {
+                va = next_block;
+                continue;
+            }
+            let l2 = ((l1 & ADDRESS) - layout::RUNTIME_IPA) as usize;
+            let e = self.entry(l2, idx(30));
+            if e & TABLE != TABLE {
+                va = next_block;
+                continue;
+            }
+            let l3 = ((e & ADDRESS) - layout::RUNTIME_IPA) as usize;
+            let d = self.entry(l3, idx(21));
+            match d & 3 {
+                TABLE => {
+                    let t = ((d & ADDRESS) - layout::RUNTIME_IPA) as usize;
+                    self.set(t, idx(12), 0);
+                    va += PAGE_BYTES;
+                }
+                BLOCK => {
+                    self.set(l3, idx(21), 0);
+                    va = next_block;
+                }
+                _ => va = next_block.min(end).max(va + PAGE_BYTES),
+            }
+        }
     }
 }
 

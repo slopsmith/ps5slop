@@ -7,7 +7,7 @@ pub mod layout;
 mod tables;
 mod translate;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -51,7 +51,10 @@ const VERIFY_EXIT: usize = layout::CODE + 0x1C0;
 const INTERP_EXIT: usize = layout::CODE + 0x1E0;
 const NATIVE_MEMSET: usize = layout::CODE + 0x200;
 const NATIVE_MEMMOVE: usize = layout::CODE + 0x400;
-const NATIVE_END: usize = layout::CODE + 0x800;
+const NATIVE_SPECIFIC: usize = layout::CODE + 0x800;
+const NATIVE_THREAD_ID: usize = layout::CODE + 0x880;
+const NATIVE_SELF: usize = layout::CODE + 0x900;
+const NATIVE_END: usize = layout::CODE + 0x980;
 const TEST_CODE: usize = layout::CODE + 0x1000;
 
 /// Library functions with a native version inside the VM, which guest calls
@@ -61,6 +64,14 @@ pub enum Native {
     Memset,
     /// `memmove`, which also serves `memcpy`.
     Memmove,
+    /// `pthread_getspecific(key)` for keys whose values live at the thread
+    /// pointer plus `specific` (the first `keys` of them); other keys go to
+    /// the host function.
+    Getspecific { specific: u32, keys: u32 },
+    /// `scePthreadGetthreadid()`: the thread pointer shifted right 14 bits.
+    ThreadId,
+    /// `pthread_self()`: the thread pointer.
+    SelfThread,
 }
 
 /// Makes calls to the host function at trap address `addr` run `native`
@@ -73,6 +84,18 @@ pub fn set_native(addr: u64, native: Native) {
         let place = match native {
             Native::Memset => NATIVE_MEMSET,
             Native::Memmove => NATIVE_MEMMOVE,
+            Native::Getspecific { specific, keys } => {
+                let code = native_getspecific(specific, keys);
+                assert!(NATIVE_SPECIFIC + code.len() * 4 <= NATIVE_THREAD_ID);
+                m.runtime.write_words(NATIVE_SPECIFIC, &code);
+                // SAFETY: the range was just written inside the runtime region.
+                unsafe {
+                    sys_icache_invalidate(m.runtime.as_ptr().add(NATIVE_SPECIFIC).cast(), code.len() * 4)
+                };
+                NATIVE_SPECIFIC
+            }
+            Native::ThreadId => NATIVE_THREAD_ID,
+            Native::SelfThread => NATIVE_SELF,
         };
         m.natives.retain(|&(a, _)| a != addr);
         m.natives.push((addr, place));
@@ -149,6 +172,12 @@ pub struct Machine {
     mapped: Vec<(u64, u64)>,
     /// The address space (its id) and region generation last mirrored.
     generation: Option<(usize, u64)>,
+    /// The accessible ranges in the active tables, as (start, end, writable).
+    mirrored: Vec<(u64, u64, bool)>,
+    /// Where each table pool's free space starts.
+    pool_next: [usize; 2],
+    /// Ranges whose host pages were replaced since the last sync.
+    fresh: Vec<(u64, u64)>,
     vcpus: [Option<VcpuKicker>; layout::MAX_VCPUS],
     code_next: usize,
     blocks: HashMap<u64, BlockInfo>,
@@ -234,6 +263,9 @@ impl Machine {
             runtime,
             mapped: Vec::new(),
             generation: None,
+            mirrored: Vec::new(),
+            pool_next: [0; 2],
+            fresh: Vec::new(),
             vcpus: [None; layout::MAX_VCPUS],
             code_next: layout::CODE_CACHE,
             blocks: HashMap::new(),
@@ -245,8 +277,9 @@ impl Machine {
             natives: Vec::new(),
         };
         for pool in 0..2 {
-            let root = tables::Tables::new(m.runtime.as_mut_slice(), pool).root;
-            SHARED.roots[pool].store(root, Ordering::SeqCst);
+            let t = tables::Tables::new(m.runtime.as_mut_slice(), pool);
+            m.pool_next[pool] = t.next();
+            SHARED.roots[pool].store(t.root, Ordering::SeqCst);
         }
         Ok(m)
     }
@@ -259,51 +292,45 @@ impl Machine {
         if self.generation == Some(generation) {
             return Ok(true);
         }
-        if self
-            .generation
-            .is_some_and(|(base, _)| base != generation.0)
-        {
+        let same_space = self.generation.is_some_and(|(base, _)| base == generation.0);
+        if self.generation.is_some() && !same_space {
             for (start, end) in self.mapped.drain(..) {
                 self.vm.unmap(start, (end - start) as usize)?;
             }
+            self.mirrored.clear();
             self.forget_code();
         }
+        self.fresh.extend(mem.take_fresh());
+        let regions: Vec<_> = mem.regions().into_iter().filter(|r| !r.trap).collect();
+        let access: Vec<(u64, u64, bool)> = regions
+            .iter()
+            .filter(|r| r.prot.allows(memory::Access::Read) || r.prot.allows(memory::Access::Write))
+            .map(|r| (r.start, r.end, r.prot.allows(memory::Access::Write)))
+            .collect();
         let sc = Ordering::SeqCst;
         let pool = 1 - SHARED.active.load(sc);
+        let in_place = same_space && !self.reduces_access(&regions, &access);
+        if !in_place && SHARED.users[pool].load(sc) > 0 {
+            return Ok(false);
+        }
+        self.map_stage2(mem, &regions)?;
+        if in_place && self.update_mappings(&access) {
+            SHARED.generation.store(generation.1, sc);
+            self.generation = Some(generation);
+            return Ok(true);
+        }
         if SHARED.users[pool].load(sc) > 0 {
             return Ok(false);
         }
-        let regions: Vec<_> = mem.regions().into_iter().filter(|r| !r.trap).collect();
-        let wanted: Vec<(u64, u64)> = regions.iter().map(|r| (r.start, r.end)).collect();
-        let fresh = mem.take_fresh();
-        let stale = |&(s, e): &(u64, u64)| fresh.iter().any(|&(fs, fe)| fs < e && s < fe);
-        let (old, kept): (Vec<_>, Vec<_>) = self.mapped.drain(..).partition(stale);
-        for (start, end) in old {
-            self.vm.unmap(start, (end - start) as usize)?;
-        }
-        self.mapped = kept;
-        for &(start, end) in self.mapped.iter().filter(|m| !wanted.contains(m)) {
-            self.vm.unmap(start, (end - start) as usize)?;
-        }
-        for &(start, end) in wanted.iter().filter(|w| !self.mapped.contains(w)) {
-            // SAFETY: the region is mapped host memory inside `mem`'s
-            // reservation, and is unmapped here before it goes away.
-            unsafe {
-                let host = mem.host_base().add(start as usize);
-                self.vm
-                    .map(host, start, (end - start) as usize, hvf::mem::RWX)?
-            };
-        }
-        self.mapped = wanted;
         engine::count_exit(engine::Count::Rebuild);
         let mut t = tables::Tables::new(self.runtime.as_mut_slice(), pool);
-        for r in &regions {
-            let read = r.prot.allows(memory::Access::Read);
-            let write = r.prot.allows(memory::Access::Write);
-            if (read || write) && !t.map(r.start, r.end, write) {
+        for &(start, end, write) in &access {
+            if !t.map(start, end, write) {
                 return Err(Error(-2));
             }
         }
+        self.pool_next[pool] = t.next();
+        self.mirrored = access;
         SHARED.roots[pool].store(t.root, sc);
         SHARED.epoch.fetch_add(1, sc);
         SHARED.active.store(pool, sc);
@@ -313,6 +340,77 @@ impl Machine {
         self.generation = Some(generation);
         self.kick_running();
         Ok(true)
+    }
+
+    /// Brings the stage-2 mappings in line with `regions`, mapping again the
+    /// ranges whose host pages were replaced.
+    fn map_stage2(&mut self, mem: &Memory, regions: &[memory::RegionInfo]) -> Result<(), Error> {
+        let wanted: Vec<(u64, u64)> = regions.iter().map(|r| (r.start, r.end)).collect();
+        let fresh = std::mem::take(&mut self.fresh);
+        let stale = |&(s, e): &(u64, u64)| fresh.iter().any(|&(fs, fe)| fs < e && s < fe);
+        let (old, kept): (Vec<_>, Vec<_>) = self.mapped.drain(..).partition(stale);
+        for (start, end) in old {
+            self.vm.unmap(start, (end - start) as usize)?;
+        }
+        self.mapped = kept;
+        let wanted_set: HashSet<&(u64, u64)> = wanted.iter().collect();
+        let mapped_set: HashSet<&(u64, u64)> = self.mapped.iter().collect();
+        for &(start, end) in self.mapped.iter().filter(|m| !wanted_set.contains(m)) {
+            self.vm.unmap(start, (end - start) as usize)?;
+        }
+        for &(start, end) in wanted.iter().filter(|w| !mapped_set.contains(w)) {
+            // SAFETY: the region is mapped host memory inside `mem`'s
+            // reservation, and is unmapped here before it goes away.
+            unsafe {
+                let host = mem.host_base().add(start as usize);
+                self.vm
+                    .map(host, start, (end - start) as usize, hvf::mem::RWX)?
+            };
+        }
+        self.mapped = wanted;
+        Ok(())
+    }
+
+    /// Whether some address the active tables give access to stays mapped
+    /// in `regions` with less access. Other changes can be made to the tables
+    /// in place: stage 1 maps every guest address to itself, so a vCPU still
+    /// holding an old entry in its TLB reaches the same physical address,
+    /// which stage 2 (changed by HVF for every vCPU) maps to the current
+    /// pages or to nothing, a fault the host handles.
+    fn reduces_access(&self, regions: &[memory::RegionInfo], access: &[(u64, u64, bool)]) -> bool {
+        let new: HashSet<&(u64, u64, bool)> = access.iter().collect();
+        let removed: Vec<_> = self.mirrored.iter().filter(|m| !new.contains(m)).collect();
+        if removed.is_empty() {
+            return false;
+        }
+        regions.iter().any(|r| {
+            let read = r.prot.allows(memory::Access::Read);
+            let write = r.prot.allows(memory::Access::Write);
+            removed.iter().any(|&&(s, e, w)| {
+                s < r.end && r.start < e && (!(read || write) || (w && !write))
+            })
+        })
+    }
+
+    /// Changes the active tables in place to map `access`; false if the pool
+    /// ran out of tables.
+    fn update_mappings(&mut self, access: &[(u64, u64, bool)]) -> bool {
+        let pool = SHARED.active.load(Ordering::SeqCst);
+        let root = SHARED.roots[pool].load(Ordering::SeqCst);
+        let new: HashSet<(u64, u64, bool)> = access.iter().copied().collect();
+        let old: HashSet<(u64, u64, bool)> = self.mirrored.iter().copied().collect();
+        let mut t = tables::Tables::resume(self.runtime.as_mut_slice(), pool, root, self.pool_next[pool]);
+        for &(start, end, _) in old.difference(&new) {
+            t.unmap(start, end);
+        }
+        for &(start, end, write) in new.difference(&old) {
+            if !t.map(start, end, write) {
+                return false;
+            }
+        }
+        self.pool_next[pool] = t.next();
+        self.mirrored = access.to_vec();
+        true
     }
 
     /// Drops every translation, for a new address space whose code may
@@ -378,6 +476,18 @@ impl Machine {
             self.link(rip, place, block.chains);
         }
         true
+    }
+
+    /// Puts the native function for trap address `rip` back in the lookup
+    /// table after a collision took its slot; false if it has none.
+    fn reenter_native(&mut self, rip: u64) -> bool {
+        match self.natives.iter().find(|&&(a, _)| a == rip) {
+            Some(&(_, place)) => {
+                self.enter(rip, place);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Whether the block may be entered in the lookup table and chained to:
@@ -561,14 +671,49 @@ fn write_runtime(rt: &mut [u8]) {
     assert!(NATIVE_MEMSET + code.len() * 4 <= NATIVE_MEMMOVE);
     put(rt, NATIVE_MEMSET, code);
     let code = native_memmove();
-    assert!(NATIVE_MEMMOVE + code.len() * 4 <= NATIVE_END);
+    assert!(NATIVE_MEMMOVE + code.len() * 4 <= NATIVE_SPECIFIC);
     put(rt, NATIVE_MEMMOVE, code);
+    let mut a = Asm::new();
+    a.lsr_imm(Size::X, Reg(0), translate::FS_BASE, 14);
+    a.mov(Size::W, Reg(0), Reg(0));
+    guest_return(&mut a, NATIVE_THREAD_ID);
+    put(rt, NATIVE_THREAD_ID, a.finish());
+    let mut a = Asm::new();
+    a.mov(Size::X, Reg(0), translate::FS_BASE);
+    guest_return(&mut a, NATIVE_SELF);
+    let code = a.finish();
+    assert!(NATIVE_SELF + code.len() * 4 <= NATIVE_END);
+    put(rt, NATIVE_SELF, code);
+}
+
+/// `pthread_getspecific(edi)` from the thread's control block; keys from
+/// `keys` on leave the VM for the host function, whose address is in x16.
+fn native_getspecific(specific: u32, keys: u32) -> Vec<u32> {
+    let (key, at) = (Reg(19), Reg(20));
+    let mut a = Asm::new();
+    let host = a.label();
+    a.mov(Size::W, key, Reg(7));
+    a.mov_imm(Size::X, at, keys as u64);
+    a.sub(Size::X, at, key, at);
+    a.tbz(at, 63, host);
+    a.add_imm(Size::X, at, translate::FS_BASE, specific);
+    a.add_shift(Size::X, at, at, key, Shift::Lsl, 3);
+    a.ldr(Width::X, Reg(0), at, 0);
+    guest_return(&mut a, NATIVE_SPECIFIC);
+    a.bind(host);
+    a.hvc(translate::HVC_HOST);
+    a.finish()
 }
 
 /// Returns from a native library function as the guest's `ret` would, with
 /// RAX = RDI (what `memset` and `memmove` return), and dispatches.
 fn native_return(a: &mut Asm, at: usize) {
     a.mov(Size::X, Reg(0), Reg(7));
+    guest_return(a, at);
+}
+
+/// Returns from a native function as the guest's `ret` would, and dispatches.
+fn guest_return(a: &mut Asm, at: usize) {
     a.ldr(Width::X, translate::RIP, Reg(4), 0);
     a.add_imm(Size::X, Reg(4), Reg(4), 8);
     a.b_offset(((DISPATCH as i64 - (at + a.pos() * 4) as i64) / 4) as i32);

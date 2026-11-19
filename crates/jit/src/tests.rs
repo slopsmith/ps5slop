@@ -75,6 +75,34 @@ fn mapping_changes_reach_the_vm_after_a_sync() {
 }
 
 #[test]
+fn unmapped_and_read_only_memory_faults_after_a_sync() {
+    let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
+    let mem = guest();
+    let mut m = machine().unwrap();
+    mem.map(0x60_0000, PAGE_SIZE, Prot::RW, "gone").unwrap();
+    mem.map(0x70_0000, PAGE_SIZE, Prot::RW, "kept").unwrap();
+    m.sync(&mem).unwrap();
+    let pc = m.load_code(0x1000, &increment());
+    let mut cpu = Cpu::new(&mut m).unwrap().unwrap();
+    for at in [0x60_0000, 0x70_0000] {
+        cpu.set_reg(0, at).unwrap();
+        assert_eq!(cpu.run(&m, pc).unwrap(), Exit::Hvc(7));
+    }
+    mem.unmap(0x60_0000).unwrap();
+    mem.protect(0x70_0000, Prot::READ).unwrap();
+    assert!(m.sync(&mem).unwrap());
+    for at in [0x60_0000, 0x70_0000] {
+        cpu.set_reg(0, at).unwrap();
+        let exit = cpu.run(&m, pc).unwrap();
+        assert!(
+            matches!(exit, Exit::Fault { .. } | Exit::Stage2 { .. }),
+            "{at:#x}: {exit:?}"
+        );
+    }
+    cpu.release(&mut m);
+}
+
+#[test]
 fn memory_mapped_again_with_the_same_bounds_reaches_the_vm() {
     let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
     let mem = guest();
@@ -531,4 +559,36 @@ fn native_memset_and_memmove_run_inside_the_vm() {
     want.copy_within(0x416..0x416 + 19, 0x403);
     assert!(page(&mem) == want, "memory differs");
     assert_eq!(cpu.regs[RAX], CODE + 0x403);
+}
+
+/// Calls the native `pthread_getspecific` (trap address +0x30) with key 3,
+/// `scePthreadGetthreadid` (+0x40) and `pthread_self` (+0x50), then
+/// `pthread_getspecific` with key 200, which leaves for the host function.
+const THREAD_NATIVES: &[u8] = &[
+    0xbf, 0x03, 0x00, 0x00, 0x00, 0x48, 0xb8, 0x30, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0xff,
+    0xd0, 0x48, 0x89, 0xc3, 0x48, 0xb8, 0x40, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0xff, 0xd0,
+    0x48, 0x89, 0xc1, 0x48, 0xb8, 0x50, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0xff, 0xd0, 0x48,
+    0x89, 0xc2, 0xbf, 0xc8, 0x00, 0x00, 0x00, 0x48, 0xb8, 0x30, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00,
+    0x00, 0xff, 0xd0,
+];
+
+#[test]
+fn native_thread_functions_read_the_thread_pointer() {
+    let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
+    let (mem, mut cpu) = program(THREAD_NATIVES);
+    let tcb = STACK + 0x100;
+    cpu.fs_base = tcb;
+    mem.write_u64(tcb + 0x400 + 8 * 3, 0x1234_5678_9abc).unwrap();
+    let specific = Native::Getspecific {
+        specific: 0x400,
+        keys: 128,
+    };
+    set_native(TRAP + 0x30, specific);
+    set_native(TRAP + 0x40, Native::ThreadId);
+    set_native(TRAP + 0x50, Native::SelfThread);
+    assert_eq!(run(&mut cpu, &mem, &|| false), x86::Exit::Trap(TRAP + 0x30));
+    assert_eq!(cpu.regs[RBX], 0x1234_5678_9abc);
+    assert_eq!(cpu.regs[RCX], tcb >> 14);
+    assert_eq!(cpu.regs[RDX], tcb);
+    assert_eq!(cpu.regs[RDI], 200);
 }

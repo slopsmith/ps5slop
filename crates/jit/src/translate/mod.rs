@@ -14,6 +14,8 @@ const DF_OFFSET: i32 = crate::layout::DF_OFFSET as i32;
 /// Exits translated code takes, as `hvc` numbers; x16 holds the guest RIP.
 pub const HVC_MISS: u16 = 1;
 pub const HVC_INTERP: u16 = 2;
+/// A native library function hands its call to the host function.
+pub const HVC_HOST: u16 = 3;
 
 /// The guest RIP to continue at, for the dispatcher and exits.
 pub const RIP: Reg = Reg(16);

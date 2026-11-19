@@ -10,7 +10,7 @@ use memory::{FaultKind, Memory};
 use x86::Cpu as X86;
 use x86::cpu::flags;
 
-use crate::translate::{AF_AUX, FS_BASE, HVC_INTERP, HVC_MISS, ICOUNT, PF_RESULT, RIP};
+use crate::translate::{AF_AUX, FS_BASE, HVC_HOST, HVC_INTERP, HVC_MISS, ICOUNT, PF_RESULT, RIP};
 use crate::{CPSR_EL1H, Cpu, DISPATCH, ENTRY_FLUSH, Exit, RESUME_FLUSH, SHARED, machine};
 
 /// Instructions the interpreter may run in a row before trying translated
@@ -469,6 +469,9 @@ impl Engine {
                     note_block(rip);
                     count_exit(Count::Miss);
                     if is_trap(mem, rip) {
+                        if machine()?.reenter_native(rip) {
+                            continue;
+                        }
                         count_exit(Count::HostCall);
                         self.store(x)?;
                         x.rip = rip;
@@ -491,6 +494,13 @@ impl Engine {
                         continue;
                     }
                     rip
+                }
+                Exit::Hvc(HVC_HOST) => {
+                    count_exit(Count::HostCall);
+                    let rip = self.cpu.reg(RIP.0)?;
+                    self.store(x)?;
+                    x.rip = rip;
+                    return Ok(x86::Exit::Trap(rip));
                 }
                 Exit::Hvc(HVC_INTERP) => {
                     count_exit(Count::Interp);
