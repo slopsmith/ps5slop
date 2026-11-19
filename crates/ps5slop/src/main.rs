@@ -65,6 +65,11 @@ fn main() -> ExitCode {
             "ps5slop: {} imported functions are not implemented yet",
             process.unimplemented.len()
         );
+        if std::env::var_os("PS5SLOP_LIST_UNIMPLEMENTED").is_some() {
+            for (library, nid) in &process.unimplemented {
+                eprintln!("  {library} {nid}");
+            }
+        }
     }
     let app0 = path.parent().map(|p| p.to_path_buf());
     let status = process

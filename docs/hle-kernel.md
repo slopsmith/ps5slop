@@ -6,7 +6,7 @@ How guest code reaches host code, and what we implement. `crates/hle`.
 
 - Every import binds, at load time, to its own 16-byte slot in a **trap region** at `0xFF_0000_0000` (our choice, see [memory.md](memory.md)). The region cannot be read, written or executed.
 - When guest code jumps there, the interpreter stops with `Exit::Trap(address)` before decoding anything. The slot names a `(library, NID)` pair; if a host function implements it, it runs with the SysV AMD64 arguments (`rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`), its result goes to `rax`, and the return address is popped from the stack, as a `ret` would.
-- Imports with no host function still get a slot. Calling one stops the process with "unimplemented *library* function with NID *x*" and the caller's address, instead of a jump to address 0. `ps5slop run` reports how many imports are unimplemented before it starts.
+- Imports with no host function still get a slot. Calling one stops the process with "unimplemented *library* function with NID *x*" and the caller's address, instead of a jump to address 0. `ps5slop run` reports how many imports are unimplemented before it starts, and lists them (library and NID) when the environment variable `PS5SLOP_LIST_UNIMPLEMENTED` is set.
 - A raw `syscall` instruction stops the process with an error. We serve the kernel through libkernel's functions, not its system call numbers.
 
 A JIT can keep the same scheme: a trap region is just memory it never maps executable.
