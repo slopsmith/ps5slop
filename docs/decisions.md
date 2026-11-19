@@ -46,6 +46,12 @@ A small Rust tool turns an ELF built with `clang -target x86_64-unknown-freebsd`
 
 ## 2026-11-19: Semi-LLE of user-supplied Sony modules
 
-Sony modules from the game's own folder or from the user's firmware dump may be loaded and run as guest code, instead of an HLE version. They are supplied at run time and never committed. HLE stays the default for modules that reach into the kernel or hardware.
+Sony modules from the game's own folder or from the user's firmware dump may be loaded and run as guest code, instead of an HLE version. (Narrowed to an allowlist in the entry below.) They are supplied at run time and never committed. HLE stays the default for modules that reach into the kernel or hardware.
 
 Reason: an HLE layer runs Sony code in our process either way (the game's own code is linked against it), and loading libraries the user already has saves reimplementing them.
+
+## 2026-11-19: Semi-LLE only through an allowlist
+
+Only allowlisted modules are loaded as guest code. A module qualifies only if all its imports are provided by HLE modules (or by other allowlisted modules), so it runs on top of HLE. Details in [loader.md](loader.md).
+
+Reason: not every module is a candidate. Ones that reach into the kernel or hardware would drag LLE in through the back door.

@@ -49,10 +49,12 @@ An import we have no name for stays an opaque NID. The HLE layer can still log i
 
 ## Sony modules as guest code (semi-LLE)
 
-Games ship some Sony libraries in their own folder (`sce_module/`), and users may supply firmware modules from their own console. We may load either kind as ordinary guest code instead of writing an HLE version, as shadPS4 does for a whitelist. The modules come from the user at run time and are never committed (see [legal.md](legal.md)). HLE stays the default for anything that talks to the kernel, the GPU or other hardware.
+Games ship some Sony libraries in their own folder (`sce_module/`), and users may supply firmware modules from their own console. We may load some of them as ordinary guest code instead of writing an HLE version. The modules come from the user at run time and are never committed (see [legal.md](legal.md)).
+
+Only modules on an **allowlist** are candidates. A module gets on it only if everything it imports is provided by our HLE modules (or by other allowlisted modules that meet the same rule), so it runs on top of HLE and never reaches the kernel, the GPU or other hardware itself. Anything not on the list is HLE, and a module the game ships that is neither allowlisted nor HLE is an error we report. The list lives in the HLE code, keyed by module name.
 
 ## Open questions
 
 - PS5 `PROCPARAM` layout and what the runtime reads from it (SDK version, heap sizes, and so on).
 - How module start and stop functions, TLS images and init arrays are laid out for `ET_SCE_DYNAMIC` modules.
-- Which Sony modules are worth loading as guest code (see below) and which we must HLE because they reach into the kernel or hardware.
+- Which modules go on the semi-LLE allowlist first. The OpenOrbis samples ship `libc.prx` and `libSceFios2.prx` in `sce_module/`; where those files come from is unknown.
