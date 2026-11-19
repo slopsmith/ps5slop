@@ -19,6 +19,11 @@ const SLICE: u64 = 1 << 16;
 const TCB_SIZE: u64 = 0x1000;
 /// Where in its thread control block a thread's `errno` lives (our choice).
 pub(crate) const ERRNO_OFFSET: u64 = 0x800;
+/// Where in its thread control block a thread's values for the first
+/// [`SPECIFIC_KEYS`] thread-specific keys live (our choice, read by the JIT's
+/// native `pthread_getspecific`).
+pub const SPECIFIC_OFFSET: u64 = 0x400;
+pub const SPECIFIC_KEYS: u32 = 128;
 /// Where thread TLS blocks and stacks are allocated from (our choice).
 const TLS_AREA: u64 = 0x7_0001_0000;
 const STACK_AREA: u64 = 0x5_0000_0000;
@@ -173,6 +178,8 @@ pub struct Kernel {
     pub(crate) saves: crate::savedata::Saves,
     pub(crate) agc: crate::agc::Agc,
     pub(crate) started: std::time::Instant,
+    /// Every thread pointer `new_tls` handed out.
+    pub(crate) tcbs: Mutex<Vec<u64>>,
 }
 
 impl Kernel {
@@ -213,6 +220,7 @@ impl Kernel {
             agc: Default::default(),
 
             started: std::time::Instant::now(),
+            tcbs: Mutex::default(),
         })
     }
 
@@ -269,6 +277,22 @@ impl Kernel {
                 jit::set_native(addr, native);
             }
         }
+        let specific = jit::Native::Getspecific {
+            specific: SPECIFIC_OFFSET as u32,
+            keys: SPECIFIC_KEYS,
+        };
+        let thread = [
+            ("pthread_getspecific", specific),
+            ("scePthreadGetspecific", specific),
+            ("scePthreadGetthreadid", jit::Native::ThreadId),
+            ("pthread_self", jit::Native::SelfThread),
+            ("scePthreadSelf", jit::Native::SelfThread),
+        ];
+        for (name, native) in thread {
+            for addr in self.hle.bound_anywhere(name) {
+                jit::set_native(addr, native);
+            }
+        }
     }
 
     /// Guest instructions run so far: (interpreted, translated).
@@ -302,6 +326,10 @@ impl Kernel {
                 .expect("tls was just mapped");
         }
         mem.write_u64(tcb, tcb).expect("tls was just mapped");
+        self.tcbs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(tcb);
         Ok(tcb)
     }
 

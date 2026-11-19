@@ -336,6 +336,16 @@ impl Hle {
         Some(TRAP_BASE + index as u64 * STUB_SIZE)
     }
 
+    /// The stub addresses of a function by name, from any library.
+    pub fn bound_anywhere(&self, name: &str) -> Vec<u64> {
+        let nid = nid(name);
+        self.stub_index
+            .iter()
+            .filter(|((n, _), _)| *n == nid)
+            .map(|(_, &index)| TRAP_BASE + index as u64 * STUB_SIZE)
+            .collect()
+    }
+
     /// The stub address of a function by name.
     pub fn stub_by_name(&mut self, library: &str, name: &str) -> u64 {
         self.stub(&nid(name), library)
@@ -546,8 +556,12 @@ pub fn report_calls() {
     let c = c.lock().unwrap_or_else(|e| e.into_inner());
     let mut v: Vec<_> = c.iter().collect();
     v.sort_by(|a, b| b.1.cmp(a.1));
+    let top = std::env::var("PS5SLOP_JIT_STATS_TOP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(20);
     eprintln!("  host calls:");
-    for (name, n) in v.iter().take(20) {
+    for (name, n) in v.iter().take(top) {
         eprintln!("    {n:>12}  {name}");
     }
 }

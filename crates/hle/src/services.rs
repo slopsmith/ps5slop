@@ -138,9 +138,18 @@ fn launch_web_browser(env: &mut Env) -> Result<Outcome, CallError> {
 /// From OpenOrbis.
 const USER_SERVICE_ERROR_NO_EVENT: u64 = 0x8096_0007;
 
-/// `sceUserServiceGetEvent(event)`: users never log in or out.
-fn user_event(_: &mut Env) -> Result<Outcome, CallError> {
-    ret(USER_SERVICE_ERROR_NO_EVENT)
+/// `sceUserServiceGetEvent(event)`: the first call reports [`USER_ID`]
+/// logging in (`{ i32 type = 0 (login); i32 user }`, from OpenOrbis), as
+/// the console does for users already logged in when a title starts; then
+/// no more events.
+fn user_event(env: &mut Env) -> Result<Outcome, CallError> {
+    static REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if REPORTED.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return ret(USER_SERVICE_ERROR_NO_EVENT);
+    }
+    env.mem.write(env.arg(0), &0i32.to_le_bytes())?;
+    env.mem.write(env.arg(0) + 4, &USER_ID.to_le_bytes())?;
+    ret(0)
 }
 
 /// `sceSystemServiceGetStatus(status)`: no events waiting, in the

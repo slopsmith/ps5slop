@@ -16,6 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use x86::cpu::reg::RSP;
 
 use crate::errno::{EBUSY, EDEADLK, EINVAL, EPERM, ETIMEDOUT};
+use crate::process::{SPECIFIC_KEYS, SPECIFIC_OFFSET};
 use crate::{CallError, Env, Function, INTERNAL, Outcome};
 
 /// How often a blocked call checks whether the process has exited.
@@ -558,16 +559,31 @@ fn key_delete(env: &mut Env) -> Result<Outcome, CallError> {
         Some(used) if *used => {
             *used = false;
             lock(&env.kernel.objects.specific).retain(|k, _| k.1 != key);
+            if key < SPECIFIC_KEYS {
+                for &tcb in lock(&env.kernel.tcbs).iter() {
+                    let _ = env.mem.write_u64(specific_slot(tcb, key), 0);
+                }
+            }
             ret(0)
         }
         _ => ret(EINVAL),
     }
 }
 
+/// Where thread `tcb` keeps its value for `key`, if in its control block.
+fn specific_slot(tcb: u64, key: u32) -> u64 {
+    tcb + SPECIFIC_OFFSET + 8 * key as u64
+}
+
 fn getspecific(env: &mut Env) -> Result<Outcome, CallError> {
-    let key = (env.thread.tcb, env.arg(0) as u32);
+    let (tcb, key) = (env.thread.tcb, env.arg(0) as u32);
+    if key < SPECIFIC_KEYS
+        && let Ok(v) = env.mem.read_u64(specific_slot(tcb, key))
+    {
+        return Ok(Outcome::Return(v));
+    }
     let v = lock(&env.kernel.objects.specific)
-        .get(&key)
+        .get(&(tcb, key))
         .copied()
         .unwrap_or(0);
     Ok(Outcome::Return(v))
@@ -582,7 +598,11 @@ fn setspecific(env: &mut Env) -> Result<Outcome, CallError> {
     if !known {
         return ret(EINVAL);
     }
-    lock(&env.kernel.objects.specific).insert((env.thread.tcb, key), env.arg(1));
+    let tcb = env.thread.tcb;
+    if key < SPECIFIC_KEYS && env.mem.write_u64(specific_slot(tcb, key), env.arg(1)).is_ok() {
+        return ret(0);
+    }
+    lock(&env.kernel.objects.specific).insert((tcb, key), env.arg(1));
     ret(0)
 }
 

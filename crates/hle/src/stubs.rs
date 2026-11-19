@@ -258,6 +258,13 @@ pub static STUBS: &[Function] = &[
     zero("libSceNpGameIntent", "sceNpGameIntentTerminate"),
     out_id::<0>("libSceNpTrophy2", "sceNpTrophy2CreateContext"),
     out_id::<0>("libSceNpTrophy2", "sceNpTrophy2CreateHandle"),
+    zero("libSceNpTrophy2", "sceNpTrophy2RegisterContext"),
+    out_id::<2>(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemCreateEvent",
+    ),
+    zero("libSceNpTrophy2", "sceNpTrophy2DestroyHandle"),
+    zero("libSceNpTrophy2", "sceNpTrophy2DestroyContext"),
     zero(
         "libSceNpEntitlementAccess",
         "sceNpEntitlementAccessInitialize",
