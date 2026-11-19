@@ -6,6 +6,7 @@ ps5slop is a PS5 compatibility layer (HLE, Wine-style) for Apple Silicon Macs, w
 
 - Never commit, embed, ship or link to proprietary Sony material: firmware, system modules (`.sprx` and similar), keys, game binaries, game assets, shader or microcode blobs.
 - Never commit reverse-engineered parts of proprietary modules: disassembly, decompilation, function-by-function ports, tables or constants copied from a dump. No leaked SDK material either.
+- Never decompile or disassemble Sony system code yourself (not even a few bytes around a call site). Public documentation others wrote may be used as a spec, whatever its origin; write our own code from it.
 - Document interface facts (NID names, syscall numbers, calling conventions) only where publicly known, with the source. Keep them apart from implementation.
 - User-supplied games, firmware and keys never enter the repo. Run `scripts/check-forbidden` (or `jj check`) before pushing.
 - Check a project's license before reading its code, and never copy across incompatible licenses. Record what was read and taken in [docs/references.md](docs/references.md).

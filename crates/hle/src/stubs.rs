@@ -64,6 +64,36 @@ fn new_id(_: &mut Env) -> Result<Outcome, CallError> {
 }
 
 pub static FUNCTIONS: &[Function] = &[
+    Function {
+        library: "libSceAppContent",
+        name: "sceAppContentTemporaryDataMount2",
+        func: temporary_data_mount,
+    },
+    Function {
+        library: "libSceAppContent",
+        name: "sceAppContentTemporaryDataGetAvailableSpaceKb",
+        func: temporary_data_space,
+    },
+    Function {
+        library: "libSceAppContent",
+        name: "sceAppContentAppParamGetInt",
+        func: app_param_int,
+    },
+    Function {
+        library: "libSceRandom",
+        name: "sceRandomGetRandomNumber",
+        func: random_number,
+    },
+    Function {
+        library: "libkernel",
+        name: "sceKernelUuidCreate",
+        func: uuid_create,
+    },
+];
+
+/// Placeholders: they answer without doing the real work, and say so on
+/// stderr when called.
+pub static STUBS: &[Function] = &[
     zero("libSceCommonDialog", "sceCommonDialogInitialize"),
     zero("libSceMsgDialog.native", "sceMsgDialogInitialize"),
     zero("libSceMsgDialog.native", "sceMsgDialogTerminate"),
@@ -133,6 +163,15 @@ pub static FUNCTIONS: &[Function] = &[
         "libSceNpUniversalDataSystem",
         "sceNpUniversalDataSystemRegisterContext",
     ),
+    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemDestroyHandle"),
+    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemAbortHandle"),
+    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemPostEvent"),
+    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemDestroyContext"),
+    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemDestroyEvent"),
+    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemEventPropertyObjectSetString"),
+    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemEventPropertyObjectSetInt32"),
+    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemEventPropertyObjectSetArray"),
+    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemEventPropertyArraySetString"),
     zero("libSceNpGameIntent", "sceNpGameIntentInitialize"),
     zero("libSceNpGameIntent", "sceNpGameIntentTerminate"),
     out_id::<0>("libSceNpTrophy2", "sceNpTrophy2CreateContext"),
@@ -172,16 +211,6 @@ pub static FUNCTIONS: &[Function] = &[
         func: netctl_state,
     },
     Function {
-        library: "libSceAppContent",
-        name: "sceAppContentTemporaryDataMount2",
-        func: temporary_data_mount,
-    },
-    Function {
-        library: "libSceAppContent",
-        name: "sceAppContentTemporaryDataGetAvailableSpaceKb",
-        func: temporary_data_space,
-    },
-    Function {
         library: "libSceLibcInternalExt",
         name: "#qBS714-Jr3g",
         func: ok,
@@ -190,21 +219,6 @@ pub static FUNCTIONS: &[Function] = &[
         library: "libkernel_write_throttling",
         name: "#YFC3dBBipj8",
         func: unsupported,
-    },
-    Function {
-        library: "libSceAppContent",
-        name: "sceAppContentAppParamGetInt",
-        func: app_param_int,
-    },
-    Function {
-        library: "libSceRandom",
-        name: "sceRandomGetRandomNumber",
-        func: random_number,
-    },
-    Function {
-        library: "libkernel",
-        name: "sceKernelUuidCreate",
-        func: uuid_create,
     },
 ];
 

@@ -170,6 +170,7 @@ pub struct Kernel {
     /// The guest's file system.
     pub(crate) vfs: crate::Vfs,
     pub(crate) saves: crate::savedata::Saves,
+    pub(crate) agc: crate::agc::Agc,
     pub(crate) started: std::time::Instant,
 }
 
@@ -207,6 +208,7 @@ impl Kernel {
             libc: Default::default(),
             vfs,
             saves: Default::default(),
+            agc: Default::default(),
 
             started: std::time::Instant::now(),
         })

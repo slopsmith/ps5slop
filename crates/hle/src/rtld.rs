@@ -49,6 +49,11 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelGetSanitizerNewReplace", no_sanitizer),
     f("sceKernelGetSanitizerNewReplaceExternal", no_sanitizer),
     f("sceKernelIsAddressSanitizerEnabled", no_sanitizer),
+];
+
+/// Placeholders: they answer without doing the real work, and say so on
+/// stderr when called.
+pub static STUBS: &[Function] = &[
     Function {
         library: "libSceLibcInternalExt",
         name: "sceLibcHeapGetTraceInfo",

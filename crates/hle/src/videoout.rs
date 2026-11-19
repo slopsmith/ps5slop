@@ -167,7 +167,6 @@ fn untile(raw: &[u8], l: Layout) -> Vec<u8> {
 pub static FUNCTIONS: &[Function] = &[
     f("sceVideoOutOpen", open),
     f("sceVideoOutClose", close),
-    f("sceVideoOutGetOutputStatus", output_status),
     f("sceVideoOutSetFlipRate", with_handle),
     f("sceVideoOutSetBufferAttribute2", set_buffer_attribute2),
     f("sceVideoOutRegisterBuffers2", register_buffers2),
@@ -175,6 +174,12 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceVideoOutWaitVblank", wait_vblank),
     f("sceVideoOutAddFlipEvent", add_flip_event),
     f("sceVideoOutDeleteFlipEvent", delete_flip_event),
+];
+
+/// Placeholders: they answer without doing the real work, and say so on
+/// stderr when called.
+pub static STUBS: &[Function] = &[
+    f("sceVideoOutGetOutputStatus", output_status),
 ];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {

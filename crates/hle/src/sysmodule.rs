@@ -16,6 +16,11 @@ pub static FUNCTIONS: &[Function] = &[
         name: "sceSysmoduleLoadModule",
         func: load_module,
     },
+    Function {
+        library: "libSceSysmodule",
+        name: "sceSysmoduleUnloadModule",
+        func: load_module,
+    },
 ];
 
 /// `sceSysmoduleLoadModule(id)` and its `Internal` variant: returns 0 (success).

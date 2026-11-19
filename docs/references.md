@@ -6,6 +6,10 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 
 | Date | Source | Read for | Took |
 | --- | --- | --- | --- |
+| 2026-11-19 | SharpEmu `src/SharpEmu.Libs/Agc` at `f1af467` (GPL-2.0-or-later, SPDX headers) | The libSceAgc and libSceAgcDriver implementation we port to Rust; `sceAgc*` names in it, hashed ourselves | Code ported (license-compatible), noted per file. Its NID attributes are not used |
+| 2026-11-19 | prosper `prosper/tests/data/console_oracle` and `docs/gpu` at `e35a74a` (no license) | Packet bytes real `libSceAgc` builders wrote on a PS5 ("captured 2026-10-08"), used as a local test oracle; names in its docs | Nothing committed: tests read the files from `references/` and skip when absent |
+| 2026-11-19 | SharpProspero `Interop/Agc`, `docs` at `5dfdb4b` (GPL-3.0-or-later); AnyPS5 `docs/dev` at `fa0b7e3` (GPL-2.0-only); OpenAGC `docs` at `3c7e807` (Apache-2.0) | AGC function names (hashed ourselves), signatures and behaviour notes as specs. Their authors say parts come from firmware disassembly (allowed as documentation, see [legal.md](legal.md)) | Facts only; no code |
+| 2026-11-19 | PS5_Vulkan `docs/HARDWARE_FINDINGS.md`, astraea `docs/research` (GPL-3.0), Kyty (MIT) | Console-measured AGC behaviour, the submit descriptor | Facts only so far |
 | 2026-11-19 | shadPS4 `src/core/loader/elf.h`, `src/core/module.cpp` (through a research summary) | ELF/SELF constants, NID derivation | Facts only, written in our own words in [loader.md](loader.md). No code. |
 | 2026-11-19 | shadPS4 `src/core/address_space.cpp`, `src/core/tls.cpp`, `src/core/cpu_patches.cpp` (summary) | PS4 address layout, TLS on macOS, Rosetta bugs | Facts only ([memory.md](memory.md), [cpu.md](cpu.md)). No code. |
 | 2026-11-19 | FEX `Config.json.in`, `OpcodeDispatcher.h`, `unittests/InstructionCountCI` (summary) | TSO options, AVX on 128-bit hosts, instruction counts | Facts only ([cpu.md](cpu.md)). No code. |

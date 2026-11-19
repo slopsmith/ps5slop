@@ -36,6 +36,13 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelFtruncate", sce_ftruncate),
     f("truncate", truncate),
     f("sceKernelTruncate", sce_truncate),
+    f("getdents", getdents),
+    f("sceKernelGetdents", sce_getdents),
+];
+
+/// Placeholders: they answer without doing the real work, and say so on
+/// stderr when called.
+pub static STUBS: &[Function] = &[
     f("sceKernelChmod", sce_accept),
     f("sceKernelUtimes", sce_accept),
     f("sceKernelSync", sce_accept),
@@ -61,7 +68,7 @@ const O_CREAT: u64 = 0x200;
 const O_TRUNC: u64 = 0x400;
 const O_EXCL: u64 = 0x800;
 /// Reads larger than this are cut short.
-const MAX_READ: u64 = 1 << 24;
+const MAX_READ: u64 = 1 << 30;
 
 /// The two error conventions: errno and -1, or a `sceKernel` error code.
 #[derive(Clone, Copy)]
@@ -102,8 +109,14 @@ fn open_file(env: &Env) -> Result<Result<u64, i32>, CallError> {
             o.create(true);
         }
     }
-    Ok(match o.open(host) {
-        Ok(file) => Ok(env.kernel.libc.files.open_fd(file) as u64),
+    Ok(match o.open(&host) {
+        Ok(file) => {
+            let fd = env.kernel.libc.files.open_fd(file);
+            if host.is_dir() {
+                env.kernel.libc.files.set_directory(fd, host);
+            }
+            Ok(fd as u64)
+        }
         Err(e) => Err(io_errno(&e)),
     })
 }
@@ -336,4 +349,59 @@ fn sce_truncate(env: &mut Env) -> Result<Outcome, CallError> {
 /// Permissions and file times are not kept; `sceKernelSync` has nothing to do.
 fn sce_accept(_: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
+}
+
+/// FreeBSD `DT_DIR` and `DT_REG`.
+const DT_DIR: u8 = 4;
+const DT_REG: u8 = 8;
+
+/// `getdents(fd, buf, len)` with FreeBSD's pre-12 `struct dirent`; 0 at
+/// the end.
+fn read_directory(env: &Env) -> Result<Result<u64, i32>, CallError> {
+    let (fd, buf, len) = (env.arg(0) as i32, env.arg(1), env.arg(2) as usize);
+    let out = env.kernel.libc.files.with_directory(fd, |path, pos| {
+        let mut names: Vec<(String, u8)> = std::fs::read_dir(path)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let kind = if e.file_type().ok()?.is_dir() { DT_DIR } else { DT_REG };
+                Some((e.file_name().into_string().ok()?, kind))
+            })
+            .collect();
+        names.sort();
+        names.splice(0..0, [(".".to_owned(), DT_DIR), ("..".to_owned(), DT_DIR)]);
+        let mut records = Vec::new();
+        for (i, (name, kind)) in names.iter().enumerate().skip(*pos) {
+            let name = &name.as_bytes()[..name.len().min(255)];
+            let reclen = (8 + name.len() + 1).next_multiple_of(4);
+            if records.len() + reclen > len {
+                break;
+            }
+            let start = records.len();
+            records.resize(start + reclen, 0);
+            records[start..start + 4].copy_from_slice(&(i as u32 + 1).to_le_bytes());
+            records[start + 4..start + 6].copy_from_slice(&(reclen as u16).to_le_bytes());
+            records[start + 6] = *kind;
+            records[start + 7] = name.len() as u8;
+            records[start + 8..start + 8 + name.len()].copy_from_slice(name);
+            *pos += 1;
+        }
+        records
+    });
+    let Some(records) = out else {
+        return Ok(Err(errno::EBADF));
+    };
+    env.mem.write(buf, &records)?;
+    Ok(Ok(records.len() as u64))
+}
+
+fn getdents(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = read_directory(env)?;
+    finish(env, Style::Posix, r)
+}
+
+fn sce_getdents(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = read_directory(env)?;
+    finish(env, Style::Sce, r)
 }

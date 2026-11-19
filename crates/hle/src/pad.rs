@@ -70,9 +70,19 @@ pub static FUNCTIONS: &[Function] = &[
     f("scePadClose", close),
     f("scePadReadState", read_state),
     f("scePadRead", read),
-    f("scePadSetVibration", with_handle),
     f("scePadGetControllerInformation", controller_information),
+];
+
+/// Placeholders: they answer without doing the real work, and say so on
+/// stderr when called.
+pub static STUBS: &[Function] = &[
+    f("scePadSetVibration", with_handle),
     f("scePadSetLightBar", with_handle),
+    f("scePadResetLightBar", with_handle),
+    f("scePadSetMotionSensorState", with_handle),
+    f("scePadSetTiltCorrectionState", with_handle),
+    f("scePadSetAngularVelocityDeadbandState", with_handle),
+    f("scePadResetOrientation", with_handle),
     f("scePadSetVibrationMode", with_handle),
 ];
 

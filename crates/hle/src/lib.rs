@@ -13,6 +13,7 @@ use memory::{Fault, MapError, Memory, PAGE_SIZE, Prot};
 use x86::Cpu;
 use x86::cpu::reg::*;
 
+mod agc;
 mod dmem;
 mod equeue;
 pub mod errno;
@@ -226,7 +227,12 @@ struct Stub {
     nid: String,
     library: String,
     func: Option<&'static Function>,
+    /// Calls so far, when `func` is a placeholder (see [`placeholders`]).
+    stub_calls: Option<std::sync::atomic::AtomicU32>,
 }
+
+/// Calls of one placeholder reported on stderr before it goes quiet.
+const STUB_REPORTS: u32 = 5;
 
 pub struct Hle {
     by_nid: HashMap<(String, String), &'static Function>,
@@ -299,10 +305,13 @@ impl Hle {
             Some(&i) => i,
             None => {
                 let i = self.stubs.len();
+                let func = self.by_nid.get(&key).copied();
+                let placeholder = func.is_some_and(|f| placeholders().any(|p| std::ptr::eq(p, f)));
                 self.stubs.push(Stub {
                     nid: key.0.clone(),
                     library: key.1.clone(),
-                    func: self.by_nid.get(&key).copied(),
+                    func,
+                    stub_calls: placeholder.then(Default::default),
                 });
                 self.stub_index.insert(key, i);
                 i
@@ -390,7 +399,12 @@ impl Hle {
             library: stub.library.clone(),
         })?;
         count_call(f);
-        let out = (f.func)(env)?;
+        let args: [u64; 4] = std::array::from_fn(|n| env.arg(n));
+        let out = (f.func)(env);
+        if let Some(calls) = &stub.stub_calls {
+            report_stub(f, calls, args, &out);
+        }
+        let out = out?;
         if let Outcome::Return(v) = out {
             let sp = env.cpu.regs[RSP];
             env.cpu.rip = env.mem.read_u64(sp)?;
@@ -399,6 +413,46 @@ impl Hle {
         }
         Ok(out)
     }
+}
+
+/// Prints `STUB! library: name(args) -> result` for a placeholder's first
+/// calls; the arguments are the first four argument registers.
+fn report_stub(
+    f: &Function,
+    calls: &std::sync::atomic::AtomicU32,
+    args: [u64; 4],
+    out: &Result<Outcome, CallError>,
+) {
+    let n = calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if n >= STUB_REPORTS {
+        return;
+    }
+    let result = match out {
+        Ok(Outcome::Return(v)) => format!("Ok({v:#x})"),
+        Ok(o) => format!("{o:?}"),
+        Err(e) => format!("Err({e})"),
+    };
+    let quiet = if n + 1 == STUB_REPORTS { " (further calls not shown)" } else { "" };
+    eprintln!(
+        "STUB! {}: {}({:#x}, {:#x}, {:#x}, {:#x}, ...) -> {result}{quiet}",
+        f.library, f.name, args[0], args[1], args[2], args[3]
+    );
+}
+
+/// Functions that only stand in for the real thing (each module's `STUBS`).
+fn placeholders() -> impl Iterator<Item = &'static Function> {
+    stubs::STUBS
+        .iter()
+        .chain(ngs2::STUBS)
+        .chain(agc::STUBS)
+        .chain(agc::DRIVER_STUBS)
+        .chain(savedata::STUBS)
+        .chain(posix::STUBS)
+        .chain(services::STUBS)
+        .chain(pad::STUBS)
+        .chain(file::STUBS)
+        .chain(videoout::STUBS)
+        .chain(rtld::STUBS)
 }
 
 /// Every function we implement.
@@ -422,6 +476,9 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(stubs::FUNCTIONS)
         .chain(savedata::FUNCTIONS)
         .chain(ngs2::FUNCTIONS)
+        .chain(agc::FUNCTIONS)
+        .chain(agc::DRIVER_FUNCTIONS)
+        .chain(placeholders())
         .chain(pthread::SCE_FUNCTIONS)
         .chain(thread::SCE_FUNCTIONS)
 }

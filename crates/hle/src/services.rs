@@ -57,6 +57,17 @@ pub static FUNCTIONS: &[Function] = &[
         param_get_int,
     ),
     f("libSceUserService", "sceUserServiceGetEvent", user_event),
+    f("libSceUserService", "sceUserServiceTerminate", ok),
+    f("libSceRtc", "sceRtcGetCurrentTick", rtc_current_tick),
+    f("libSceAudioOut", "sceAudioOutInit", ok),
+    f("libSceAudioOut", "sceAudioOutOpen", audio_open),
+    f("libSceAudioOut", "sceAudioOutOutput", audio_output),
+    f("libSceAudioOut", "sceAudioOutClose", audio_close),
+];
+
+/// Placeholders: they answer without doing the real work, and say so on
+/// stderr when called.
+pub static STUBS: &[Function] = &[
     f(
         "libSceSystemService",
         "sceSystemServiceGetStatus",
@@ -67,10 +78,6 @@ pub static FUNCTIONS: &[Function] = &[
         "sceSystemServiceReceiveEvent",
         no_system_event,
     ),
-    f("libSceAudioOut", "sceAudioOutInit", ok),
-    f("libSceAudioOut", "sceAudioOutOpen", audio_open),
-    f("libSceAudioOut", "sceAudioOutOutput", audio_output),
-    f("libSceAudioOut", "sceAudioOutClose", audio_close),
     f("libSceAudioOut", "sceAudioOutSetVolume", ok),
 ];
 
@@ -227,4 +234,17 @@ fn system_status(env: &mut Env) -> Result<Outcome, CallError> {
 /// reports zero); the error code is our guess.
 fn no_system_event(_: &mut Env) -> Result<Outcome, CallError> {
     ret(SYSTEM_SERVICE_ERROR_PARAMETER)
+}
+
+/// Seconds from 0001-01-01 to the Unix epoch.
+const RTC_EPOCH_OFFSET: u64 = 62_135_596_800;
+
+/// `sceRtcGetCurrentTick(&tick)`: microseconds since 0001-01-01 UTC.
+fn rtc_current_tick(env: &mut Env) -> Result<Outcome, CallError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let tick = (now.as_secs() + RTC_EPOCH_OFFSET) * 1_000_000 + now.subsec_micros() as u64;
+    env.mem.write_u64(env.arg(0), tick)?;
+    ret(0)
 }

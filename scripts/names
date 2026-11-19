@@ -1,6 +1,7 @@
 #!/bin/sh
 # Prints candidate function names, one per line, from public headers: the
-# macOS SDK and, if fetched into references/, the OpenOrbis toolchain. For
+# macOS SDK and, if fetched into references/, the OpenOrbis toolchain and
+# the sce* names in the other fetched projects' sources and docs. For
 # PS5SLOP_NAMES and scripts/nid. The list is generated locally and never
 # committed (see docs/legal.md: no NID-to-name databases in the repo).
 # Usage: scripts/names > references/names.txt
@@ -12,4 +13,9 @@ sdk=$(xcrun --show-sdk-path)/usr/include
 	if [ -d "$root/references/src/OpenOrbis/include" ]; then
 		find "$root/references/src/OpenOrbis/include" -name '*.h' -exec cat {} +
 	fi
+	for p in sharpemu prosper SharpProspero AnyPS5 OpenAGC; do
+		if [ -d "$root/references/src/$p" ]; then
+			grep -rhoE '\bsce[A-Z][A-Za-z0-9_]*' "$root/references/src/$p" || true
+		fi
+	done
 } | grep -oE '\b_*[A-Za-z][A-Za-z0-9_]*\b' | sort -u

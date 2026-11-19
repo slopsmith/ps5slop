@@ -36,10 +36,6 @@ pub static FUNCTIONS: &[Function] = &[
     f("getrusage", getrusage),
     f("_exit", crate::kernel::exit),
     f("_sigprocmask", pthread_sigmask),
-    f("__pthread_cxa_finalize", accept),
-    f("pthread_condattr_setclock", accept),
-    f("sceKernelMlock", accept),
-    f("sceKernelIsTrinityMode", accept),
     f("sceKernelConvertUtcToLocaltime", utc_to_localtime),
     f("sceKernelDebugRaiseException", raise_exception),
     f("sceKernelDebugRaiseExceptionOnReleaseMode", raise_exception),
@@ -61,6 +57,15 @@ pub static FUNCTIONS: &[Function] = &[
     f("dlclose", dlclose),
     f("dlerror", dlerror),
     f("sceKernelSendNotificationRequest", send_notification),
+];
+
+/// Placeholders: they answer without doing the real work, and say so on
+/// stderr when called.
+pub static STUBS: &[Function] = &[
+    f("__pthread_cxa_finalize", accept),
+    f("pthread_condattr_setclock", accept),
+    f("sceKernelMlock", accept),
+    f("sceKernelIsTrinityMode", accept),
 ];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {

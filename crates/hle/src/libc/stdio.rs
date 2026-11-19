@@ -49,6 +49,9 @@ struct Stream {
 pub(crate) struct Files {
     streams: Mutex<HashMap<u64, Stream>>,
     descriptors: Mutex<HashMap<i32, File>>,
+    /// Descriptors open on directories: the host path and how many entries
+    /// `getdents` has returned.
+    directories: Mutex<HashMap<i32, (std::path::PathBuf, usize)>>,
 }
 
 /// What a file descriptor from a stream refers to.
@@ -100,7 +103,22 @@ impl Files {
 
     /// Closes descriptor `fd`; false when it was not open.
     pub(crate) fn close_fd(&self, fd: i32) -> bool {
+        lock(&self.directories).remove(&fd);
         lock(&self.descriptors).remove(&fd).is_some()
+    }
+
+    /// Marks `fd` as open on directory `path`.
+    pub(crate) fn set_directory(&self, fd: i32, path: std::path::PathBuf) {
+        lock(&self.directories).insert(fd, (path, 0));
+    }
+
+    /// Runs `f` on directory descriptor `fd`'s path and read position.
+    pub(crate) fn with_directory<T>(
+        &self,
+        fd: i32,
+        f: impl FnOnce(&std::path::Path, &mut usize) -> T,
+    ) -> Option<T> {
+        lock(&self.directories).get_mut(&fd).map(|(p, pos)| f(p, pos))
     }
 }
 
@@ -126,6 +144,7 @@ impl Default for Files {
         Self {
             streams: Mutex::new(streams),
             descriptors: Mutex::default(),
+            directories: Mutex::default(),
         }
     }
 }

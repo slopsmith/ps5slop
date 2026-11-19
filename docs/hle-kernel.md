@@ -83,11 +83,15 @@ Each thread's errno lives in its thread control block, at the thread pointer plu
 | libSceAppContent | `sceAppContentTemporaryDataMount2` | `/temp0`, a `temp` folder next to the title's `/data` folder | Minecraft |
 | libSceRandom | `sceRandomGetRandomNumber` | Host random bytes, at most 64 per call (shadPS4's limit; unverified) | Minecraft |
 | many (`stubs.rs`) | Set-up and tear-down of dialogs (common, message, save data, sign-in, web browser, commerce, IME, authorized app), save data, SSL, HTTP, HTTP2, NP (web API 2, universal data system, trophies, game intent, entitlements, auth and manager requests), NetCtl callbacks, Ajm, AudioOut2, mouse, text to speech and core dumps | Placeholders: initialise and terminate calls succeed, create calls hand back fresh ids. `sceNpGetState` reports signed out and `sceNetCtlGetState` disconnected (encodings unverified) | Minecraft gets past them |
+| libkernel | `getdents`, `sceKernelGetdents` | FreeBSD's pre-12 `struct dirent` records for descriptors opened on a directory, `.` and `..` first, then names in sorted order | Balatro lists its save folder |
+| libSceRtc | `sceRtcGetCurrentTick` | Microseconds since 0001-01-01 UTC | |
 | libSceNgs2 | `sceNgs2SystemCreateWithAllocator`, `SystemDestroy`, `SystemGetInfo`, `SystemRender`, `RackCreateWithAllocator`, `RackDestroy`, `RackGetVoiceHandle`, `VoiceControl`, `VoiceRunCommands`, `VoiceGetState`, `VoiceGetStateFlags` | No sound: handles only, voices never play, rendering writes silence. The allocator callbacks are never called. PS4 prototypes as shadPS4 knows them, checked against Balatro's arguments | Balatro |
 | libSceAudioOut | `sceAudioOutSetVolume` | Accepted | Balatro |
 | libSceSysmodule | `sceSysmoduleLoadModule`, `sceSysmoduleLoadModuleInternal` | Succeed without doing anything: every library is provided by the HLE layer | Called by vic's homebrew |
 
 **Variables.** Some imports are data, not functions: libkernel's `__stack_chk_guard` is read through its GOT entry, although OpenOrbis's stub declares it a function. So the symbol type cannot be trusted; the HLE layer knows its variables by name and binds them to readable memory in a data region next to the trap region.
+
+**Placeholders say so.** Functions that answer without doing the real work live in each module's `STUBS` table. The first five calls of each print `STUB! <library>: <name>(<first four argument registers>, ...) -> <result>` on stderr, so a log shows which placeholders a title leans on.
 
 **Imports without a public name.** A few imports have no name we can find. When a title's own code shows what one does (its arguments and how it uses the result; we never look inside Sony's modules), we bind it by NID: a function named `#<NID>` in the HLE tables binds to that NID. So far: libSceLibcInternalExt `qBS714-Jr3g` (registers a `thread_local` destructor, as `__cxa_thread_atexit` does; accepted), libkernel_write_throttling `YFC3dBBipj8` (fills a write budget; fails, so Minecraft uses its default), and a save data search.
 

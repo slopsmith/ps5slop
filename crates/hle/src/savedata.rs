@@ -51,6 +51,15 @@ pub static FUNCTIONS: &[Function] = &[
     f("#X4MYzukPc3g", dir_name_search),
 ];
 
+/// Placeholders: they answer without doing the real work, and say so on
+/// stderr when called.
+pub static STUBS: &[Function] = &[
+    f("sceSaveDataCreateTransactionResource", create_transaction),
+    f("sceSaveDataDeleteTransactionResource", accept),
+    f("sceSaveDataPrepare", accept),
+    f("sceSaveDataCommit", accept),
+];
+
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
     Function {
         library: "libSceSaveData_native",
@@ -61,6 +70,18 @@ const fn f(name: &'static str, func: crate::HostFn) -> Function {
 
 fn ret(v: u64) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(v))
+}
+
+/// Transactions are not modelled: files are written straight through, so
+/// preparing and committing have nothing to do.
+fn accept(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
+/// `sceSaveDataCreateTransactionResource(...)`: a positive id.
+fn create_transaction(_: &mut Env) -> Result<Outcome, CallError> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    ret(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
 }
 
 fn valid_dir_name(name: &[u8]) -> bool {

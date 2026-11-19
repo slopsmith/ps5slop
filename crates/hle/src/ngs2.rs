@@ -8,6 +8,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::{CallError, Env, Function, Outcome};
 
 pub static FUNCTIONS: &[Function] = &[
+];
+
+/// Placeholders: they answer without doing the real work, and say so on
+/// stderr when called.
+pub static STUBS: &[Function] = &[
     f("sceNgs2SystemCreateWithAllocator", system_create),
     f("sceNgs2SystemDestroy", ok),
     f("sceNgs2SystemGetInfo", ok),

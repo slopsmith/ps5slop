@@ -2,19 +2,37 @@
 # Fetches reference material into references/ (gitignored, never committed).
 #   references/src/FEX: FEX-Emu's handwritten x86-64 ASM tests (MIT), used by
 #   ps5slop-asmtest as a hardware-checked oracle for the interpreter.
+#   references/src/sharpemu: SharpEmu (GPL-2.0-or-later), whose libSceAgc
+#   implementation we port.
+#   references/src/prosper: prosper (no license), for its console-measured
+#   AGC packet bytes, used as a local test oracle only.
+#   references/src/{SharpProspero,AnyPS5,OpenAGC}: documentation of AGC
+#   functions (signatures, behaviour notes), read as specs only; their code
+#   is not copied (GPL-3.0, GPL-2.0-only, Apache-2.0).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-fex_commit=be66e03d65217f53a7a2e5af46473cc9a79ce3f8
-dest="$root/references/src/FEX"
 
-if [ ! -d "$dest/.git" ]; then
-	mkdir -p "$dest"
-	git -C "$dest" init -q
-	git -C "$dest" remote add origin https://github.com/FEX-Emu/FEX.git
-	git -C "$dest" config core.sparseCheckout true
-	printf '%s\n' /unittests/ASM/ /LICENSE > "$dest/.git/info/sparse-checkout"
-fi
-git -C "$dest" fetch -q --depth 1 origin "$fex_commit"
-git -C "$dest" checkout -q FETCH_HEAD
-echo "FEX tests at $fex_commit in $dest/unittests/ASM"
+# fetch NAME URL COMMIT PATHS...: a sparse, shallow checkout of PATHS.
+fetch() {
+	local name=$1 url=$2 commit=$3
+	shift 3
+	local dest="$root/references/src/$name"
+	if [ ! -d "$dest/.git" ]; then
+		mkdir -p "$dest"
+		git -C "$dest" init -q
+		git -C "$dest" remote add origin "$url"
+		git -C "$dest" config core.sparseCheckout true
+		printf '%s\n' "$@" > "$dest/.git/info/sparse-checkout"
+	fi
+	git -C "$dest" fetch -q --depth 1 origin "$commit"
+	git -C "$dest" checkout -q FETCH_HEAD
+	echo "$name at $commit in $dest"
+}
+
+fetch FEX https://github.com/FEX-Emu/FEX.git be66e03d65217f53a7a2e5af46473cc9a79ce3f8 /unittests/ASM/ /LICENSE
+fetch sharpemu https://github.com/sharpemu/sharpemu.git f1af467a656d0a14b1f05a332e2757f5523a1489 /src/SharpEmu.Libs/Agc/ /LICENSE* /README* /CONTRIBUTING*
+fetch prosper https://github.com/mattias800/prosper.git e35a74a20f4241ceaaa9974fd35cec92e868baea /prosper/tests/data/console_oracle/ /prosper/docs/gpu/ /README*
+fetch SharpProspero https://github.com/SvenGDK/SharpProspero.git 5dfdb4b0b166e83dc9ae275001afb695f12c7174 /src/SharpProspero/Interop/Agc/ /docs/ /LICENSE* /README*
+fetch AnyPS5 https://github.com/boykopovar/AnyPS5.git fa0b7e3ce40785882720adf9ceaeb090a82d63ea /docs/dev/ /LICENSE* /README*
+fetch OpenAGC https://github.com/OpenAGC/OpenAGC.git 3c7e8072f0d7684e930454794fd5c02056946d73 /docs/ /LICENSE* /README*
