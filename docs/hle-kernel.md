@@ -66,6 +66,18 @@ INFO: ../subprojects/orbitengine/platforms/orbis/src/setup.cpp:14: Loading all n
 
 It then loads system modules (which succeeds) and stops at `sceCommonDialogInitialize` in libSceCommonDialog. From here it needs system services (common dialogs, user service, pads) and PS4 graphics through `libScePigletv2VSH` (the PS4's OpenGL ES), which is outside our PS5 GPU plan.
 
+## What the first PS5 homebrew needs
+
+ScreenTester5 (see [test-targets.md](test-targets.md)) loads and relocates (2,097 relocations), with 208 imports. Names found by hashing function names from public headers (199 of the 208):
+
+- **libSceLibcInternal (105):** the C library: memory and string functions, the `printf` and `scanf` families, math (`sin`, `pow`, `atan2`, ...), stdio files (`fopen`, `fread`, `fseeko`, ...), `qsort`, `bsearch`, `strtod`, `getenv`, `atexit`, `exit`.
+- **libkernel (67):** pthreads (mostly done), semaphores, direct memory (`sceKernelAllocateDirectMemory`, `sceKernelMapDirectMemory`, ...), event queues (`sceKernelCreateEqueue`, `sceKernelWaitEqueue`), signals, `stat`/`fstat`/`mkdir`, `dlopen`, `sysconf`, notifications.
+- **libSceVideoOut (9):** open, flips and flip events, vblank wait, flip rate.
+- **libScePad (8):** open, read state, light bar, vibration.
+- **libSceUserService, libSceSystemService, libSceAudioOut, libSceKeyboard, libSceImeDialog, libScePosixForWebKit (17).**
+
+It does not import from the `libc.prx` it ships.
+
 ## What a real executable needs next
 
 Libraries beyond libkernel (system services, pads, video out), the process parameters in `PT_SCE_PROCPARAM`, module start functions and init arrays, thread attributes, key destructors, and file and socket I/O.
