@@ -10,7 +10,7 @@ const TRAP: u64 = 0x1000_0000;
 /// A machine with `code` at [`CODE`], a stack, a data page and a trap page.
 /// `_asm` is the source the bytes were assembled from with llvm-mc.
 fn machine(_asm: &str, code: &[u8]) -> (Cpu, Memory) {
-    let mut mem = Memory::new(1 << 32).unwrap();
+    let mem = Memory::new(1 << 32).unwrap();
     mem.map(CODE, PAGE_SIZE, Prot::RX, "code").unwrap();
     mem.write_host(CODE, code).unwrap();
     mem.map(STACK_TOP - PAGE_SIZE, PAGE_SIZE, Prot::RW, "stack")

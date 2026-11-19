@@ -263,7 +263,7 @@ mod tests {
     use super::*;
 
     fn guest() -> (Cpu, Memory) {
-        let mut mem = Memory::new(1 << 40).unwrap();
+        let mem = Memory::new(1 << 40).unwrap();
         mem.map(0x10_0000, PAGE_SIZE, Prot::RW, "stack").unwrap();
         mem.map(0x20_0000, PAGE_SIZE, Prot::RW, "data").unwrap();
         let mut cpu = Cpu::default();
