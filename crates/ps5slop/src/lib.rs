@@ -96,7 +96,9 @@ impl Process {
         for (name, path) in modules::choose(&units[0], &found) {
             let file = std::fs::read(&path).map_err(|e| Error::Map(MapError::Host(e)))?;
             let mut unit = Unit::parse(name, file)?;
-            unit.file = path.file_name().map_or(String::new(), |f| f.to_string_lossy().into_owned());
+            unit.file = path
+                .file_name()
+                .map_or(String::new(), |f| f.to_string_lossy().into_owned());
             unit.base = next;
             next = (next + unit.size() + PAGE_SIZE).next_multiple_of(PAGE_SIZE);
             units.push(unit);

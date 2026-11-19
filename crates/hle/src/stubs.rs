@@ -1,6 +1,13 @@
 //! Library set-up and tear-down calls that only need to succeed (or hand
 //! back a fresh id) for a title to carry on: dialogs, save data, network
 //! contexts. Each is a placeholder until a title needs the real behaviour.
+//!
+//! `#qBS714-Jr3g` (libSceLibcInternalExt, name unknown) is what Minecraft's
+//! `thread_local` set-up calls with a destructor, an object and a DSO
+//! handle, as `__cxa_thread_atexit` takes; thread-exit destructors are not
+//! run yet, so it only succeeds. `#YFC3dBBipj8` (libkernel_write_throttling)
+//! fills a write budget in 64 KiB units, judging by Minecraft's use; failing
+//! makes Minecraft use its own default.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -39,6 +46,12 @@ fn write_id<const N: usize>(env: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(0))
 }
 
+fn unsupported(_: &mut Env) -> Result<Outcome, CallError> {
+    Ok(Outcome::Return(crate::dmem::sce_error(
+        crate::errno::ENOSYS,
+    )))
+}
+
 fn ok(_: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(0))
 }
@@ -65,6 +78,12 @@ pub static FUNCTIONS: &[Function] = &[
     zero("libSceImeDialog", "sceImeDialogInit"),
     zero("libSceImeDialog", "sceImeDialogTerm"),
     zero("libSceMouse", "sceMouseInit"),
+    id("libSceMouse", "sceMouseOpen"),
+    zero("libSceMouse", "sceMouseClose"),
+    zero("libSceMouse", "sceMouseRead"),
+    zero("libSceIme", "sceImeKeyboardOpen"),
+    zero("libSceIme", "sceImeKeyboardClose"),
+    zero("libSceIme", "sceImeUpdate"),
     zero("libSceAppContent", "sceAppContentInitialize"),
     zero("libSceSaveData_native", "sceSaveDataInitialize3"),
     zero("libSceSaveData_native", "sceSaveDataTerminate"),
@@ -80,7 +99,10 @@ pub static FUNCTIONS: &[Function] = &[
     id("libSceNet", "sceNetResolverCreate"),
     id("libSceNpManager", "sceNpCreateRequest"),
     id("libSceNpAuth", "sceNpAuthCreateRequest"),
-    zero("libSceSystemService", "sceSystemServiceReportAbnormalTermination"),
+    zero(
+        "libSceSystemService",
+        "sceSystemServiceReportAbnormalTermination",
+    ),
     id("libSceNpWebApi2", "sceNpWebApi2Initialize"),
     zero("libSceNpWebApi2", "sceNpWebApi2Terminate"),
     id("libSceNpWebApi2", "sceNpWebApi2CreateUserContext"),
@@ -91,16 +113,34 @@ pub static FUNCTIONS: &[Function] = &[
     zero("libSceNpWebApi2", "sceNpWebApi2PushEventDeleteFilter"),
     id("libSceNpWebApi2", "sceNpWebApi2PushEventRegisterCallback"),
     zero("libSceNpWebApi2", "sceNpWebApi2PushEventUnregisterCallback"),
-    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemInitialize"),
-    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemTerminate"),
-    out_id::<0>("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemCreateContext"),
-    out_id::<0>("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemCreateHandle"),
-    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemRegisterContext"),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemInitialize",
+    ),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemTerminate",
+    ),
+    out_id::<0>(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemCreateContext",
+    ),
+    out_id::<0>(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemCreateHandle",
+    ),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemRegisterContext",
+    ),
     zero("libSceNpGameIntent", "sceNpGameIntentInitialize"),
     zero("libSceNpGameIntent", "sceNpGameIntentTerminate"),
     out_id::<0>("libSceNpTrophy2", "sceNpTrophy2CreateContext"),
     out_id::<0>("libSceNpTrophy2", "sceNpTrophy2CreateHandle"),
-    zero("libSceNpEntitlementAccess", "sceNpEntitlementAccessInitialize"),
+    zero(
+        "libSceNpEntitlementAccess",
+        "sceNpEntitlementAccessInitialize",
+    ),
     id("libSceNpManager", "sceNpRegisterStateCallbackA"),
     zero("libSceNpManager", "sceNpCheckCallback"),
     out_id::<2>("libSceNetCtl", "sceNetCtlRegisterCallback"),
@@ -110,8 +150,14 @@ pub static FUNCTIONS: &[Function] = &[
     zero("libSceCoredump", "sceCoredumpUnregisterCoredumpHandler"),
     zero("libSceTextToSpeech2", "sceTextToSpeech2Initialize"),
     zero("libSceTextToSpeech2", "sceTextToSpeech2Terminate"),
-    zero("libSceNpAuthAuthorizedAppDialog", "sceNpAuthAuthorizedAppDialogInitialize"),
-    zero("libSceNpAuthAuthorizedAppDialog", "sceNpAuthAuthorizedAppDialogTerminate"),
+    zero(
+        "libSceNpAuthAuthorizedAppDialog",
+        "sceNpAuthAuthorizedAppDialogInitialize",
+    ),
+    zero(
+        "libSceNpAuthAuthorizedAppDialog",
+        "sceNpAuthAuthorizedAppDialogTerminate",
+    ),
     out_id::<1>("libSceAjm", "sceAjmInitialize"),
     zero("libSceAjm", "sceAjmModuleRegister"),
     out_id::<3>("libSceAjm", "sceAjmInstanceCreate"),
@@ -129,6 +175,26 @@ pub static FUNCTIONS: &[Function] = &[
         library: "libSceAppContent",
         name: "sceAppContentTemporaryDataMount2",
         func: temporary_data_mount,
+    },
+    Function {
+        library: "libSceAppContent",
+        name: "sceAppContentTemporaryDataGetAvailableSpaceKb",
+        func: temporary_data_space,
+    },
+    Function {
+        library: "libSceLibcInternalExt",
+        name: "#qBS714-Jr3g",
+        func: ok,
+    },
+    Function {
+        library: "libkernel_write_throttling",
+        name: "#YFC3dBBipj8",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceAppContent",
+        name: "sceAppContentAppParamGetInt",
+        func: app_param_int,
     },
     Function {
         library: "libSceRandom",
@@ -197,5 +263,28 @@ fn temporary_data_mount(env: &mut Env) -> Result<Outcome, CallError> {
     let mut point = [0u8; 16];
     point[..6].copy_from_slice(b"/temp0");
     env.mem.write(env.arg(1), &point)?;
+    Ok(Outcome::Return(0))
+}
+
+/// `sceAppContentTemporaryDataGetAvailableSpaceKb(mount_point, &kb)`:
+/// 1 GiB (our choice).
+fn temporary_data_space(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write_u64(env.arg(1), 1 << 20)?;
+    Ok(Outcome::Return(0))
+}
+
+/// `sceAppContentAppParamGetInt(id, &value)`: the full game (SKU flag 3),
+/// and 0 for the four user-defined parameters (encodings unverified).
+fn app_param_int(env: &mut Env) -> Result<Outcome, CallError> {
+    let value: i32 = match env.arg(0) as u32 {
+        0 => 3,
+        1..=4 => 0,
+        _ => {
+            return Ok(Outcome::Return(crate::dmem::sce_error(
+                crate::errno::EINVAL,
+            )));
+        }
+    };
+    env.mem.write(env.arg(1), &value.to_le_bytes())?;
     Ok(Outcome::Return(0))
 }

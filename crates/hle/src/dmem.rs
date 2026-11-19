@@ -164,18 +164,18 @@ fn map(env: &mut Env) -> Result<Outcome, CallError> {
         }
     };
     let mapped = if flags & MAP_FIXED != 0 {
-        env.mem.map_over(at, len, Prot::new(read, write, exec), "direct memory")
+        env.mem
+            .map_over(at, len, Prot::new(read, write, exec), "direct memory")
     } else {
-        env.mem.map(at, len, Prot::new(read, write, exec), "direct memory")
+        env.mem
+            .map(at, len, Prot::new(read, write, exec), "direct memory")
     };
-    if mapped.is_err()
-    {
+    if mapped.is_err() {
         return ret(sce_error(errno::ENOMEM));
     }
     env.mem.write_u64(addr_at, at)?;
     ret(0)
 }
-
 
 /// `sceKernelReserveVirtualRange(*addr, len, flags, align)`: address space
 /// no access is allowed to, for fixed maps to go into later.
@@ -214,7 +214,9 @@ fn virtual_query(env: &mut Env) -> Result<Outcome, CallError> {
         return ret(sce_error(errno::EACCES));
     };
     let bit = |a: memory::Access, v: u32| if r.prot.allows(a) { v } else { 0 };
-    let prot = bit(memory::Access::Read, 1) | bit(memory::Access::Write, 2) | bit(memory::Access::Execute, 4);
+    let prot = bit(memory::Access::Read, 1)
+        | bit(memory::Access::Write, 2)
+        | bit(memory::Access::Execute, 4);
     let kinds = (r.name == "mmap") as u32
         | ((r.name == "direct memory") as u32) << 1
         | (r.name.contains("stack") as u32) << 2

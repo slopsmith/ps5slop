@@ -273,6 +273,15 @@ fn sce_attr_getdetachstate(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
+/// `scePthreadAttrGetstacksize(attr, size)`.
+fn sce_attr_getstacksize(env: &mut Env) -> Result<Outcome, CallError> {
+    let Some(a) = attr(env, env.arg(0))? else {
+        return crate::pthread::sce(ret(EINVAL));
+    };
+    env.mem.write_u64(env.arg(1), a.stack)?;
+    ret(0)
+}
+
 /// `scePthreadAttrGetschedparam(attr, param)`: the default priority.
 fn sce_attr_getschedparam(env: &mut Env) -> Result<Outcome, CallError> {
     env.mem.write(env.arg(1), &PRIORITY_DEFAULT.to_le_bytes())?;
@@ -329,6 +338,7 @@ pub static SCE_FUNCTIONS: &[Function] = &[
     f("scePthreadAttrDestroy", sce_attr_destroy),
     f("scePthreadAttrSetdetachstate", sce_attr_setdetachstate),
     f("scePthreadAttrGetdetachstate", sce_attr_getdetachstate),
+    f("scePthreadAttrGetstacksize", sce_attr_getstacksize),
     f("scePthreadAttrSetstacksize", sce_attr_setstacksize),
     f("scePthreadAttrSetaffinity", sce_ok),
     f("scePthreadAttrGetaffinity", sce_attr_getaffinity),

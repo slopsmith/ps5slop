@@ -253,7 +253,11 @@ fn sce_wait(env: &mut Env) -> Result<Outcome, CallError> {
             },
             None => POLL,
         };
-        st = s.changed.wait_timeout(st, wait).unwrap_or_else(|e| e.into_inner()).0;
+        st = s
+            .changed
+            .wait_timeout(st, wait)
+            .unwrap_or_else(|e| e.into_inner())
+            .0;
     };
     st.waiters -= 1;
     drop(st);

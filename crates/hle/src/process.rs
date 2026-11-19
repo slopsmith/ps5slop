@@ -169,6 +169,7 @@ pub struct Kernel {
     pub(crate) libc: crate::libc::State,
     /// The guest's file system.
     pub(crate) vfs: crate::Vfs,
+    pub(crate) saves: crate::savedata::Saves,
     pub(crate) started: std::time::Instant,
 }
 
@@ -205,6 +206,7 @@ impl Kernel {
             jit: AtomicBool::new(false),
             libc: Default::default(),
             vfs,
+            saves: Default::default(),
 
             started: std::time::Instant::now(),
         })
@@ -399,7 +401,8 @@ impl Kernel {
                         CpuFault::Unimplemented { .. } => {
                             let mut b = [0u8; 15];
                             mem.fetch(cpu.rip, &mut b).ok().map(|()| {
-                                let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
+                                let hex: Vec<String> =
+                                    b.iter().map(|x| format!("{x:02x}")).collect();
                                 format!("bytes {}", hex.join(" "))
                             })
                         }

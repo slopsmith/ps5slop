@@ -85,7 +85,7 @@ pub static FUNCTIONS: &[Function] = &[
 ];
 
 /// `exit(status)`.
-fn exit(env: &mut Env) -> Result<Outcome, CallError> {
+pub(crate) fn exit(env: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Exit(env.arg(0) as i32))
 }
 
@@ -175,9 +175,17 @@ fn sce_mprotect(env: &mut Env) -> Result<Outcome, CallError> {
 }
 
 fn protect(env: &Env) -> Result<(), memory::MapError> {
-    let (addr, len, p) = (env.arg(0), env.arg(1).next_multiple_of(PAGE_SIZE), env.arg(2));
+    let (addr, len, p) = (
+        env.arg(0),
+        env.arg(1).next_multiple_of(PAGE_SIZE),
+        env.arg(2),
+    );
     let gpu = p & 0x30 != 0;
-    let prot = Prot::new(p & (PROT_READ | PROT_WRITE) != 0 || gpu, p & PROT_WRITE != 0 || p & 0x20 != 0, p & PROT_EXEC != 0);
+    let prot = Prot::new(
+        p & (PROT_READ | PROT_WRITE) != 0 || gpu,
+        p & PROT_WRITE != 0 || p & 0x20 != 0,
+        p & PROT_EXEC != 0,
+    );
     env.mem.protect_range(addr, len, prot)
 }
 

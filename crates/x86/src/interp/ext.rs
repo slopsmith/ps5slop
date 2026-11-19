@@ -251,7 +251,7 @@ impl Ctx<'_> {
             Map::M0F38 => {
                 matches!(
                     op,
-                    0x00..=0x0e | 0x1c..=0x1e | 0x28 | 0x29 | 0x2b | 0x37..=0x40 | 0x45..=0x47 | 0x96..=0x98 | 0x9a | 0x9c | 0x9e
+                    0x00..=0x0e | 0x1c..=0x1e | 0x28..=0x2b | 0x37..=0x40 | 0x45..=0x47 | 0x96..=0x98 | 0x9a | 0x9c | 0x9e
                         | 0xa6..=0xa8 | 0xaa | 0xac | 0xae | 0xb6..=0xb8 | 0xba | 0xbc | 0xbe
                 ) && op != 0x0f
             }
@@ -1340,7 +1340,8 @@ impl Ctx<'_> {
         let n = if wide { 4 } else { 2 };
         let zf = (0..n).all(|k| a[k] & b[k] == 0);
         let cf = (0..n).all(|k| !a[k] & b[k] == 0);
-        self.cpu.set_arith(if zf { ZF } else { 0 } | if cf { CF } else { 0 });
+        self.cpu
+            .set_arith(if zf { ZF } else { 0 } | if cf { CF } else { 0 });
         Ok(true)
     }
 }

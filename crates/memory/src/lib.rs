@@ -353,7 +353,7 @@ impl Memory {
         Ok(())
     }
 
-        /// Maps `len` bytes at `addr` like `mmap` with `MAP_FIXED`: whatever was
+    /// Maps `len` bytes at `addr` like `mmap` with `MAP_FIXED`: whatever was
     /// mapped there is replaced (regions are split as needed). Trap regions
     /// cannot be replaced.
     pub fn map_over(&self, addr: u64, len: u64, prot: Prot, name: &str) -> Result<(), MapError> {
@@ -720,7 +720,6 @@ impl Memory {
     }
 }
 
-
 /// Removes `start..end` from the region table, keeping the parts of
 /// regions that stick out on either side. Trap regions cannot be cut.
 fn carve(regions: &mut BTreeMap<u64, Region>, start: u64, end: u64) -> Result<(), MapError> {
@@ -735,7 +734,13 @@ fn carve(regions: &mut BTreeMap<u64, Region>, start: u64, end: u64) -> Result<()
     for s in hit {
         let r = regions.remove(&s).expect("listed above");
         if s < start {
-            regions.insert(s, Region { end: start, ..r.clone() });
+            regions.insert(
+                s,
+                Region {
+                    end: start,
+                    ..r.clone()
+                },
+            );
         }
         if r.end > end {
             regions.insert(end, Region { end: r.end, ..r });
@@ -753,10 +758,12 @@ mod tests {
         let mem = Memory::new(1 << 32).unwrap();
         let p = PAGE_SIZE;
         mem.map(0x10_0000, 8 * p, Prot::NONE, "reserved").unwrap();
-        mem.map_over(0x10_0000 + 2 * p, 2 * p, Prot::RW, "inside").unwrap();
+        mem.map_over(0x10_0000 + 2 * p, 2 * p, Prot::RW, "inside")
+            .unwrap();
         mem.write(0x10_0000 + 2 * p, b"hi").unwrap();
         assert!(mem.read(0x10_0000, &mut [0u8; 1]).is_err());
-        mem.protect_range(0x10_0000 + 3 * p, 4 * p, Prot::READ).unwrap();
+        mem.protect_range(0x10_0000 + 3 * p, 4 * p, Prot::READ)
+            .unwrap();
         assert!(mem.write(0x10_0000 + 3 * p, b"x").is_err());
         assert!(mem.write(0x10_0000 + 2 * p, b"x").is_ok());
         mem.unmap_range(0x10_0000 + 2 * p, p).unwrap();

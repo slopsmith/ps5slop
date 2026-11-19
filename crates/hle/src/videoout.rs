@@ -167,6 +167,7 @@ fn untile(raw: &[u8], l: Layout) -> Vec<u8> {
 pub static FUNCTIONS: &[Function] = &[
     f("sceVideoOutOpen", open),
     f("sceVideoOutClose", close),
+    f("sceVideoOutGetOutputStatus", output_status),
     f("sceVideoOutSetFlipRate", with_handle),
     f("sceVideoOutSetBufferAttribute2", set_buffer_attribute2),
     f("sceVideoOutRegisterBuffers2", register_buffers2),
@@ -351,6 +352,13 @@ fn delete_flip_event(env: &mut Env) -> Result<Outcome, CallError> {
     } else {
         ERROR_INVALID_EVENT_QUEUE
     })
+}
+
+/// `sceVideoOutGetOutputStatus(handle, status)`: first field 1, which
+/// Minecraft reads as 1080p; the rest of the layout is unknown.
+fn output_status(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write(env.arg(1), &1u32.to_le_bytes())?;
+    Ok(Outcome::Return(0))
 }
 
 #[cfg(test)]

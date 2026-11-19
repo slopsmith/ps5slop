@@ -140,6 +140,12 @@ The interpreter's x87 keeps its eight registers as `f64`. 80-bit loads round to 
 
 Reason: titles reach x87 only through `long double` code in their C++ runtime (Minecraft's start-up loads an 80-bit value). Exact 80-bit arithmetic would need a soft-float implementation of every operation, for code that is rare in games. FEX offers the same trade-off as its reduced-precision mode, and its `X87_F64` tests check it.
 
+## 2026-11-19: Imports without a public name bind by NID
+
+An HLE function named `#<NID>` binds to that NID. We use it only when no name matches and the title's own code shows what the import does.
+
+Reason: some PS5 imports have no public name to hash. The NID is what the title imports, and the behaviour comes from observing the title's code, never from Sony's modules, so this stays on the interface side of the legal line. See [hle-kernel.md](hle-kernel.md).
+
 ## 2026-11-19: pthread handles are guest addresses
 
 `pthread_mutex_t`, `pthread_cond_t`, `pthread_rwlock_t`, their attributes, thread attributes and `sem_t` hold the address of a small zeroed block of guest memory, and our objects are keyed by it.

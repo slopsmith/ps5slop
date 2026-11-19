@@ -56,6 +56,17 @@ pub static FUNCTIONS: &[Function] = &[
         "sceSystemServiceParamGetInt",
         param_get_int,
     ),
+    f("libSceUserService", "sceUserServiceGetEvent", user_event),
+    f(
+        "libSceSystemService",
+        "sceSystemServiceGetStatus",
+        system_status,
+    ),
+    f(
+        "libSceSystemService",
+        "sceSystemServiceReceiveEvent",
+        no_system_event,
+    ),
     f("libSceAudioOut", "sceAudioOutInit", ok),
     f("libSceAudioOut", "sceAudioOutOpen", audio_open),
     f("libSceAudioOut", "sceAudioOutOutput", audio_output),
@@ -194,4 +205,25 @@ fn audio_close(env: &mut Env) -> Result<Outcome, CallError> {
         Some(_) => ret(0),
         None => ret(AUDIO_ERROR_INVALID_PORT),
     }
+}
+
+/// From OpenOrbis.
+const USER_SERVICE_ERROR_NO_EVENT: u64 = 0x8096_0007;
+
+/// `sceUserServiceGetEvent(event)`: users never log in or out.
+fn user_event(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(USER_SERVICE_ERROR_NO_EVENT)
+}
+
+/// `sceSystemServiceGetStatus(status)`: no events waiting, in the
+/// foreground; only the event count and five flags are written.
+fn system_status(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write(env.arg(0), &[0u8; 9])?;
+    ret(0)
+}
+
+/// `sceSystemServiceReceiveEvent(event)`: there are none (the status
+/// reports zero); the error code is our guess.
+fn no_system_event(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(SYSTEM_SERVICE_ERROR_PARAMETER)
 }

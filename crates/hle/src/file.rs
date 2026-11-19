@@ -22,6 +22,23 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelWrite", sce_write),
     f("sceKernelClose", sce_close),
     f("sceKernelMkdir", sce_mkdir),
+    f("lseek", lseek),
+    f("sceKernelLseek", sce_lseek),
+    f("unlink", unlink),
+    f("sceKernelUnlink", sce_unlink),
+    f("rmdir", rmdir),
+    f("sceKernelRmdir", sce_rmdir),
+    f("rename", rename),
+    f("sceKernelRename", sce_rename),
+    f("fsync", fsync),
+    f("sceKernelFsync", sce_fsync),
+    f("ftruncate", ftruncate),
+    f("sceKernelFtruncate", sce_ftruncate),
+    f("truncate", truncate),
+    f("sceKernelTruncate", sce_truncate),
+    f("sceKernelChmod", sce_accept),
+    f("sceKernelUtimes", sce_accept),
+    f("sceKernelSync", sce_accept),
 ];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
@@ -186,4 +203,137 @@ fn sce_mkdir(env: &mut Env) -> Result<Outcome, CallError> {
     let path = cstr(env, env.arg(0))?;
     let r = env.kernel.vfs.mkdir(&path).map(|_| 0);
     finish(env, Style::Sce, r)
+}
+
+/// `lseek(fd, offset, whence)` with FreeBSD's `SEEK_SET`, `SEEK_CUR` and
+/// `SEEK_END` (0 to 2).
+fn seek_file(env: &Env) -> Result<u64, i32> {
+    use std::io::{Seek, SeekFrom};
+    let (fd, off) = (env.arg(0) as i32, env.arg(1) as i64);
+    let to = match env.arg(2) {
+        0 => SeekFrom::Start(u64::try_from(off).map_err(|_| errno::EINVAL)?),
+        1 => SeekFrom::Current(off),
+        2 => SeekFrom::End(off),
+        _ => return Err(errno::EINVAL),
+    };
+    match env.kernel.libc.files.with_fd(fd, |f| f.seek(to)) {
+        Some(Ok(at)) => Ok(at),
+        Some(Err(e)) => Err(io_errno(&e)),
+        None => Err(errno::EBADF),
+    }
+}
+
+fn lseek(env: &mut Env) -> Result<Outcome, CallError> {
+    finish(env, Style::Posix, seek_file(env))
+}
+
+fn sce_lseek(env: &mut Env) -> Result<Outcome, CallError> {
+    finish(env, Style::Sce, seek_file(env))
+}
+
+/// The host path of the guest path in argument `n`, if it may be written.
+fn writable_path(env: &Env, n: usize) -> Result<Result<std::path::PathBuf, i32>, CallError> {
+    let path = cstr(env, env.arg(n))?;
+    Ok(match env.kernel.vfs.resolve(&path) {
+        None => Err(errno::ENOENT),
+        Some((_, false)) => Err(errno::EROFS),
+        Some((host, true)) => Ok(host),
+    })
+}
+
+fn on_path(
+    env: &Env,
+    op: impl FnOnce(&std::path::Path) -> std::io::Result<()>,
+) -> Result<Result<u64, i32>, CallError> {
+    Ok(writable_path(env, 0)?.and_then(|p| op(&p).map(|()| 0).map_err(|e| io_errno(&e))))
+}
+
+fn unlink(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = on_path(env, |p| std::fs::remove_file(p))?;
+    finish(env, Style::Posix, r)
+}
+
+fn sce_unlink(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = on_path(env, |p| std::fs::remove_file(p))?;
+    finish(env, Style::Sce, r)
+}
+
+fn rmdir(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = on_path(env, |p| std::fs::remove_dir(p))?;
+    finish(env, Style::Posix, r)
+}
+
+fn sce_rmdir(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = on_path(env, |p| std::fs::remove_dir(p))?;
+    finish(env, Style::Sce, r)
+}
+
+fn rename_file(env: &Env) -> Result<Result<u64, i32>, CallError> {
+    Ok(match (writable_path(env, 0)?, writable_path(env, 1)?) {
+        (Ok(from), Ok(to)) => std::fs::rename(from, to)
+            .map(|()| 0)
+            .map_err(|e| io_errno(&e)),
+        (Err(e), _) | (_, Err(e)) => Err(e),
+    })
+}
+
+fn rename(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = rename_file(env)?;
+    finish(env, Style::Posix, r)
+}
+
+fn sce_rename(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = rename_file(env)?;
+    finish(env, Style::Sce, r)
+}
+
+fn on_fd(
+    env: &Env,
+    op: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<u64, i32> {
+    match env.kernel.libc.files.with_fd(env.arg(0) as i32, op) {
+        Some(Ok(())) => Ok(0),
+        Some(Err(e)) => Err(io_errno(&e)),
+        None => Err(errno::EBADF),
+    }
+}
+
+fn fsync(env: &mut Env) -> Result<Outcome, CallError> {
+    finish(env, Style::Posix, on_fd(env, |f| f.sync_all()))
+}
+
+fn sce_fsync(env: &mut Env) -> Result<Outcome, CallError> {
+    finish(env, Style::Sce, on_fd(env, |f| f.sync_all()))
+}
+
+fn ftruncate(env: &mut Env) -> Result<Outcome, CallError> {
+    let len = env.arg(1);
+    finish(env, Style::Posix, on_fd(env, |f| f.set_len(len)))
+}
+
+fn sce_ftruncate(env: &mut Env) -> Result<Outcome, CallError> {
+    let len = env.arg(1);
+    finish(env, Style::Sce, on_fd(env, |f| f.set_len(len)))
+}
+
+fn truncate_path(env: &Env) -> Result<Result<u64, i32>, CallError> {
+    let len = env.arg(1);
+    on_path(env, |p| {
+        OpenOptions::new().write(true).open(p)?.set_len(len)
+    })
+}
+
+fn truncate(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = truncate_path(env)?;
+    finish(env, Style::Posix, r)
+}
+
+fn sce_truncate(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = truncate_path(env)?;
+    finish(env, Style::Sce, r)
+}
+
+/// Permissions and file times are not kept; `sceKernelSync` has nothing to do.
+fn sce_accept(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
 }

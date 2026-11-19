@@ -71,6 +71,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("scePadReadState", read_state),
     f("scePadRead", read),
     f("scePadSetVibration", with_handle),
+    f("scePadGetControllerInformation", controller_information),
     f("scePadSetLightBar", with_handle),
     f("scePadSetVibrationMode", with_handle),
 ];
@@ -186,6 +187,21 @@ fn write_sample(env: &Env) -> Result<(), CallError> {
     env.mem
         .write(env.arg(1), &pad_data(input, timestamp, count))?;
     Ok(())
+}
+
+/// `scePadGetControllerInformation(handle, info)`, OpenOrbis's layout:
+/// a connected controller with PS4 touch pad values (unverified for PS5).
+fn controller_information(env: &mut Env) -> Result<Outcome, CallError> {
+    let mut info = [0u8; 28];
+    info[0..4].copy_from_slice(&44.86f32.to_le_bytes());
+    info[4..6].copy_from_slice(&1920u16.to_le_bytes());
+    info[6..8].copy_from_slice(&943u16.to_le_bytes());
+    info[8] = 13;
+    info[9] = 13;
+    info[11] = 1;
+    info[12..16].copy_from_slice(&1i32.to_le_bytes());
+    env.mem.write(env.arg(1), &info)?;
+    Ok(Outcome::Return(0))
 }
 
 #[cfg(test)]

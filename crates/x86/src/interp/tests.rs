@@ -415,13 +415,17 @@ fn x87_loads_adds_and_stores_extended_values() {
         "fld tbyte ptr [rdi]; fld st(0); faddp st(1), st; fstp tbyte ptr [rdi+16]",
         &[0xdb, 0x2f, 0xd9, 0xc0, 0xde, 0xc1, 0xdb, 0x7f, 0x10],
     );
-    mem.write(DATA, &0xc000_0000_0000_0000u64.to_le_bytes()).unwrap();
+    mem.write(DATA, &0xc000_0000_0000_0000u64.to_le_bytes())
+        .unwrap();
     mem.write(DATA + 8, &0x3fffu16.to_le_bytes()).unwrap();
     cpu.regs[RDI] = DATA;
     steps(&mut cpu, &mem, 4);
     let mut out = [0u8; 10];
     mem.read(DATA + 16, &mut out).unwrap();
-    assert_eq!(u64::from_le_bytes(out[..8].try_into().unwrap()), 0xc000_0000_0000_0000);
+    assert_eq!(
+        u64::from_le_bytes(out[..8].try_into().unwrap()),
+        0xc000_0000_0000_0000
+    );
     assert_eq!(u16::from_le_bytes([out[8], out[9]]), 0x4000);
     assert_eq!((cpu.ftag, (cpu.fsw >> 11) & 7), (0, 0));
 }

@@ -63,7 +63,9 @@ fn ether_ntostr(env: &mut Env) -> Result<Outcome, CallError> {
     let mut text = mac.map(|b| format!("{b:02x}")).join(":").into_bytes();
     text.push(0);
     if len < text.len() {
-        return Ok(Outcome::Return(crate::dmem::sce_error(crate::errno::EINVAL)));
+        return Ok(Outcome::Return(crate::dmem::sce_error(
+            crate::errno::EINVAL,
+        )));
     }
     env.mem.write(out, &text)?;
     Ok(Outcome::Return(0))

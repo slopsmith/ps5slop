@@ -84,6 +84,14 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelCreateEqueue", create),
     f("sceKernelDeleteEqueue", delete),
     f("sceKernelWaitEqueue", wait),
+    f("sceKernelAddUserEvent", add_user_event),
+    f("sceKernelAddUserEventEdge", add_user_event),
+    f("sceKernelDeleteUserEvent", delete_user_event),
+    f("sceKernelTriggerUserEvent", trigger_user_event),
+    f("sceKernelGetEventId", event_id),
+    f("sceKernelGetEventFilter", event_filter),
+    f("sceKernelGetEventData", event_data),
+    f("sceKernelGetEventUserData", event_user_data),
 ];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
@@ -187,6 +195,75 @@ fn write_events(env: &Env, out: u64, events: &[(u64, i16, u64, u64)]) -> Result<
         env.mem.write(out + i as u64 * EVENT_SIZE, &e)?;
     }
     Ok(())
+}
+
+/// FreeBSD's `EVFILT_USER`.
+const EVFILT_USER: i16 = -11;
+
+/// `sceKernelAddUserEvent(queue, id)`.
+fn add_user_event(env: &mut Env) -> Result<Outcome, CallError> {
+    let ok = env
+        .kernel
+        .equeues
+        .add(env.arg(0), env.arg(1) as u32 as u64, EVFILT_USER, 0);
+    Ok(Outcome::Return(if ok {
+        0
+    } else {
+        sce_error(errno::EBADF)
+    }))
+}
+
+fn delete_user_event(env: &mut Env) -> Result<Outcome, CallError> {
+    let ok = env
+        .kernel
+        .equeues
+        .remove(env.arg(0), env.arg(1) as u32 as u64, EVFILT_USER);
+    Ok(Outcome::Return(if ok {
+        0
+    } else {
+        sce_error(errno::ENOENT)
+    }))
+}
+
+/// `sceKernelTriggerUserEvent(queue, id, udata)`: `udata` replaces the
+/// registration's.
+fn trigger_user_event(env: &mut Env) -> Result<Outcome, CallError> {
+    let (id, ident, udata) = (env.arg(0), env.arg(1) as u32 as u64, env.arg(2));
+    let Some(q) = env.kernel.equeues.get(id) else {
+        return Ok(Outcome::Return(sce_error(errno::EBADF)));
+    };
+    let mut hit = false;
+    for r in lock(&q.registrations).iter_mut() {
+        if (r.ident, r.filter) == (ident, EVFILT_USER) {
+            r.udata = udata;
+            r.pending = Some(0);
+            hit = true;
+        }
+    }
+    q.triggered.notify_all();
+    Ok(Outcome::Return(if hit {
+        0
+    } else {
+        sce_error(errno::ENOENT)
+    }))
+}
+
+fn event_id(env: &mut Env) -> Result<Outcome, CallError> {
+    Ok(Outcome::Return(env.mem.read_u64(env.arg(0))?))
+}
+
+fn event_filter(env: &mut Env) -> Result<Outcome, CallError> {
+    let mut b = [0u8; 2];
+    env.mem.read(env.arg(0) + 8, &mut b)?;
+    Ok(Outcome::Return(i16::from_le_bytes(b) as i64 as u64))
+}
+
+fn event_data(env: &mut Env) -> Result<Outcome, CallError> {
+    Ok(Outcome::Return(env.mem.read_u64(env.arg(0) + 16)?))
+}
+
+fn event_user_data(env: &mut Env) -> Result<Outcome, CallError> {
+    Ok(Outcome::Return(env.mem.read_u64(env.arg(0) + 24)?))
 }
 
 impl Kernel {

@@ -79,7 +79,8 @@ fn main() -> ExitCode {
     let app0 = path.parent().map(|p| p.to_path_buf());
     let data = data.or_else(|| default_data(&path));
     let temp = data.as_ref().map(|d| d.with_file_name("temp"));
-    for d in data.iter().chain(&temp) {
+    let saves = data.as_ref().map(|d| d.with_file_name("savedata"));
+    for d in data.iter().chain(&temp).chain(&saves) {
         if let Err(e) = std::fs::create_dir_all(d) {
             eprintln!("ps5slop: cannot make {}: {e}", d.display());
         }
@@ -87,6 +88,9 @@ fn main() -> ExitCode {
     let mut vfs = hle::Vfs::new(app0, data);
     if let Some(t) = temp {
         vfs.mount("/temp0", t, true);
+    }
+    if let Some(s) = saves {
+        vfs.set_saves(s);
     }
     let status = process
         .boot(

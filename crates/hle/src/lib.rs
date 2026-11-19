@@ -26,6 +26,7 @@ mod posix;
 mod process;
 mod pthread;
 mod rtld;
+mod savedata;
 mod sem;
 mod services;
 mod stubs;
@@ -249,15 +250,15 @@ impl Hle {
         let by_nid = functions()
             .flat_map(|f| {
                 let posix = (f.library == "libkernel")
-                    .then(|| ((nid(f.name), "libScePosix".to_owned()), f));
-                std::iter::once(((nid(f.name), f.library.to_owned()), f)).chain(posix)
+                    .then(|| ((function_nid(f.name), "libScePosix".to_owned()), f));
+                std::iter::once(((function_nid(f.name), f.library.to_owned()), f)).chain(posix)
             })
             .collect();
         let variables = kernel::VARIABLES
             .iter()
             .chain(libc::VARIABLES)
             .chain(net::VARIABLES)
-            .map(|v| ((nid(v.name), v.library.to_owned()), v))
+            .map(|v| ((function_nid(v.name), v.library.to_owned()), v))
             .collect();
         let mut hle = Self {
             by_nid,
@@ -328,7 +329,7 @@ impl Hle {
         self.stub(&nid(name), library)
     }
 
-        /// What lives at trap-region address `addr`: the import whose stub it is.
+    /// What lives at trap-region address `addr`: the import whose stub it is.
     pub fn describe(&self, addr: u64) -> Option<String> {
         let index = (addr.checked_sub(TRAP_BASE)? / STUB_SIZE) as usize;
         let s = self.stubs.get(index)?;
@@ -418,8 +419,16 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(rtld::FUNCTIONS)
         .chain(net::FUNCTIONS)
         .chain(stubs::FUNCTIONS)
+        .chain(savedata::FUNCTIONS)
         .chain(pthread::SCE_FUNCTIONS)
         .chain(thread::SCE_FUNCTIONS)
+}
+
+/// The NID a function or variable binds to: `#` followed by the NID itself
+/// for imports whose name is not public, else the hash of its name.
+fn function_nid(name: &str) -> String {
+    name.strip_prefix('#')
+        .map_or_else(|| nid(name), str::to_owned)
 }
 
 /// Names for NIDs: everything we implement, and the names listed (one per
@@ -430,10 +439,10 @@ fn names() -> HashMap<String, String> {
         kernel::VARIABLES
             .iter()
             .chain(libc::VARIABLES)
-                .chain(net::VARIABLES)
-                .map(|v| v.name),
+            .chain(net::VARIABLES)
+            .map(|v| v.name),
     );
-    for name in ours {
+    for name in ours.filter(|n| !n.starts_with('#')) {
         names.insert(nid(name), name.to_owned());
     }
     if let Some(path) = std::env::var_os("PS5SLOP_NAMES") {

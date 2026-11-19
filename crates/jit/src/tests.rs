@@ -83,7 +83,8 @@ fn memory_mapped_again_with_the_same_bounds_reaches_the_vm() {
     m.sync(&mem).unwrap();
     let pc = m.load_code(0x1000, &increment());
     let mut cpu = Cpu::new(&mut m).unwrap().unwrap();
-    mem.map_over(0x60_0000, PAGE_SIZE, Prot::RW, "second").unwrap();
+    mem.map_over(0x60_0000, PAGE_SIZE, Prot::RW, "second")
+        .unwrap();
     assert!(m.sync(&mem).unwrap());
     cpu.set_reg(0, 0x60_0000).unwrap();
     assert_eq!(cpu.run(&m, pc).unwrap(), Exit::Hvc(7));

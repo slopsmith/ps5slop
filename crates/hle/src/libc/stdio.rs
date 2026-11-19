@@ -93,6 +93,11 @@ impl Files {
             .map(|f| f.write_all(data))
     }
 
+    /// Runs `f` on descriptor `fd`'s file; `None` when it is not open.
+    pub(crate) fn with_fd<T>(&self, fd: i32, f: impl FnOnce(&mut File) -> T) -> Option<T> {
+        lock(&self.descriptors).get_mut(&fd).map(f)
+    }
+
     /// Closes descriptor `fd`; false when it was not open.
     pub(crate) fn close_fd(&self, fd: i32) -> bool {
         lock(&self.descriptors).remove(&fd).is_some()

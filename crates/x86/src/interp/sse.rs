@@ -927,7 +927,10 @@ impl Ctx<'_> {
         for n in 0..16 {
             if rfbm & 2 != 0 {
                 let (lo, hi) = if bv & 2 != 0 {
-                    (self.load(a + 160 + 16 * n as u64, 8)?, self.load(a + 168 + 16 * n as u64, 8)?)
+                    (
+                        self.load(a + 160 + 16 * n as u64, 8)?,
+                        self.load(a + 168 + 16 * n as u64, 8)?,
+                    )
                 } else {
                     (0, 0)
                 };
@@ -936,7 +939,10 @@ impl Ctx<'_> {
             }
             if rfbm & 4 != 0 {
                 let (lo, hi) = if bv & 4 != 0 {
-                    (self.load(a + 576 + 16 * n as u64, 8)?, self.load(a + 584 + 16 * n as u64, 8)?)
+                    (
+                        self.load(a + 576 + 16 * n as u64, 8)?,
+                        self.load(a + 584 + 16 * n as u64, 8)?,
+                    )
                 } else {
                     (0, 0)
                 };

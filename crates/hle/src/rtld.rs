@@ -115,7 +115,16 @@ fn module_info_for_unwind(env: &mut Env) -> Result<Outcome, CallError> {
     let name = m.name.as_bytes();
     let n = name.len().min(255);
     b[8..8 + n].copy_from_slice(&name[..n]);
-    for (k, v) in [m.eh_frame_hdr, m.eh_frame.0, m.eh_frame.1, m.text.0, m.text.1].iter().enumerate() {
+    for (k, v) in [
+        m.eh_frame_hdr,
+        m.eh_frame.0,
+        m.eh_frame.1,
+        m.text.0,
+        m.text.1,
+    ]
+    .iter()
+    .enumerate()
+    {
         let at = 0x108 + 8 * k;
         b[at..at + 8].copy_from_slice(&v.to_le_bytes());
     }
@@ -127,12 +136,18 @@ fn module_info_for_unwind(env: &mut Env) -> Result<Outcome, CallError> {
 /// handle of the loaded module with that file name (modules load at start).
 fn load_start_module(env: &mut Env) -> Result<Outcome, CallError> {
     let path = crate::libc::cstr(env, env.arg(0))?;
-    let file = path.rsplit(|&c| c == b'/').next().unwrap_or(&path).to_ascii_lowercase();
+    let file = path
+        .rsplit(|&c| c == b'/')
+        .next()
+        .unwrap_or(&path)
+        .to_ascii_lowercase();
     let found = lock(&env.kernel.rtld.modules)
         .iter()
         .position(|m| m.file.to_ascii_lowercase().as_bytes() == file.as_slice());
     let Some(handle) = found else {
-        return Ok(Outcome::Return(crate::dmem::sce_error(crate::errno::ENOENT)));
+        return Ok(Outcome::Return(crate::dmem::sce_error(
+            crate::errno::ENOENT,
+        )));
     };
     if env.arg(5) != 0 {
         env.mem.write(env.arg(5), &0u32.to_le_bytes())?;

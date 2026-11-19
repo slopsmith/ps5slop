@@ -22,6 +22,27 @@ pub static FUNCTIONS: &[Function] = &[
     f("nanosleep", nanosleep),
     f("sceKernelUsleep", usleep),
     f("sceKernelGetProcessTime", process_time),
+    f("sceKernelGetProcessTimeCounter", process_time_counter),
+    f(
+        "sceKernelGetProcessTimeCounterFrequency",
+        process_time_frequency,
+    ),
+    f("sceKernelGettimeofday", gettimeofday),
+    f("sceKernelNanosleep", sce_nanosleep),
+    f("_nanosleep", nanosleep),
+    f("usleep", posix_usleep),
+    f("sched_yield", sched_yield),
+    f("getpid", getpid),
+    f("getrusage", getrusage),
+    f("_exit", crate::kernel::exit),
+    f("_sigprocmask", pthread_sigmask),
+    f("__pthread_cxa_finalize", accept),
+    f("pthread_condattr_setclock", accept),
+    f("sceKernelMlock", accept),
+    f("sceKernelIsTrinityMode", accept),
+    f("sceKernelConvertUtcToLocaltime", utc_to_localtime),
+    f("sceKernelDebugRaiseException", raise_exception),
+    f("sceKernelDebugRaiseExceptionOnReleaseMode", raise_exception),
     f("sysconf", sysconf),
     f("sysctl", sysctl),
     f("sysctlbyname", sysctl),
@@ -191,7 +212,6 @@ fn usleep(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// `sceKernelGetProcessTime()`: microseconds since the process started.
 /// The time on FreeBSD clock `id`; the non-realtime ones count from start.
 fn clock(env: &Env, id: u64) -> Option<Duration> {
     match id {
@@ -244,6 +264,7 @@ fn clock_getres(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
+/// `sceKernelGetProcessTime()`: microseconds since the process started.
 fn process_time(env: &mut Env) -> Result<Outcome, CallError> {
     ret(env.kernel.started.elapsed().as_micros() as u64)
 }
@@ -393,4 +414,79 @@ fn send_notification(env: &mut Env) -> Result<Outcome, CallError> {
         return ret(sce_error(errno::EINVAL));
     }
     ret(0)
+}
+
+/// Ticks per second of `sceKernelGetProcessTimeCounter` (our choice).
+const COUNTER_FREQUENCY: u64 = 1_000_000_000;
+
+fn process_time_counter(env: &mut Env) -> Result<Outcome, CallError> {
+    ret(env.kernel.started.elapsed().as_nanos() as u64)
+}
+
+fn process_time_frequency(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(COUNTER_FREQUENCY)
+}
+
+fn sce_nanosleep(env: &mut Env) -> Result<Outcome, CallError> {
+    let req = env.arg(0);
+    let (sec, nsec) = (env.mem.read_u64(req)?, env.mem.read_u64(req + 8)?);
+    if nsec >= 1_000_000_000 {
+        return ret(sce_error(errno::EINVAL));
+    }
+    sleep(env, Duration::new(sec, nsec as u32));
+    ret(0)
+}
+
+fn posix_usleep(env: &mut Env) -> Result<Outcome, CallError> {
+    sleep(env, Duration::from_micros(env.arg(0) as u32 as u64));
+    ret(0)
+}
+
+fn sched_yield(_: &mut Env) -> Result<Outcome, CallError> {
+    std::thread::yield_now();
+    ret(0)
+}
+
+/// The process id we report (our choice).
+const PID: u64 = 100;
+
+fn getpid(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(PID)
+}
+
+/// `getrusage(who, usage)`: all zeros (`struct rusage` is 144 bytes on amd64).
+fn getrusage(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write(env.arg(1), &[0u8; 144])?;
+    ret(0)
+}
+
+/// Calls with nothing to do. `sceKernelIsTrinityMode` (is this a PS5
+/// Pro?) answers no.
+fn accept(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
+/// `sceKernelConvertUtcToLocaltime(utc, &local, &timesec, &dst)`: the
+/// console's time zone is UTC without daylight saving.
+fn utc_to_localtime(env: &mut Env) -> Result<Outcome, CallError> {
+    let utc = env.arg(0);
+    if env.arg(1) != 0 {
+        env.mem.write_u64(env.arg(1), utc)?;
+    }
+    if env.arg(2) != 0 {
+        env.mem.write_u64(env.arg(2), utc)?;
+        env.mem.write_u64(env.arg(2) + 8, 0)?;
+    }
+    if env.arg(3) != 0 {
+        env.mem.write_u64(env.arg(3), 0)?;
+    }
+    ret(0)
+}
+
+fn raise_exception(env: &mut Env) -> Result<Outcome, CallError> {
+    let _ = env.kernel.write_output(
+        2,
+        format!("[sceKernelDebugRaiseException {:#x}]\n", env.arg(0)).as_bytes(),
+    );
+    Err(CallError::Abort("the title raised a debug exception"))
 }

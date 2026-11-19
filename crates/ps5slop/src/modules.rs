@@ -174,11 +174,16 @@ pub fn info(unit: &Unit, image: &loader::Image) -> hle::ModuleInfo {
         text,
         ..Default::default()
     };
-    let Some((_, hdr)) = unit.elf.find(loader::elf::PT_GNU_EH_FRAME) else { return info };
+    let Some((_, hdr)) = unit.elf.find(loader::elf::PT_GNU_EH_FRAME) else {
+        return info;
+    };
     info.eh_frame_hdr = unit.base + hdr.vaddr;
     let at = hdr.vaddr as usize;
-    let Some(&enc) = image.bytes.get(at + 1) else { return info };
-    let Some(frame) = read_encoded(&image.bytes, at + 4, enc).map(|v| v.wrapping_add(unit.base)) else {
+    let Some(&enc) = image.bytes.get(at + 1) else {
+        return info;
+    };
+    let Some(frame) = read_encoded(&image.bytes, at + 4, enc).map(|v| v.wrapping_add(unit.base))
+    else {
         return info;
     };
     let end = phdrs
