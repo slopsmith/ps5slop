@@ -16,6 +16,7 @@ use x86::cpu::reg::*;
 pub mod errno;
 mod kernel;
 mod process;
+mod pthread;
 mod sysmodule;
 
 pub use process::{Kernel, Thread, ThreadError, TlsTemplate};
@@ -168,20 +169,31 @@ impl Hle {
         let by_nid = kernel::FUNCTIONS
             .iter()
             .chain(sysmodule::FUNCTIONS)
+            .chain(pthread::FUNCTIONS)
             .map(|f| ((nid(f.name), f.library.to_owned()), f))
             .collect();
         let variables = kernel::VARIABLES
             .iter()
             .map(|v| ((nid(v.name), v.library.to_owned()), v))
             .collect();
-        Self {
+        let mut hle = Self {
             by_nid,
             stubs: Vec::new(),
             stub_index: HashMap::new(),
             variables,
             data: Vec::new(),
             data_end: DATA_BASE,
+        };
+        let internal: Vec<&str> = hle
+            .by_nid
+            .iter()
+            .filter(|(k, _)| k.1 == INTERNAL)
+            .map(|(_, f)| f.name)
+            .collect();
+        for name in internal {
+            hle.stub_by_name(INTERNAL, name);
         }
+        hle
     }
 
     /// The address `nid` in `library` binds to: a variable we provide, or a
@@ -211,6 +223,13 @@ impl Hle {
             }
         };
         assert!((index as u64) < MAX_STUBS, "too many imported functions");
+        TRAP_BASE + index as u64 * STUB_SIZE
+    }
+
+    /// The stub address of one of our internal functions, which exist from
+    /// the start.
+    pub fn internal(&self, name: &str) -> u64 {
+        let index = self.stub_index[&(nid(name), INTERNAL.to_owned())];
         TRAP_BASE + index as u64 * STUB_SIZE
     }
 
@@ -396,6 +415,106 @@ mod tests {
         let mut b = [0u8; 4];
         kernel.memory().read(cpu.regs[RAX], &mut b).unwrap();
         assert_eq!(i32::from_le_bytes(b), errno::ENOTTY);
+    }
+
+    /// Calls `name` with `args` as the thread whose pointer is `tcb`.
+    fn libkernel(kernel: &Kernel, name: &str, tcb: u64, args: &[u64]) -> u64 {
+        const ORDER: [usize; 6] = [RDI, RSI, RDX, RCX, R8, R9];
+        let stub = kernel.hle.stub_index[&(nid(name), "libkernel".to_owned())];
+        let mut cpu = Cpu {
+            fs_base: tcb,
+            ..Cpu::default()
+        };
+        cpu.regs[RSP] = 0x10_0000 + PAGE_SIZE - 8;
+        for (i, &a) in args.iter().enumerate() {
+            cpu.regs[ORDER[i]] = a;
+        }
+        let mem = kernel.memory();
+        mem.write_u64(cpu.regs[RSP], 0x40_1234).unwrap();
+        let thread = Thread { tcb };
+        let mut env = Env {
+            cpu: &mut cpu,
+            mem: &mem,
+            kernel,
+            thread,
+        };
+        kernel
+            .hle
+            .call(TRAP_BASE + stub as u64 * STUB_SIZE, &mut env)
+            .unwrap();
+        cpu.regs[RAX]
+    }
+
+    fn with_pthreads() -> std::sync::Arc<Kernel> {
+        let mut hle = Hle::new();
+        for name in [
+            "pthread_mutex_lock",
+            "pthread_mutex_unlock",
+            "pthread_mutex_trylock",
+            "pthread_mutex_init",
+            "pthread_mutexattr_init",
+            "pthread_mutexattr_settype",
+            "pthread_key_create",
+            "pthread_setspecific",
+            "pthread_getspecific",
+        ] {
+            hle.stub_by_name("libkernel", name);
+        }
+        guest(hle).0
+    }
+
+    #[test]
+    fn default_mutexes_check_for_errors() {
+        let k = with_pthreads();
+        let m = 0x20_0000;
+        assert_eq!(libkernel(&k, "pthread_mutex_lock", 1, &[m]), 0);
+        assert_eq!(
+            libkernel(&k, "pthread_mutex_lock", 1, &[m]) as i32,
+            errno::EDEADLK
+        );
+        assert_eq!(
+            libkernel(&k, "pthread_mutex_trylock", 2, &[m]) as i32,
+            errno::EBUSY
+        );
+        assert_eq!(
+            libkernel(&k, "pthread_mutex_unlock", 2, &[m]) as i32,
+            errno::EPERM
+        );
+        assert_eq!(libkernel(&k, "pthread_mutex_unlock", 1, &[m]), 0);
+        assert_eq!(libkernel(&k, "pthread_mutex_trylock", 2, &[m]), 0);
+    }
+
+    #[test]
+    fn recursive_mutexes_count_their_locks() {
+        let k = with_pthreads();
+        let (attr, m) = (0x20_0000, 0x20_0010);
+        libkernel(&k, "pthread_mutexattr_init", 1, &[attr]);
+        assert_eq!(libkernel(&k, "pthread_mutexattr_settype", 1, &[attr, 2]), 0);
+        libkernel(&k, "pthread_mutex_init", 1, &[m, attr]);
+        assert_eq!(libkernel(&k, "pthread_mutex_lock", 1, &[m]), 0);
+        assert_eq!(libkernel(&k, "pthread_mutex_lock", 1, &[m]), 0);
+        assert_eq!(libkernel(&k, "pthread_mutex_unlock", 1, &[m]), 0);
+        assert_eq!(
+            libkernel(&k, "pthread_mutex_trylock", 2, &[m]) as i32,
+            errno::EBUSY
+        );
+        assert_eq!(libkernel(&k, "pthread_mutex_unlock", 1, &[m]), 0);
+        assert_eq!(libkernel(&k, "pthread_mutex_trylock", 2, &[m]), 0);
+    }
+
+    #[test]
+    fn thread_specific_values_are_per_thread() {
+        let k = with_pthreads();
+        let key_at = 0x20_0000;
+        libkernel(&k, "pthread_key_create", 1, &[key_at, 0]);
+        let mut b = [0u8; 4];
+        k.memory().read(key_at, &mut b).unwrap();
+        let key = u32::from_le_bytes(b) as u64;
+        libkernel(&k, "pthread_setspecific", 1, &[key, 0xaaaa]);
+        libkernel(&k, "pthread_setspecific", 2, &[key, 0xbbbb]);
+        assert_eq!(libkernel(&k, "pthread_getspecific", 1, &[key]), 0xaaaa);
+        assert_eq!(libkernel(&k, "pthread_getspecific", 2, &[key]), 0xbbbb);
+        assert_eq!(libkernel(&k, "pthread_getspecific", 3, &[key]), 0);
     }
 
     #[test]

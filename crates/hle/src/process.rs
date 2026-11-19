@@ -117,6 +117,7 @@ pub struct Kernel {
     exited: AtomicBool,
     result: Mutex<Option<Result<i32, ThreadError>>>,
     exit_signal: Condvar,
+    pub(crate) objects: crate::pthread::Objects,
 }
 
 impl Kernel {
@@ -136,6 +137,7 @@ impl Kernel {
             exited: AtomicBool::new(false),
             result: Mutex::new(None),
             exit_signal: Condvar::new(),
+            objects: Default::default(),
         })
     }
 
