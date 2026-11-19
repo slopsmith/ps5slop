@@ -25,10 +25,36 @@ The same shape as 86slopper's `radeon` 3D engine (its `docs/gpu.md`): interpret 
 
 ## Milestones that need almost no GPU
 
-1. **Video out without AGC.** `libSceVideoOut`: register buffers, flip, vblank events. A program that fills its buffer on the CPU and flips shows pixels with no GPU work at all. This is also how the open-source PS5 SDL2 port draws.
+1. **Video out without AGC** (done for ScreenTester5, see below). `libSceVideoOut`: register buffers, flip, vblank events. A program that fills its buffer on the CPU and flips shows pixels with no GPU work at all. This is also how the open-source PS5 SDL2 port draws.
 2. **Accept and drop command buffers.** `sceAgcDriverSubmitDcb` parses the PM4 stream, logs it and signals completion. Many programs get far with nothing drawn.
 3. **Clears.** The first real Metal work: a clear or a fill to a render target that is then flipped.
 4. **2D:** textured quads, blending. Then **3D**.
+
+## Video out (implemented)
+
+`libSceVideoOut` as ScreenTester5 uses it (its `src/display_native.cpp`, GPL-3.0, read for the call sequence; see [references.md](references.md)). None of it is verified on a PS5:
+
+- `sceVideoOutOpen(0xff, 0, 0, NULL)` opens the one port; we return handle 1.
+- `sceVideoOutSetBufferAttribute2(attr, format, tiling, width, height, option, dcc_control, dcc_clear)` fills an 80-byte block the guest treats as opaque, so ours holds our own layout. ScreenTester5 passes format `0x8000000022000000` (RGBA8, sRGB) and tiling mode 0.
+- `sceVideoOutRegisterBuffers2(handle, set, first, buffers, count, attr, category, option)`, where `buffers` is an array of `{ data, metadata, reserved[2] }` (32 bytes each).
+- `sceVideoOutSubmitFlip(handle, index, mode, arg)` puts the buffer on screen at once (index -1 blanks it) and fires flip events (`EVFILT_DISPLAY`, ident 0, `data` = `arg`). `sceVideoOutWaitVblank` sleeps to the next 1/60 s boundary.
+
+**Frame layout for tiling mode 0**, as ScreenTester5 writes it: 32-bit RGBA pixels in 128x128-pixel tiles of 64 KiB, tiles row-major (`ceil(width / 128)` per row). Inside a tile, a pixel's byte offset is the XOR of these bits:
+
+| Coordinate bit | Offset bits |
+| --- | --- |
+| x0, x1 | 2, 3 |
+| x2, x3, x4 | 7, 8, 9 |
+| x4 | 13 |
+| x5 | 11 |
+| x6 | 10, 15 |
+| y0, y1, y2 | 4, 5, 6 |
+| y3 | 8, 12 |
+| y4, y5, y6 | 9, 10, 11 |
+
+This is probably one of RDNA2's 64 KiB swizzle modes; which one is unconfirmed. We treat any other tiling mode as linear (unverified). `Kernel::frame` reads the front buffer from guest memory and untiles it for the host.
+
+Status, 2026-11-19: ScreenTester5 shows its menu, and a pad press changes the pattern (checked with a frame dump).
 
 ## Open questions
 

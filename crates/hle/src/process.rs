@@ -130,6 +130,7 @@ pub struct Kernel {
     pub(crate) equeues: crate::equeue::Queues,
     pub(crate) pad: crate::pad::Pad,
     pub(crate) audio: crate::services::Audio,
+    pub(crate) videoout: crate::videoout::VideoOut,
     pub(crate) libc: crate::libc::State,
     /// The title folder, which the guest sees as `/app0`.
     pub(crate) app0: Option<PathBuf>,
@@ -163,6 +164,7 @@ impl Kernel {
             equeues: Default::default(),
             pad: Default::default(),
             audio: Default::default(),
+            videoout: Default::default(),
             libc: Default::default(),
             app0,
         })

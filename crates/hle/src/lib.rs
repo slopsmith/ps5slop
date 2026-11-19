@@ -27,9 +27,11 @@ mod sem;
 mod services;
 mod sysmodule;
 mod thread;
+mod videoout;
 
 pub use pad::PadInput;
 pub use process::{Kernel, Thread, ThreadError, TlsTemplate};
+pub use videoout::Frame;
 
 /// Where the trap region starts. Our choice, below 2^40 and away from where
 /// PS4 titles put things (see `docs/memory.md`).
@@ -247,6 +249,7 @@ impl Hle {
             .chain(libc::functions())
             .chain(services::FUNCTIONS)
             .chain(pad::FUNCTIONS)
+            .chain(videoout::FUNCTIONS)
             .map(|f| ((nid(f.name), f.library.to_owned()), f))
             .collect();
         let variables = kernel::VARIABLES

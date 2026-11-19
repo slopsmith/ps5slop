@@ -57,6 +57,7 @@ Each thread's errno lives in its thread control block, at the thread pointer plu
 | libSceSystemService | `sceSystemServiceHideSplashScreen`, `sceSystemServiceLaunchWebBrowser` | Succeed; the browser call prints the address on stderr | Reached by ScreenTester5 |
 | libSceAudioOut | `sceAudioOutInit`, `Open`, `Output`, `Close` | Samples are dropped. `Output` waits until the previous buffer would have finished playing, so audio threads keep a console's pace | |
 | libScePad | `scePadInit`, `Open`, `GetHandle`, `Close`, `ReadState`, `SetVibration`, `SetVibrationMode`, `SetLightBar` | One controller for user 1. `ReadState` reports what the host set with `Kernel::set_pad_input`, in OpenOrbis's `OrbisPadData` layout (the PS4's; unverified for the PS5). Vibration and the light bar are ignored | Layout unit-tested |
+| libSceVideoOut | `sceVideoOutOpen`, `Close`, `SetFlipRate`, `SetBufferAttribute2`, `RegisterBuffers2`, `SubmitFlip`, `WaitVblank`, `AddFlipEvent`, `DeleteFlipEvent` | One port; flips take effect at once; a 60 Hz vblank clock; flip rate ignored. Details in [gpu.md](gpu.md) | ScreenTester5 draws its menu |
 | libSceSysmodule | `sceSysmoduleLoadModule`, `sceSysmoduleLoadModuleInternal` | Succeed without doing anything: every library is provided by the HLE layer | Called by vic's homebrew |
 
 **Variables.** Some imports are data, not functions: libkernel's `__stack_chk_guard` is read through its GOT entry, although OpenOrbis's stub declares it a function. So the symbol type cannot be trusted; the HLE layer knows its variables by name and binds them to readable memory in a data region next to the trap region.
@@ -98,7 +99,7 @@ ScreenTester5 (see [test-targets.md](test-targets.md)) loads and relocates (2,09
 
 It does not import from the `libc.prx` it ships.
 
-Status on 2026-11-19: the C library is in place (one libc import, NID `Fm-dmyywH9Q`, still has no name and no host function). ScreenTester5 runs through `_init_env` and its start-up code. With the libkernel functions above it gets through its set-up, including starting threads, and through the system services above, and stops at `sceVideoOutOpen`. One libkernel import (NID `FJmglmTMdr4`) still has no name.
+Status on 2026-11-19: the C library is in place (one libc import, NID `Fm-dmyywH9Q`, still has no name and no host function). ScreenTester5 runs through `_init_env` and its start-up code. With the libkernel functions above it gets through its set-up, including starting threads, through the system services and VideoOut, and draws its menu (see [gpu.md](gpu.md)). It runs slowly: a full 1080p redraw takes about 2 s in the interpreter. One libkernel import (NID `FJmglmTMdr4`) still has no name.
 
 ## What a real executable needs next
 
