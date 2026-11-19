@@ -1432,6 +1432,18 @@ impl Asm {
         );
     }
 
+    /// TBL with one table register: each byte of `rd` is the byte of `rn`
+    /// that the matching byte of `rm` indexes, or 0 when the index is 16 or more.
+    pub fn tbl(&mut self, rd: V, rn: V, rm: V) {
+        self.emit(0x4e00_0000 | (rm.0 as u32) << 16 | (rn.0 as u32) << 5 | rd.0 as u32)
+    }
+
+    /// MOVI: every byte of `rd` = `imm`.
+    pub fn movi_b(&mut self, rd: V, imm: u8) {
+        let imm = imm as u32;
+        self.emit(0x4f00_e400 | (imm >> 5) << 16 | (imm & 31) << 5 | rd.0 as u32)
+    }
+
     /// ZIP1 (`second` false) or ZIP2.
     pub fn zip(&mut self, q: bool, size: u32, second: bool, rd: V, rn: V, rm: V) {
         self.emit(

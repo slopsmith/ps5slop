@@ -2,7 +2,7 @@
 
 x86-64 user code translated to AArch64 and run inside a Hypervisor.framework VM, as decided on 2026-11-19 (see [decisions.md](decisions.md) and [cpu.md](cpu.md#hypervisorframework)). The design follows 86slopper's (see its `docs/architecture.md`, "VM runtime layout"), simplified: there is no guest kernel, so no shadow paging of x86 page tables. Our own page tables mirror the regions in `crates/memory`.
 
-Status (2026-11-19): stages A and B work and are wired into `ps5slop run --jit`. ScreenTester5 and our test programs run correctly under the JIT, with 0 differences from the interpreter in verify mode over 40 s of ScreenTester5. It is not faster yet: ScreenTester5's pixel loop uses BMI and SSE instructions the translator leaves to the interpreter, so it leaves the VM every iteration. In its first 2 s the interpreter alone runs 40 M guest instructions, the JIT 23 M (20 M of them translated).
+Status (2026-11-19): stages A and B work, C is under way, and it is wired into `ps5slop run --jit`. ScreenTester5 and DriftCheck run correctly under the JIT, with 0 differences from the interpreter in verify mode over 40 s of each. ScreenTester5 draws its menu 0.2 s after start with the JIT and 2.5 s after start with the interpreter (release builds, frame dumps every 0.1 s). In its first 3 s it runs 47 M translated instructions and 58 K interpreted ones.
 
 ## Where the time goes now
 
@@ -36,7 +36,18 @@ Status (2026-11-19): stages A and B work and are wired into `ps5slop run --jit`.
 - A block ends with a jump to the dispatcher, which looks the next RIP up in a direct-mapped table (2^16 entries, Fibonacci hash) and exits with `hvc #1` on a miss. Instructions not translated yet end the block with `hvc #2`; the host runs them in the interpreter (up to 64, until one could start a block) and re-enters. A call into the HLE trap region is a lookup miss the host recognises.
 - A fault in translated code maps the host PC back to the guest instruction, which the interpreter runs again. Translations do their memory accesses before writing registers, so a faulting instruction has not changed guest state.
 
-Translated so far: `mov` (all forms), `movzx`, `movsx`, `movsxd`, `lea`, `add`/`or`/`and`/`sub`/`xor`/`cmp`/`test` (all sizes), `inc`/`dec`, `shl`/`shr`/`sar` by a constant, two-operand `imul`, `cmovcc`, `setcc`, `push`/`pop`, `jmp`, `jcc`, `call`, `ret`, `nop`. Not yet: `adc`/`sbb`, parity conditions, string instructions, `lock` and anything with VEX, SSE or x87.
+Translated so far:
+
+- General: `mov` (all forms), `movzx`, `movsx`, `movsxd`, `lea`, `add`/`or`/`and`/`sub`/`xor`/`cmp`/`test` (all sizes), `inc`/`dec`, `shl`/`shr`/`sar` by a constant, two-operand `imul`, `cmovcc`, `setcc`, `push`/`pop`, `jmp`, `jcc`, `call`, `ret`, `nop`; BMI `andn`, `bextr`, `shlx`/`shrx`/`sarx`, `rorx`.
+- Vector (`translate/vector.rs`), as legacy SSE, VEX.128 and VEX.256: `movdqa`/`movdqu`/`movaps`/`movups`/`movapd`/`movupd`, `movd`/`movq`, the logic operations (integer and FP forms), packed add, subtract (also saturating), compare, min/max, average, `pmullw`, `pmulhw`/`pmulhuw`, `pmuludq`, `pmaddwd`, `psadbw`, unpacks and packs, shifts by a constant (including `pslldq`/`psrldq`), `pshufd`, `pshufb`, `pmovmskb` (128-bit), `vzeroupper`/`vzeroall`. YMM registers live in the vCPU's context block in the runtime region (`x25` points at it) and are loaded per instruction; a 256-bit operation is two 128-bit halves; a VEX.128 write clears the upper half. Most NEON choices and the "three same" opcode table come from 86slopper's `translate/sse.rs`. Alignment faults of `movdqa`/`movaps` are not raised.
+
+Not yet: `adc`/`sbb`, parity conditions, string instructions, `lock`, `bt*`, three-operand `imul`, `not`/`neg`, cross-lane AVX2 (`vperm*`, `vpbroadcast*`, `vinserti128`...), floating-point arithmetic, and x87.
+
+Block ends with a known target are chained: the branch to the dispatcher is patched to go straight to the target block once it is translated (not in verify mode).
+
+## Statistics mode
+
+`PS5SLOP_JIT_STATS=1` prints, when the process ends, the translated and interpreted instruction counts, exits by kind, and the interpreted instructions by opcode and by address (with their bytes, for `llvm-mc --disassemble`). This is how the next instructions to translate are chosen.
 
 ## Verify mode
 

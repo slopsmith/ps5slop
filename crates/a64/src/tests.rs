@@ -6,6 +6,9 @@ type Case = (&'static str, fn(&mut Asm));
 
 const CASES: &[Case] = &[
     ("add x0, x1, x2", |a| a.add(X, r(0), r(1), r(2))),
+    ("tbl v0.16b, {v1.16b}, v2.16b", |a| a.tbl(V(0), V(1), V(2))),
+    ("movi v3.16b, #143", |a| a.movi_b(V(3), 0x8f)),
+    ("movi v4.16b, #0", |a| a.movi_b(V(4), 0)),
     ("ldr d16, [x28, #64]", |a| a.ldr_d(V(16), r(28), 64)),
     ("str d17, [x9, #8]", |a| a.str_d(V(17), r(9), 8)),
     ("fmov d16, x9", |a| a.fmov_dx(V(16), r(9))),

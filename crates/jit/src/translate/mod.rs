@@ -5,6 +5,9 @@ use a64::{Asm, Cond, Logic, Reg, Shift, Size, Width, r};
 use memory::Memory;
 use x86::decode::{Insn, Map, Mem, Rep, Seg, decode};
 
+mod vector;
+pub use vector::CTX;
+
 /// Exits translated code takes, as `hvc` numbers; x16 holds the guest RIP.
 pub const HVC_MISS: u16 = 1;
 pub const HVC_INTERP: u16 = 2;
@@ -30,11 +33,13 @@ const OLD_AF: Reg = Reg(18);
 const MAX_INSNS: usize = 64;
 const C_BIT: u64 = 1 << 29;
 
-/// A translated block: code, and for each guest instruction the word
-/// offset where its code starts.
+/// A translated block: code, for each guest instruction the word offset
+/// where its code starts, and its direct exits as (word offset of the
+/// branch to the dispatcher, target RIP), which can be chained.
 pub struct Block {
     pub code: Vec<u32>,
     pub insns: Vec<(u32, u64)>,
+    pub chains: Vec<(u32, u64)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -89,6 +94,9 @@ fn cond(cc: u8) -> Option<Cond> {
 /// Whether an instruction ends the block, and its flag use; `None` if it
 /// cannot be translated.
 fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
+    if let Some(c) = vector::classify(i) {
+        return Some(c);
+    }
     let none = FlagUse {
         reads: false,
         writes: false,
@@ -189,6 +197,7 @@ pub fn block(mem: &Memory, rip: u64, place: usize, dispatch: usize) -> Option<Bl
         place,
         dispatch,
         insns: Vec::new(),
+        chains: Vec::new(),
     };
     t.a.add_imm(Size::X, ICOUNT, ICOUNT, insns.len() as u32);
     let mut ended = false;
@@ -209,6 +218,7 @@ pub fn block(mem: &Memory, rip: u64, place: usize, dispatch: usize) -> Option<Bl
     Some(Block {
         code: t.a.finish(),
         insns: t.insns,
+        chains: t.chains,
     })
 }
 
@@ -217,6 +227,7 @@ struct Translator {
     place: usize,
     dispatch: usize,
     insns: Vec<(u32, u64)>,
+    chains: Vec<(u32, u64)>,
 }
 
 fn sz(size: u8) -> Size {
@@ -244,6 +255,9 @@ impl Translator {
     /// Continues at guest `rip`: through the dispatcher, or with an `hvc`.
     fn exit_to(&mut self, rip: u64, hvc: Option<u16>) {
         self.a.mov_imm(Size::X, RIP, rip);
+        if hvc.is_none() {
+            self.chains.push((self.a.pos() as u32, rip));
+        }
         self.jump(hvc);
     }
 
@@ -396,6 +410,10 @@ impl Translator {
     /// Translates one instruction; true if it ended the block.
     fn insn(&mut self, i: &Insn, rip: u64, flags: bool) -> bool {
         let next = rip + i.len as u64;
+        if vector::classify(i).is_some() {
+            self.vector(i, next, flags);
+            return false;
+        }
         let rex = i.rex != 0;
         match (i.map, i.op) {
             (Map::Primary, 0x00..=0x3f) => {

@@ -18,6 +18,9 @@ pub const TTBR1_L2: usize = 0x1_1000;
 pub const STACKS: usize = 0x2_0000;
 pub const STACK_SIZE: usize = 0x1000;
 pub const MAX_VCPUS: usize = 64;
+/// One context block per vCPU: YMM0-15.
+pub const CONTEXTS: usize = 0x6_0000;
+pub const CONTEXT_SIZE: usize = 0x200;
 /// Two pools the TTBR0 tables are built in, alternately, so one can be
 /// rebuilt while vCPUs still walk the other.
 pub const TABLES: [(usize, usize); 2] = [(0x10_0000, 0x90_0000), (0x90_0000, 0x110_0000)];
@@ -36,5 +39,6 @@ pub const fn ipa(offset: usize) -> u64 {
     RUNTIME_IPA + offset as u64
 }
 
-const _: () = assert!(STACKS + MAX_VCPUS * STACK_SIZE <= TABLES[0].0);
+const _: () = assert!(STACKS + MAX_VCPUS * STACK_SIZE <= CONTEXTS);
+const _: () = assert!(CONTEXTS + MAX_VCPUS * CONTEXT_SIZE <= TABLES[0].0);
 const _: () = assert!(TABLES[1].1 <= LOOKUP && LOOKUP + LOOKUP_ENTRIES * 16 <= CODE_CACHE);

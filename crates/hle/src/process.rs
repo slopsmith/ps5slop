@@ -206,6 +206,7 @@ impl Kernel {
         self.exit_signal.notify_all();
         if self.jit.load(Ordering::Relaxed) {
             jit::kick_all();
+            jit::report(&self.memory());
         }
     }
 

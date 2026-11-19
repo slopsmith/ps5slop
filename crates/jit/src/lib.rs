@@ -15,7 +15,7 @@ use a64::{Asm, Reg, Shift, Size, Width};
 use hvf::{GuestMemory, Vcpu, VcpuKicker, Vm, reg, sysreg};
 use memory::Memory;
 
-pub use engine::{instructions, interpret, kick_all, run};
+pub use engine::{instructions, interpret, kick_all, report, run};
 pub use hvf::Error;
 
 /// `hvc` numbers the runtime's exception vectors use.
@@ -79,6 +79,8 @@ pub struct Machine {
     /// (word offset, RIP).
     by_place: BTreeMap<usize, Vec<(u32, u64)>>,
     cache_full: bool,
+    /// Branches waiting for the block at a RIP to exist: runtime offsets.
+    chain_wanted: HashMap<u64, Vec<usize>>,
 }
 
 // SAFETY: the VM is process-wide and HVF's VM calls may come from any thread;
@@ -159,6 +161,7 @@ impl Machine {
             verify: std::env::var_os("PS5SLOP_JIT_VERIFY").is_some(),
             by_place: BTreeMap::new(),
             cache_full: false,
+            chain_wanted: HashMap::new(),
         };
         for pool in 0..2 {
             m.roots[pool] = tables::Tables::new(m.runtime.as_mut_slice(), pool).root;
@@ -266,8 +269,31 @@ impl Machine {
         self.by_place.insert(place, block.insns);
         if !self.verify {
             self.enter(rip, place);
+            for (word, target) in block.chains {
+                let site = place + word as usize * 4;
+                match self.blocks.get(&target) {
+                    Some(b) => {
+                        let to = b.place;
+                        self.patch(site, to);
+                    }
+                    None => self.chain_wanted.entry(target).or_default().push(site),
+                }
+            }
+            for site in self.chain_wanted.remove(&rip).unwrap_or_default() {
+                self.patch(site, place);
+            }
         }
         true
+    }
+
+    /// Turns the branch to the dispatcher at runtime offset `site` into a
+    /// branch straight to the block at `to`.
+    fn patch(&mut self, site: usize, to: usize) {
+        let delta = (to as i64 - site as i64) / 4;
+        self.runtime
+            .write_words(site, &[0x1400_0000 | (delta as u32 & 0x03ff_ffff)]);
+        // SAFETY: one word inside the runtime region.
+        unsafe { sys_icache_invalidate(self.runtime.as_ptr().add(site).cast(), 4) };
     }
 
     /// Points `rip`'s lookup slot at `place`. The tag is cleared first and
@@ -375,6 +401,8 @@ fn write_runtime(rt: &mut [u8]) {
 pub struct Cpu {
     vcpu: Vcpu,
     slot: usize,
+    /// The host address of this vCPU's context block.
+    context: *mut u8,
 }
 
 impl Cpu {
@@ -398,8 +426,17 @@ impl Cpu {
             reg::X0 + translate::LOOKUP.0 as u32,
             layout::va(layout::LOOKUP),
         )?;
+        let context = layout::CONTEXTS + slot * layout::CONTEXT_SIZE;
+        vcpu.set_reg(reg::X0 + translate::CTX.0 as u32, layout::va(context))?;
         m.vcpus[slot] = Some(vcpu.kicker());
-        Ok(Some(Cpu { vcpu, slot }))
+        // SAFETY: the context block is inside the runtime region, which lives as
+        // long as the process.
+        let context = unsafe { m.runtime.as_ptr().add(context) };
+        Ok(Some(Cpu {
+            vcpu,
+            slot,
+            context,
+        }))
     }
 
     pub fn reg(&self, n: u8) -> Result<u64, Error> {

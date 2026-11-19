@@ -2,8 +2,9 @@
 //! falls back to the interpreter for what is not translated.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use memory::{FaultKind, Memory};
 use x86::Cpu as X86;
@@ -40,6 +41,101 @@ pub fn instructions() -> (u64, u64) {
         INTERPRETED.load(Ordering::Relaxed),
         TRANSLATED.load(Ordering::Relaxed),
     )
+}
+
+/// Exits counted by statistics mode.
+#[derive(Clone, Copy)]
+enum Count {
+    Miss,
+    Interp,
+    HostCall,
+    Fault,
+    Cancel,
+}
+
+/// Statistics mode (`PS5SLOP_JIT_STATS`): what the interpreter runs, by
+/// opcode and address, and why the VM is left.
+#[derive(Default)]
+struct Stats {
+    opcodes: HashMap<(u8, u8, u8), u64>,
+    rips: HashMap<u64, u64>,
+    exits: [u64; 5],
+}
+
+fn stats() -> Option<&'static Mutex<Stats>> {
+    static STATS: OnceLock<Option<Mutex<Stats>>> = OnceLock::new();
+    STATS
+        .get_or_init(|| std::env::var_os("PS5SLOP_JIT_STATS").map(|_| Mutex::default()))
+        .as_ref()
+}
+
+fn count_exit(c: Count) {
+    if let Some(s) = stats() {
+        s.lock().unwrap_or_else(|e| e.into_inner()).exits[c as usize] += 1;
+    }
+}
+
+/// In statistics mode, counts the instruction the interpreter is about to run.
+fn count_insn(x: &X86, mem: &Memory) {
+    let Some(s) = stats() else { return };
+    let insn = x86::decode::decode(|i| {
+        let mut b = [0u8];
+        mem.fetch(x.rip.wrapping_add(i as u64), &mut b)
+            .map(|_| b[0])
+    });
+    let mut s = s.lock().unwrap_or_else(|e| e.into_inner());
+    if let Ok(i) = insn {
+        let ext = i.modrm.map_or(0xff, |_| i.ext());
+        *s.opcodes.entry((i.map as u8, i.op, ext)).or_default() += 1;
+    }
+    *s.rips.entry(x.rip).or_default() += 1;
+}
+
+/// Prints what statistics mode gathered, if it is on.
+pub fn report(mem: &Memory) {
+    let Some(s) = stats() else { return };
+    let s = s.lock().unwrap_or_else(|e| e.into_inner());
+    let (interp, jit) = instructions();
+    eprintln!("ps5slop: JIT statistics: {jit} instructions translated, {interp} interpreted");
+    let names = [
+        "lookup misses",
+        "untranslated",
+        "host calls",
+        "faults",
+        "cancels",
+    ];
+    let exits: Vec<String> = names
+        .iter()
+        .zip(s.exits)
+        .map(|(n, c)| format!("{n} {c}"))
+        .collect();
+    eprintln!("  exits: {}", exits.join(", "));
+    let mut ops: Vec<_> = s.opcodes.iter().collect();
+    ops.sort_by(|a, b| b.1.cmp(a.1));
+    eprintln!("  interpreted opcodes (map, opcode, /ext):");
+    for ((map, op, ext), n) in ops.iter().take(30) {
+        let ext = if *ext == 0xff {
+            String::new()
+        } else {
+            format!(" /{ext}")
+        };
+        eprintln!("    {n:>12}  map {map} {op:02x}{ext}");
+    }
+    let mut rips: Vec<_> = s.rips.iter().collect();
+    rips.sort_by(|a, b| b.1.cmp(a.1));
+    eprintln!("  interpreted addresses:");
+    for (rip, n) in rips.iter().take(20) {
+        let mut code = [0u8; 15];
+        let bytes = match mem.fetch(**rip, &mut code) {
+            Ok(()) => code
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join(" "),
+            Err(_) => String::new(),
+        };
+        eprintln!("    {n:>12}  {rip:#x}  {bytes}");
+    }
 }
 
 fn count_interpreted(n: u64) {
@@ -119,6 +215,15 @@ impl Engine {
         }
         self.cpu.set_reg(RIP.0, x.rip)?;
         self.cpu.set_reg(FS_BASE.0, x.fs_base)?;
+        let ymm: Vec<u8> = x
+            .xmm
+            .iter()
+            .flatten()
+            .flat_map(|q| q.to_le_bytes())
+            .collect();
+        // SAFETY: the vCPU's context block holds exactly the 16 YMM registers,
+        // and only this thread's vCPU uses it.
+        unsafe { std::ptr::copy_nonoverlapping(ymm.as_ptr(), self.cpu.context, ymm.len()) };
         let f = x.rflags;
         let pf_result = if f & flags::PF != 0 { 0 } else { 1 };
         let af = if f & flags::AF != 0 { 0x10 } else { 0 };
@@ -141,6 +246,12 @@ impl Engine {
         let cpsr = self.cpsr()?;
         for i in 0..16 {
             x.regs[i] = self.cpu.reg(i as u8)?;
+        }
+        let mut ymm = [0u8; crate::layout::CONTEXT_SIZE];
+        // SAFETY: as in `load`.
+        unsafe { std::ptr::copy_nonoverlapping(self.cpu.context, ymm.as_mut_ptr(), ymm.len()) };
+        for (k, q) in ymm.as_chunks::<8>().0.iter().enumerate() {
+            x.xmm[k / 4][k % 4] = u64::from_le_bytes(*q);
         }
         let pf_result = self.cpu.reg(PF_RESULT.0)?;
         let af_aux = self.cpu.reg(AF_AUX.0)?;
@@ -213,7 +324,9 @@ impl Engine {
             let rip = match exit {
                 Exit::Hvc(HVC_MISS) => {
                     let rip = self.cpu.reg(RIP.0)?;
+                    count_exit(Count::Miss);
                     if is_trap(mem, rip) {
+                        count_exit(Count::HostCall);
                         self.store(x)?;
                         x.rip = rip;
                         return Ok(x86::Exit::Trap(rip));
@@ -236,14 +349,19 @@ impl Engine {
                     }
                     rip
                 }
-                Exit::Hvc(HVC_INTERP) => self.cpu.reg(RIP.0)?,
+                Exit::Hvc(HVC_INTERP) => {
+                    count_exit(Count::Interp);
+                    self.cpu.reg(RIP.0)?
+                }
                 Exit::Fault { elr: pc, .. } | Exit::Stage2 { pc } => {
+                    count_exit(Count::Fault);
                     let Some(rip) = machine()?.rip_at(pc) else {
                         panic!("the JIT faulted outside translated code at {pc:#x}");
                     };
                     rip
                 }
                 Exit::Canceled { pc, cpsr } => {
+                    count_exit(Count::Cancel);
                     if stop() {
                         return Ok(x86::Exit::Limit);
                     }
@@ -259,6 +377,7 @@ impl Engine {
             let mut stopped = None;
             while steps < INTERP_RUN {
                 steps += 1;
+                count_insn(x, mem);
                 match x86::step(x, mem) {
                     x86::Exit::Continue => {}
                     other => {
@@ -328,6 +447,14 @@ impl Engine {
                 diffs.push(format!(
                     "r{i}: jit {:#x}, interpreter {:#x}",
                     got.regs[i], want.regs[i]
+                ));
+            }
+        }
+        for n in 0..16 {
+            if got.xmm[n] != want.xmm[n] {
+                diffs.push(format!(
+                    "ymm{n}: jit {:x?}, interpreter {:x?}",
+                    got.xmm[n], want.xmm[n]
                 ));
             }
         }
