@@ -46,6 +46,9 @@ const DISPATCH: usize = layout::CODE + 0x80;
 /// Leaves the VM as a lookup miss: where blocks still being checked in
 /// verify mode exit, so each check runs exactly one block.
 const VERIFY_EXIT: usize = layout::CODE + 0x1C0;
+/// Hands the RIP in x16 to the interpreter: the lookup table's entry for
+/// code whose first instruction is not translated.
+const INTERP_EXIT: usize = layout::CODE + 0x1E0;
 const NATIVE_MEMSET: usize = layout::CODE + 0x200;
 const NATIVE_MEMMOVE: usize = layout::CODE + 0x400;
 const NATIVE_END: usize = layout::CODE + 0x800;
@@ -292,6 +295,7 @@ impl Machine {
             };
         }
         self.mapped = wanted;
+        engine::count_exit(engine::Count::Rebuild);
         let mut t = tables::Tables::new(self.runtime.as_mut_slice(), pool);
         for r in &regions {
             let read = r.prot.allows(memory::Access::Read);
@@ -345,6 +349,7 @@ impl Machine {
     /// false if it cannot be translated or the cache is full.
     fn translate(&mut self, mem: &Memory, rip: u64) -> bool {
         if let Some(b) = self.blocks.get(&rip) {
+            engine::count_exit(engine::Count::Reenter);
             if self.ready(b) {
                 let place = b.place;
                 self.enter(rip, place);
@@ -353,6 +358,10 @@ impl Machine {
         }
         let exit = if self.verify || self.trace { VERIFY_EXIT } else { DISPATCH };
         let Some((place, block)) = self.emit(mem, rip, exit) else {
+            engine::count_exit(engine::Count::NoBlock);
+            if !self.trace {
+                self.enter(rip, INTERP_EXIT);
+            }
             return false;
         };
         let insns = block.insns.len();
@@ -545,6 +554,9 @@ fn write_runtime(rt: &mut [u8]) {
     let mut a = Asm::new();
     a.hvc(translate::HVC_MISS);
     put(rt, VERIFY_EXIT, a.finish());
+    let mut a = Asm::new();
+    a.hvc(translate::HVC_INTERP);
+    put(rt, INTERP_EXIT, a.finish());
     let code = native_memset();
     assert!(NATIVE_MEMSET + code.len() * 4 <= NATIVE_MEMMOVE);
     put(rt, NATIVE_MEMSET, code);

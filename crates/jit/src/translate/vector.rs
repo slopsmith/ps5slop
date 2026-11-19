@@ -825,7 +825,7 @@ impl Translator {
 
     /// x86's flags after UCOMISS/COMISS from the FCMP just made: ZF, PF, CF
     /// as the comparison says (all three when unordered), OF, SF, AF clear.
-    fn compare_flags(&mut self) {
+    pub(super) fn compare_flags(&mut self) {
         let a = &mut self.a;
         a.cset(Size::X, T, a64::Cond::Ge);
         a.cset(Size::X, super::U, a64::Cond::Eq);

@@ -35,6 +35,8 @@ struct Engine {
     shadow: Option<Shadow>,
     /// Whether FPSR may hold flags `store` already folded into MXCSR.
     fpsr_dirty: bool,
+    /// Whether FPCR may not be what MXCSR gives (a fault in x87 code).
+    fpcr_dirty: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -58,12 +60,20 @@ pub fn instructions() -> (u64, u64) {
 
 /// Exits counted by statistics mode.
 #[derive(Clone, Copy)]
-enum Count {
+pub(crate) enum Count {
     Miss,
     Interp,
     HostCall,
     Fault,
     Cancel,
+    /// Lookup misses at a block already translated (a table collision).
+    Reenter,
+    /// Lookup misses at an address whose first instruction is not translated.
+    NoBlock,
+    /// TTBR0 table rebuilds after memory changes.
+    Rebuild,
+    /// VM entries that had to take the machine's lock.
+    SlowEntry,
 }
 
 /// Statistics mode (`PS5SLOP_JIT_STATS`): what the interpreter runs, by
@@ -72,7 +82,7 @@ enum Count {
 struct Stats {
     opcodes: HashMap<(u8, u8, u8), u64>,
     rips: HashMap<u64, u64>,
-    exits: [u64; 5],
+    exits: [u64; 9],
 }
 
 fn stats() -> Option<&'static Mutex<Stats>> {
@@ -82,7 +92,7 @@ fn stats() -> Option<&'static Mutex<Stats>> {
         .as_ref()
 }
 
-fn count_exit(c: Count) {
+pub(crate) fn count_exit(c: Count) {
     if let Some(s) = stats() {
         s.lock().unwrap_or_else(|e| e.into_inner()).exits[c as usize] += 1;
     }
@@ -120,6 +130,10 @@ pub fn report(mem: &Memory) {
         "host calls",
         "faults",
         "cancels",
+        "misses at translated blocks",
+        "misses at untranslatable code",
+        "table rebuilds",
+        "locked entries",
     ];
     let exits: Vec<String> = names
         .iter()
@@ -209,6 +223,7 @@ pub fn run(cpu: &mut X86, mem: &Memory, stop: &dyn Fn() -> bool) -> x86::Exit {
                     icount: 0,
                     shadow: None,
                     fpsr_dirty: true,
+                    fpcr_dirty: true,
                 })),
                 _ => Slot::Unavailable,
             };
@@ -291,9 +306,18 @@ impl Engine {
         };
         // SAFETY: the direction flag's slot is inside the same context block.
         unsafe { (self.cpu.context.add(crate::layout::DF_OFFSET) as *mut u64).write_unaligned(df) };
-        if old.is_none_or(|o| o.mxcsr != x.mxcsr) {
-            self.cpu.vcpu.set_reg(hvf::reg::FPCR, fpcr(x.mxcsr))?;
+        if self.fpcr_dirty || old.is_none_or(|o| o.mxcsr != x.mxcsr) {
+            let v = fpcr(x.mxcsr);
+            self.cpu.vcpu.set_reg(hvf::reg::FPCR, v)?;
+            self.put(crate::layout::FPCR_SSE, v);
+            self.fpcr_dirty = false;
         }
+        for (k, &v) in x.st.iter().enumerate() {
+            self.put(crate::layout::X87_ST + 8 * k, v);
+        }
+        self.put(crate::layout::X87_FSW, x.fsw as u64);
+        self.put(crate::layout::X87_FCW, x.fcw as u64);
+        self.put(crate::layout::X87_FTAG, x.ftag as u64);
         if self.fpsr_dirty {
             self.cpu.vcpu.set_reg(hvf::reg::FPSR, 0)?;
             self.fpsr_dirty = false;
@@ -338,6 +362,12 @@ impl Engine {
         let df = unsafe {
             (self.cpu.context.add(crate::layout::DF_OFFSET) as *const u64).read_unaligned()
         };
+        for k in 0..8 {
+            x.st[k] = self.get(crate::layout::X87_ST + 8 * k);
+        }
+        x.fsw = self.get(crate::layout::X87_FSW) as u16;
+        x.fcw = self.get(crate::layout::X87_FCW) as u16;
+        x.ftag = self.get(crate::layout::X87_FTAG) as u8;
         let pf_result = self.cpu.reg(PF_RESULT.0)?;
         let af_aux = self.cpu.reg(AF_AUX.0)?;
         let mut f = x.rflags & !(flags::ARITH | flags::DF);
@@ -368,6 +398,18 @@ impl Engine {
         Ok(())
     }
 
+    /// Writes the 64-bit slot at `offset` in the vCPU's context block.
+    fn put(&self, offset: usize, v: u64) {
+        // SAFETY: callers pass offsets of slots inside the context block,
+        // which only this thread's vCPU uses.
+        unsafe { (self.cpu.context.add(offset) as *mut u64).write_unaligned(v) };
+    }
+
+    fn get(&self, offset: usize) -> u64 {
+        // SAFETY: as in `put`.
+        unsafe { (self.cpu.context.add(offset) as *const u64).read_unaligned() }
+    }
+
     fn cpsr(&self) -> Result<u64, crate::Error> {
         self.cpu.vcpu.reg(hvf::reg::CPSR)
     }
@@ -381,6 +423,7 @@ impl Engine {
             if let Some(pool) = SHARED.try_use(mem, self.epoch) {
                 break (pool, false);
             }
+            count_exit(Count::SlowEntry);
             let mut m = machine()?;
             if m.sync(mem)? {
                 let epoch = SHARED.epoch.load(sc);
@@ -462,6 +505,7 @@ impl Engine {
                 }
                 Exit::Fault { elr: pc, .. } | Exit::Stage2 { pc } => {
                     count_exit(Count::Fault);
+                    self.fpcr_dirty = true;
                     let Some(rip) = machine()?.rip_at(pc) else {
                         panic!("the JIT faulted outside translated code at {pc:#x}");
                     };
@@ -545,9 +589,18 @@ impl Engine {
         let mut got = x.clone();
         self.store(&mut got)?;
         let mut diffs = Vec::new();
+        let mut finished_here = false;
         match exit {
             Exit::Hvc(HVC_MISS | HVC_INTERP) => got.rip = self.cpu.reg(RIP.0)?,
             other => diffs.push(format!("the translated block stopped with {other:x?}")),
+        }
+        if exit == Exit::Hvc(HVC_INTERP) && got.rip != want.rip {
+            finished_here = true;
+            for _ in 0..insns {
+                if got.rip == want.rip || x86::step(&mut got, mem) != x86::Exit::Continue {
+                    break;
+                }
+            }
         }
         for i in 0..16 {
             if got.regs[i] != want.regs[i] {
@@ -564,6 +617,12 @@ impl Engine {
                     got.xmm[n], want.xmm[n]
                 ));
             }
+        }
+        if (got.fsw, got.fcw, got.ftag, got.st) != (want.fsw, want.fcw, want.ftag, want.st) {
+            diffs.push(format!(
+                "x87: jit fsw {:#x} fcw {:#x} tags {:#x} st {:x?}, interpreter fsw {:#x} fcw {:#x} tags {:#x} st {:x?}",
+                got.fsw, got.fcw, got.ftag, got.st, want.fsw, want.fcw, want.ftag, want.st
+            ));
         }
         if got.rip != want.rip {
             diffs.push(format!(
@@ -593,6 +652,10 @@ impl Engine {
             }
         }
         if diffs.is_empty() {
+            if finished_here {
+                *x = got;
+                return Ok(Entry::Dispatch(self.load(x)?));
+            }
             return Ok(Entry::Dispatch(self.cpsr()? & NZCV));
         }
         eprintln!("ps5slop: JIT verify: the block at {rip:#x} ({insns} instructions) differs:");

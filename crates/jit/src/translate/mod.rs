@@ -6,6 +6,7 @@ use memory::Memory;
 use x86::decode::{Insn, Map, Mem, Rep, Seg, decode};
 
 mod vector;
+mod x87;
 pub use vector::CTX;
 
 const DF_OFFSET: i32 = crate::layout::DF_OFFSET as i32;
@@ -136,6 +137,14 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
     let counts = i.rep == Rep::Rep && i.map == Map::M0F && matches!(i.op, 0xbc | 0xbd);
     let crc32 = i.rep == Rep::Repne && i.map == Map::M0F38 && matches!(i.op, 0xf0 | 0xf1);
     let string = i.map == Map::Primary && matches!(i.op, 0xa4..=0xa7 | 0xaa..=0xaf);
+    if i.vex.is_none()
+        && !i.lock
+        && i.seg != Some(Seg::Gs)
+        && i.rep == Rep::None
+        && let Some(c) = x87::classify(i)
+    {
+        return Some(c);
+    }
     if i.vex.is_some()
         || (i.lock && !lockable(i))
         || i.seg == Some(Seg::Gs)
@@ -289,15 +298,21 @@ pub fn block(mem: &Memory, rip: u64, place: usize, dispatch: usize) -> Option<Bl
         chains: Vec::new(),
         bails: Vec::new(),
         cur: (rip, 0),
+        x87_mode: false,
     };
     t.a.add_imm(Size::X, ICOUNT, ICOUNT, insns.len() as u32);
     let mut ended = false;
     for (k, (insn, at, _)) in insns.iter().enumerate() {
         t.insns.push((t.a.pos() as u32, *at));
         t.cur = (*at, (insns.len() - k) as u32);
+        let x87 = x87::classify(insn).is_some();
+        if !x87 && (vector::classify(insn).is_some() || classify(insn).is_some_and(|c| c.0)) {
+            t.leave_x87();
+        }
         ended = t.insn(insn, *at, live[k]);
     }
     if !ended {
+        t.leave_x87();
         let (insn, at, _) = insns.last().expect("not empty");
         let next = at + insn.len as u64;
         let hvc = if insns.len() == MAX_INSNS {
@@ -307,8 +322,11 @@ pub fn block(mem: &Memory, rip: u64, place: usize, dispatch: usize) -> Option<Bl
         };
         t.exit_to(next, hvc);
     }
-    for (l, at, left) in std::mem::take(&mut t.bails) {
+    for (l, at, left, x87) in std::mem::take(&mut t.bails) {
         t.a.bind(l);
+        if x87 {
+            t.restore_fp();
+        }
         t.a.sub_imm(Size::X, ICOUNT, ICOUNT, left);
         t.exit_to(at, Some(HVC_INTERP));
     }
@@ -326,9 +344,11 @@ struct Translator {
     insns: Vec<(u32, u64)>,
     chains: Vec<(u32, u64)>,
     /// Exits that leave the current instruction to the interpreter, as
-    /// (label, its RIP, instructions of the block not run).
-    bails: Vec<(Label, u64, u32)>,
+    /// (label, its RIP, instructions of the block not run, x87 FP mode on).
+    bails: Vec<(Label, u64, u32, bool)>,
     cur: (u64, u32),
+    /// Whether the code emitted so far runs with x87's FPCR.
+    x87_mode: bool,
 }
 
 fn sz(size: u8) -> Size {
@@ -357,7 +377,7 @@ impl Translator {
     /// branching there must not have changed guest state or NZCV.
     fn bail(&mut self) -> Label {
         let l = self.a.label();
-        self.bails.push((l, self.cur.0, self.cur.1));
+        self.bails.push((l, self.cur.0, self.cur.1, self.x87_mode));
         l
     }
 
@@ -529,6 +549,10 @@ impl Translator {
     /// Translates one instruction; true if it ended the block.
     fn insn(&mut self, i: &Insn, rip: u64, flags: bool) -> bool {
         let next = rip + i.len as u64;
+        if x87::classify(i).is_some() {
+            self.x87(i, next);
+            return false;
+        }
         if vector::classify(i).is_some() {
             self.vector(i, next, flags);
             return false;
