@@ -67,3 +67,9 @@ Reason: vic wants to run his own and other homebrew packages directly. The passc
 ps5slop takes two inputs: fake-signed packages (FPKG), opened with the all-zeros passcode by default, and already extracted `app0` folders (dumps). Retail Sony-signed packages are not supported.
 
 Reason: many dumping tools produce FPKGs, and folders are what other dumpers and our own builds give. The important line is that we never decrypt retail game data ourselves, and we cannot: retail packages need keys we do not have and will not embed.
+
+## 2026-11-19: FEX's ASM tests as the interpreter's oracle
+
+The interpreter is measured against FEX-Emu's handwritten x86-64 ASM tests (MIT), fetched into `references/` and run by `ps5slop-asmtest`. CPUID reports Zen 2's features, implemented or not.
+
+Reason: no public hardware-generated x86-64 suite exists; FEX runs these tests natively on x86-64 hardware in CI, so their expected values are hardware-checked. Reporting the full Zen 2 feature set makes missing instructions show up as failures instead of hidden fallbacks.

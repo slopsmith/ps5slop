@@ -20,6 +20,7 @@ cargo run --release -p loader -- imports OUT_DIR/eboot.bin --names names.txt   #
 cargo run --release -p loader -- load OUT_DIR/eboot.bin   # lay out, relocate, list missing imports
 scripts/build-test-programs   # our own test programs -> target/test-programs/
 scripts/run-test-programs     # build, run under ps5slop, compare with expected output
+scripts/fetch-references && cargo run --release -p asmtest   # FEX's x86-64 tests against the interpreter
 cargo run --release -p ps5slop -- run target/test-programs/hello.elf
 ```
 

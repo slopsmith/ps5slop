@@ -71,4 +71,18 @@ The CPU sits behind one interface (run a thread until it calls into HLE, faults 
 - **Faults:** a faulting instruction leaves the state as it was before it, and the run loop gets the fault and its address. Unimplemented instructions are reported by map and opcode.
 - **Memory:** goes through `crates/memory` with a guest-protection check on every access; nothing is optimised yet.
 
-**How it is tested:** unit tests whose encodings come from llvm-mc, and the test programs (`scripts/run-test-programs`). No public instruction test suite is wired up yet; picking one (and checking how its expected values were made) is the next step for correctness, before the JIT exists to be compared against.
+- **CPUID:** reports a Zen 2 core (family 17h) with the features Zen 2 has (SSE to SSE4.2, SSE4a, AVX, AVX2, FMA, F16C, BMI1/2, LZCNT, POPCNT, MOVBE, AES, PCLMULQDQ, SHA, ADX, RDRAND/RDSEED, CLZERO, ...), bit positions from AMD's public CPUID specification. The PS5's own CPUID values are unknown. Reporting features we do not implement yet is deliberate: programs then hit the missing instruction and we see it, instead of quietly taking a fallback path.
+
+## Correctness oracle: FEX's ASM tests
+
+There is no public x86-64 suite in the style of SingleStepTests (those stop at the 80386). The best public oracle we found is FEX-Emu's set of 2,291 handwritten x86-64 test programs (`unittests/ASM`, MIT). Each one runs a few instructions and states the register values it must end with. FEX runs the same tests natively on an x86-64 machine (its "host" runner on a Zen+ CI box), apart from a short list of tests it disables or knows to fail there, so the expected values have been checked on real hardware, not just against FEX itself.
+
+`scripts/fetch-references` puts them in `references/src/FEX` (pinned commit, not committed); `ps5slop-asmtest` (in `nix develop`, which provides nasm) assembles each test as FEX does and runs it the way FEX's host runner does: code at `0x10000`, all registers zero, RFLAGS `0x202`, scratch memory at `0xE000_0000`, plus the memory each test asks for, until `hlt`. Then it compares the registers the test names. It skips FEX's disabled and known-failing lists, 32-bit tests, tests that need features Zen 2 lacks (3DNow!, AVX-VNNI, VAES, SHA512, ...) and tests that make Linux system calls. Results go to `target/asmtest/report.tsv`.
+
+**Measured on 2026-11-19 (FEX `be66e03d`):** of 2,291 tests, 70 are skipped and 2,221 run. 568 pass (25.6%), **none give a wrong result, fault or time out**, and 1,653 stop at an instruction we do not implement yet. By area: Primary 186/197, PrimaryGroup 151/156, Atomics 12/12, TwoByte 106/220; SSE, VEX/AVX, x87 and MMX are at zero. The most wanted missing pieces, by tests blocked: VEX (739), `0F 28` movaps (291), x87 `DB`/`D9`/`DD` (317), `0F 6F` movq/movdqa (96), `9B` fwait (68).
+
+The first run found four bugs that unit tests had not: string instructions and `loop` ignored the `67` address-size prefix, a REX byte followed by another prefix was rejected instead of ignored, `shld`/`shrd` with a zero count did not zero-extend a 32-bit register, and CPUID reported no features. All four are fixed.
+
+Unchecked so far: tests whose expected values include XMM or MMX registers can only pass once we model those registers.
+
+**Other tests:** unit tests whose encodings come from llvm-mc, and our test programs (`scripts/run-test-programs`).
