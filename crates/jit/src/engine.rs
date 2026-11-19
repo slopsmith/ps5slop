@@ -163,6 +163,23 @@ enum Slot {
 
 thread_local! {
     static THREAD: RefCell<Slot> = const { RefCell::new(Slot::Untried) };
+    static RECENT: RefCell<std::collections::VecDeque<u64>> = const { RefCell::new(std::collections::VecDeque::new()) };
+}
+
+/// Blocks this thread last ran, oldest first: in trace mode
+/// (`PS5SLOP_JIT_TRACE`) every block start, otherwise only those the host saw.
+pub fn recent_blocks() -> Vec<u64> {
+    RECENT.with(|r| r.borrow().iter().copied().collect())
+}
+
+fn note_block(rip: u64) {
+    RECENT.with(|r| {
+        let mut r = r.borrow_mut();
+        if r.len() == 64 {
+            r.pop_front();
+        }
+        r.push_back(rip);
+    });
 }
 
 /// Runs `cpu` against `mem` until it calls into the host (a trap region or
@@ -364,6 +381,7 @@ impl Engine {
             let rip = match exit {
                 Exit::Hvc(HVC_MISS) => {
                     let rip = self.cpu.reg(RIP.0)?;
+                    note_block(rip);
                     count_exit(Count::Miss);
                     if is_trap(mem, rip) {
                         count_exit(Count::HostCall);

@@ -63,7 +63,13 @@ Not yet: 8- and 16-bit `adc`/`sbb`, shifts and rotates (`c0`, `d0`, `d2`, and 16
 
 **Library functions in the VM.** `memset`, `memcpy` and `memmove` have native versions in the runtime region. The kernel registers their trap addresses when the JIT is on, so the dispatcher sends guest calls straight to them, and they return as the guest's `ret` would. A fault inside one falls back to the host function at the same address, which reports it as before. Verify mode uses the host versions. ScreenTester5's flash mode called `memset` 3.2 M times in 5 s; each was a VM exit before.
 
-Block ends with a known target are chained: the branch to the dispatcher is patched to go straight to the target block once it is translated (not in verify mode).
+Block ends with a known target are chained: the branch to the dispatcher is patched to go straight to the target block once it is translated (in verify mode, only between blocks that passed their checks).
+
+**The lookup table and races.** The host replaces a slot (`enter`) in three stores: tag cleared, code address, new tag. The dispatcher reads the tag, checks it, reads the code address, then reads the tag again and checks it before jumping; loads stay in order under TSO, so two matching reads mean the code address belongs to that tag. Until 2026-11-19 it read the tag only once, before the code address: a thread could check the old tag and jump to the new occupant's code, running another address's block. Minecraft crashed in a different place nearly every run (wild jumps into stacks, writes through small integers); with the second check, four runs of 45 s ran their full length without a crash. Found by elimination: the crashes went away in trace mode (no lookups inside the VM) but not without the native library functions.
+
+## Trace mode
+
+`PS5SLOP_JIT_TRACE=1` sends every block's exit to the host, without lookups or chaining inside the VM, and keeps the last 64 blocks each thread entered; a guest fault prints them ("blocks before: ..."), which shows where a wild jump came from. It is slower, and timing changes, so races may hide in it.
 
 ## Statistics mode
 
@@ -71,7 +77,7 @@ Block ends with a known target are chained: the branch to the dispatcher is patc
 
 ## Verify mode
 
-`PS5SLOP_JIT_VERIFY=1` checks the first 4 runs of every block against the interpreter: the interpreter runs the block with `Memory`'s write journal on, its writes are undone, the translated block runs alone, and registers, RIP, arithmetic flags and the bytes the interpreter wrote are compared. Differences are printed with the block's bytes, and execution carries on from the interpreter's state. The lookup table stays empty in this mode, so every block exits by itself. Writes only the JIT made are not caught.
+`PS5SLOP_JIT_VERIFY=1` checks the first 4 runs of every block against the interpreter: the interpreter runs the block with `Memory`'s write journal on, its writes are undone, the translated block runs alone, and registers, RIP, arithmetic flags and the bytes the interpreter wrote are compared. Differences are printed with the block's bytes, and execution carries on from the interpreter's state. While a block is being checked it exits through a stub that leaves the VM (`VERIFY_EXIT`), so each check runs exactly that block; once it passes, a second copy with ordinary exits is entered in the lookup table and chained to other checked blocks, so verify mode runs at the JIT's speed (Balatro: the same frame rate as without it). Writes only the JIT made are not caught, and a block that reads memory another thread changes between the two runs shows up as a difference (lock words, counters).
 
 ## Stages
 

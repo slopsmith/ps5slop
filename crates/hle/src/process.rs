@@ -398,18 +398,22 @@ impl Kernel {
                     }));
                 }
                 Exit::Fault { kind, .. } => {
-                    let note = match kind {
-                        CpuFault::Memory(f) => self.hle.describe(f.addr),
-                        CpuFault::Unimplemented { .. } => {
-                            let mut b = [0u8; 15];
-                            mem.fetch(cpu.rip, &mut b).ok().map(|()| {
-                                let hex: Vec<String> =
-                                    b.iter().map(|x| format!("{x:02x}")).collect();
-                                format!("bytes {}", hex.join(" "))
-                            })
-                        }
-                        _ => None,
+                    let bytes = || {
+                        let mut b = [0u8; 15];
+                        mem.fetch(cpu.rip, &mut b).ok().map(|()| {
+                            let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
+                            format!("bytes {}", hex.join(" "))
+                        })
                     };
+                    let mut note = match kind {
+                        CpuFault::Memory(f) => self.hle.describe(f.addr).or_else(bytes),
+                        _ => bytes(),
+                    };
+                    let recent = jit::recent_blocks();
+                    if std::env::var_os("PS5SLOP_JIT_TRACE").is_some() && !recent.is_empty() {
+                        let list: Vec<String> = recent.iter().map(|r| format!("{r:#x}")).collect();
+                        note = Some(format!("{}; blocks before: {}", note.unwrap_or_default(), list.join(" ")));
+                    }
                     self.exit(Err(ThreadError::Guest {
                         fault: kind,
                         cpu: Box::new(cpu.clone()),

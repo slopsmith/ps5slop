@@ -15,7 +15,7 @@ use a64::{Asm, Reg, Shift, Size, Width};
 use hvf::{GuestMemory, Vcpu, VcpuKicker, Vm, reg, sysreg};
 use memory::Memory;
 
-pub use engine::{instructions, interpret, kick_all, report, run};
+pub use engine::{instructions, interpret, kick_all, recent_blocks, report, run};
 pub use hvf::Error;
 
 /// `hvc` numbers the runtime's exception vectors use.
@@ -65,6 +65,7 @@ pub enum Native {
 pub fn set_native(addr: u64, native: Native) {
     if let Ok(mut m) = machine()
         && !m.verify
+        && !m.trace
     {
         let place = match native {
             Native::Memset => NATIVE_MEMSET,
@@ -106,6 +107,9 @@ pub struct Machine {
     blocks: HashMap<u64, BlockInfo>,
     /// Check blocks against the interpreter before trusting them.
     verify: bool,
+    /// Trace mode: every block exits to the host, which keeps the last ones
+    /// run on each thread (see [`recent_blocks`]).
+    trace: bool,
     /// Translated blocks by runtime offset: their guest instructions, as
     /// (word offset, RIP).
     by_place: BTreeMap<usize, Vec<(u32, u64)>>,
@@ -192,6 +196,7 @@ impl Machine {
             code_next: layout::CODE_CACHE,
             blocks: HashMap::new(),
             verify: std::env::var_os("PS5SLOP_JIT_VERIFY").is_some(),
+            trace: std::env::var_os("PS5SLOP_JIT_TRACE").is_some(),
             by_place: BTreeMap::new(),
             cache_full: false,
             chain_wanted: HashMap::new(),
@@ -302,7 +307,7 @@ impl Machine {
             }
             return true;
         }
-        let exit = if self.verify { VERIFY_EXIT } else { DISPATCH };
+        let exit = if self.verify || self.trace { VERIFY_EXIT } else { DISPATCH };
         let Some((place, block)) = self.emit(mem, rip, exit) else {
             return false;
         };
@@ -316,7 +321,7 @@ impl Machine {
             },
         );
         self.by_place.insert(place, block.insns);
-        if !self.verify {
+        if !self.verify && !self.trace {
             self.link(rip, place, block.chains);
         }
         true
@@ -325,7 +330,7 @@ impl Machine {
     /// Whether the block may be entered in the lookup table and chained to:
     /// always, except in verify mode before its checks are done.
     fn ready(&self, b: &BlockInfo) -> bool {
-        !self.verify || b.verified >= VERIFY_RUNS
+        !self.trace && (!self.verify || b.verified >= VERIFY_RUNS)
     }
 
     /// Translates the block at `rip` into the code cache, its exits going to
@@ -478,11 +483,16 @@ fn write_runtime(rt: &mut [u8]) {
     a.mul(Size::X, slot, rip, slot);
     a.lsr_imm(Size::X, slot, slot, 64 - layout::LOOKUP_BITS);
     a.add_shift(Size::X, slot, translate::LOOKUP, slot, Shift::Lsl, 4);
+    // The tag is read again after the code: `enter` may replace the slot in
+    // between, and loads stay in order (TSO), so two matching reads are safe.
     a.ldr(Width::X, tag, slot, 0);
-    a.ldr(Width::X, slot, slot, 8);
     a.eor(Size::X, tag, tag, rip);
     a.cbnz(Size::X, tag, miss);
-    a.br(slot);
+    a.ldr(Width::X, tag, slot, 8);
+    a.ldr(Width::X, slot, slot, 0);
+    a.eor(Size::X, slot, slot, rip);
+    a.cbnz(Size::X, slot, miss);
+    a.br(tag);
     a.bind(miss);
     a.hvc(translate::HVC_MISS);
     let code = a.finish();
