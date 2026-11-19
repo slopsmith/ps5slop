@@ -1,0 +1,14 @@
+[package]
+name = "ps5slop"
+description = "Runs Orbis executables: loader, interpreter and HLE put together"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+hle = { path = "../hle" }
+loader = { path = "../loader" }
+memory = { path = "../memory" }
+x86 = { path = "../x86" }
