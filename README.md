@@ -22,7 +22,11 @@ scripts/build-test-programs   # our own test programs -> target/test-programs/
 scripts/run-test-programs     # build, run under ps5slop, compare with expected output
 scripts/fetch-references && cargo run --release -p asmtest   # FEX's x86-64 tests against the interpreter
 cargo run --release -p ps5slop -- run target/test-programs/hello.elf
+cargo run --release -p ps5slop -- run games/TITLE   # an app folder; opens a window for VideoOut
+cargo run --release -p ps5slop -- run --headless --dump-frame out.ppm --after 10 games/TITLE
 ```
+
+In the window, the keyboard stands in for the controller: arrow keys for the D-pad, X Cross, C Circle, Z Square, V Triangle, Q/E for L1/R1, 1/3 for L2/R2, Enter for Options, T for the touchpad button. Closing the window ends the guest.
 
 ## Docs
 

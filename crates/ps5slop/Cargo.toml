@@ -6,9 +6,22 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = ["window"]
+window = ["dep:winit", "dep:objc2", "dep:objc2-foundation", "dep:objc2-metal", "dep:objc2-quartz-core", "dep:objc2-core-foundation", "dep:objc2-core-graphics"]
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 hle = { path = "../hle" }
 loader = { path = "../loader" }
 memory = { path = "../memory" }
 x86 = { path = "../x86" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+winit = { version = "0.30", optional = true, default-features = false, features = ["rwh_06"] }
+objc2 = { version = "0.6", optional = true }
+objc2-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "NSString", "NSError"] }
+objc2-metal = { version = "0.3", optional = true, default-features = false, features = ["std", "MTLDevice", "MTLResource", "MTLTexture", "MTLSampler", "MTLCommandQueue", "MTLCommandBuffer", "MTLCommandEncoder", "MTLRenderCommandEncoder", "MTLRenderPass", "MTLRenderPipeline", "MTLLibrary", "MTLTypes", "MTLPixelFormat", "MTLAllocation", "MTLDrawable"] }
+objc2-quartz-core = { version = "0.3", optional = true, default-features = false, features = ["std", "CALayer", "CAMetalLayer", "objc2-metal", "objc2-core-foundation", "objc2-core-graphics"] }
+objc2-core-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "CFCGTypes", "CFString"] }
+objc2-core-graphics = { version = "0.3", optional = true, default-features = false, features = ["std", "CGColorSpace"] }

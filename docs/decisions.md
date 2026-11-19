@@ -97,3 +97,9 @@ Reason: our rule is to build from public documentation, observed behaviour and c
 ## 2026-11-19: Reuse 86slopper's window code
 
 The VideoOut window reuses 86slopper's winit and `CAMetalLayer` code (vic's own, same license).
+
+## 2026-11-19: The window runs on the main thread, the guest beside it
+
+AppKit needs its event loop on the main thread, so `ps5slop run` starts the guest's main thread on a second host thread and runs the window on the first. VideoOut tells the window about flips through a callback; the window reads the front buffer from guest memory, untiles it on the host and uploads it to Metal. `--headless` runs without a window, and `--dump-frame` writes the screen to a file, which gives tests a way to check what a title drew.
+
+Reason: it keeps the guest unaware of the window, and untiling on the CPU is simple and fast enough until the GPU work brings Metal-side surfaces.

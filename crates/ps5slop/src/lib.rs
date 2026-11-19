@@ -4,12 +4,16 @@
 use std::fmt;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use hle::{Hle, Kernel, ThreadError, TlsTemplate};
 use loader::{Dynamic, ElfFile, Image};
 use memory::{MapError, Memory, PAGE_SIZE, Prot};
 use x86::Cpu;
 use x86::cpu::reg::*;
+
+#[cfg(all(target_os = "macos", feature = "window"))]
+pub mod window;
 
 /// The guest address space spans 1 TiB, enough for the PS4 layout in
 /// `docs/memory.md` (GPU addresses stay below 2^40).
@@ -124,14 +128,15 @@ impl Process {
         })
     }
 
-    /// Runs until the guest exits, and returns its exit status. `app0` is the
-    /// title folder, which the guest sees as `/app0`.
-    pub fn run(
+    /// Starts the kernel, so the host can attach to it (a window, input)
+    /// before the guest runs. `app0` is the title folder, which the guest
+    /// sees as `/app0`.
+    pub fn boot(
         self,
         stdout: Box<dyn Write + Send>,
         stderr: Box<dyn Write + Send>,
         app0: Option<PathBuf>,
-    ) -> Result<i32, Error> {
+    ) -> Result<Booted, Error> {
         let Process {
             mut cpu,
             mem,
@@ -141,7 +146,21 @@ impl Process {
         } = self;
         let kernel = Kernel::new(hle, mem, tls, stdout, stderr, app0);
         cpu.fs_base = kernel.new_tls(&kernel.memory())?;
-        Ok(kernel.run_main(cpu)?)
+        Ok(Booted { kernel, cpu })
+    }
+}
+
+/// A process whose kernel is up and whose main thread has not started.
+pub struct Booted {
+    pub kernel: Arc<Kernel>,
+    cpu: Cpu,
+}
+
+impl Booted {
+    /// Runs the main thread on this host thread until the guest exits, and
+    /// returns its exit status.
+    pub fn run(self) -> Result<i32, Error> {
+        Ok(self.kernel.run_main(self.cpu)?)
     }
 }
 
