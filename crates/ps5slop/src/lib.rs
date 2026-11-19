@@ -6,7 +6,6 @@ use std::io::Write;
 use std::sync::Arc;
 
 use std::collections::HashMap;
-use std::path::Path;
 
 use hle::{Hle, Kernel, ThreadError, TlsTemplate};
 use loader::Image;
@@ -17,6 +16,7 @@ use x86::Cpu;
 use x86::cpu::reg::*;
 
 pub mod modules;
+pub mod title;
 #[cfg(all(target_os = "macos", feature = "window"))]
 pub mod window;
 
@@ -84,21 +84,20 @@ pub struct Process {
 
 impl Process {
     /// Loads an executable (plain ELF or fake-signed SELF), and the modules it
-    /// imports from that `dir` (its title folder) holds, and prepares its main
-    /// thread to start at the entry point.
-    pub fn load(file: Vec<u8>, dir: Option<&Path>) -> Result<Self, Error> {
+    /// imports that its title's `files` hold, and prepares its main thread to
+    /// start at the entry point.
+    pub fn load(file: Vec<u8>, files: Option<&dyn modules::Files>) -> Result<Self, Error> {
         let mut main = Unit::parse("eboot".into(), file)?;
         main.file = "eboot.bin".into();
         main.base = IMAGE_BASE;
-        let found = dir.map(modules::candidates).unwrap_or_default();
         let mut units = vec![main];
         let mut next = modules::MODULE_AREA;
-        for (name, path) in modules::choose(&units[0], &found) {
-            let file = std::fs::read(&path).map_err(|e| Error::Map(MapError::Host(e)))?;
+        let chosen = files.map_or_else(Vec::new, |files| {
+            modules::choose(&units[0], &modules::candidates(files), files)
+        });
+        for (name, path, file) in chosen {
             let mut unit = Unit::parse(name, file)?;
-            unit.file = path
-                .file_name()
-                .map_or(String::new(), |f| f.to_string_lossy().into_owned());
+            unit.file = path.rsplit('/').next().unwrap_or_default().to_owned();
             unit.base = next;
             next = (next + unit.size() + PAGE_SIZE).next_multiple_of(PAGE_SIZE);
             units.push(unit);

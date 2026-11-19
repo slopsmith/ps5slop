@@ -98,7 +98,7 @@ Each thread's errno lives in its thread control block, at the thread pointer plu
 
 ## The guest file system
 
-Guest paths resolve through a small mount table (`crates/hle/src/vfs.rs`): `/app0` is the title folder, read-only; `/data` is a writable per-title folder on the host, by default `~/Library/Application Support/ps5slop/<title folder>/data` (`--data DIR` picks another). Anything else does not exist, and paths that climb out of a mount with `..` are refused. What a real PS5 title sees under `/data`, and which other mounts it expects (`/savedata0`, `/temp0`, `/hostapp`), is unverified.
+Guest paths resolve through a small mount table (`crates/hle/src/vfs.rs`): `/app0` is the title, read-only: a host folder, or a package's image served through the `ImageFs` trait (see [packages.md](packages.md)); `/data` is a writable per-title folder on the host, by default `~/Library/Application Support/ps5slop/<title id>/data`, or the folder's name when there is no title id (`--data DIR` picks another). Descriptors and FILEs hold a `GuestFile`, a host file or a file in an image, so reads, seeks, `fstat` and `getdents` work on both. `sceNgs2ParseWaveformFile` still uses host paths (`Vfs::resolve`), so it cannot read files from a package yet. Anything else does not exist, and paths that climb out of a mount with `..` are refused. What a real PS5 title sees under `/data`, and which other mounts it expects (`/savedata0`, `/temp0`, `/hostapp`), is unverified.
 
 ## How a process starts
 

@@ -2,7 +2,7 @@
 //! See `docs/loader.md`, "Modules".
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use hle::Hle;
 use loader::dynamic::{Import, STB_GLOBAL, STB_WEAK};
@@ -18,31 +18,58 @@ pub const ALLOWED_SYSTEM_MODULES: &[&str] = &["libc"];
 /// `docs/memory.md`).
 pub const MODULE_AREA: u64 = 0x8_0000_0000;
 
-/// A module file found in the title folder.
+/// Where a title's files come from: a host folder or a package.
+pub trait Files {
+    /// The names of the files (not folders) in folder `dir`; `""` is the root.
+    fn list(&self, dir: &str) -> Vec<String>;
+    /// The bytes of the file at `path`, relative to the root.
+    fn read(&self, path: &str) -> std::io::Result<Vec<u8>>;
+}
+
+impl Files for &Path {
+    fn list(&self, dir: &str) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(self.join(dir)) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| !t.is_dir()))
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect()
+    }
+
+    fn read(&self, path: &str) -> std::io::Result<Vec<u8>> {
+        std::fs::read(self.join(path))
+    }
+}
+
+/// A module file found in the title's files.
 pub struct Candidate {
-    pub path: PathBuf,
+    /// Relative to the title's root.
+    pub path: String,
     /// In `sce_module`, so a Sony module that needs allowing.
     pub system: bool,
 }
 
-/// The module files in `dir` (and `dir/sce_module`), by the module name
-/// their own tables give. Files that do not parse are skipped.
-pub fn candidates(dir: &Path) -> HashMap<String, Candidate> {
+/// The module files at the root of `files` and in `sce_module`, by the
+/// module name their own tables give. Files that do not parse are skipped.
+pub fn candidates(files: &dyn Files) -> HashMap<String, Candidate> {
     let mut out = HashMap::new();
-    for (folder, system) in [(dir.to_path_buf(), false), (dir.join("sce_module"), true)] {
-        let Ok(entries) = std::fs::read_dir(&folder) else {
-            continue;
-        };
-        for e in entries.flatten() {
-            let path = e.path();
-            let prx = path
+    for (folder, system) in [("", false), ("sce_module", true)] {
+        for file in files.list(folder) {
+            let prx = Path::new(&file)
                 .extension()
                 .and_then(|x| x.to_str())
                 .is_some_and(|x| x.eq_ignore_ascii_case("prx") || x.eq_ignore_ascii_case("sprx"));
             if !prx {
                 continue;
             }
-            let Some(name) = module_name(&path) else {
+            let path = if folder.is_empty() {
+                file
+            } else {
+                format!("{folder}/{file}")
+            };
+            let Some(name) = module_name(files, &path) else {
                 continue;
             };
             out.entry(name).or_insert(Candidate { path, system });
@@ -51,8 +78,8 @@ pub fn candidates(dir: &Path) -> HashMap<String, Candidate> {
     out
 }
 
-fn module_name(path: &Path) -> Option<String> {
-    let elf = ElfFile::parse(std::fs::read(path).ok()?).ok()?;
+fn module_name(files: &dyn Files, path: &str) -> Option<String> {
+    let elf = ElfFile::parse(files.read(path).ok()?).ok()?;
     let dynamic = Dynamic::parse(&elf).ok()?;
     dynamic.modules.first().map(|m| m.name.clone())
 }
@@ -113,9 +140,14 @@ impl Unit {
 
 /// Chooses the modules to load for `main`: those it (or a loaded module)
 /// imports from, found in `found`, and allowed if they are system modules.
-/// Returns them in the order they were found, dependencies after dependents.
-pub fn choose(main: &Unit, found: &HashMap<String, Candidate>) -> Vec<(String, PathBuf)> {
-    let mut chosen: Vec<(String, PathBuf)> = Vec::new();
+/// Returns them with their bytes, in the order they were found,
+/// dependencies after dependents.
+pub fn choose(
+    main: &Unit,
+    found: &HashMap<String, Candidate>,
+    files: &dyn Files,
+) -> Vec<(String, String, Vec<u8>)> {
+    let mut chosen: Vec<(String, String, Vec<u8>)> = Vec::new();
     let mut queue: Vec<String> = main
         .dynamic
         .needed_modules
@@ -123,21 +155,21 @@ pub fn choose(main: &Unit, found: &HashMap<String, Candidate>) -> Vec<(String, P
         .map(|m| m.name.clone())
         .collect();
     while let Some(name) = queue.pop() {
-        if chosen.iter().any(|(n, _)| *n == name) {
+        if chosen.iter().any(|(n, _, _)| *n == name) {
             continue;
         }
         let Some(c) = found.get(&name) else { continue };
         if c.system && !ALLOWED_SYSTEM_MODULES.contains(&name.as_str()) {
             continue;
         }
-        let Ok(file) = std::fs::read(&c.path) else {
+        let Ok(file) = files.read(&c.path) else {
             continue;
         };
-        let Ok(unit) = Unit::parse(name.clone(), file) else {
+        let Ok(unit) = Unit::parse(name.clone(), file.clone()) else {
             continue;
         };
         queue.extend(unit.dynamic.needed_modules.iter().map(|m| m.name.clone()));
-        chosen.push((name, c.path.clone()));
+        chosen.push((name, c.path.clone(), file));
     }
     chosen
 }

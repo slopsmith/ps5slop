@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use pkg::keys::{DEFAULT_PASSCODE, Passcode};
 use pkg::{Package, entry_id};
 
-/// Inspects and extracts fake-signed PS4 packages.
+/// Inspects and extracts fake-signed PS4 packages and plaintext PS5 packages.
 #[derive(Parser)]
 #[command(name = "ps5slop-pkg")]
 struct Cli {
@@ -17,6 +17,13 @@ struct Cli {
 enum Command {
     /// Prints the header and entry table.
     Info { package: PathBuf },
+    /// Lists the app's files with their sizes.
+    Ls {
+        package: PathBuf,
+        /// The package's 32-character passcode (all zeros by default).
+        #[arg(long)]
+        passcode: Option<String>,
+    },
     /// Extracts the app's files into a new folder.
     Extract {
         package: PathBuf,
@@ -42,7 +49,9 @@ fn run(cli: Cli) -> pkg::Result<()> {
         Command::Info { package } => {
             let p = Package::open(&package)?;
             let h = p.header();
+            println!("format:       {:x?}", p.format());
             println!("content id:   {}", h.content_id);
+            println!("title id:     {}", p.title_id().as_deref().unwrap_or("?"));
             println!(
                 "content type: {:#x}, flags {:#x}",
                 h.content_type, h.content_flags
@@ -66,15 +75,22 @@ fn run(cli: Cli) -> pkg::Result<()> {
                 println!("param.sfo:    {} bytes", p.read_entry(e)?.len());
             }
         }
+        Command::Ls { package, passcode } => {
+            let app = Package::open(&package)?.app_pfs(&passcode_or_default(passcode)?)?;
+            for (path, inode) in app.files()? {
+                println!(
+                    "{:>12} {}",
+                    app.inode(inode)?.size_compressed,
+                    path.display()
+                );
+            }
+        }
         Command::Extract {
             package,
             dest,
             passcode,
         } => {
-            let passcode = match passcode {
-                Some(s) => Passcode::new(&s)?,
-                None => DEFAULT_PASSCODE,
-            };
+            let passcode = passcode_or_default(passcode)?;
             let done = Package::open(&package)?.extract(&passcode, &dest)?;
             println!(
                 "extracted {} files, {} bytes, into {}",
@@ -85,4 +101,11 @@ fn run(cli: Cli) -> pkg::Result<()> {
         }
     }
     Ok(())
+}
+
+fn passcode_or_default(passcode: Option<String>) -> pkg::Result<Passcode> {
+    match passcode {
+        Some(s) => Passcode::new(&s),
+        None => Ok(DEFAULT_PASSCODE),
+    }
 }

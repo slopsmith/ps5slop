@@ -158,6 +158,18 @@ Reason: some PS5 imports have no public name to hash. The NID is what the title 
 
 Reason: Sony's libc reads through these as pointers (it faulted at the small counters we used before), as FreeBSD's pthread types are pointers.
 
+## 2026-11-20: Run packages in place, through a read-only file system backend
+
+`ps5slop run GAME.pkg` serves `/app0` (and the loader's reads of `eboot.bin` and modules) straight from the package's PFS image, through an `ImageFs` mount in the guest file system. We do not extract packages to a cache folder.
+
+Reason: PS5 packages are large (Astro Bot is 38 GB), so extracting would double the disk use and delay the first run by minutes, while the game reads only part of it. `crates/pkg` already reads files at random offsets (block lists, PFSC, XTS), so a lazy backend is little extra code. The cost is that guest descriptors are no longer always host files (`GuestFile` in `vfs.rs`), and code that wants a host path (`Vfs::resolve`) gets none for package files; it should use `Vfs::read` instead.
+
+## 2026-11-20: Per-title folders are named by the title id
+
+`/data`, save data and `/temp0` live under `~/Library/Application Support/ps5slop/<title id>/` (`PPSA17221`), for packages and folders alike. Without a title id (a lone executable, a folder without `sce_sys/param.json` or `param.sfo`) the folder's or file's name is used, as before. A folder kept under the old name is renamed to the title id on the first run that finds the id.
+
+Reason: the same title run from a package and from a folder (or from folders with different names) should see the same data and saves.
+
 ## 2026-11-20: Render targets live in Metal textures; flips present them directly
 
 Render targets are Metal textures keyed by guest address. A flip of a buffer the GPU rendered presents that texture in the window, and guest memory is not updated with the rendered pixels until something on the CPU needs them (not implemented yet). Guest memory is wrapped in place as no-copy buffers for everything else.

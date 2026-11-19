@@ -7,7 +7,7 @@ use std::fs::OpenOptions;
 
 use crate::dmem::sce_error;
 use crate::libc::cstr;
-use crate::vfs::io_errno;
+use crate::vfs::{GuestFile, io_errno};
 use crate::{CallError, Env, Function, Outcome, errno};
 
 pub static FUNCTIONS: &[Function] = &[
@@ -89,14 +89,8 @@ fn finish(env: &Env, style: Style, r: Result<u64, i32>) -> Result<Outcome, CallE
 /// `/data` for anything.
 fn open_file(env: &Env) -> Result<Result<u64, i32>, CallError> {
     let (path, flags) = (cstr(env, env.arg(0))?, env.arg(1));
-    let Some((host, writable)) = env.kernel.vfs.resolve(&path) else {
-        return Ok(Err(errno::ENOENT));
-    };
     let access = flags & O_ACCMODE;
     let wants_write = access != 0 || flags & (O_CREAT | O_TRUNC | O_APPEND) != 0;
-    if wants_write && !writable {
-        return Ok(Err(errno::EROFS));
-    }
     let mut o = OpenOptions::new();
     o.read(access != O_WRONLY)
         .write(matches!(access, O_WRONLY | O_RDWR))
@@ -109,16 +103,17 @@ fn open_file(env: &Env) -> Result<Result<u64, i32>, CallError> {
             o.create(true);
         }
     }
-    Ok(match o.open(&host) {
-        Ok(file) => {
+    Ok(env
+        .kernel
+        .vfs
+        .open(&path, &o, wants_write)
+        .map(|(file, dir)| {
             let fd = env.kernel.libc.files.open_fd(file);
-            if host.is_dir() {
-                env.kernel.libc.files.set_directory(fd, host);
+            if let Some(dir) = dir {
+                env.kernel.libc.files.set_directory(fd, dir);
             }
-            Ok(fd as u64)
-        }
-        Err(e) => Err(io_errno(&e)),
-    })
+            fd as u64
+        }))
 }
 
 /// `read(fd, buf, len)`: descriptor files, and stdin, which is always at
@@ -300,10 +295,7 @@ fn sce_rename(env: &mut Env) -> Result<Outcome, CallError> {
     finish(env, Style::Sce, r)
 }
 
-fn on_fd(
-    env: &Env,
-    op: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
-) -> Result<u64, i32> {
+fn on_fd(env: &Env, op: impl FnOnce(&mut GuestFile) -> std::io::Result<()>) -> Result<u64, i32> {
     match env.kernel.libc.files.with_fd(env.arg(0) as i32, op) {
         Some(Ok(())) => Ok(0),
         Some(Err(e)) => Err(io_errno(&e)),
@@ -359,21 +351,12 @@ const DT_REG: u8 = 8;
 /// the end.
 fn read_directory(env: &Env) -> Result<Result<u64, i32>, CallError> {
     let (fd, buf, len) = (env.arg(0) as i32, env.arg(1), env.arg(2) as usize);
-    let out = env.kernel.libc.files.with_directory(fd, |path, pos| {
-        let mut names: Vec<(String, u8)> = std::fs::read_dir(path)
+    let out = env.kernel.libc.files.with_directory(fd, |dir, pos| {
+        let mut names: Vec<(String, u8)> = dir
+            .names()
             .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|e| {
-                let kind = if e.file_type().ok()?.is_dir() {
-                    DT_DIR
-                } else {
-                    DT_REG
-                };
-                Some((e.file_name().into_string().ok()?, kind))
-            })
+            .map(|(name, is_dir)| (name, if is_dir { DT_DIR } else { DT_REG }))
             .collect();
-        names.sort();
         names.splice(0..0, [(".".to_owned(), DT_DIR), ("..".to_owned(), DT_DIR)]);
         let mut records = Vec::new();
         for (i, (name, kind)) in names.iter().enumerate().skip(*pos) {

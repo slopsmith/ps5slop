@@ -6,7 +6,7 @@ use crate::Result;
 use crate::error::invalid;
 use crate::read::{ReadAt, u32_le, u64_le};
 
-const MAGIC: &[u8; 4] = b"PFSC";
+pub(crate) const MAGIC: &[u8; 4] = b"PFSC";
 const HEADER_SIZE: usize = 0x30;
 
 /// A PFSC file: data cut into fixed-size blocks, each stored raw or deflated.

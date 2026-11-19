@@ -3,10 +3,13 @@ use std::path::Path;
 
 use crate::error::invalid;
 use crate::keys::{self, EKPFS_INDEX, Passcode};
-use crate::read::{FileSlice, ReadAt, u32_be, u64_be};
+use crate::read::{FileSlice, ReadAt, u32_be, u64_be, u64_le};
 use crate::{Error, Result};
 
 const MAGIC: [u8; 4] = *b"\x7fCNT";
+/// A finished PS5 package (LibProsperoPKG's "finalized image"), little-endian.
+const FIH_MAGIC: [u8; 4] = *b"\x7fFIH";
+const FIH_HEADER_SIZE: usize = 0x100;
 const HEADER_SIZE: usize = 0x1000;
 const ENTRY_SIZE: usize = 0x20;
 const ENTRY_ENCRYPTED: u32 = 0x8000_0000;
@@ -23,6 +26,8 @@ pub mod entry_id {
     pub const ICON0_PNG: u32 = 0x1200;
     pub const PIC0_PNG: u32 = 0x1220;
     pub const PIC1_PNG: u32 = 0x1006;
+    /// PS5 only (LibProsperoPKG's `ps5-pkg-format.md`).
+    pub const PARAM_JSON: u32 = 0x2000;
 }
 
 /// Metadata entries that belong in the app's `sce_sys/` folder, by entry id
@@ -45,7 +50,36 @@ pub(crate) const SCE_SYS_ENTRIES: &[(u32, &str)] = &[
     (0x1280, "icon0.dds"),
     (0x12a0, "pic0.dds"),
     (0x1400, "trophy/trophy00.trp"),
+    (0x2000, "param.json"),
 ];
+
+/// Which kind of package a file is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    /// A PS4 package: the `\x7FCNT` container is the whole file.
+    Ps4,
+    /// A PS5 finalized image, with a `\x7FCNT` container embedded after the
+    /// PFS image. Offsets are from the start of the file.
+    Ps5 {
+        pfs_offset: u64,
+        pfs_size: u64,
+        superblock_offset: u64,
+    },
+}
+
+/// The PFS segment, superblock and container offsets of a FIH header; field
+/// sources and checks are in `docs/packages.md`.
+fn parse_fih(b: &[u8]) -> Result<(Format, u64)> {
+    if b.len() < FIH_HEADER_SIZE {
+        return Err(invalid("PS5 package header is truncated"));
+    }
+    let format = Format::Ps5 {
+        pfs_offset: u64_le(b, 0x10),
+        pfs_size: u64_le(b, 0x18),
+        superblock_offset: u64_le(b, 0x20),
+    };
+    Ok((format, u64_le(b, 0x58)))
+}
 
 /// The fields of the package header that we use. All are big-endian on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,16 +154,38 @@ impl Entry {
 }
 
 pub struct Package {
+    /// The whole file.
+    file: FileSlice,
+    /// The `\x7FCNT` container, which entry offsets count from.
     source: FileSlice,
     header: Header,
     entries: Vec<Entry>,
+    format: Format,
 }
 
 impl Package {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::from_source(FileSlice::whole(File::open(path)?)?)
+        Self::from_file(FileSlice::whole(File::open(path)?)?)
     }
 
+    /// Opens a PS4 package or a PS5 finalized image.
+    pub fn from_file(file: FileSlice) -> Result<Self> {
+        let head = file.read_vec(0, FIH_HEADER_SIZE.min(file.len() as usize))?;
+        if head.get(..4) != Some(&FIH_MAGIC[..]) {
+            return Self::from_source(file);
+        }
+        let (format, cnt_offset) = parse_fih(&head)?;
+        let cnt_size = file
+            .len()
+            .checked_sub(cnt_offset)
+            .ok_or_else(|| invalid("PS5 package's container lies past its end"))?;
+        let mut package = Self::from_source(file.slice(cnt_offset, cnt_size)?)?;
+        package.file = file;
+        package.format = format;
+        Ok(package)
+    }
+
+    /// Opens a PS4 package (a bare `\x7FCNT` container).
     pub fn from_source(source: FileSlice) -> Result<Self> {
         let header = Header::parse(&source.read_vec(0, HEADER_SIZE.min(source.len() as usize))?)?;
         let table_len = header.entry_count as usize * ENTRY_SIZE;
@@ -141,14 +197,33 @@ impl Package {
             .map(|e| Entry::parse(e))
             .collect();
         Ok(Self {
+            file: source.clone(),
             source,
             header,
             entries,
+            format: Format::Ps4,
         })
     }
 
     pub fn header(&self) -> &Header {
         &self.header
+    }
+
+    pub fn format(&self) -> Format {
+        self.format
+    }
+
+    /// The whole package file.
+    pub(crate) fn file(&self) -> &FileSlice {
+        &self.file
+    }
+
+    /// The clear metadata entries that belong in `sce_sys/`, by file name.
+    pub fn sce_sys_entries(&self) -> Vec<(&'static str, Entry)> {
+        SCE_SYS_ENTRIES
+            .iter()
+            .filter_map(|&(id, name)| Some((name, *self.entry(id).filter(|e| !e.is_encrypted())?)))
+            .collect()
     }
 
     pub fn entries(&self) -> &[Entry] {

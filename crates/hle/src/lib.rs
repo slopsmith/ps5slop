@@ -42,7 +42,7 @@ mod videoout;
 pub use pad::PadInput;
 pub use process::{Kernel, Thread, ThreadError, TlsBlock, TlsTemplate};
 pub use rtld::ModuleInfo;
-pub use vfs::Vfs;
+pub use vfs::{ImageFile, ImageFs, ImageStat, Target, Vfs};
 pub use videoout::Frame;
 
 /// Where the trap region starts. Our choice, below 2^40 and away from where

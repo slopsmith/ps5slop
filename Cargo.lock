@@ -1254,6 +1254,7 @@ dependencies = [
  "objc2-game-controller",
  "objc2-metal 0.3.2",
  "objc2-quartz-core 0.3.2",
+ "pkg",
  "winit",
  "x86",
 ]

@@ -1,6 +1,6 @@
 # Packages
 
-What a `.pkg` holds, and how we open fake-signed ones. `crates/pkg` implements this for PS4 packages; PS5 packages are not handled yet.
+What a `.pkg` holds, and how we open fake-signed ones. `crates/pkg` implements this for PS4 packages. For PS5 packages it reads the container, its metadata and an outer PFS image stored in the clear, but not yet the compressed image that holds the game's files (see "PS5 packages we have looked at").
 
 ## PS4 PKG
 
@@ -62,7 +62,19 @@ Sources disagree on step 3: the psdevwiki PKG page (vic's saved copy) says the s
 
 - Reading the PKG header and its clear metadata (title, content ID, icons) needs no keys.
 - A fake-signed package opens with its passcode (the user supplies it, all zeros by default), with no Sony keys. This is allowed as a convenience feature (see [decisions.md](decisions.md)).
-- Supported inputs are fake-signed packages (passcode all zeros unless the user gives another) and dumped `app0` folders (`eboot.bin`, `sce_module/`, `sce_sys/`). The loader works on the folder form; a package is extracted (or mounted) into it.
+- Supported inputs are fake-signed packages (passcode all zeros unless the user gives another) and dumped `app0` folders (`eboot.bin`, `sce_module/`, `sce_sys/`).
+
+## Running from a package
+
+`ps5slop run GAME.pkg` reads the package in place; nothing is extracted (see [decisions.md](decisions.md)).
+
+- `/app0` is a read-only mount backed by the package's app image (`crates/ps5slop/src/title.rs`, `PackageFs`, behind the `hle::ImageFs` trait in `crates/hle/src/vfs.rs`). Files are read on demand through the PFS block lists (and PFSC, XTS where the image needs them); directory listings are cached once read.
+- `sce_sys/` also shows the clear metadata entries the image does not hold itself (`param.sfo`, `param.json`, icons, ...), the same set `extract` writes.
+- The loader reads `eboot.bin` and the title's modules (`*.prx` at the root and in `sce_module/`) from the package the same way.
+- Packages that need keys we do not have (retail images, encrypted PS5 images) or a format we do not read fail at start with a message that says which.
+- Per-title data folders (`/data`, save data, `/temp0`) are named by the title id: `param.json`'s `titleId` (PS5), `param.sfo`'s `TITLE_ID` (PS4), else the one in the content id (`UP0000-PPSA01234_00-...`). Folder runs use the same id from `sce_sys/`.
+
+**Checked on 2026-11-20** with vic's two OpenOrbis packages (`pkgstore.pkg`, and `example.pkg` from `funny-ps4-engine`): every file read through `/app0` matches an extraction of the same package byte for byte (the ignored test `title::tests::package_files_match_their_extraction`), and `ps5slop run --headless` on each package gets as far as on its extracted folder (both stop at the unimplemented `sceMsgDialogInitialize`). No PS5 title has run from a package yet: see below.
 
 ## PS5
 
@@ -72,5 +84,15 @@ Source: LibProsperoPKG's [ps5-pkg-format.md](https://github.com/SvenGDK/LibProsp
 - The PFS uses the same scheme: AES-XTS over 0x1000-byte sectors, a plain 0x10000-byte header block, EKPFS plus the superblock seed giving the keys, but with a SHA3-256 based key schedule. Digests are SHA3-256.
 - Debug or passcode images: the EKPFS comes from the content ID and passcode (the writeup says SHA-256 first, SHA3-256 as a fallback). Retail outer images use an image key delivered through the console; not derivable, out of scope.
 - The writeup is partly inconsistent about which image uses which key (section 3.3 against section 11). Treat it as a lead to test, not a fact.
+
+### PS5 packages we have looked at
+
+Two PS5 fake packages from vic's downloads, Superliminal (`PPSA06084`, 4.5 GB) and Astro Bot (`PPSA21564`, 38 GB), looked at on 2026-11-20 with a hex viewer and our own reader. What they show:
+
+- **FIH:** `0x10` and `0x18` are the PFS segment's offset (`0x10000`) and size, and `0x58` the embedded container's offset, as LibProsperoPKG says. `0xA0` is not the container's size in either file: it equals the stored size of `pfs_image.dat`. The u64 at `0x20` is the offset of the PFS superblock in the file. We read the container from `0x58` to the end of the file.
+- **Embedded container:** a `\x7FCNT` like the PS4's. Entry offsets count from the container's start. `param.json` (entry `0x2000`) is stored in the clear; we read the title id from it.
+- **Outer PFS:** superblock version 2, mode `0xD` (signed and the encrypted flag), yet stored in the clear: its seed reads `PPRPLAIN-NOAUTH!`, and we take that seed to mean "not encrypted". The superblock does not start the image: it sits near the end, after the file data (block `0x10707` of `0x10733` in Superliminal), with the inode block right after it. Block numbers still count from the image's start. Inodes use the signed PS4 layout (0x2C8 bytes).
+- **Contents:** the superroot holds `inode_flat_path_table` and `uroot`; `uroot` holds `pfs_image.dat` (compressed flag set; Superliminal: 4.4 GB stored, 14.9 GB as its second size) and `naps_pkg_layout.dat` (1.2 MB, unknown format).
+- **`pfs_image.dat`** has no PFSC header. It starts with a PS5 SELF in the clear (`54 14 F5 EE`), and elsewhere holds what looks like LZ-compressed PFS metadata (`inode_flat_path_table`, `uroot`, `sce_module`, `eboot.bin` appear split up by back-references). We do not know this compression format or where its block table lives, so `ps5slop` stops there with "compressed with a scheme ps5slop does not know yet". Unknown: the codec (Kraken-like? LZ4-like?), the role of `naps_pkg_layout.dat`, and whether other PS5 packages share the plain seed.
 
 The PS4 cannot install PS5 packages, so any PS5 package work happens on the Mac. PS5 game dumps usually arrive as `PPSAxxxxx-app0` folders anyway (see [loader.md](loader.md)).

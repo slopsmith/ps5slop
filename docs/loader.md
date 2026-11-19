@@ -92,7 +92,7 @@ Only modules on an **allowlist** are candidates. A module gets on it only if eve
 
 Status (2026-11-19): Balatro loads its own `sce_module/libc.prx` (Sony's C library, which only needs `libkernel`), binds its 183 `libc` imports to it, runs its initialiser, and reaches `main`. Implemented in `crates/ps5slop/src/modules.rs` and `Process::load`.
 
-- **Finding modules.** Each import names a module. The candidates are the `.prx`/`.sprx` files in the title folder and in `sce_module/`, by the module name their own tables give.
+- **Finding modules.** Each import names a module. The candidates are the `.prx`/`.sprx` files at the title's root and in `sce_module/` (a folder, or a package read in place), by the module name their own tables give.
 - **Choosing.** Only modules that the executable, or a module already chosen, imports from are loaded, so homebrew that never imports from its `libc.prx` does not load it. Game modules (outside `sce_module`, such as Minecraft's `libfmod.prx`) always load. Modules in `sce_module/` are Sony's and load only if `ALLOWED_SYSTEM_MODULES` names them; today that is `libc`. Everything else stays with the HLE layer. Whether to drop the allowlist will be revisited (vic, 2026-11-19).
 - **Layout.** The executable stays at `0x40_0000`; modules follow one another from `0x8_0000_0000` (our choice; see [memory.md](memory.md)).
 - **Binding.** Every unit's exports (global or weak symbols with a value, as `(library, NID)`) are collected before anything is relocated. An import binds to a module export first, then to an HLE stub.

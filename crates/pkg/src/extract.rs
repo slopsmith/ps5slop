@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use crate::error::invalid;
 use crate::keys::Passcode;
-use crate::package::SCE_SYS_ENTRIES;
-use crate::pfs::{Kind, Pfs};
+use crate::package::Format;
+use crate::pfs::{Kind, Pfs, Superblock};
+use crate::pfsc::MAGIC as PFSC_MAGIC;
 use crate::read::ReadAt;
-use crate::{Package, Result};
+use crate::{Error, Package, Result};
 
 /// LibOrbisPkg's flag for the variant PFS key schedule ("new crypt"); not yet
 /// seen in a real package.
@@ -26,8 +27,27 @@ pub struct Extracted {
 }
 
 impl Package {
-    /// The outer PFS image, decrypted with keys derived from `passcode`.
+    /// The outer PFS image, decrypted with keys derived from `passcode`. PS5
+    /// images are read only when stored in the clear.
     pub fn outer_pfs(&self, passcode: &Passcode) -> Result<Pfs> {
+        if let Format::Ps5 {
+            pfs_offset,
+            pfs_size,
+            superblock_offset,
+        } = self.format()
+        {
+            let image = self.file().slice(pfs_offset, pfs_size)?;
+            let at = superblock_offset
+                .checked_sub(pfs_offset)
+                .ok_or_else(|| invalid("PS5 superblock lies before the PFS image"))?;
+            let image: Arc<dyn ReadAt + Send + Sync> = Arc::new(image);
+            if Superblock::read(&*image, at)?.is_encrypted() {
+                return Err(Error::Unsupported(
+                    "this PS5 package's PFS image is encrypted; ps5slop only reads images stored in the clear".into(),
+                ));
+            }
+            return Pfs::open_at(image, at, None, false);
+        }
         let ekpfs = self.ekpfs(passcode)?;
         let h = self.header();
         let image = self.source().slice(h.pfs_image_offset, h.pfs_image_size)?;
@@ -44,6 +64,15 @@ impl Package {
         let entry = outer.lookup(INNER_IMAGE)?;
         if entry.kind != Kind::File {
             return Err(invalid(format!("{INNER_IMAGE} is not a file")));
+        }
+        if matches!(self.format(), Format::Ps5 { .. }) {
+            let inode = outer.inode(entry.inode)?;
+            let head = outer.open_file_stored(entry.inode)?.read_vec(0, 4)?;
+            if inode.is_compressed() && head[..] != PFSC_MAGIC[..] {
+                return Err(Error::Unsupported(format!(
+                    "this PS5 package's {INNER_IMAGE} is compressed with a scheme ps5slop does not know yet (it is not PFSC)"
+                )));
+            }
         }
         Pfs::open(outer.open_file(entry.inode)?, None, false)
     }
@@ -75,10 +104,7 @@ impl Package {
             done.files += 1;
             done.bytes += src.len();
         }
-        for &(id, name) in SCE_SYS_ENTRIES {
-            let Some(entry) = self.entry(id).filter(|e| !e.is_encrypted()) else {
-                continue;
-            };
+        for (name, entry) in self.sce_sys_entries() {
             let target = dest.join("sce_sys").join(name);
             if target.exists() {
                 continue;
@@ -86,7 +112,7 @@ impl Package {
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let data = self.read_entry(entry)?;
+            let data = self.read_entry(&entry)?;
             OpenOptions::new()
                 .write(true)
                 .create_new(true)

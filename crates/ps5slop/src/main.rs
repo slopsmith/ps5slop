@@ -2,7 +2,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use pkg::keys::{DEFAULT_PASSCODE, Passcode};
 use ps5slop::Process;
+use ps5slop::title::Title;
 
 /// A PS5 compatibility layer for Apple Silicon Macs.
 #[derive(Parser)]
@@ -14,8 +16,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Runs an executable: a plain or fake-signed ELF, or an app folder
-    /// holding `eboot.bin`.
+    /// Runs an executable: a plain or fake-signed ELF, an app folder
+    /// holding `eboot.bin`, or a `.pkg` file read in place.
     Run {
         path: PathBuf,
         /// Runs without a window; frames are not shown.
@@ -34,6 +36,10 @@ enum Command {
         /// title under ~/Library/Application Support/ps5slop).
         #[arg(long, value_name = "DIR")]
         data: Option<PathBuf>,
+        /// A fake-signed PS4 package's 32-character passcode (all zeros by
+        /// default).
+        #[arg(long)]
+        passcode: Option<String>,
     },
 }
 
@@ -45,20 +51,37 @@ fn main() -> ExitCode {
         after,
         interpreter,
         data,
+        passcode,
     } = Cli::parse().command;
-    let path = if path.is_dir() {
-        path.join("eboot.bin")
-    } else {
-        path
-    };
-    let file = match std::fs::read(&path) {
-        Ok(f) => f,
+    let passcode = match passcode
+        .as_deref()
+        .map(Passcode::new)
+        .unwrap_or(Ok(DEFAULT_PASSCODE))
+    {
+        Ok(p) => p,
         Err(e) => {
-            eprintln!("ps5slop: cannot read {}: {e}", path.display());
+            eprintln!("ps5slop: {e}");
             return ExitCode::FAILURE;
         }
     };
-    let process = match Process::load(file, path.parent()) {
+    let title = match Title::open(&path, &passcode) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("ps5slop: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let file = match title.eboot() {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!(
+                "ps5slop: cannot read the executable of {}: {e}",
+                path.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    let process = match Process::load(file, title.files().as_deref()) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("ps5slop: {e}");
@@ -76,8 +99,7 @@ fn main() -> ExitCode {
             }
         }
     }
-    let app0 = path.parent().map(|p| p.to_path_buf());
-    let data = data.or_else(|| default_data(&path));
+    let data = data.or_else(|| default_data(&title));
     let temp = data.as_ref().map(|d| d.with_file_name("temp"));
     let saves = data.as_ref().map(|d| d.with_file_name("savedata"));
     for d in data.iter().chain(&temp).chain(&saves) {
@@ -85,7 +107,8 @@ fn main() -> ExitCode {
             eprintln!("ps5slop: cannot make {}: {e}", d.display());
         }
     }
-    let mut vfs = hle::Vfs::new(app0, data);
+    let mut vfs = hle::Vfs::new(None, data);
+    title.mount(&vfs);
     if let Some(t) = temp {
         vfs.mount("/temp0", t, true);
     }
@@ -153,14 +176,25 @@ fn dump_after(kernel: std::sync::Arc<hle::Kernel>, out: PathBuf, seconds: f64) {
     });
 }
 
-/// `~/Library/Application Support/ps5slop/<title>/data`, where `<title>` is
-/// the app folder's name (or the executable's, outside one).
-fn default_data(eboot: &std::path::Path) -> Option<PathBuf> {
+/// `~/Library/Application Support/ps5slop/<title id or name>/data`, moving a
+/// folder kept under the name to the title id.
+fn default_data(title: &Title) -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
-    let title = match eboot.parent() {
-        Some(dir) if eboot.file_name().is_some_and(|n| n == "eboot.bin") => dir.file_name()?,
-        _ => eboot.file_stem()?,
-    };
     let root = PathBuf::from(home).join("Library/Application Support/ps5slop");
-    Some(root.join(title).join("data"))
+    let fallback = title.fallback_name().map(|n| root.join(n));
+    let Some(id) = title.id() else {
+        return fallback.map(|d| d.join("data"));
+    };
+    let dir = root.join(&id);
+    if let Some(old) = fallback.filter(|old| old.is_dir() && !dir.exists() && *old != dir) {
+        match std::fs::rename(&old, &dir) {
+            Ok(()) => eprintln!("ps5slop: moved {} to {}", old.display(), dir.display()),
+            Err(e) => eprintln!(
+                "ps5slop: cannot move {} to {}: {e}",
+                old.display(),
+                dir.display()
+            ),
+        }
+    }
+    Some(dir.join("data"))
 }

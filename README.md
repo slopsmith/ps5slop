@@ -23,6 +23,8 @@ scripts/run-test-programs     # build, run under ps5slop, compare with expected 
 scripts/fetch-references && cargo run --release -p asmtest   # FEX's x86-64 tests against the interpreter
 cargo run --release -p ps5slop -- run target/test-programs/hello.elf
 cargo run --release -p ps5slop -- run games/TITLE   # an app folder; opens a window for VideoOut
+cargo run --release -p ps5slop -- run --headless GAME.pkg   # a package, read in place (--passcode for PS4 ones)
+cargo run --release -p pkg -- ls GAME.pkg   # list a package's app files
 cargo run --release -p ps5slop -- run --headless --dump-frame out.ppm --after 10 games/TITLE
 cargo run --release -p ps5slop -- run --interpreter games/TITLE   # no JIT; by default guest code is translated and runs in a Hypervisor.framework VM
 PS5SLOP_JIT_VERIFY=1 PS5SLOP_JIT_STATS=1 cargo run ...   # check the JIT against the interpreter / see what it leaves to the interpreter

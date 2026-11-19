@@ -7,6 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::dmem::sce_error;
 use crate::libc::FdInfo;
 use crate::pthread::{POLL, ret as ret_errno};
+use crate::vfs::Meta;
 use crate::{CallError, Env, Function, Outcome, errno};
 
 pub static FUNCTIONS: &[Function] = &[
@@ -113,23 +114,18 @@ fn write_stat(
     Ok(())
 }
 
-fn write_metadata(env: &Env, at: u64, m: &std::fs::Metadata) -> Result<(), CallError> {
-    let mode = if m.is_dir() {
+fn write_metadata(env: &Env, at: u64, m: &Meta) -> Result<(), CallError> {
+    let mode = if m.dir {
         S_IFDIR | 0o555
     } else {
         S_IFREG | 0o444
     };
-    write_stat(env, at, mode, m.len(), m.modified().ok())
+    write_stat(env, at, mode, m.len, m.modified)
 }
 
 fn stat_path(env: &Env) -> Result<Result<(), i32>, CallError> {
     let path = super::libc::cstr(env, env.arg(0))?;
-    let meta = env
-        .kernel
-        .vfs
-        .resolve(&path)
-        .and_then(|(p, _)| std::fs::metadata(p).ok());
-    match meta {
+    match env.kernel.vfs.metadata(&path) {
         Some(m) => write_metadata(env, env.arg(1), &m).map(Ok),
         None => Ok(Err(errno::ENOENT)),
     }

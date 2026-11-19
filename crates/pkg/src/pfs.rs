@@ -12,6 +12,9 @@ use crate::xts::{SECTOR_SIZE, XtsReader};
 use crate::{Error, Result};
 
 const MAGIC: u64 = 20130315;
+/// The seed of the PS5 images we have seen stored in the clear, though their
+/// mode still has the encrypted flag (observed in two packages, see `docs/packages.md`).
+pub const PLAIN_SEED: [u8; 16] = *b"PPRPLAIN-NOAUTH!";
 const SEED_OFFSET: usize = 0x370;
 const SUPERBLOCK_READ: usize = 0x400;
 
@@ -38,6 +41,8 @@ type Source = Arc<dyn ReadAt + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Superblock {
+    /// 1 on PS4, 2 on PS5.
+    pub version: u64,
     pub mode: u16,
     pub block_size: u32,
     pub dinode_count: u64,
@@ -47,7 +52,8 @@ pub struct Superblock {
 
 impl Superblock {
     fn parse(b: &[u8]) -> Result<Self> {
-        if u64_le(b, 0) != 1 || u64_le(b, 8) != MAGIC {
+        let version = u64_le(b, 0);
+        if !matches!(version, 1 | 2) || u64_le(b, 8) != MAGIC {
             return Err(invalid("not a PFS image (bad version or magic)"));
         }
         let block_size = u32_le(b, 0x20);
@@ -57,6 +63,7 @@ impl Superblock {
             )));
         }
         Ok(Self {
+            version,
             mode: u16_le(b, 0x1c),
             block_size,
             dinode_count: u64_le(b, 0x30),
@@ -65,12 +72,17 @@ impl Superblock {
         })
     }
 
+    /// Reads the superblock at `offset` in `image`.
+    pub fn read(image: &(impl ReadAt + ?Sized), offset: u64) -> Result<Self> {
+        Self::parse(&image.read_vec(offset, SUPERBLOCK_READ)?)
+    }
+
     pub fn is_signed(&self) -> bool {
         self.mode & MODE_SIGNED != 0
     }
 
     pub fn is_encrypted(&self) -> bool {
-        self.mode & MODE_ENCRYPTED != 0
+        self.mode & MODE_ENCRYPTED != 0 && self.seed != PLAIN_SEED
     }
 }
 
@@ -123,6 +135,8 @@ pub struct DirEntry {
 pub struct Pfs {
     source: Source,
     superblock: Superblock,
+    /// Where the superblock sits in the image: 0 on PS4, near the end on PS5.
+    superblock_offset: u64,
     inodes: Vec<Inode>,
 }
 
@@ -130,11 +144,27 @@ impl Pfs {
     /// Opens a PFS image. Encrypted images need the package's EKPFS, and
     /// `new_crypt` selects the variant key schedule (see [`PfsKeys::derive`]).
     pub fn open(raw: Source, ekpfs: Option<&[u8; 32]>, new_crypt: bool) -> Result<Self> {
-        let superblock = Superblock::parse(&raw.read_vec(0, SUPERBLOCK_READ)?)?;
+        Self::open_at(raw, 0, ekpfs, new_crypt)
+    }
+
+    /// Opens a PFS image whose superblock (and the inode blocks after it) sits
+    /// at `superblock_offset`. Block numbers still count from the image's start.
+    pub fn open_at(
+        raw: Source,
+        superblock_offset: u64,
+        ekpfs: Option<&[u8; 32]>,
+        new_crypt: bool,
+    ) -> Result<Self> {
+        let superblock = Superblock::read(&*raw, superblock_offset)?;
         if superblock.mode & MODE_64BIT != 0 {
             return Err(Error::Unsupported("PFS images with 64-bit inodes".into()));
         }
         let source: Source = if superblock.is_encrypted() {
+            if superblock_offset != 0 {
+                return Err(Error::Unsupported(
+                    "encrypted PFS images with the superblock away from the start".into(),
+                ));
+            }
             let ekpfs =
                 ekpfs.ok_or_else(|| invalid("PFS image is encrypted but no key was given"))?;
             let keys = PfsKeys::derive(ekpfs, &superblock.seed, new_crypt);
@@ -146,6 +176,7 @@ impl Pfs {
         let mut pfs = Self {
             source,
             superblock,
+            superblock_offset,
             inodes: Vec::new(),
         };
         pfs.inodes = pfs.read_inodes()?;
@@ -174,9 +205,10 @@ impl Pfs {
         }
         let mut inodes = Vec::with_capacity(count as usize);
         for block in 0..self.superblock.dinode_block_count {
-            let data = self
-                .source
-                .read_vec((1 + block) * self.block_size(), self.block_size() as usize)?;
+            let data = self.source.read_vec(
+                self.superblock_offset + (1 + block) * self.block_size(),
+                self.block_size() as usize,
+            )?;
             for chunk in data.chunks_exact(size).take(per_block) {
                 if inodes.len() as u64 == count {
                     return Ok(inodes);
@@ -257,6 +289,12 @@ impl Pfs {
             block_size: self.block_size(),
             len,
         })
+    }
+
+    /// A file's bytes as stored, without decompressing them.
+    pub fn open_file_stored(&self, number: u32) -> Result<Source> {
+        let inode = self.inode(number)?;
+        Ok(Arc::new(self.stored(inode, inode.size)?))
     }
 
     /// The contents of a file, decompressed if it is a PFSC file.
@@ -595,6 +633,25 @@ mod tests {
         let superroot = img.dir(&[("uroot", 1, DIRENT_DIR)]);
         let pfs = open(img.finish(&[superroot, uroot, a]));
         assert!(pfs.files().is_err());
+    }
+
+    #[test]
+    fn opens_plain_ps5_images_with_the_superblock_at_an_offset() {
+        let (mut img, _) = tree(true);
+        let at = img.len();
+        let mut meta = img[..2 * BS].to_vec();
+        meta[0..8].copy_from_slice(&2u64.to_le_bytes());
+        meta[0x1c] |= MODE_ENCRYPTED as u8;
+        meta[SEED_OFFSET..SEED_OFFSET + 16].copy_from_slice(&PLAIN_SEED);
+        img[..2 * BS].fill(0);
+        img.extend(meta);
+        let pfs = Pfs::open_at(Arc::new(img.clone()), at as u64, None, false).unwrap();
+        assert_eq!(pfs.superblock().version, 2);
+        assert!(!pfs.superblock().is_encrypted());
+        assert_eq!(pfs.open_file(2).unwrap().read_vec(0, 5).unwrap(), b"hello");
+
+        img[at + SEED_OFFSET] = b'X';
+        assert!(Pfs::open_at(Arc::new(img), at as u64, None, false).is_err());
     }
 
     #[test]

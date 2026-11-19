@@ -3,13 +3,14 @@
 //! Paths go through the guest's file system (see `vfs.rs`).
 
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Mutex;
 
 use super::format::{Args, printf};
 use super::{STDERR_FILE, STDIN_FILE, STDOUT_FILE, cstr, f, ret};
 use crate::pthread::lock;
+use crate::vfs::{DirSource, GuestFile, Meta};
 use crate::{CallError, Env, Function, Outcome, errno};
 
 pub static FUNCTIONS: &[Function] = &[
@@ -34,7 +35,7 @@ const EOF: u64 = -1i32 as u32 as u64;
 
 enum Target {
     Console(i32),
-    Host(File),
+    Host(GuestFile),
 }
 
 struct Stream {
@@ -48,33 +49,33 @@ struct Stream {
 /// descriptors (libkernel's `open`). Both share one descriptor space.
 pub(crate) struct Files {
     streams: Mutex<HashMap<u64, Stream>>,
-    descriptors: Mutex<HashMap<i32, File>>,
-    /// Descriptors open on directories: the host path and how many entries
+    descriptors: Mutex<HashMap<i32, GuestFile>>,
+    /// Descriptors open on directories: what to list and how many entries
     /// `getdents` has returned.
-    directories: Mutex<HashMap<i32, (std::path::PathBuf, usize)>>,
+    directories: Mutex<HashMap<i32, (DirSource, usize)>>,
 }
 
 /// What a file descriptor from a stream refers to.
 pub(crate) enum FdInfo {
     Console,
-    File(std::fs::Metadata),
+    File(Meta),
 }
 
 impl Files {
     pub(crate) fn fd_info(&self, fd: i32) -> Option<FdInfo> {
         let streams = lock(&self.streams);
         if let Some(f) = lock(&self.descriptors).get(&fd) {
-            return f.metadata().ok().map(FdInfo::File);
+            return f.meta().ok().map(FdInfo::File);
         }
         let s = streams.values().find(|s| s.fd == fd)?;
         match &s.target {
             Target::Console(_) => Some(FdInfo::Console),
-            Target::Host(f) => f.metadata().ok().map(FdInfo::File),
+            Target::Host(f) => f.meta().ok().map(FdInfo::File),
         }
     }
 
     /// Gives `file` the lowest free descriptor number.
-    pub(crate) fn open_fd(&self, file: File) -> i32 {
+    pub(crate) fn open_fd(&self, file: GuestFile) -> i32 {
         let streams = lock(&self.streams);
         let mut descriptors = lock(&self.descriptors);
         let fd = free_fd(&streams, &descriptors);
@@ -97,7 +98,7 @@ impl Files {
     }
 
     /// Runs `f` on descriptor `fd`'s file; `None` when it is not open.
-    pub(crate) fn with_fd<T>(&self, fd: i32, f: impl FnOnce(&mut File) -> T) -> Option<T> {
+    pub(crate) fn with_fd<T>(&self, fd: i32, f: impl FnOnce(&mut GuestFile) -> T) -> Option<T> {
         lock(&self.descriptors).get_mut(&fd).map(f)
     }
 
@@ -107,16 +108,16 @@ impl Files {
         lock(&self.descriptors).remove(&fd).is_some()
     }
 
-    /// Marks `fd` as open on directory `path`.
-    pub(crate) fn set_directory(&self, fd: i32, path: std::path::PathBuf) {
-        lock(&self.directories).insert(fd, (path, 0));
+    /// Marks `fd` as open on directory `dir`.
+    pub(crate) fn set_directory(&self, fd: i32, dir: DirSource) {
+        lock(&self.directories).insert(fd, (dir, 0));
     }
 
-    /// Runs `f` on directory descriptor `fd`'s path and read position.
+    /// Runs `f` on directory descriptor `fd`'s directory and read position.
     pub(crate) fn with_directory<T>(
         &self,
         fd: i32,
-        f: impl FnOnce(&std::path::Path, &mut usize) -> T,
+        f: impl FnOnce(&DirSource, &mut usize) -> T,
     ) -> Option<T> {
         lock(&self.directories)
             .get_mut(&fd)
@@ -124,7 +125,7 @@ impl Files {
     }
 }
 
-fn free_fd(streams: &HashMap<u64, Stream>, descriptors: &HashMap<i32, File>) -> i32 {
+fn free_fd(streams: &HashMap<u64, Stream>, descriptors: &HashMap<i32, GuestFile>) -> i32 {
     (FIRST_FD..)
         .find(|fd| !descriptors.contains_key(fd) && streams.values().all(|s| s.fd != *fd))
         .expect("a free fd")
@@ -172,15 +173,9 @@ fn fopen(env: &mut Env) -> Result<Outcome, CallError> {
         env.set_errno(errno::EINVAL)?;
         return ret(0);
     };
-    let file = match env.kernel.vfs.resolve(&path) {
-        None => Err(errno::ENOENT),
-        Some((_, false)) if mode.first() != Some(&b'r') || mode.contains(&b'+') => {
-            Err(errno::EROFS)
-        }
-        Some((host, _)) => options.open(host).map_err(|e| crate::vfs::io_errno(&e)),
-    };
-    let file = match file {
-        Ok(f) => f,
+    let writes = mode.first() != Some(&b'r') || mode.contains(&b'+');
+    let file = match env.kernel.vfs.open(&path, &options, writes) {
+        Ok((f, _)) => f,
         Err(e) => {
             env.set_errno(e)?;
             return ret(0);
