@@ -1,0 +1,63 @@
+# References and prior art
+
+What exists, what it is licensed under, and what we read or took from it. Surveyed 2026-11-19 through GitHub (`gh api`, READMEs, LICENSE files, a few source files). Progress claims are the projects' own; we ran nothing.
+
+## Ledger: what we read and what we took
+
+| Date | Source | Read for | Took |
+| --- | --- | --- | --- |
+| 2026-11-19 | shadPS4 `src/core/loader/elf.h`, `src/core/module.cpp` (through a research summary) | ELF/SELF constants, NID derivation | Facts only, written in our own words in [loader.md](loader.md). No code. |
+| 2026-11-19 | shadPS4 `src/core/address_space.cpp`, `src/core/tls.cpp`, `src/core/cpu_patches.cpp` (summary) | PS4 address layout, TLS on macOS, Rosetta bugs | Facts only ([memory.md](memory.md), [cpu.md](cpu.md)). No code. |
+| 2026-11-19 | FEX `Config.json.in`, `OpcodeDispatcher.h`, `unittests/InstructionCountCI` (summary) | TSO options, AVX on 128-bit hosts, instruction counts | Facts only ([cpu.md](cpu.md)). No code. |
+| 2026-11-19 | Prosperity `delta/cpu/fex_backend.cc` (summary) | How FEXCore is embedded | Facts only. No code. |
+
+Add a row whenever someone reads another project's source for this repo.
+
+## License rules for borrowing
+
+ps5slop is GPL-2.0-or-later.
+
+- **Reading for ideas** is fine for any project, including ones with no license. Write down what was read in the ledger.
+- **Copying code** is fine from MIT, BSD, ISC, zlib and GPL-2.0-or-later sources, keeping their notices.
+- **GPL-2.0-only** code (rps5e, AnyPS5, and conservatively any project whose LICENSE is bare GPLv2 text with no "or later" in its headers) can be copied, but it turns the whole project GPL-2.0-only. Ask vic first.
+- **Apache-2.0, GPL-3.0, LGPL-3.0** code is incompatible with GPLv2. Copying it forces the combined work to GPLv3. This also matters for dependencies we link statically, for example SPIRV-Cross (Apache-2.0). Rust crates under `MIT OR Apache-2.0` are fine: we take them under MIT.
+- **No license** means all rights reserved: read only.
+- **Tables are a provenance problem, not only a license one.** Several emulators and SDKs carry symbol name lists, NID databases and stub lists generated from decrypted Sony modules (for example the payload SDK's `sce_stubs`, `aerolib.csv`, ps4libdoc). We never import those, whatever their license. See [legal.md](legal.md).
+
+## Prior art
+
+Every working project runs guest x86-64 natively on an x86-64 host. On Apple Silicon the three routes in use are: an x86_64 build under Rosetta 2, an embedded FEXCore JIT, or an interpreter. No native arm64 macOS PS5 path that we could verify has shipped.
+
+| Project | Lang | License | CPU | GPU | System libs | Claimed state | arm64 / macOS |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [rps5e](https://github.com/keklick1337/rps5e) | Rust | GPL-2.0-only | Native x86-64 (x86-64-v3) | PM4 to Vulkan 1.3, RDNA to SPIR-V | HLE | Large titles "playable" (unverified) | No |
+| [KytyPS5](https://github.com/KytyPS5/KytyPS5) | C++ | Mixed: GPLv2 text, Kyty MIT files, shadPS4 GPL-2.0-or-later files | Native x86-64 + instruction patcher | Vulkan 1.3, RDNA2 to SPIR-V | HLE, no LLE modules | Many commercial titles in game | x86_64 under Rosetta + MoltenVK, experimental |
+| [Kyty](https://github.com/InoriRus/Kyty) (original) | C++ | MIT | Native x86-64 | Vulkan | HLE | PS4 simple games, PS5 homebrew; inactive since 2022 | No |
+| [KytyPlus](https://github.com/Coder787-source/KytyPlus) | C++ | GPLv2 text | As KytyPS5 | Vulkan / MoltenVK | HLE | One menu; maintainer stepped back | macOS listed |
+| [Prosperity](https://github.com/Force67/prosperity) | C++ | GPLv2 text | Native on x86-64, embedded FEXCore on aarch64 | GCN/RDNA to SPIR-V, Vulkan | **LLE**: needs user firmware modules | Small titles in game | Linux arm64, Android; no macOS |
+| [RPCSX](https://github.com/RPCSX/rpcsx) | C++ | GPLv2 text; orbis-kernel MIT; contains RPCS3 code | Native x86-64, Linux | GCN to SPIR-V, Vulkan | Kernel-level, needs PS4 firmware | PS4 samples; PS5 unverified | Unverified |
+| [SharpEmu](https://github.com/sharpemu/sharpemu) | C# | GPL-2.0-or-later | Native x86-64 | Vulkan | HLE | Commercial titles (screenshots) | No |
+| [SharpEmu-mac](https://github.com/sharpemu/sharpemu-mac) | C# | GPL-2.0-or-later | x86_64 under Rosetta, macOS 15+ | **Native Metal**, own shader compiler to Metal, NGG to mesh pipelines | HLE | As upstream | Yes, via Rosetta; rejects arm64 builds |
+| [craziiEmu](https://github.com/craze1pirate/craziiEmu) | C# | GPLv2 text | Native x86-64 | Vulkan 1.3 | HLE (SharpEmu-derived) | Small titles playable | Windows only |
+| [EmUV](https://github.com/sammwyy/EmUV) | C++ | **None** | Native, single-step tracing | None | Stubs | Loads an ELF and resolves imports | No |
+| [AnyPS5](https://github.com/boykopovar/AnyPS5) | C++ | GPL-2.0-only | **AOT relinker**: PS5 ELF to native ELF/PE | AGC/RDNA to SPIR-V, Vulkan | HLE libs as shared libraries | Unverified | Relinker builds on Apple Silicon |
+| [KyTx](https://github.com/TxCsOffc/KyTx) | C++ | GPLv2 text | **FEXCore in-process on arm64 macOS** | RDNA to MSL, native Metal | HLE (KytyPS5) | One title to a match on an M5 Max | Native arm64 macOS, but needs an unpublished FEX port |
+| [ostrium-labs/prospero](https://github.com/ostrium-labs/prospero) | Docs | Apache-2.0 | Plan only; emulator is a KytyPS5 fork | | | Two days old | Plan mentions FEX/Box64 |
+| [shadPS4](https://github.com/shadps4-emu/shadPS4) (PS4) | C++ | GPL-2.0-or-later | Native x86-64 (x86-64-v3) + patches | GCN to IR to SPIR-V, Vulkan; KosmicKrisp on macOS | HLE, optional LLE of whitelisted user modules | Many commercial PS4 titles | x86_64 under Rosetta, macOS 26+ |
+
+Low-credibility or very new Apple efforts (one or two days of commits, unverifiable claims): VibeStation5 (interpreter on iPad), AnyPS5-OSX, madeira-anyps5 (no license). Fake "PS5 emulators" that carry malware also circulate, and news sites that report percentages of "progress" are not sources.
+
+### Notes worth keeping
+
+- **SharpEmu-mac** is the closest existing design to our GPU side: Metal directly, no MoltenVK, its own shader compiler to Metal, and NGG geometry mapped onto Metal mesh pipelines ([metal-backend.md](https://github.com/sharpemu/sharpemu-mac/blob/main/docs/macos/metal-backend.md)). GPL-2.0-or-later, so compatible.
+- **KyTx** shows FEXCore can run in-process on arm64 macOS, but its Darwin port of FEX is not published, so nothing can be checked.
+- **KytyPS5 on macOS** reserves the guest address space with Mach-O `.zerofill` segments and patches instructions Rosetta lacks (SSE4a `extrq`/`insertq`, `rdpid`, `clwb`).
+- **Prosperity** embeds FEXCore (`delta/cpu/fex_backend.cc`) and handles `syscall` and FS/GS itself. It is LLE and needs firmware, which we will not do.
+- **A PS5 Mesa port exists** (radv on AGC, GFX1013, in the payload SDK's `pacbrew-repo/mesa`). It means open-source code can produce real PS5 PM4 command buffers through a small AGC surface. Where its authors learned the AGC signatures is unknown, so we treat it as observed behaviour only.
+
+## Public documentation
+
+- AMD ISA guides (RDNA1 and RDNA2), [gpuopen.com/amd-isa-documentation](https://gpuopen.com/amd-isa-documentation/). Official.
+- LLVM AMDGPU backend (`GCNFeatures.td`, the disassembler) for what gfx1013 is. Official, Apache-2.0 with LLVM exception: read, do not copy.
+- Mesa (radv, ACO, the PS5 patches above). MIT for most of it.
+- psdevwiki (PS4 and PS5). Community wiki, blocks automated fetches; check pages by hand and note what each fact rests on.
