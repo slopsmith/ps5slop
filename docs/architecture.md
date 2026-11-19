@@ -23,6 +23,7 @@ Status: discussion. Nothing runs, and most of the design below is a proposal.
 - [cpu.md](cpu.md): running x86-64 on ARM64: Rosetta, FEX, our own translator, and whether Hypervisor.framework helps.
 - [memory.md](memory.md): the guest's address space, and what macOS lets us map.
 - [loader.md](loader.md): executable format, NIDs and linking.
+- [packages.md](packages.md): what a `.pkg` holds, and why we load unpacked folders.
 - [gpu.md](gpu.md): the PS5 GPU, AGC and the Metal plan.
 - [test-targets.md](test-targets.md): test programs, commercial targets and the oracles we have without a PS5.
 - [references.md](references.md): prior art, licenses, and what we read.
