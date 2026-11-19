@@ -8,7 +8,10 @@ You supply your own games, dumped from your own console. Nothing from Sony is pa
 
 ## Docs
 
-- [Architecture](docs/architecture.md): overview and index of the other docs
+- [Architecture](docs/architecture.md): overview, milestones and index of the other docs
+- [CPU](docs/cpu.md), [memory](docs/memory.md), [loader](docs/loader.md), [GPU](docs/gpu.md)
+- [Test targets and oracles](docs/test-targets.md)
+- [References and prior art](docs/references.md)
 - [Legal boundaries](docs/legal.md)
 - [Decisions](docs/decisions.md)
 
