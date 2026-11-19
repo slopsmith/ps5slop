@@ -1,7 +1,7 @@
 //! Translates a basic block of x86-64 into AArch64. Register and flag
 //! conventions are in `docs/jit.md`, "Translated code".
 
-use a64::{Asm, Cond, Logic, Reg, Shift, Size, Width, r};
+use a64::{Asm, Cond, Label, Logic, Reg, Shift, Size, Width, r};
 use memory::Memory;
 use x86::decode::{Insn, Map, Mem, Rep, Seg, decode};
 
@@ -49,6 +49,8 @@ enum Alu {
     And,
     Sub,
     Xor,
+    Adc,
+    Sbb,
 }
 
 /// What an instruction does to the arithmetic flags.
@@ -62,12 +64,28 @@ fn alu_of(n: u8) -> Option<(Alu, bool)> {
     Some(match n {
         0 => (Alu::Add, true),
         1 => (Alu::Or, true),
+        2 => (Alu::Adc, true),
+        3 => (Alu::Sbb, true),
         4 => (Alu::And, true),
         5 => (Alu::Sub, true),
         6 => (Alu::Xor, true),
         7 => (Alu::Sub, false),
         _ => return None,
     })
+}
+
+/// Whether a LOCK prefix on `i` is one the translator turns into an atomic.
+fn lockable(i: &Insn) -> bool {
+    let logic = |n: u8| matches!(n, 0 | 1 | 4 | 5 | 6);
+    i.mem.is_some()
+        && match (i.map, i.op) {
+            (Map::Primary, 0x00..=0x3f) => i.op & 7 <= 1 && logic(i.op >> 3),
+            (Map::Primary, 0x80 | 0x81 | 0x83) => logic(i.ext()),
+            (Map::Primary, 0x86 | 0x87) => true,
+            (Map::Primary, 0xfe | 0xff) => i.ext() <= 1,
+            (Map::M0F, 0xb0 | 0xb1 | 0xc0 | 0xc1) => true,
+            _ => false,
+        }
 }
 
 /// The ARM condition for x86 condition code `cc`, with CF kept inverted in C.
@@ -109,14 +127,49 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         reads: true,
         writes: false,
     };
-    if i.vex.is_some() || i.lock || i.seg == Some(Seg::Gs) || i.rep != Rep::None {
+    let both = FlagUse {
+        reads: true,
+        writes: true,
+    };
+    let counts = i.rep == Rep::Rep && i.map == Map::M0F && matches!(i.op, 0xbc | 0xbd);
+    if i.vex.is_some()
+        || (i.lock && !lockable(i))
+        || i.seg == Some(Seg::Gs)
+        || (i.rep != Rep::None && !counts)
+    {
         return None;
     }
+    let carries = |n: u8| matches!(n, 2 | 3);
     Some(match (i.map, i.op) {
         (Map::Primary, 0x00..=0x3f) if i.op & 7 <= 5 && alu_of(i.op >> 3).is_some() => {
-            (false, writes)
+            if !carries(i.op >> 3) {
+                (false, writes)
+            } else if i.op & 1 == 1 && i.osize() >= 4 {
+                (false, both)
+            } else {
+                return None;
+            }
         }
-        (Map::Primary, 0x80 | 0x81 | 0x83) if alu_of(i.ext()).is_some() => (false, writes),
+        (Map::Primary, 0x80 | 0x81 | 0x83) if alu_of(i.ext()).is_some() => {
+            if !carries(i.ext()) {
+                (false, writes)
+            } else if i.op != 0x80 && i.osize() >= 4 {
+                (false, both)
+            } else {
+                return None;
+            }
+        }
+        (Map::Primary, 0x86 | 0x87 | 0x91..=0x97) => (false, none),
+        (Map::Primary, 0xa8 | 0xa9) => (false, writes),
+        (Map::Primary, 0xc1 | 0xd1 | 0xd3) if i.ext() <= 1 && i.osize() >= 4 => (false, both),
+        (Map::Primary, 0xf6 | 0xf7) if i.ext() == 0 => (false, writes),
+        (Map::Primary, 0xf7) if matches!(i.ext(), 4 | 5) && i.osize() >= 4 => (false, writes),
+        (Map::Primary, 0xf7) if matches!(i.ext(), 6 | 7) && i.osize() >= 4 => (false, none),
+        (Map::Primary, 0xfe | 0xff) if i.ext() <= 1 => (false, both),
+        (Map::M0F, 0xb0 | 0xb1) if i.mem.is_some() => (false, writes),
+        (Map::M0F, 0xc0 | 0xc1) => (false, writes),
+        (Map::M0F, 0xbc | 0xbd) if i.osize() >= 4 => (false, both),
+        (Map::M0F, 0xc3) if i.mem.is_some() => (false, none),
         (Map::Primary, 0x84 | 0x85) => (false, writes),
         (Map::Primary, 0x88..=0x8b) => (false, none),
         (Map::Primary, 0x8d) if i.mem.is_some() && i.osize() >= 4 => (false, none),
@@ -135,18 +188,11 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         (Map::Primary, 0xc3) => (true, none),
         (Map::Primary, 0xc6 | 0xc7) if i.ext() == 0 => (false, none),
         (Map::Primary, 0xe8 | 0xe9 | 0xeb) => (true, none),
-        (Map::Primary, 0xf7) if i.ext() == 0 && i.osize() >= 4 => (false, writes),
+        (Map::Primary, 0xe2 | 0xe3) if !i.addr32 => (true, none),
         (Map::Primary, 0xf6 | 0xf7) if i.ext() == 2 => (false, none),
         (Map::Primary, 0xf6 | 0xf7) if i.ext() == 3 => (false, writes),
         (Map::Primary, 0x69 | 0x6b) if i.osize() >= 4 => (false, writes),
         (Map::Primary, 0x98) if i.osize() >= 4 => (false, none),
-        (Map::Primary, 0xff) if matches!(i.ext(), 0 | 1) && i.osize() >= 4 => (
-            false,
-            FlagUse {
-                reads: true,
-                writes: true,
-            },
-        ),
         (Map::Primary, 0xff) if matches!(i.ext(), 2 | 4) => (true, none),
         (Map::M0F, 0x1f) => (false, none),
         (Map::M0F, 0xae)
@@ -222,11 +268,14 @@ pub fn block(mem: &Memory, rip: u64, place: usize, dispatch: usize) -> Option<Bl
         dispatch,
         insns: Vec::new(),
         chains: Vec::new(),
+        bails: Vec::new(),
+        cur: (rip, 0),
     };
     t.a.add_imm(Size::X, ICOUNT, ICOUNT, insns.len() as u32);
     let mut ended = false;
     for (k, (insn, at, _)) in insns.iter().enumerate() {
         t.insns.push((t.a.pos() as u32, *at));
+        t.cur = (*at, (insns.len() - k) as u32);
         ended = t.insn(insn, *at, live[k]);
     }
     if !ended {
@@ -238,6 +287,11 @@ pub fn block(mem: &Memory, rip: u64, place: usize, dispatch: usize) -> Option<Bl
             Some(HVC_INTERP)
         };
         t.exit_to(next, hvc);
+    }
+    for (l, at, left) in std::mem::take(&mut t.bails) {
+        t.a.bind(l);
+        t.a.sub_imm(Size::X, ICOUNT, ICOUNT, left);
+        t.exit_to(at, Some(HVC_INTERP));
     }
     Some(Block {
         code: t.a.finish(),
@@ -252,6 +306,10 @@ struct Translator {
     dispatch: usize,
     insns: Vec<(u32, u64)>,
     chains: Vec<(u32, u64)>,
+    /// Exits that leave the current instruction to the interpreter, as
+    /// (label, its RIP, instructions of the block not run).
+    bails: Vec<(Label, u64, u32)>,
+    cur: (u64, u32),
 }
 
 fn sz(size: u8) -> Size {
@@ -276,6 +334,14 @@ fn mask(size: u8) -> u64 {
 }
 
 impl Translator {
+    /// A label that hands the current instruction to the interpreter; code
+    /// branching there must not have changed guest state or NZCV.
+    fn bail(&mut self) -> Label {
+        let l = self.a.label();
+        self.bails.push((l, self.cur.0, self.cur.1));
+        l
+    }
+
     /// Continues at guest `rip`: through the dispatcher, or with an `hvc`.
     fn exit_to(&mut self, rip: u64, hvc: Option<u16>) {
         self.a.mov_imm(Size::X, RIP, rip);
@@ -407,11 +473,21 @@ impl Translator {
             (Alu::And, false) => a.and(s, T, x, y),
             (Alu::Or, _) => a.orr(s, T, x, y),
             (Alu::Xor, _) => a.eor(s, T, x, y),
+            (Alu::Adc, f) => {
+                a.cfinv();
+                if f {
+                    a.adcs(s, T, x, y);
+                } else {
+                    a.adc(s, T, x, y);
+                }
+            }
+            (Alu::Sbb, true) => a.sbcs(s, T, x, y),
+            (Alu::Sbb, false) => a.sbc(s, T, x, y),
         }
         if flags {
             match op {
-                Alu::Add | Alu::And => a.cfinv(),
-                Alu::Sub => {}
+                Alu::Add | Alu::And | Alu::Adc => a.cfinv(),
+                Alu::Sub | Alu::Sbb => {}
                 Alu::Or | Alu::Xor => {
                     a.tst(s, T, T);
                     a.cfinv();
@@ -423,7 +499,7 @@ impl Translator {
         }
         if flags {
             a.mov(Size::X, PF_RESULT, T);
-            if matches!(op, Alu::Add | Alu::Sub) {
+            if matches!(op, Alu::Add | Alu::Sub | Alu::Adc | Alu::Sbb) {
                 a.eor(Size::X, AF_AUX, A, B);
             } else {
                 a.mov(Size::X, AF_AUX, T);
@@ -449,12 +525,8 @@ impl Translator {
                 };
                 match i.op & 7 {
                     0 | 1 => {
-                        self.get_rm(i, size, next);
                         self.get(B, i.reg, size, rex);
-                        self.alu(op, size, flags);
-                        if keep {
-                            self.set_rm(i, size, T);
-                        }
+                        self.alu_rm(i, op, keep, size, next, flags);
                     }
                     2 | 3 => {
                         match i.mem {
@@ -483,12 +555,8 @@ impl Translator {
             (Map::Primary, 0x80 | 0x81 | 0x83) => {
                 let (op, keep) = alu_of(i.ext()).expect("classified");
                 let size = if i.op == 0x80 { 1 } else { i.osize() };
-                self.get_rm(i, size, next);
                 self.a.mov_imm(Size::X, B, i.imm as u64 & mask(size));
-                self.alu(op, size, flags);
-                if keep {
-                    self.set_rm(i, size, T);
-                }
+                self.alu_rm(i, op, keep, size, next, flags);
             }
             (Map::Primary, 0x84 | 0x85) => {
                 let size = if i.op == 0x84 { 1 } else { i.osize() };
@@ -510,11 +578,29 @@ impl Translator {
                 self.alu(Alu::Sub, size, flags);
                 self.set_rm(i, size, T);
             }
-            (Map::Primary, 0xf7) => {
-                let size = i.osize();
+            (Map::Primary, 0xf6 | 0xf7) if i.ext() == 0 => {
+                let size = if i.op == 0xf6 { 1 } else { i.osize() };
                 self.get_rm(i, size, next);
                 self.a.mov_imm(Size::X, B, i.imm as u64 & mask(size));
                 self.alu(Alu::And, size, flags);
+            }
+            (Map::Primary, 0xa8 | 0xa9) => {
+                let size = if i.op == 0xa8 { 1 } else { i.osize() };
+                self.get(A, 0, size, rex);
+                self.a.mov_imm(Size::X, B, i.imm as u64 & mask(size));
+                self.alu(Alu::And, size, flags);
+            }
+            (Map::Primary, 0xf7) if matches!(i.ext(), 4 | 5) => self.mul_wide(i, next, flags),
+            (Map::Primary, 0xf7) => self.div(i, next),
+            (Map::Primary, 0xc1 | 0xd1 | 0xd3) if i.ext() <= 1 => self.rotate(i, next, flags),
+            (Map::Primary, 0x86 | 0x87 | 0x91..=0x97) => self.xchg(i, next),
+            (Map::M0F, 0xb0 | 0xb1 | 0xc0 | 0xc1) => self.atomic(i, next, flags),
+            (Map::M0F, 0xbc | 0xbd) => self.bit_scan(i, next, flags),
+            (Map::M0F, 0xc3) => {
+                let size = i.osize();
+                self.get(B, i.reg, size, rex);
+                self.addr(&i.mem.expect("classified"), next);
+                self.store(B, size);
             }
             (Map::Primary, 0x98) => {
                 if i.osize() == 8 {
@@ -659,18 +745,31 @@ impl Translator {
                 }
                 self.set(i.reg, size, rex, T);
             }
-            (Map::Primary, 0xff) if matches!(i.ext(), 0 | 1) => {
-                let size = i.osize();
-                self.get_rm(i, size, next);
-                self.a.mov_imm(Size::X, B, 1);
+            (Map::Primary, 0xfe | 0xff) if i.ext() <= 1 => {
+                let size = if i.op == 0xfe { 1 } else { i.osize() };
+                let op = if i.ext() == 0 { Alu::Add } else { Alu::Sub };
                 if flags {
-                    self.a.mrs(U, a64::sysreg::NZCV);
+                    self.a.mrs(OLD_NZCV, a64::sysreg::NZCV);
                 }
-                self.alu(if i.ext() == 0 { Alu::Add } else { Alu::Sub }, size, flags);
-                if flags {
-                    self.keep_carry();
+                if i.lock {
+                    self.addr(&i.mem.expect("lockable"), next);
+                    let delta = if op == Alu::Add { 1 } else { u64::MAX };
+                    self.a.mov_imm(Size::X, B, delta);
+                    self.a.ldaddal(width(size), B, A, ADDR);
+                    if flags {
+                        self.a.mov_imm(Size::X, B, 1);
+                        self.alu(op, size, true);
+                        self.keep_carry();
+                    }
+                } else {
+                    self.get_rm(i, size, next);
+                    self.a.mov_imm(Size::X, B, 1);
+                    self.alu(op, size, flags);
+                    if flags {
+                        self.keep_carry();
+                    }
+                    self.set_rm(i, size, T);
                 }
-                self.set_rm(i, size, T);
             }
             (Map::M0F, 0x40..=0x4f) => {
                 let size = i.osize();
@@ -691,6 +790,20 @@ impl Translator {
                 let target = next.wrapping_add(i.imm as u64);
                 let taken = self.a.label();
                 self.a.b_cond(cond(i.op).expect("classified"), taken);
+                self.exit_to(next, None);
+                self.a.bind(taken);
+                self.exit_to(target, None);
+                return true;
+            }
+            (Map::Primary, 0xe2 | 0xe3) => {
+                let target = next.wrapping_add(i.imm as u64);
+                let taken = self.a.label();
+                if i.op == 0xe2 {
+                    self.a.sub_imm(Size::X, r(1), r(1), 1);
+                    self.a.cbnz(Size::X, r(1), taken);
+                } else {
+                    self.a.cbz(Size::X, r(1), taken);
+                }
                 self.exit_to(next, None);
                 self.a.bind(taken);
                 self.exit_to(target, None);
@@ -732,24 +845,320 @@ impl Translator {
         self.a.mov(Size::X, r(4), ADDR);
     }
 
-    /// Puts back the C flag saved in U, since INC and DEC leave CF alone.
+    /// Puts back the C flag saved in x17, since INC and DEC leave CF alone.
     fn keep_carry(&mut self) {
         let a = &mut self.a;
         a.mrs(B, a64::sysreg::NZCV);
-        assert!(a.logic_imm(Logic::And, Size::W, U, U, C_BIT));
+        assert!(a.logic_imm(Logic::And, Size::W, OLD_NZCV, OLD_NZCV, C_BIT));
         assert!(a.logic_imm(Logic::And, Size::W, B, B, !C_BIT & 0xffff_ffff));
-        a.orr(Size::X, B, B, U);
+        a.orr(Size::X, B, B, OLD_NZCV);
         a.msr(a64::sysreg::NZCV, B);
     }
 
-    /// `T` = SHL/SHR/SAR of `A` by `n`, with x86's flags: CF the last bit
-    /// out, OF for a count of 1; AF (and OF otherwise) keep their old values.
+    /// `T` = the r/m operand `op` `B`, written back when `keep`. With LOCK
+    /// the memory operand changes atomically and `T` is not computed unless
+    /// the flags are live.
+    fn alu_rm(&mut self, i: &Insn, op: Alu, keep: bool, size: u8, next: u64, flags: bool) {
+        if !i.lock {
+            self.get_rm(i, size, next);
+            self.alu(op, size, flags);
+            if keep {
+                self.set_rm(i, size, T);
+            }
+            return;
+        }
+        self.addr(&i.mem.expect("lockable"), next);
+        let (a, w) = (&mut self.a, width(size));
+        match op {
+            Alu::Add => a.ldaddal(w, B, A, ADDR),
+            Alu::Sub => {
+                a.neg(Size::X, U, B);
+                a.ldaddal(w, U, A, ADDR);
+            }
+            Alu::Or => a.ldsetal(w, B, A, ADDR),
+            Alu::And => {
+                a.mvn(Size::X, U, B);
+                a.ldclral(w, U, A, ADDR);
+            }
+            Alu::Xor => a.ldeoral(w, B, A, ADDR),
+            Alu::Adc | Alu::Sbb => unreachable!("not lockable"),
+        }
+        if flags {
+            self.alu(op, size, true);
+        }
+    }
+
+    /// XADD and CMPXCHG; with a memory operand they are always atomic.
+    fn atomic(&mut self, i: &Insn, next: u64, flags: bool) {
+        let rex = i.rex != 0;
+        let size = if i.op & 1 == 0 { 1 } else { i.osize() };
+        let w = width(size);
+        if i.op >= 0xc0 {
+            self.get(B, i.reg, size, rex);
+            match i.mem {
+                Some(m) => {
+                    self.addr(&m, next);
+                    self.a.ldaddal(w, B, A, ADDR);
+                    if flags {
+                        self.alu(Alu::Add, size, true);
+                    }
+                    self.set(i.reg, size, rex, A);
+                }
+                None => {
+                    self.get(A, i.rm, size, rex);
+                    self.alu(Alu::Add, size, flags);
+                    self.set(i.reg, size, rex, A);
+                    self.set(i.rm, size, rex, T);
+                }
+            }
+            return;
+        }
+        self.addr(&i.mem.expect("classified"), next);
+        self.get(A, 0, size, rex);
+        self.get(B, i.reg, size, rex);
+        self.a.mov(Size::X, U, A);
+        self.a.casal(w, U, B, ADDR);
+        self.a.mov(Size::X, B, U);
+        self.alu(Alu::Sub, size, true);
+        if size >= 4 {
+            self.a.csel(Size::X, r(0), B, r(0), Cond::Ne);
+        } else {
+            self.a.mov(Size::X, OLD_NZCV, r(0));
+            self.a.bfi(Size::X, OLD_NZCV, B, 0, size as u32 * 8);
+            self.a.csel(Size::X, r(0), OLD_NZCV, r(0), Cond::Ne);
+        }
+    }
+
+    /// XCHG; with memory it is atomic, as on x86.
+    fn xchg(&mut self, i: &Insn, next: u64) {
+        let rex = i.rex != 0;
+        let size = if i.op == 0x86 { 1 } else { i.osize() };
+        let (x, y) = if i.op >= 0x91 {
+            (0, i.rm)
+        } else {
+            (i.reg, i.rm)
+        };
+        self.get(B, x, size, rex);
+        match i.mem {
+            Some(m) if i.op < 0x91 => {
+                self.addr(&m, next);
+                self.a.swpal(width(size), B, A, ADDR);
+                self.set(x, size, rex, A);
+            }
+            _ => {
+                self.get(A, y, size, rex);
+                self.set(x, size, rex, A);
+                self.set(y, size, rex, B);
+            }
+        }
+    }
+
+    /// One-operand MUL and IMUL: RDX:RAX = RAX * r/m.
+    fn mul_wide(&mut self, i: &Insn, next: u64, flags: bool) {
+        let size = i.osize();
+        let signed = i.ext() == 5;
+        self.get_rm(i, size, next);
+        let (hi, a) = (OLD_NZCV, &mut self.a);
+        if size == 8 {
+            a.mul(Size::X, T, r(0), A);
+            if signed {
+                a.smulh(hi, r(0), A);
+            } else {
+                a.umulh(hi, r(0), A);
+            }
+            if flags && signed {
+                a.asr_imm(Size::X, B, T, 63);
+                a.cmp(Size::X, hi, B);
+            }
+        } else {
+            if signed {
+                a.smull(T, r(0), A);
+                if flags {
+                    a.sxtw(B, T);
+                    a.cmp(Size::X, T, B);
+                }
+            } else {
+                a.umull(T, r(0), A);
+            }
+            a.lsr_imm(Size::X, hi, T, 32);
+        }
+        if flags && !signed {
+            self.a.cmp_imm(Size::X, hi, 0);
+        }
+        if flags {
+            self.imul_flags(size);
+        }
+        let s = sz(size);
+        self.a.mov(s, r(0), T);
+        self.a.mov(s, r(2), hi);
+    }
+
+    /// DIV and IDIV of RDX:RAX by r/m. Division by zero, a quotient that does
+    /// not fit and 64-bit dividends wider than RAX go to the interpreter.
+    fn div(&mut self, i: &Insn, next: u64) {
+        let size = i.osize();
+        let signed = i.ext() == 7;
+        let bail = self.bail();
+        self.get_rm(i, size, next);
+        let (x, a) = (OLD_NZCV, &mut self.a);
+        if size == 8 {
+            a.cbz(Size::X, A, bail);
+            if signed {
+                a.asr_imm(Size::X, x, r(0), 63);
+                a.eor(Size::X, x, x, r(2));
+                a.cbnz(Size::X, x, bail);
+                a.add_imm(Size::X, x, A, 1);
+                a.cbz(Size::X, x, bail);
+                a.sdiv(Size::X, T, r(0), A);
+            } else {
+                a.cbnz(Size::X, r(2), bail);
+                a.udiv(Size::X, T, r(0), A);
+            }
+            a.msub(Size::X, U, T, A, r(0));
+            a.mov(Size::X, r(0), T);
+            a.mov(Size::X, r(2), U);
+            return;
+        }
+        a.cbz(Size::W, A, bail);
+        a.mov(Size::W, U, r(0));
+        a.bfi(Size::X, U, r(2), 32, 32);
+        if signed {
+            a.sxtw(A, A);
+            a.sdiv(Size::X, T, U, A);
+            a.sxtw(x, T);
+        } else {
+            a.udiv(Size::X, T, U, A);
+            a.mov(Size::W, x, T);
+        }
+        a.eor(Size::X, x, x, T);
+        a.cbnz(Size::X, x, bail);
+        a.msub(Size::X, B, T, A, U);
+        a.mov(Size::W, r(0), T);
+        a.mov(Size::W, r(2), B);
+    }
+
+    /// ROL and ROR by 1, a constant or CL: only CF and OF change, and
+    /// nothing does for a count of 0.
+    fn rotate(&mut self, i: &Insn, next: u64, flags: bool) {
+        let size = i.osize();
+        let s = sz(size);
+        let bits = size as u32 * 8;
+        let rol = i.ext() == 0;
+        self.get_rm(i, size, next);
+        let skip = self.a.label();
+        let mut counted = true;
+        if i.op == 0xd3 {
+            assert!(
+                self.a
+                    .logic_imm(Logic::And, Size::X, B, r(1), bits as u64 - 1)
+            );
+            if rol {
+                self.a.neg(s, U, B);
+                self.a.rorv(s, T, A, U);
+            } else {
+                self.a.rorv(s, T, A, B);
+            }
+        } else {
+            let n = if i.op == 0xd1 {
+                1
+            } else {
+                i.imm as u32 & (bits - 1)
+            };
+            counted = n != 0;
+            let k = if rol { (bits - n) % bits } else { n };
+            self.a.ror_imm(s, T, A, k);
+        }
+        self.set_rm(i, size, T);
+        if !flags || !counted {
+            return;
+        }
+        let (old, cf, a) = (OLD_NZCV, OLD_AF, &mut self.a);
+        if i.op == 0xd3 {
+            a.cbz(Size::X, B, skip);
+        }
+        a.mrs(old, a64::sysreg::NZCV);
+        if rol {
+            a.ubfx(Size::X, cf, T, 0, 1);
+            a.lsr_imm(s, U, T, bits - 1);
+        } else {
+            a.lsr_imm(s, cf, T, bits - 1);
+            a.ubfx(Size::X, U, T, bits - 2, 1);
+        }
+        a.eor(Size::X, U, U, cf);
+        assert!(a.logic_imm(Logic::Eor, Size::X, cf, cf, 1));
+        a.bfi(Size::X, old, cf, 29, 1);
+        a.bfi(Size::X, old, U, 28, 1);
+        a.msr(a64::sysreg::NZCV, old);
+        a.bind(skip);
+    }
+
+    /// BSF and BSR: with a zero source only ZF changes (set) and the
+    /// destination is left alone. TZCNT and LZCNT set CF for a zero source
+    /// and ZF for a zero result.
+    fn bit_scan(&mut self, i: &Insn, next: u64, flags: bool) {
+        let size = i.osize();
+        let s = sz(size);
+        self.get_rm(i, size, next);
+        if i.rep == Rep::Rep {
+            if i.op == 0xbd {
+                self.a.clz(s, T, A);
+            } else {
+                self.a.rbit(s, T, A);
+                self.a.clz(s, T, T);
+            }
+            self.set(i.reg, size, i.rex != 0, T);
+            if flags {
+                let (old, z, a) = (OLD_NZCV, OLD_AF, &mut self.a);
+                a.mrs(old, a64::sysreg::NZCV);
+                a.cmp_imm(s, A, 0);
+                a.cset(Size::X, U, Cond::Ne);
+                a.cmp_imm(s, T, 0);
+                a.cset(Size::X, z, Cond::Eq);
+                a.bfi(Size::X, old, U, 29, 1);
+                a.bfi(Size::X, old, z, 30, 1);
+                a.msr(a64::sysreg::NZCV, old);
+            }
+            return;
+        }
+        let (zero, done) = (self.a.label(), self.a.label());
+        if i.op == 0xbd {
+            self.a.clz(s, T, A);
+            self.a.mov_imm(Size::X, U, size as u64 * 8 - 1);
+            self.a.sub(Size::X, T, U, T);
+        } else {
+            self.a.rbit(s, T, A);
+            self.a.clz(s, T, T);
+        }
+        if flags {
+            self.a.mrs(OLD_NZCV, a64::sysreg::NZCV);
+        }
+        self.a.cbz(Size::X, A, zero);
+        self.set(i.reg, size, i.rex != 0, T);
+        let z = 1u64 << 30;
+        if flags {
+            assert!(
+                self.a
+                    .logic_imm(Logic::And, Size::X, OLD_NZCV, OLD_NZCV, !z)
+            );
+        }
+        self.a.b(done);
+        self.a.bind(zero);
+        if flags {
+            assert!(self.a.logic_imm(Logic::Orr, Size::X, OLD_NZCV, OLD_NZCV, z));
+        }
+        self.a.bind(done);
+        if flags {
+            self.a.msr(a64::sysreg::NZCV, OLD_NZCV);
+        }
+    }
+
+    /// `T` = SHL/SHR/SAR of `A` by `n`, with the interpreter's flags: CF the
+    /// last bit out, OF as for a count of 1 whatever the count, AF kept.
     fn shift_flags(&mut self, ext: u8, size: u8, n: u32) {
         let s = sz(size);
         let bits = size as u32 * 8;
-        let (old, old_af) = (OLD_NZCV, OLD_AF);
+        let old_af = OLD_AF;
         let a = &mut self.a;
-        a.mrs(old, a64::sysreg::NZCV);
         a.eor(Size::X, old_af, PF_RESULT, AF_AUX);
         assert!(a.logic_imm(Logic::And, Size::X, old_af, old_af, 0x10));
         let carry_bit = if ext == 4 { bits - n } else { n - 1 };
@@ -759,14 +1168,13 @@ impl Translator {
             _ => a.asr_imm(s, T, A, n),
         }
         a.ubfx(Size::X, U, A, carry_bit, 1);
-        match (ext, n) {
-            (4, 1) => {
+        match ext {
+            4 => {
                 a.lsr_imm(s, B, T, bits - 1);
                 a.eor(Size::X, B, B, U);
             }
-            (5, 1) => a.lsr_imm(s, B, A, bits - 1),
-            (_, 1) => a.mov_imm(Size::X, B, 0),
-            _ => a.ubfx(Size::X, B, old, 28, 1),
+            5 => a.lsr_imm(s, B, A, bits - 1),
+            _ => a.mov_imm(Size::X, B, 0),
         }
         a.tst(s, T, T);
         a.mrs(PF_RESULT, a64::sysreg::NZCV);
