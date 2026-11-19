@@ -16,7 +16,8 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 | 2026-11-19 | vic's `ps4-pkg-db` (`pkg.py`, `sfo.py`) | PKG header and SFO layout | Facts ([packages.md](packages.md)). vic's own code, so copying is his call. |
 | 2026-11-19 | LibOrbisPkg `PFS/PfsStructs.cs`, `Util/Crypto.cs`, `PKG/Pkg.cs` (LGPL-3.0, read directly) | PFS mode flags, passcode key derivation, PFS key schedule | Facts only ([packages.md](packages.md)). No code. |
 | 2026-11-19 | psdevwiki PKG files (vic's saved copy) | PKG entries, entry keys, PFS encryption | Facts ([packages.md](packages.md)) |
-| 2026-11-19 | LibProsperoPKG `docs/ps5-pkg-format.md` (GPL-3.0) | PS5 package layout | Facts only, unverified ([packages.md](packages.md)) |
+| 2026-11-19 | LibProsperoPKG `docs/ps5-pkg-format.md` (GPL-3.0) | PS5 package layout | Facts only, unverified ([packages.md](packages.md)). The library itself bundles key material; never read or use its code. |
+| 2026-11-19 | PS5 homebrew survey (READMEs, release notes, the homebrew.page catalog) | Which native PS5 homebrew exists and how it is built | Facts ([test-targets.md](test-targets.md)) |
 
 Add a row whenever someone reads another project's source for this repo.
 

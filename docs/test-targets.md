@@ -48,7 +48,30 @@ Title IDs come from SharpEmu's compatibility list; `PPSA` is the PS5 title prefi
 
 Nothing public describes GameMaker's PS5 runtime or which graphics API it uses (very likely AGC, but unverified).
 
-## Homebrew
+## PS5 homebrew
+
+A survey on 2026-11-19 (by a research delegate; nothing downloaded, so archive contents come from READMEs and release notes and are unverified) found:
+
+- **Native PS5 homebrew ships as title folders, not packages:** `<TITLEID>/eboot.bin` (a development fake-signed SELF), `sce_sys/param.json`, `sce_module/libc.prx` and assets, copied to the console's homebrew directory. That is the dumped-folder input ps5slop already takes. No clean homebrew `.pkg` turned up.
+- **Almost all of it is built from one template**, ps5-native-app-boilerplate (GPL-3.0-or-later; the original repository is gone, copies survive), with clang 18's `x86_64-sie-ps5` target and the ps5-payload-sdk headers and stubs. Every title carries the template's own generated `libc.prx`: not Sony's, about 2,566 exports, mostly stubs, with `malloc`/`free` forwarded to `libSceLibcInternal`. So a PS5 homebrew title needs us to load its own `sce_module` libraries as guest code and link them to our HLE libraries.
+- **Index:** the homebrew.page catalog (`https://homebrew.page/catalog/v1.json`, from `github.com/darkxex/ps5-homebrew-catalog`) lists about 209 apps with source, release URL, checksum and license. Many entries are recompiled commercial games that need the user's game data; we skip those.
+
+Candidates, simplest first:
+
+| Title | Source | What it exercises |
+| --- | --- | --- |
+| ScreenTester5 (`PPSA69420`, 1 MB) | github.com/Marice/ScreenTester5, GPL-3.0 | Colour patterns drawn on the CPU through VideoOut, the pad. **First target.** |
+| DriftCheck (`PPSA98766`) | github.com/felipemelchior/driftcheck5, GPL-3.0 | Everything the DualSense reports |
+| Raymarch tech demo | github.com/Alexius0815/ps5-raymarch-techdemo, GPL-3.0-or-later | Threads, VideoOut, AudioOut, pad; `--smoke-test` renders 180 frames and exits 0. Only ever run under another emulator (AnyPS5), not on a PS5 |
+| DOOM port | github.com/lowbit/ps5-doom, GPL-2.0 | The first GPU target: draws through AGC with an OpenCL kernel compiled for gfx1010; ships the freely distributable shareware WAD |
+| BennuGD2 PS5 runtime | github.com/Rufidj/BennuGD2 (`ps5` branch) | OpenGL through the PS5 Mesa port; its README records sandbox behaviour (`stat`, `getcwd`, `opendir` refused, `exit()` raising SIGSYS) |
+
+Legal notes from the survey:
+
+- The template's documentation says reverse engineering was used to learn interface facts for its `libc.prx`. Its builder sources and API-surface list are therefore not read here until vic decides (see [legal.md](legal.md)). Running a title's own `libc.prx` as guest code is a different matter: it is part of the homebrew, not a Sony module.
+- LibProsperoPKG bundles key material (passcode and token files, a keys class). We only ever read its format write-up (see [references.md](references.md)); its code is not read or used.
+
+## Homebrew (PS4 era and payloads)
 
 - [ps5-payload-dev/sdk](https://github.com/ps5-payload-dev/sdk) (GPL-3.0) builds plain ELF "payloads" with their own run-time linker, which walks loaded system modules through kernel access. Running them unmodified means faking that environment; not a first target. Its `sce_stubs` are generated from decrypted Sony modules: do not use.
 - A PS5 port of Mesa's radv on top of AGC exists in that organisation's package repository. It is the only known open-source producer of PS5 PM4 command buffers, and could become a GPU test once our AGC layer exists.
