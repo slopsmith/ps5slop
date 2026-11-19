@@ -297,6 +297,8 @@ pub struct Image {
     pub tile: Option<TileMode>,
     pub raw_tile: u32,
     pub kind: u32,
+    pub base_level: u32,
+    pub last_level: u32,
 }
 
 impl Image {
@@ -312,6 +314,8 @@ impl Image {
             tile: TileMode::from_bits(raw_tile),
             raw_tile,
             kind: d[3] >> 28,
+            base_level: (d[3] >> 12) & 0xF,
+            last_level: (d[3] >> 16) & 0xF,
         }
     }
 }

@@ -14,7 +14,7 @@ use objc2_foundation::NSString;
 use objc2_metal::*;
 
 use crate::regs::{self, Blend, ColorTarget, DepthState, DepthTarget, Image, Sampler, Viewport, context, sh, uconfig};
-use crate::shader::{self, Resource, Source, Stage, Translated};
+use gfx10::translate::{self as shader, Resource, Source, Stage, TextureKind, Translated, binding};
 use crate::tiling::{Layout, TileMode};
 use crate::{Backend, Draw, Host, State};
 
@@ -48,11 +48,55 @@ pub fn frame(address: u64) -> Option<SharedTexture> {
     frames().lock().ok()?.get(&address).cloned()
 }
 
+/// Every render target, by guest address.
+pub fn all_frames() -> Vec<(u64, SharedTexture)> {
+    frames().lock().map(|f| f.iter().map(|(a, t)| (*a, t.clone())).collect()).unwrap_or_default()
+}
+
+/// `texture`'s pixels as RGBA8, read back for screenshots.
+pub fn read_rgba(texture: &SharedTexture) -> Option<(u32, u32, Vec<u8>)> {
+    let t = &texture.0;
+    let (w, h) = (t.width(), t.height());
+    let format = t.pixelFormat();
+    let bgra = matches!(format, MTLPixelFormat::BGRA8Unorm | MTLPixelFormat::BGRA8Unorm_sRGB);
+    if !bgra && !matches!(format, MTLPixelFormat::RGBA8Unorm | MTLPixelFormat::RGBA8Unorm_sRGB) {
+        return None;
+    }
+    let device = t.device();
+    let queue = device.newCommandQueue()?;
+    let buffer = device.newBufferWithLength_options(w * h * 4, MTLResourceOptions::StorageModeShared)?;
+    let cb = queue.commandBuffer()?;
+    let blit = cb.blitCommandEncoder()?;
+    unsafe {
+        blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage(
+            t,
+            0,
+            0,
+            MTLOrigin { x: 0, y: 0, z: 0 },
+            MTLSize { width: w, height: h, depth: 1 },
+            &buffer,
+            0,
+            w * 4,
+            w * h * 4,
+        );
+    }
+    blit.endEncoding();
+    cb.commit();
+    cb.waitUntilCompleted();
+    let mut px = unsafe { std::slice::from_raw_parts(buffer.contents().as_ptr() as *const u8, w * h * 4) }.to_vec();
+    if bgra {
+        for p in px.as_chunks_mut::<4>().0 {
+            p.swap(0, 2);
+        }
+    }
+    Some((w as u32, h as u32, px))
+}
+
 /// Guest memory is wrapped in windows of about this size.
 const WINDOW: u64 = 64 << 20;
 const PAGE: u64 = 0x4000;
 /// Draws whose shaders failed are reported this many times.
-const REPORTS: u32 = 8;
+const REPORTS: u32 = 24;
 
 struct Window {
     start: u64,
@@ -65,9 +109,18 @@ struct Target {
     pixel_format: MTLPixelFormat,
 }
 
+struct Bound {
+    memory: Option<(Retained<Buffer>, u64)>,
+    textures: Vec<(usize, Retained<Texture>)>,
+    samplers: Vec<(usize, Retained<ProtocolObject<dyn MTLSamplerState>>)>,
+}
+
 struct Program {
+    address: u64,
     function: Retained<Function>,
     translated: Translated,
+    /// The rectangle-list form of a vertex program, made on first use.
+    rect: Mutex<Option<Option<Retained<Function>>>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -78,6 +131,7 @@ struct PipelineKey {
     blends: [(Blend, u8); 8],
     depth: usize,
     stencil: bool,
+    rect: bool,
 }
 
 /// The Metal side of the GPU.
@@ -87,6 +141,7 @@ pub struct Metal {
     command: Option<Retained<CommandBuffer>>,
     pass: Option<(Retained<RenderEncoder>, Vec<u64>)>,
     depths: HashMap<u64, Retained<Texture>>,
+    shown: HashMap<u64, Retained<Texture>>,
     depth_states: HashMap<(DepthState, bool), Retained<ProtocolObject<dyn MTLDepthStencilState>>>,
     windows: Vec<Window>,
     generation: u64,
@@ -94,11 +149,12 @@ pub struct Metal {
     images: HashMap<Image, (u64, Retained<Texture>)>,
     epoch: u64,
     detilers: HashMap<(TileMode, u32, bool), Retained<ComputePipeline>>,
-    programs: HashMap<(u64, Stage), Option<Arc<Program>>>,
+    programs: HashMap<(u64, u64), Option<Arc<Program>>>,
     computes: HashMap<u64, Option<Retained<ComputePipeline>>>,
     pipelines: HashMap<PipelineKey, Option<Retained<RenderPipeline>>>,
     samplers: HashMap<Sampler, Retained<ProtocolObject<dyn MTLSamplerState>>>,
     reports: u32,
+    null: Option<Retained<Texture>>,
     pub draws: u64,
     pub dispatches: u64,
     pub skipped: u64,
@@ -169,6 +225,7 @@ impl Metal {
             command: None,
             pass: None,
             depths: HashMap::new(),
+            shown: HashMap::new(),
             depth_states: HashMap::new(),
             windows: Vec::new(),
             generation: 0,
@@ -181,6 +238,7 @@ impl Metal {
             pipelines: HashMap::new(),
             samplers: HashMap::new(),
             reports: 0,
+            null: None,
             draws: 0,
             dispatches: 0,
             skipped: 0,
@@ -417,8 +475,10 @@ impl Metal {
                 pixel_format: format,
             },
         );
-        if let Ok(mut f) = frames().lock() {
-            f.insert(t.address, SharedTexture(texture.clone()));
+        if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some()
+            && let Ok(mut f) = frames().lock()
+        {
+            f.insert(t.address | 2, SharedTexture(texture.clone()));
         }
         Some((texture, format))
     }
@@ -453,16 +513,44 @@ impl Metal {
             Some((_, t)) => t.clone(),
             None => self.new_texture(format, image.width, image.height, false)?,
         };
+        let base = image.address + layout.mip0_offset(image.last_level + 1);
         let filled = if compressed {
-            self.detile_blocks_into(host, &tex, image.address, layout)
+            self.detile_blocks_into(host, &tex, base, layout)
         } else {
-            self.detile_into(host, &tex, image.address, layout)
+            self.detile_into(host, &tex, base, layout)
         };
         if !filled {
             return None;
         }
         self.images.insert(image, (self.epoch, tex.clone()));
+        if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some()
+            && let Ok(mut f) = frames().lock()
+        {
+            f.entry(image.address | 1).or_insert_with(|| SharedTexture(tex.clone()));
+        }
         Some(tex)
+    }
+
+    /// A 1x1 transparent black texture, for unbound image descriptors.
+    fn null_texture(&mut self) -> Option<Retained<Texture>> {
+        if self.null.is_none() {
+            let d = unsafe {
+                MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(MTLPixelFormat::RGBA8Unorm, 1, 1, false)
+            };
+            d.setStorageMode(MTLStorageMode::Shared);
+            let t = self.device.newTextureWithDescriptor(&d)?;
+            let zero = [0u8; 4];
+            unsafe {
+                t.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
+                    MTLRegion { origin: MTLOrigin { x: 0, y: 0, z: 0 }, size: MTLSize { width: 1, height: 1, depth: 1 } },
+                    0,
+                    NonNull::from(&zero).cast(),
+                    4,
+                );
+            }
+            self.null = Some(t);
+        }
+        self.null.clone()
     }
 
     fn sampler(&mut self, s: Sampler) -> Option<Retained<ProtocolObject<dyn MTLSamplerState>>> {
@@ -500,8 +588,19 @@ impl Metal {
     }
 
     /// The translated program at `address`, translated on first use.
-    fn program(&mut self, host: &dyn Host, state: &State, stage: Stage, address: u64, user_sgprs: u32) -> Option<Arc<Program>> {
-        if let Some(p) = self.programs.get(&(address, stage)) {
+    fn program(&mut self, host: &dyn Host, state: &State, stage: Stage, address: u64, user_sgprs: u32, ngg: bool) -> Option<Arc<Program>> {
+        let c = state.context;
+        let cntl = &c[context::SPI_PS_INPUT_CNTL_0..context::SPI_PS_INPUT_CNTL_0 + 32];
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (stage as u8, user_sgprs, ngg).hash(&mut h);
+            if stage == Stage::Pixel {
+                (cntl, c[context::SPI_PS_INPUT_ENA], c[context::SPI_PS_INPUT_ADDR], c[context::SPI_SHADER_COL_FORMAT]).hash(&mut h);
+            }
+            h.finish()
+        };
+        if let Some(p) = self.programs.get(&(address, key)) {
             return p.clone();
         }
         let (_, hi) = host.extent(address)?;
@@ -509,23 +608,30 @@ impl Metal {
         let mut bytes = vec![0u8; len];
         let program = if host.read(address, &mut bytes) {
             let code: Vec<u32> = bytes.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect();
-            let c = state.context;
             let request = shader::Request {
                 stage,
                 code: &code,
                 user_sgprs,
+                ngg,
                 ps_input_ena: c[context::SPI_PS_INPUT_ENA],
                 ps_input_addr: c[context::SPI_PS_INPUT_ADDR],
-                ps_input_cntl: &c[context::SPI_PS_INPUT_CNTL_0..context::SPI_PS_INPUT_CNTL_0 + 32],
+                ps_input_cntl: cntl,
                 col_format: c[context::SPI_SHADER_COL_FORMAT],
             };
             match shader::translate(&request) {
-                Ok(translated) => self.compile(&translated.msl, &translated.entry).map(|function| {
-                    Arc::new(Program {
-                        function,
-                        translated,
+                Ok(translated) => {
+                    if std::env::var_os("PS5SLOP_MSL_DUMP").is_some() {
+                        eprintln!("=== {stage:?} {address:#x}\n{}", translated.msl);
+                    }
+                    self.compile(&translated.msl, &translated.entry).map(|function| {
+                        Arc::new(Program {
+                            address,
+                            function,
+                            translated,
+                            rect: Mutex::new(None),
+                        })
                     })
-                }),
+                }
                 Err(e) => {
                     self.report(format!("{stage:?} program at {address:#x} not translated: {e}"));
                     None
@@ -534,16 +640,29 @@ impl Metal {
         } else {
             None
         };
-        self.programs.insert((address, stage), program.clone());
+        self.programs.insert((address, key), program.clone());
         program
     }
 
-    fn pipeline(&mut self, key: &PipelineKey, vertex: &Program, pixel: &Program) -> Option<Retained<RenderPipeline>> {
+    /// The vertex function drawing `program`'s rectangles: six vertices per
+    /// three guest ones, the fourth corner being v1 + v2 - v0.
+    fn rect_function(&mut self, program: &Program) -> Option<Retained<Function>> {
+        if let Some(f) = program.rect.lock().ok()?.as_ref() {
+            return f.clone();
+        }
+        let f = rect_source(&program.translated.msl).and_then(|msl| self.compile(&msl, "gen5_vs_rect"));
+        if let Ok(mut r) = program.rect.lock() {
+            *r = Some(f.clone());
+        }
+        f
+    }
+
+    fn pipeline(&mut self, key: &PipelineKey, vertex: &Function, pixel: &Program) -> Option<Retained<RenderPipeline>> {
         if let Some(p) = self.pipelines.get(key) {
             return p.clone();
         }
         let desc = MTLRenderPipelineDescriptor::new();
-        desc.setVertexFunction(Some(&vertex.function));
+        desc.setVertexFunction(Some(vertex));
         desc.setFragmentFunction(Some(&pixel.function));
         for (i, &raw) in key.formats.iter().enumerate() {
             if raw == 0 {
@@ -708,41 +827,73 @@ impl Metal {
         }
     }
 
-    fn bind(&mut self, host: &dyn Host, enc: Slot, program: &Program, user: &[u32]) -> bool {
-        enc.bytes(user.as_ptr().cast(), user.len() * 4, 0);
-        let mut vsharps = [[0u32; 4]; 16];
+    /// The resources `program` binds, made ready before any encoder opens
+    /// (uploads end the open pass).
+    fn resolve(&mut self, host: &dyn Host, program: &Program, user: &[u32]) -> Option<Bound> {
+        let mut bound = Bound { memory: None, textures: Vec::new(), samplers: Vec::new() };
+        if program.translated.guest_memory {
+            let Some(m) = self.guest_window(host, user, program.address) else {
+                self.report(format!("no guest memory window for the program at {:#x}, user data {user:x?}", program.address));
+                return None;
+            };
+            bound.memory = Some(m);
+        }
         for r in &program.translated.resources {
             match *r {
-                Resource::Texture { slot, source } => {
-                    let Some(d) = self.descriptor(host, user, source, 8) else { return false };
+                Resource::Texture { slot, source, kind } => {
+                    if kind != TextureKind::Tex2d {
+                        self.report(format!("{kind:?} textures not supported"));
+                        return None;
+                    }
+                    let d = self.descriptor(host, user, source, 8)?;
                     let image = Image::read(&d);
-                    let Some(tex) = self.image(host, image) else {
-                        self.report(format!("image {image:x?} not supported"));
-                        return false;
+                    let tex = if image.address == 0 { self.null_texture() } else { self.image(host, image) };
+                    let Some(tex) = tex else {
+                        self.report(format!("image {image:x?} for the program at {:#x} not supported", program.address));
+                        return None;
                     };
-                    enc.texture(&tex, slot as usize);
+                    bound.textures.push((slot as usize, tex));
                 }
                 Resource::Sampler { slot, source } => {
-                    let Some(d) = self.descriptor(host, user, source, 4) else { return false };
-                    let Some(s) = self.sampler(Sampler::read(&d)) else { return false };
-                    enc.sampler(&s, slot as usize);
-                }
-                Resource::Buffer { slot, source } => {
-                    let Some(d) = self.descriptor(host, user, source, 4) else { return false };
-                    let v = regs::Buffer::read(&d);
-                    if let Some(x) = vsharps.get_mut(slot as usize) {
-                        x.copy_from_slice(&d);
-                    }
-                    let Some((buf, offset)) = self.window(host, v.address, v.size()) else {
-                        self.report(format!("buffer {v:x?} is not in guest memory"));
-                        return false;
-                    };
-                    enc.buffer(&buf, offset, 1 + slot as usize);
+                    let d = self.descriptor(host, user, source, 4)?;
+                    bound.samplers.push((slot as usize, self.sampler(Sampler::read(&d))?));
                 }
             }
         }
-        enc.bytes(vsharps.as_ptr().cast(), size_of_val(&vsharps), 30);
-        true
+        Some(bound)
+    }
+
+    fn apply(enc: Slot, bound: &Bound, user: &[u32]) {
+        enc.bytes(user.as_ptr().cast(), user.len() * 4, binding::USER as usize);
+        if let Some((buf, base)) = &bound.memory {
+            enc.buffer(buf, 0, binding::MEM as usize);
+            enc.bytes((base as *const u64).cast(), 8, binding::MEM_BASE as usize);
+        }
+        for (slot, t) in &bound.textures {
+            enc.texture(t, *slot);
+        }
+        for (slot, s) in &bound.samplers {
+            enc.sampler(s, *slot);
+        }
+    }
+
+    /// A window over the guest memory a program's user data points into,
+    /// and the guest address of its first byte.
+    fn guest_window(&mut self, host: &dyn Host, user: &[u32], code: u64) -> Option<(Retained<Buffer>, u64)> {
+        let max = self.device.maxBufferLength() as u64;
+        let mut best = host.extent(code);
+        for pair in user.windows(2) {
+            let ptr = pair[0] as u64 | (pair[1] as u64) << 32;
+            if let Some((lo, hi)) = host.extent(ptr)
+                && best.is_none_or(|(l, h)| hi - lo > h - l)
+            {
+                best = Some((lo, hi));
+            }
+        }
+        let (lo, hi) = best?;
+        let len = (hi - lo).min(max & !(PAGE - 1));
+        let (buf, offset) = self.window(host, lo, len)?;
+        Some((buf, lo - offset as u64))
     }
 
     fn try_dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]) -> Result<(), &'static str> {
@@ -752,7 +903,7 @@ impl Metal {
             return Err("no compute program");
         }
         let users = (s[sh::COMPUTE_PGM_RSRC2] >> 1) & 0x1F;
-        let program = self.program(host, state, Stage::Compute, address, users).ok_or("compute program")?;
+        let program = self.program(host, state, Stage::Compute, address, users, false).ok_or("compute program")?;
         let pipeline = match self.computes.get(&address) {
             Some(p) => p.clone(),
             None => {
@@ -763,13 +914,14 @@ impl Metal {
         }
         .ok_or("compute pipeline")?;
         let threads = [0, 1, 2].map(|i| (s[sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1) as usize);
+        let user = &s[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + sh::COMPUTE_USER_DATA_COUNT];
+        let bound = self.resolve(host, &program, user);
         self.end_pass();
         let command = self.command();
         let enc = command.computeCommandEncoder().ok_or("compute encoder")?;
         enc.setComputePipelineState(&pipeline);
-        let user = &s[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + sh::COMPUTE_USER_DATA_COUNT];
-        let bound = self.bind(host, Slot::Compute(&enc), &program, user);
-        if bound {
+        if let Some(b) = &bound {
+            Self::apply(Slot::Compute(&enc), b, user);
             enc.dispatchThreadgroups_threadsPerThreadgroup(
                 MTLSize {
                     width: groups[0] as usize,
@@ -784,7 +936,7 @@ impl Metal {
             );
         }
         enc.endEncoding();
-        if bound { Ok(()) } else { Err("resources") }
+        if bound.is_some() { Ok(()) } else { Err("resources") }
     }
 
     fn try_draw(&mut self, host: &dyn Host, state: &State, draw: Draw) -> Result<(), &'static str> {
@@ -804,8 +956,14 @@ impl Metal {
         }
         let vs_users = user_count(s[vs_rsrc2]);
         let ps_users = user_count(s[sh::SPI_SHADER_PGM_RSRC2_PS]);
-        let vertex = self.program(host, state, Stage::Vertex, vs_addr, vs_users).ok_or("vertex program")?;
-        let pixel = self.program(host, state, Stage::Pixel, ps_addr, ps_users).ok_or("pixel program")?;
+        let vertex = self.program(host, state, Stage::Vertex, vs_addr, vs_users, ngg).ok_or("vertex program")?;
+        let pixel = self.program(host, state, Stage::Pixel, ps_addr, ps_users, false).ok_or("pixel program")?;
+        let rect = u[uconfig::VGT_PRIMITIVE_TYPE] == 7;
+        let vertex_function = if rect {
+            self.rect_function(&vertex).ok_or("rectangle-list vertex program")?
+        } else {
+            vertex.function.clone()
+        };
 
         let mask = c[context::CB_TARGET_MASK];
         let mut targets = Vec::new();
@@ -816,6 +974,7 @@ impl Metal {
             blends: [(Blend::read(c, 0), 0); 8],
             depth: 0,
             stencil: false,
+            rect,
         };
         for n in 0..8 {
             let write = (mask >> (4 * n)) & 0xF;
@@ -851,12 +1010,24 @@ impl Metal {
         if targets.is_empty() && depth.is_none() {
             return Err("no color target");
         }
-        let pipeline = self.pipeline(&key, &vertex, &pixel).ok_or("pipeline")?;
+        let pipeline = self.pipeline(&key, &vertex_function, &pixel).ok_or("pipeline")?;
         let depth_bound = depth.is_some();
         let (w, h) = match (size, &depth) {
             (Some((w, h)), _) => (w as f64, h as f64),
             (None, Some((_, t, _))) => (t.width() as f64, t.height() as f64),
             _ => return Err("no target size"),
+        };
+        let vs_data = &s[vs_user..vs_user + sh::USER_DATA_COUNT];
+        let ps_data = &s[sh::SPI_SHADER_USER_DATA_PS_0..sh::SPI_SHADER_USER_DATA_PS_0 + sh::USER_DATA_COUNT];
+        let vs_bound = self.resolve(host, &vertex, vs_data).ok_or("resources")?;
+        let ps_bound = self.resolve(host, &pixel, ps_data).ok_or("resources")?;
+        let index = match draw {
+            Draw::Indexed { count, address, .. } if !rect => {
+                let wide = u[uconfig::VGT_INDEX_TYPE] & 3 == 1;
+                let size = if wide { 4 } else { 2 };
+                Some((self.window(host, address, count as u64 * size).ok_or("index buffer")?, wide))
+            }
+            _ => None,
         };
         let enc = self.pass(&targets, depth, clear).ok_or("render pass")?;
         enc.setRenderPipelineState(&pipeline);
@@ -894,11 +1065,8 @@ impl Metal {
         } else {
             MTLWinding::CounterClockwise
         });
-        let vs_data = &s[vs_user..vs_user + sh::USER_DATA_COUNT];
-        let ps_data = &s[sh::SPI_SHADER_USER_DATA_PS_0..sh::SPI_SHADER_USER_DATA_PS_0 + sh::USER_DATA_COUNT];
-        if !self.bind(host, Slot::Vertex(&enc), &vertex, vs_data) || !self.bind(host, Slot::Fragment(&enc), &pixel, ps_data) {
-            return Err("resources");
-        }
+        Self::apply(Slot::Vertex(&enc), &vs_bound, vs_data);
+        Self::apply(Slot::Fragment(&enc), &ps_bound, ps_data);
         let primitive = match u[uconfig::VGT_PRIMITIVE_TYPE] {
             1 => MTLPrimitiveType::Point,
             2 => MTLPrimitiveType::Line,
@@ -908,17 +1076,15 @@ impl Metal {
             _ => return Err("primitive type"),
         };
         match draw {
+            Draw::Auto { count, instances } if rect => unsafe {
+                enc.drawPrimitives_vertexStart_vertexCount_instanceCount(primitive, 0, (count / 3 * 6) as usize, instances.max(1) as usize);
+            },
+            Draw::Indexed { .. } if rect => return Err("indexed rectangle list"),
             Draw::Auto { count, instances } => unsafe {
                 enc.drawPrimitives_vertexStart_vertexCount_instanceCount(primitive, 0, count as usize, instances.max(1) as usize);
             },
-            Draw::Indexed {
-                count,
-                address,
-                instances,
-            } => {
-                let wide = u[uconfig::VGT_INDEX_TYPE] & 3 == 1;
-                let size = if wide { 4 } else { 2 };
-                let (buf, offset) = self.window(host, address, count as u64 * size).ok_or("index buffer")?;
+            Draw::Indexed { count, instances, .. } => {
+                let ((buf, offset), wide) = index.ok_or("index buffer")?;
                 unsafe {
                     enc.drawIndexedPrimitives_indexCount_indexType_indexBuffer_indexBufferOffset_instanceCount(
                         primitive,
@@ -972,10 +1138,59 @@ impl Backend for Metal {
         self.flush_and_wait();
     }
 
-    fn frame_done(&mut self) {
-        self.flush_and_wait();
+    fn summary(&self) -> String {
+        format!("{} drawn, {} dispatched, {} skipped", self.draws, self.dispatches, self.skipped)
+    }
+
+    fn frame_done(&mut self, shown: Option<u64>) {
+        if let Some(addr) = shown
+            && let Some(t) = self.targets.get(&addr)
+        {
+            let src = t.texture.clone();
+            let copy = match self.shown.get(&addr) {
+                Some(c) if c.width() == src.width() && c.height() == src.height() && c.pixelFormat() == src.pixelFormat() => c.clone(),
+                _ => {
+                    let c = self.new_texture(src.pixelFormat(), src.width() as u32, src.height() as u32, false);
+                    let Some(c) = c else { return };
+                    self.shown.insert(addr, c.clone());
+                    c
+                }
+            };
+            self.end_pass();
+            let cb = self.command();
+            if let Some(blit) = cb.blitCommandEncoder() {
+                unsafe { blit.copyFromTexture_toTexture(&src, &copy) };
+                blit.endEncoding();
+            }
+            self.flush_and_wait();
+            if let Ok(mut f) = frames().lock() {
+                f.insert(addr, SharedTexture(copy));
+            }
+        } else {
+            self.flush_and_wait();
+        }
         self.epoch += 1;
     }
+}
+
+// Each rectangle draws guest vertices 0, 1, 2, 1, 3, 2; corner 3 is v1 + v2 - v0.
+fn rect_source(msl: &str) -> Option<String> {
+    let start = msl.find("vertex VsOut gen5_vs(")?;
+    let open = start + "vertex VsOut gen5_vs(".len();
+    let close = open + msl[open..].find(") {")?;
+    let params = msl[open..close].split_once("[[instance_id]], ")?.1;
+    let call = msl[close..].find("return gen5_vs_body(vid, iid")? + close + "return gen5_vs_body(vid, iid".len();
+    let call_end = call + msl[call..].find(");")?;
+    let args = &msl[call..call_end];
+    let fields: Vec<&str> = msl[msl.find("struct VsOut {")?..]
+        .lines()
+        .take_while(|l| !l.starts_with("};"))
+        .filter_map(|l| l.trim().strip_prefix("float4 ")?.split_whitespace().next())
+        .collect();
+    let combine: String = fields.iter().map(|f| format!("    o.{f} = b.{f} + c.{f} - a.{f};\n")).collect();
+    Some(format!(
+        "{msl}\nvertex VsOut gen5_vs_rect(uint rv [[vertex_id]], uint iid [[instance_id]], {params}) {{\n    uint base = rv / 6 * 3;\n    uint k = (0x231210u >> ((rv % 6) * 4)) & 0xFu;\n    if (k < 3) return gen5_vs_body(base + k, iid{args});\n    VsOut a = gen5_vs_body(base, iid{args});\n    VsOut b = gen5_vs_body(base + 1, iid{args});\n    VsOut c = gen5_vs_body(base + 2, iid{args});\n    VsOut o = a;\n{combine}    return o;\n}}\n"
+    ))
 }
 
 fn write_mask(bits: u32, swap: u32) -> usize {

@@ -156,24 +156,44 @@ fn run(booted: ps5slop::Booted, _headless: bool) -> Result<i32, ps5slop::Error> 
 fn dump_after(kernel: std::sync::Arc<hle::Kernel>, out: PathBuf, seconds: f64) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
-        match kernel.frame() {
-            Some(f) => {
-                let mut ppm = format!("P6\n{} {}\n255\n", f.width, f.height).into_bytes();
-                ppm.extend(
-                    f.rgba
-                        .as_chunks::<4>()
-                        .0
-                        .iter()
-                        .flat_map(|p| [p[0], p[1], p[2]]),
-                );
-                if let Err(e) = std::fs::write(&out, ppm) {
-                    eprintln!("ps5slop: cannot write {}: {e}", out.display());
+        #[cfg(target_os = "macos")]
+        if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some() {
+            for (addr, t) in hle::gpu::metal::all_frames() {
+                if let Some((w, h, px)) = hle::gpu::metal::read_rgba(&t) {
+                    let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
+                    ppm.extend(px.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]));
+                    let _ = std::fs::write(out.with_extension(format!("{addr:x}.ppm")), ppm);
                 }
             }
-            None => eprintln!("ps5slop: no frame on screen to dump"),
+        }
+        let series: u32 = std::env::var("PS5SLOP_DUMP_SERIES").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+        for i in 0..series {
+            if i > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            let path = if series > 1 { out.with_extension(format!("{i}.ppm")) } else { out.clone() };
+            write_frame(&kernel, &path);
         }
         kernel.exit(Ok(0));
     });
+}
+
+/// Writes the screen to `out` as a binary PPM.
+fn write_frame(kernel: &hle::Kernel, out: &std::path::Path) {
+    match kernel.frame() {
+        Some(mut f) => {
+            #[cfg(target_os = "macos")]
+            if let Some((w, h, px)) = f.texture.as_ref().and_then(hle::gpu::metal::read_rgba) {
+                (f.width, f.height, f.rgba) = (w, h, px);
+            }
+            let mut ppm = format!("P6\n{} {}\n255\n", f.width, f.height).into_bytes();
+            ppm.extend(f.rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]));
+            if let Err(e) = std::fs::write(out, ppm) {
+                eprintln!("ps5slop: cannot write {}: {e}", out.display());
+            }
+        }
+        None => eprintln!("ps5slop: no frame on screen to dump"),
+    }
 }
 
 /// `~/Library/Application Support/ps5slop/<title id or name>/data`, moving a

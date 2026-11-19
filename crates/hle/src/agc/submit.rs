@@ -88,6 +88,10 @@ impl gpu::Host for Host {
         (addr < self.mem.size()).then(|| self.mem.host_base().wrapping_add(addr as usize))
     }
 
+    fn display_buffer(&self, index: i32) -> Option<u64> {
+        self.kernel.display_buffer(index)
+    }
+
     fn generation(&self) -> u64 {
         self.mem.generation()
     }
@@ -117,7 +121,9 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>, stats: Arc<Mutex<gpu::Stats>>) {
                 "ps5slop: GPU: {} submissions, {} packets, {} draws, {} dispatches, {} flips, {} interrupts, {} wait timeouts",
                 s.submissions, s.packets, s.draws, s.dispatches, s.flips, s.interrupts, s.timeouts
             );
-            eprintln!("ps5slop: GPU opcodes: {:x?}", s.opcodes);
+            if let Some(b) = &processor.backend {
+                eprintln!("ps5slop: GPU: Metal: {}", b.summary());
+            }
         }
         if host.kernel.has_exited() {
             break;

@@ -9,7 +9,6 @@
 pub mod metal;
 mod pm4;
 pub mod regs;
-pub mod shader;
 pub mod tiling;
 
 pub use pm4::{Processor, Stats};
@@ -35,8 +34,13 @@ pub trait Backend: Send {
     fn dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]);
     /// Finishes GPU work recorded so far, before the CPU may observe its results.
     fn sync(&mut self);
-    /// As [`Backend::sync`], at a flip.
-    fn frame_done(&mut self);
+    /// As [`Backend::sync`], at a flip that puts the buffer at guest address
+    /// `shown` on screen.
+    fn frame_done(&mut self, shown: Option<u64>);
+    /// A line of counters for logs.
+    fn summary(&self) -> String {
+        String::new()
+    }
 }
 
 /// Runs `f` inside an Objective-C autorelease pool where the platform has one.
@@ -69,6 +73,10 @@ pub trait Host {
     }
     /// The host address of guest address `addr`.
     fn host_pointer(&self, _addr: u64) -> Option<*mut u8> {
+        None
+    }
+    /// The guest address of display buffer `index`.
+    fn display_buffer(&self, _index: i32) -> Option<u64> {
         None
     }
     /// A number that changes whenever guest mappings change.

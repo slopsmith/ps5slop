@@ -55,6 +55,8 @@ const WRITE_DATA_MEMORY: [u32; 4] = [1, 2, 4, 5];
 const MAX_DEPTH: u32 = 8;
 /// How long a wait polls before giving up and moving on.
 const WAIT_LIMIT: Duration = Duration::from_secs(5);
+/// Flips wait for the display's next refresh, at 60 Hz.
+const VBLANK: Duration = Duration::from_micros(16_667);
 
 /// What the processor has seen, for logs.
 #[derive(Debug, Default, Clone)]
@@ -80,6 +82,7 @@ pub struct Processor {
     pub backend: Option<Box<dyn Backend>>,
     index_base: u64,
     instances: u32,
+    last_flip: Option<Instant>,
 }
 
 impl Default for Processor {
@@ -92,6 +95,7 @@ impl Default for Processor {
             backend: None,
             index_base: 0,
             instances: 1,
+            last_flip: None,
         }
     }
 }
@@ -380,8 +384,14 @@ impl Processor {
 
     fn flip(&mut self, host: &dyn Host, flip: Flip) {
         if let Some(b) = self.backend.as_mut() {
-            b.frame_done();
+            b.frame_done(host.display_buffer(flip.index));
         }
+        if let Some(last) = self.last_flip
+            && let Some(wait) = (last + VBLANK).checked_duration_since(Instant::now())
+        {
+            std::thread::sleep(wait);
+        }
+        self.last_flip = Some(Instant::now());
         self.stats.flips += 1;
         host.flip(flip);
     }

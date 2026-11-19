@@ -88,6 +88,12 @@ impl Kernel {
         *lock(&self.videoout.listener) = Some(listener);
     }
 
+    /// The guest address of registered display buffer `index`.
+    pub fn display_buffer(&self, index: i32) -> Option<u64> {
+        let port = lock(&self.videoout.port);
+        port.buffers.get(usize::try_from(index).ok()?).copied().flatten().map(|(addr, _)| addr)
+    }
+
     /// The buffer on screen, read from guest memory and untiled.
     pub fn frame(&self) -> Option<Frame> {
         let (addr, layout, flips) = {

@@ -112,6 +112,29 @@ impl Layout {
         self.pitch as u64 * self.height.div_ceil(bh) as u64 * bh as u64 * self.bpe as u64
     }
 
+    /// Where mip level 0 starts in a 64 KiB-block surface of `levels`
+    /// levels: smaller levels come first, the smallest ones packed into one
+    /// trailing block (the mip tail).
+    pub fn mip0_offset(&self, levels: u32) -> u64 {
+        if self.mode == TileMode::Linear || levels <= 1 {
+            return 0;
+        }
+        let (bw, bh) = Self::block(self.mode, self.bpe);
+        let tail_max = 12;
+        let first_tail = (0..levels)
+            .find(|&l| {
+                self.width.div_ceil(1 << l) <= bw / 2 && self.height.div_ceil(1 << l) <= bh && levels - l <= tail_max
+            })
+            .unwrap_or(levels);
+        let mut offset = if first_tail < levels { 0x10000 } else { 0 };
+        for l in 1..first_tail {
+            let pw = self.width.div_ceil(1 << l).max(1).next_multiple_of(bw) as u64;
+            let ph = self.height.div_ceil(1 << l).max(1).next_multiple_of(bh) as u64;
+            offset += pw * ph * self.bpe as u64;
+        }
+        offset
+    }
+
     /// The byte offset of element (`ex`, `ey`).
     pub fn offset(&self, ex: u32, ey: u32) -> u64 {
         if self.mode == TileMode::Linear {
