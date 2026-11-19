@@ -74,7 +74,8 @@ pub fn stubs() -> impl Iterator<Item = &'static Function> {
 }
 
 pub static FUNCTIONS: &[Function] = &[
-    f("sceAgcInit_0090", init),
+    // AGC init; SharpEmu binds this NID as its `sceAgcInit`.
+    f("#23LRUSvYu1M", init),
     f("sceAgcGetRegisterDefaults2", register_defaults),
     f(
         "sceAgcGetRegisterDefaults2Internal",

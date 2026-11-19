@@ -13,7 +13,7 @@ sdk=$(xcrun --show-sdk-path)/usr/include
 	if [ -d "$root/references/src/OpenOrbis/include" ]; then
 		find "$root/references/src/OpenOrbis/include" -name '*.h' -exec cat {} +
 	fi
-	for p in sharpemu prosper SharpProspero AnyPS5 OpenAGC; do
+	for p in sharpemu prosper SharpProspero OpenAGC; do
 		if [ -d "$root/references/src/$p" ]; then
 			grep -rhoE '\bsce[A-Z][A-Za-z0-9_]*' "$root/references/src/$p" || true
 		fi

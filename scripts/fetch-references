@@ -6,9 +6,9 @@
 #   implementation we port.
 #   references/src/prosper: prosper (no license), for its console-measured
 #   AGC packet bytes, used as a local test oracle only.
-#   references/src/{SharpProspero,AnyPS5,OpenAGC}: documentation of AGC
-#   functions (signatures, behaviour notes), read as specs only; their code
-#   is not copied (GPL-3.0, GPL-2.0-only, Apache-2.0).
+#   references/src/{SharpProspero,OpenAGC}: documentation of AGC functions
+#   (signatures, behaviour notes), read as specs only; their code is not
+#   copied (GPL-3.0, Apache-2.0).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -34,5 +34,4 @@ fetch FEX https://github.com/FEX-Emu/FEX.git be66e03d65217f53a7a2e5af46473cc9a79
 fetch sharpemu https://github.com/sharpemu/sharpemu.git f1af467a656d0a14b1f05a332e2757f5523a1489 /src/SharpEmu.Libs/Agc/ /src/SharpEmu.Libs/Gpu/GpuCommands/ /LICENSE* /README* /CONTRIBUTING*
 fetch prosper https://github.com/mattias800/prosper.git e35a74a20f4241ceaaa9974fd35cec92e868baea /prosper/tests/data/console_oracle/ /prosper/docs/gpu/ /README*
 fetch SharpProspero https://github.com/SvenGDK/SharpProspero.git 5dfdb4b0b166e83dc9ae275001afb695f12c7174 /src/SharpProspero/Interop/Agc/ /docs/ /LICENSE* /README*
-fetch AnyPS5 https://github.com/boykopovar/AnyPS5.git fa0b7e3ce40785882720adf9ceaeb090a82d63ea /docs/dev/ /LICENSE* /README*
 fetch OpenAGC https://github.com/OpenAGC/OpenAGC.git 3c7e8072f0d7684e930454794fd5c02056946d73 /docs/ /LICENSE* /README*
