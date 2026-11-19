@@ -431,6 +431,9 @@ dependencies = [
 [[package]]
 name = "x86"
 version = "0.1.0"
+dependencies = [
+ "memory",
+]
 
 [[package]]
 name = "xts-mode"
