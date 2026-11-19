@@ -96,6 +96,10 @@ pub fn report(mem: &Memory) {
     let Some(s) = stats() else { return };
     let s = s.lock().unwrap_or_else(|e| e.into_inner());
     let (interp, jit) = instructions();
+    let top = std::env::var("PS5SLOP_JIT_STATS_TOP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(20);
     eprintln!("ps5slop: JIT statistics: {jit} instructions translated, {interp} interpreted");
     let names = [
         "lookup misses",
@@ -113,7 +117,7 @@ pub fn report(mem: &Memory) {
     let mut ops: Vec<_> = s.opcodes.iter().collect();
     ops.sort_by(|a, b| b.1.cmp(a.1));
     eprintln!("  interpreted opcodes (map, opcode, /ext):");
-    for ((map, op, ext), n) in ops.iter().take(30) {
+    for ((map, op, ext), n) in ops.iter().take(top.max(30)) {
         let ext = if *ext == 0xff {
             String::new()
         } else {
@@ -124,7 +128,7 @@ pub fn report(mem: &Memory) {
     let mut rips: Vec<_> = s.rips.iter().collect();
     rips.sort_by(|a, b| b.1.cmp(a.1));
     eprintln!("  interpreted addresses:");
-    for (rip, n) in rips.iter().take(20) {
+    for (rip, n) in rips.iter().take(top) {
         let mut code = [0u8; 15];
         let bytes = match mem.fetch(**rip, &mut code) {
             Ok(()) => code
@@ -242,6 +246,13 @@ impl Engine {
         // SAFETY: the vCPU's context block holds exactly the 16 YMM registers,
         // and only this thread's vCPU uses it.
         unsafe { std::ptr::copy_nonoverlapping(ymm.as_ptr(), self.cpu.context, ymm.len()) };
+        let df = if x.rflags & flags::DF != 0 {
+            u64::MAX
+        } else {
+            0
+        };
+        // SAFETY: the direction flag's slot is inside the same context block.
+        unsafe { (self.cpu.context.add(crate::layout::DF_OFFSET) as *mut u64).write_unaligned(df) };
         self.cpu.vcpu.set_reg(hvf::reg::FPCR, fpcr(x.mxcsr))?;
         self.cpu.vcpu.set_reg(hvf::reg::FPSR, 0)?;
         let f = x.rflags;
@@ -269,15 +280,22 @@ impl Engine {
         }
         let fpsr = self.cpu.vcpu.reg(hvf::reg::FPSR)?;
         x.mxcsr |= mxcsr_flags(fpsr);
-        let mut ymm = [0u8; crate::layout::CONTEXT_SIZE];
+        let mut ymm = [0u8; crate::layout::YMM_SIZE];
         // SAFETY: as in `load`.
         unsafe { std::ptr::copy_nonoverlapping(self.cpu.context, ymm.as_mut_ptr(), ymm.len()) };
+        // SAFETY: as in `load`.
+        let df = unsafe {
+            (self.cpu.context.add(crate::layout::DF_OFFSET) as *const u64).read_unaligned()
+        };
         for (k, q) in ymm.as_chunks::<8>().0.iter().enumerate() {
             x.xmm[k / 4][k % 4] = u64::from_le_bytes(*q);
         }
         let pf_result = self.cpu.reg(PF_RESULT.0)?;
         let af_aux = self.cpu.reg(AF_AUX.0)?;
-        let mut f = x.rflags & !flags::ARITH;
+        let mut f = x.rflags & !(flags::ARITH | flags::DF);
+        if df != 0 {
+            f |= flags::DF;
+        }
         for (bit, flag) in [(N, flags::SF), (Z, flags::ZF), (V, flags::OF)] {
             if cpsr & bit != 0 {
                 f |= flag;

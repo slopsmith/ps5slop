@@ -8,6 +8,8 @@ use x86::decode::{Insn, Map, Mem, Rep, Seg, decode};
 mod vector;
 pub use vector::CTX;
 
+const DF_OFFSET: i32 = crate::layout::DF_OFFSET as i32;
+
 /// Exits translated code takes, as `hvc` numbers; x16 holds the guest RIP.
 pub const HVC_MISS: u16 = 1;
 pub const HVC_INTERP: u16 = 2;
@@ -132,10 +134,12 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         writes: true,
     };
     let counts = i.rep == Rep::Rep && i.map == Map::M0F && matches!(i.op, 0xbc | 0xbd);
+    let crc32 = i.rep == Rep::Repne && i.map == Map::M0F38 && matches!(i.op, 0xf0 | 0xf1);
+    let string = i.map == Map::Primary && matches!(i.op, 0xa4..=0xa7 | 0xaa..=0xaf);
     if i.vex.is_some()
         || (i.lock && !lockable(i))
         || i.seg == Some(Seg::Gs)
-        || (i.rep != Rep::None && !counts)
+        || (i.rep != Rep::None && !counts && !crc32 && !string)
     {
         return None;
     }
@@ -175,7 +179,21 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         (Map::Primary, 0x8d) if i.mem.is_some() && i.osize() >= 4 => (false, none),
         (Map::Primary, 0x63) if i.rex_w() => (false, none),
         (Map::Primary, 0x50..=0x5f | 0x68 | 0x6a) if i.osize64() == 8 => (false, none),
-        (Map::Primary, 0x70..=0x7f) if cond(i.op).is_some() => (true, reads),
+        (Map::Primary, 0x70..=0x7f) => (true, reads),
+        (Map::Primary, 0xfc | 0xfd) => (false, none),
+        (Map::Primary, 0xa4..=0xa7 | 0xaa..=0xaf) if !i.addr32 && i.seg.is_none() => {
+            match (
+                matches!(i.op, 0xa6 | 0xa7 | 0xae | 0xaf),
+                i.rep != Rep::None,
+            ) {
+                (false, _) => (false, none),
+                (true, false) => (false, writes),
+                (true, true) => (false, both),
+            }
+        }
+        (Map::M0F38, 0xf0 | 0xf1) if crc32 || (i.rep == Rep::None && i.mem.is_some()) => {
+            (false, none)
+        }
         (Map::Primary, 0x90) if i.rex & 1 == 0 => (false, none),
         (Map::Primary, 0xb0..=0xbf) => (false, none),
         (Map::Primary, 0xc1 | 0xd1) if matches!(i.ext(), 4 | 5 | 7) && i.osize() >= 4 => (
@@ -194,7 +212,8 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         (Map::Primary, 0x69 | 0x6b) if i.osize() >= 4 => (false, writes),
         (Map::Primary, 0x98) if i.osize() >= 4 => (false, none),
         (Map::Primary, 0xff) if matches!(i.ext(), 2 | 4) => (true, none),
-        (Map::M0F, 0x1f) => (false, none),
+        (Map::M0F, 0x0d | 0x18..=0x1f) => (false, none),
+        (Map::M0F, 0xc8..=0xcf) if i.osize() >= 4 => (false, none),
         (Map::M0F, 0xae)
             if !i.opsize_prefix
                 && matches!((i.ext(), i.mem.is_some()), (5..=7, false) | (7, true)) =>
@@ -215,9 +234,9 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
                 writes: true,
             },
         ),
-        (Map::M0F, 0x40..=0x4f) if cond(i.op).is_some() && i.osize() >= 4 => (false, reads),
-        (Map::M0F, 0x80..=0x8f) if cond(i.op).is_some() => (true, reads),
-        (Map::M0F, 0x90..=0x9f) if cond(i.op).is_some() => (false, reads),
+        (Map::M0F, 0x40..=0x4f) if i.osize() >= 4 => (false, reads),
+        (Map::M0F, 0x80..=0x8f) => (true, reads),
+        (Map::M0F, 0x90..=0x9f) => (false, reads),
         (Map::M0F, 0xaf) if i.osize() >= 4 => (false, writes),
         (Map::M0F, 0xb6 | 0xb7 | 0xbe | 0xbf) if i.osize() >= 4 => (false, none),
         _ => return None,
@@ -671,7 +690,18 @@ impl Translator {
                 self.a.mov(Size::X, r(i.rm), A);
             }
             (Map::Primary, 0x68 | 0x6a) => self.push_const(i.imm as u64),
-            (Map::Primary, 0x90) | (Map::M0F, 0x1f) => {}
+            (Map::Primary, 0x90) | (Map::M0F, 0x0d | 0x18..=0x1f) => {}
+            (Map::M0F, 0xc8..=0xcf) => {
+                let s = sz(i.osize());
+                self.a.rev(s, r(i.rm), r(i.rm));
+            }
+            (Map::Primary, 0xfc) => self.a.str(Width::X, Reg(31), CTX, DF_OFFSET),
+            (Map::Primary, 0xfd) => {
+                self.a.mov_imm(Size::X, B, u64::MAX);
+                self.a.str(Width::X, B, CTX, DF_OFFSET);
+            }
+            (Map::Primary, 0xa4..=0xa7 | 0xaa..=0xaf) => self.string(i),
+            (Map::M0F38, 0xf0 | 0xf1) => self.movbe_crc32(i, next),
             (Map::M0F, 0xae) => {
                 if i.ext() == 6 {
                     self.a.dmb(0xb);
@@ -775,21 +805,40 @@ impl Translator {
                 let size = i.osize();
                 self.get_rm(i, size, next);
                 self.get(B, i.reg, size, rex);
-                let c = cond(i.op).expect("classified");
-                self.a.csel(sz(size), T, A, B, c);
+                match cond(i.op) {
+                    Some(c) => self.a.csel(sz(size), T, A, B, c),
+                    None => {
+                        let skip = self.a.label();
+                        self.parity_branch(i.op, true, skip);
+                        self.a.mov(Size::X, B, A);
+                        self.a.bind(skip);
+                        self.a.mov(Size::X, T, B);
+                    }
+                }
                 self.set(i.reg, size, rex, T);
             }
             (Map::M0F, 0x90..=0x9f) => {
                 if let Some(m) = i.mem {
                     self.addr(&m, next);
                 }
-                self.a.cset(Size::W, T, cond(i.op).expect("classified"));
+                match cond(i.op) {
+                    Some(c) => self.a.cset(Size::W, T, c),
+                    None => {
+                        self.parity(T);
+                        if i.op & 1 == 0 {
+                            assert!(self.a.logic_imm(Logic::Eor, Size::W, T, T, 1));
+                        }
+                    }
+                }
                 self.set_rm(i, 1, T);
             }
             (Map::Primary, 0x70..=0x7f) | (Map::M0F, 0x80..=0x8f) => {
                 let target = next.wrapping_add(i.imm as u64);
                 let taken = self.a.label();
-                self.a.b_cond(cond(i.op).expect("classified"), taken);
+                match cond(i.op) {
+                    Some(c) => self.a.b_cond(c, taken),
+                    None => self.parity_branch(i.op, false, taken),
+                }
                 self.exit_to(next, None);
                 self.a.bind(taken);
                 self.exit_to(target, None);
@@ -836,6 +885,130 @@ impl Translator {
             _ => unreachable!("classify accepted an instruction translate does not handle"),
         }
         false
+    }
+
+    /// `dst` = 1 if the low byte of the last result has odd parity (PF clear).
+    fn parity(&mut self, dst: Reg) {
+        let a = &mut self.a;
+        a.ubfx(Size::X, dst, PF_RESULT, 0, 8);
+        for n in [4, 2, 1] {
+            a.logic_shift(Logic::Eor, false, Size::X, dst, dst, dst, Shift::Lsr, n);
+        }
+        assert!(a.logic_imm(Logic::And, Size::X, dst, dst, 1));
+    }
+
+    /// Branches to `to` when parity condition `cc` (P or NP) holds, or when
+    /// it fails if `negate`; NZCV is left alone.
+    fn parity_branch(&mut self, cc: u8, negate: bool, to: Label) {
+        self.parity(U);
+        if (cc & 1 == 0) != negate {
+            self.a.cbz(Size::X, U, to);
+        } else {
+            self.a.cbnz(Size::X, U, to);
+        }
+    }
+
+    /// MOVS, CMPS, STOS, LODS and SCAS, with or without REP. Each step loads
+    /// before it writes, so a fault leaves a state the interpreter can resume.
+    fn string(&mut self, i: &Insn) {
+        let size = if i.op & 1 == 0 { 1 } else { i.osize() };
+        let w = width(size);
+        let rep = i.rep != Rep::None;
+        let step = OLD_AF;
+        let (top, done) = (self.a.label(), self.a.label());
+        self.a.ldr(Width::X, step, CTX, DF_OFFSET);
+        self.a.mov_imm(Size::X, T, size as u64);
+        self.a.eor(Size::X, T, T, step);
+        self.a.sub(Size::X, step, T, step);
+        self.a.bind(top);
+        if rep {
+            self.a.cbz(Size::X, r(1), done);
+        }
+        let (si, di) = (r(6), r(7));
+        match i.op {
+            0xa4 | 0xa5 => {
+                self.a.ldr(w, A, si, 0);
+                self.a.str(w, A, di, 0);
+            }
+            0xa6 | 0xa7 => {
+                self.a.ldr(w, A, si, 0);
+                self.a.ldr(w, B, di, 0);
+                self.alu(Alu::Sub, size, true);
+            }
+            0xaa | 0xab => {
+                self.get(B, 0, size, false);
+                self.a.str(w, B, di, 0);
+            }
+            0xac | 0xad => {
+                self.a.ldr(w, A, si, 0);
+                self.set(0, size, false, A);
+            }
+            _ => {
+                self.a.ldr(w, B, di, 0);
+                self.get(A, 0, size, false);
+                self.alu(Alu::Sub, size, true);
+            }
+        }
+        if !matches!(i.op, 0xaa..=0xab | 0xae..=0xaf) {
+            self.a.add(Size::X, si, si, step);
+        }
+        if !matches!(i.op, 0xac | 0xad) {
+            self.a.add(Size::X, di, di, step);
+        }
+        if rep {
+            self.a.sub_imm(Size::X, r(1), r(1), 1);
+            match i.op {
+                0xa6 | 0xa7 | 0xae | 0xaf => {
+                    let stop = if i.rep == Rep::Rep {
+                        Cond::Ne
+                    } else {
+                        Cond::Eq
+                    };
+                    self.a.b_cond(stop, done);
+                }
+                _ => {}
+            }
+            self.a.b(top);
+        }
+        self.a.bind(done);
+    }
+
+    /// CRC32 (`F2 0F38 F0/F1`, ARM's CRC32C) and MOVBE (`0F38 F0/F1`).
+    fn movbe_crc32(&mut self, i: &Insn, next: u64) {
+        let rex = i.rex != 0;
+        if i.rep == Rep::Repne {
+            let size = if i.op == 0xf0 { 1 } else { i.osize() };
+            self.get_rm(i, size, next);
+            let sf = (size == 8) as u32;
+            let szf = size.trailing_zeros();
+            self.a.emit(
+                0x1ac0_5000
+                    | sf << 31
+                    | (A.0 as u32) << 16
+                    | szf << 10
+                    | (i.reg as u32 & 15) << 5
+                    | T.0 as u32,
+            );
+            self.a.mov(Size::W, r(i.reg), T);
+            return;
+        }
+        let size = i.osize();
+        let s = sz(size);
+        self.addr(&i.mem.expect("classified"), next);
+        if i.op == 0xf0 {
+            self.load(A, size);
+        } else {
+            self.get(A, i.reg, size, rex);
+        }
+        match size {
+            2 => self.a.rev16(Size::W, A, A),
+            _ => self.a.rev(s, A, A),
+        }
+        if i.op == 0xf0 {
+            self.set(i.reg, size, rex, A);
+        } else {
+            self.store(A, size);
+        }
     }
 
     fn push_const(&mut self, v: u64) {

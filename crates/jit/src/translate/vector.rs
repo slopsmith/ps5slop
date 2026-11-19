@@ -80,6 +80,8 @@ fn simd_three(op: u16) -> Option<(bool, u32, u32)> {
         0x1de => (true, 0, 0b01100),
         0x1ea => (false, 1, 0b01101),
         0x1ee => (false, 1, 0b01100),
+        0x229 => (true, 3, 0b10001),
+        0x237 => (false, 3, 0b00110),
         _ => return None,
     })
 }
@@ -152,6 +154,16 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x246 => i.vex.is_some() && p == Pfx::P66 && !i.rex_w(),
         0x2f2 => i.vex.is_some() && p == Pfx::None,
         0x2f7 => i.vex.is_some(),
+        0x2f5 => i.vex.is_some() && p != Pfx::P66,
+        0x22a => p == Pfx::P66 && i.mem.is_some(),
+        0x1e6 => p != Pfx::None && !wide,
+        0x1c6 => matches!(p, Pfx::None | Pfx::P66),
+        0x300 | 0x301 => wide && p == Pfx::P66 && i.rex_w(),
+        0x302 => i.vex.is_some() && p == Pfx::P66 && !i.rex_w(),
+        0x320 | 0x322 => p == Pfx::P66 && !wide,
+        0x220..=0x225 | 0x230..=0x235 => p == Pfx::P66 && !wide,
+        0x1c5 => p == Pfx::P66 && i.mem.is_none() && !wide,
+        0x114 | 0x115 => matches!(p, Pfx::None | Pfx::P66),
         0x3f0 => i.vex.is_some() && p == Pfx::F2,
         _ => false,
     };
@@ -161,12 +173,17 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
     Some(match op {
         0x12e | 0x12f => (false, writes),
         0x2f2 | 0x217 => (false, writes),
-        0x2f7 if p == Pfx::None => (false, writes),
+        0x2f7 | 0x2f5 if p == Pfx::None => (false, writes),
         _ => (false, none),
     })
 }
 
 const FCVTL: u32 = 0x0e61_7800;
+/// SSHLL Vd.2D, Vn.2S, #0.
+const SSHLL_2D: u32 = 0x0f20_a400;
+/// SSHLL and USHLL by 0 of the lower half, without the element size bit.
+const SSHLL: u32 = 0x0f00_a400;
+const USHLL: u32 = 0x2f00_a400;
 const FCVTN: u32 = 0x0e61_6800;
 
 fn vregs(d: V, n: V) -> u32 {
@@ -205,6 +222,117 @@ impl Translator {
         }
         match op {
             0x2f2 | 0x2f6 | 0x2f7 | 0x3f0 => return self.bmi(i, op, p, flags),
+            0x2f5 => return self.bmi2_bits(i, p, flags),
+            0x1e6 if p == Pfx::F3 => {
+                match i.mem {
+                    Some(_) => self.a.ldr_d(XB, ADDR, 0),
+                    None => self.a.ldr_q(XB, CTX, ymm(i.rm, 0)),
+                }
+                self.a.emit(SSHLL_2D | vregs(XR, XB));
+                self.a.scvtf_v(true, XR, XR);
+                self.a.str_q(XR, CTX, ymm(i.reg, 0));
+            }
+            0x1e6 => {
+                self.rm_half(i, 0, XB);
+                self.a.frint32_v(p == Pfx::F2, true, XR, XB);
+                self.a.fcvtzs_v(true, XR, XR);
+                self.a.narrow(Narrow::Xtn, 2, XR, XR);
+                self.a.str_q(XR, CTX, ymm(i.reg, 0));
+            }
+            0x1c6 => {
+                let imm = i.imm as u32 & 0xff;
+                for h in 0..halves {
+                    self.a.ldr_q(XA, CTX, ymm(src1, h));
+                    self.rm_half(i, h, XB);
+                    if p == Pfx::None {
+                        for k in 0..4 {
+                            let from = if k < 2 { XA } else { XB };
+                            self.a.ins(2, XR, k, from, (imm >> (2 * k)) & 3);
+                        }
+                    } else {
+                        self.a.ins(3, XR, 0, XA, (imm >> (2 * h)) & 1);
+                        self.a.ins(3, XR, 1, XB, (imm >> (2 * h + 1)) & 1);
+                    }
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
+            0x302 => {
+                for h in 0..halves {
+                    self.a.ldr_q(XA, CTX, ymm(src1, h));
+                    self.rm_half(i, h, XB);
+                    for k in 0..4 {
+                        if i.imm as u32 >> (4 * h + k) & 1 != 0 {
+                            self.a.ins(2, XA, k, XB, k);
+                        }
+                    }
+                    self.a.str_q(XA, CTX, ymm(i.reg, h));
+                }
+            }
+            0x320 | 0x322 => {
+                let (w, bytes, lane) = match (op, i.rex_w()) {
+                    (0x320, _) => (Width::B, 1, i.imm as i32 & 15),
+                    (_, true) => (Width::X, 8, i.imm as i32 & 1),
+                    _ => (Width::W, 4, i.imm as i32 & 3),
+                };
+                match i.mem {
+                    Some(_) => self.a.ldr(w, A, ADDR, 0),
+                    None => self.a.mov(Size::X, A, r(i.rm)),
+                }
+                self.a.ldr_q(XA, CTX, ymm(src1, 0));
+                self.a.str_q(XA, CTX, ymm(i.reg, 0));
+                self.a.str(w, A, CTX, ymm(i.reg, 0) + bytes * lane);
+            }
+            0x220..=0x225 | 0x230..=0x235 => {
+                let (from, to) = match op & 0xf {
+                    0 => (0, 1),
+                    1 => (0, 2),
+                    2 => (0, 3),
+                    3 => (1, 2),
+                    4 => (1, 3),
+                    _ => (2, 3),
+                };
+                match i.mem {
+                    Some(_) => {
+                        let w = [Width::H, Width::W, Width::X][(3 - (to - from)) as usize];
+                        self.a.ldr(w, A, ADDR, 0);
+                        self.a.fmov_dx(XB, A);
+                    }
+                    None => self.a.ldr_q(XB, CTX, ymm(i.rm, 0)),
+                }
+                let base = if op >= 0x230 { USHLL } else { SSHLL };
+                for size in from..to {
+                    self.a.emit(base | 1 << (19 + size) | vregs(XB, XB));
+                }
+                self.a.str_q(XB, CTX, ymm(i.reg, 0));
+            }
+            0x1c5 => {
+                self.a.ldr_q(XB, CTX, ymm(i.rm, 0));
+                self.a.umov_h(A, XB, i.imm as u32 & 7);
+                self.a.mov(Size::X, r(i.reg), A);
+                return;
+            }
+            0x114 | 0x115 => {
+                let size = if p == Pfx::P66 { 3 } else { 2 };
+                for h in 0..halves {
+                    self.a.ldr_q(XA, CTX, ymm(src1, h));
+                    self.rm_half(i, h, XB);
+                    self.a.zip(true, size, op == 0x115, XR, XA, XB);
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
+            0x300 | 0x301 => {
+                self.rm_half(i, 0, XA);
+                self.rm_half(i, 1, XB);
+                for (h, out) in [(0, XR), (1, XT)] {
+                    for k in 0..2 {
+                        let n = (i.imm as u32 >> (2 * (2 * h + k))) & 3;
+                        self.a.ins(3, out, k, if n < 2 { XA } else { XB }, n & 1);
+                    }
+                }
+                self.a.str_q(XR, CTX, ymm(i.reg, 0));
+                self.a.str_q(XT, CTX, ymm(i.reg, 1));
+                return;
+            }
             0x15a if matches!(p, Pfx::F3 | Pfx::F2) => {
                 let double = p == Pfx::F2;
                 self.a.ldr_q(XA, CTX, ymm(src1, 0));
@@ -497,7 +625,7 @@ impl Translator {
                 }
                 return;
             }
-            0x16f | 0x128 | 0x110 => {
+            0x16f | 0x128 | 0x110 | 0x22a => {
                 for h in 0..halves {
                     self.rm_half(i, h, XB);
                     self.a.str_q(XB, CTX, ymm(i.reg, h));
@@ -824,6 +952,60 @@ impl Translator {
             (_, 4) if n > 0 => a.shr_v(true, true, esize, XA, XA, n.min(esize - 1).max(1)),
             _ => {}
         }
+    }
+
+    /// BZHI, PDEP and PEXT. PDEP and PEXT walk the mask's set bits in a loop
+    /// and leave NZCV alone.
+    fn bmi2_bits(&mut self, i: &Insn, p: Pfx, flags: bool) {
+        let size = if i.rex_w() { 8 } else { 4 };
+        let s = if size == 8 { Size::X } else { Size::W };
+        let v = r(i.vex.expect("classified").vvvv);
+        let (u, low, tmp) = (super::U, super::OLD_NZCV, super::OLD_AF);
+        match i.mem {
+            Some(_) => self
+                .a
+                .ldr(if size == 8 { Width::X } else { Width::W }, A, ADDR, 0),
+            None => self.a.mov(s, A, r(i.rm)),
+        }
+        let a = &mut self.a;
+        if p == Pfx::None {
+            a.ubfx(Size::X, B, v, 0, 8);
+            a.mov_imm(Size::X, u, 1);
+            a.lslv(Size::X, u, u, B);
+            a.sub_imm(Size::X, u, u, 1);
+            a.and(Size::X, T, A, u);
+            a.cmp_imm(Size::X, B, size as u32 * 8);
+            a.csel(s, T, A, T, a64::Cond::Hs);
+            if flags {
+                a.cset(Size::X, tmp, a64::Cond::Lo);
+                a.tst(s, T, T);
+                a.mrs(B, a64::sysreg::NZCV);
+                a.bfi(Size::X, B, tmp, 29, 1);
+                a.msr(a64::sysreg::NZCV, B);
+                a.mov_imm(Size::X, super::PF_RESULT, 1);
+                a.mov_imm(Size::X, super::AF_AUX, 1);
+            }
+            a.mov(s, r(i.reg), T);
+            return;
+        }
+        let pext = p == Pfx::F3;
+        let (top, skip, done) = (a.label(), a.label(), a.label());
+        a.mov(s, B, v);
+        a.mov_imm(Size::X, T, 0);
+        a.mov_imm(Size::X, u, 1);
+        a.bind(top);
+        a.cbz(Size::X, A, done);
+        a.neg(Size::X, low, A);
+        a.and(Size::X, low, A, low);
+        a.and(Size::X, tmp, B, if pext { low } else { u });
+        a.cbz(Size::X, tmp, skip);
+        a.orr(Size::X, T, T, if pext { u } else { low });
+        a.bind(skip);
+        a.add(Size::X, u, u, u);
+        a.bic(Size::X, A, A, low);
+        a.b(top);
+        a.bind(done);
+        a.mov(s, r(i.reg), T);
     }
 
     /// ANDN, BEXTR, SHLX/SHRX/SARX, RORX and MULX on general registers.

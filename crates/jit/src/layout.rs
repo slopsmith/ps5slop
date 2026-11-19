@@ -18,9 +18,12 @@ pub const TTBR1_L2: usize = 0x1_1000;
 pub const STACKS: usize = 0x2_0000;
 pub const STACK_SIZE: usize = 0x1000;
 pub const MAX_VCPUS: usize = 64;
-/// One context block per vCPU: YMM0-15.
+/// One context block per vCPU: YMM0-15, then the direction flag (0 or all
+/// ones, so a string step is `(size ^ df) - df`).
 pub const CONTEXTS: usize = 0x6_0000;
-pub const CONTEXT_SIZE: usize = 0x200;
+pub const CONTEXT_SIZE: usize = 0x400;
+pub const YMM_SIZE: usize = 0x200;
+pub const DF_OFFSET: usize = 0x200;
 /// Two pools the TTBR0 tables are built in, alternately, so one can be
 /// rebuilt while vCPUs still walk the other.
 pub const TABLES: [(usize, usize); 2] = [(0x10_0000, 0x90_0000), (0x90_0000, 0x110_0000)];
