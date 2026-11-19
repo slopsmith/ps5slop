@@ -47,7 +47,7 @@ There is no guest kernel, so we do not need HVF the way 86slopper does. It still
 Against it:
 
 - **HLE calls cost a VM exit** (~700 ns round trip measured in 86slopper) unless the hot ones are handled inside the VM. Games call libc and libkernel a lot (`memcpy`, mutexes, time). How often is unknown until we can run a real title.
-- **Each guest thread needs a vCPU** (or we multiplex them ourselves), and blocking calls must leave the VM.
+- **Each guest thread needs a vCPU** (or we multiplex them ourselves), and blocking calls must leave the VM. Measured 2026-11-19 on vic's M4 Pro, macOS 27 (a probe on 86slopper's `hvf` crate): at most **64 vCPUs** per VM, all 64 created concurrently without trouble; creating and destroying a vCPU costs ~15 µs, a host thread ~17 µs, so a new guest thread with its own vCPU costs ~37 µs. The largest IPA size is 40 bits (1 TiB).
 - More moving parts before anything runs.
 
 Without HVF, translated code runs in our process with guest addresses offset by a base register (one extra add on some accesses), TSO through acquire/release accesses, and faults through signals.
@@ -55,8 +55,10 @@ Without HVF, translated code runs in our process with guest addresses offset by 
 ## Plan
 
 1. **Interpreter first,** in Rust, user-mode x86-64 only, running in our process with a base-offset address space. It runs our own test programs from day one, it is the oracle for everything after it, and it lets the loader and HLE work start without waiting for a JIT. Guest memory accesses that may race use acquire/release ordering.
-2. **Decide the JIT later, with data,** once a commercial title reaches its first GPU submission under the interpreter. By then we can measure: interpreter speed, the instruction mix, the rate of HLE calls (which decides whether HVF's exit cost hurts), and whether games need fixed addresses.
+2. **Decide the JIT later, with data,** once a commercial title reaches its first GPU submission under the interpreter. (Decided earlier than planned, on 2026-11-19: see below.) By then we can measure: interpreter speed, the instruction mix, the rate of HLE calls (which decides whether HVF's exit cost hurts), and whether games need fixed addresses.
 3. **Our own JIT.** A JIT is necessary; only its timing is deferred. Whether it runs inside an HVF VM (for TSO and the address layout, with the hottest HLE functions handled inside the VM) is decided at the decision point. Rosetta is an oracle only.
+
+**Decision (2026-11-19): the JIT runs inside an HVF VM.** Translated code runs on vCPUs with `EnTSO` set, under our own stage-1 page tables that map guest addresses one to one. Each guest thread gets a vCPU on its own host thread; past the 64-vCPU limit, further threads run in the interpreter, which keeps TSO through barriers, so mixing the two stays correct. HLE calls leave the VM; hot ones may get in-VM paths once measured. The interpreter stays as the fallback for anything not yet translated, and as the oracle. See [decisions.md](decisions.md).
 
 FEX is not a fallback: it was not designed for macOS, and forcing it in would mean porting and maintaining it alone. We may still read it for ideas (MIT) and use its tests as an oracle.
 
