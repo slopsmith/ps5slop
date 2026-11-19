@@ -12,7 +12,9 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 | 2026-11-19 | Prosperity `delta/cpu/fex_backend.cc` (summary) | How FEXCore is embedded | Facts only. No code. |
 | 2026-11-19 | shadPS4 `src/core/module.cpp` `Module::LoadSymbols` (read directly) | Whether exports carry names | Fact only: exports are `NID#LIB#MOD`, names come from aerolib ([loader.md](loader.md)). No code. |
 | 2026-11-19 | vic's `ps4-pkg-db` (`pkg.py`, `sfo.py`) | PKG header and SFO layout | Facts ([packages.md](packages.md)). vic's own code, so copying is his call. |
-| 2026-11-19 | LibOrbisPkg `PFS/PfsStructs.cs` (LGPL-3.0, read directly) | PFS mode flags | Facts only. No code. |
+| 2026-11-19 | LibOrbisPkg `PFS/PfsStructs.cs`, `Util/Crypto.cs`, `PKG/Pkg.cs` (LGPL-3.0, read directly) | PFS mode flags, passcode key derivation, PFS key schedule | Facts only ([packages.md](packages.md)). No code. |
+| 2026-11-19 | psdevwiki PKG files (vic's saved copy) | PKG entries, entry keys, PFS encryption | Facts ([packages.md](packages.md)) |
+| 2026-11-19 | LibProsperoPKG `docs/ps5-pkg-format.md` (GPL-3.0) | PS5 package layout | Facts only, unverified ([packages.md](packages.md)) |
 
 Add a row whenever someone reads another project's source for this repo.
 

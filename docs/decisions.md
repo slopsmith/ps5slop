@@ -55,3 +55,9 @@ Reason: an HLE layer runs Sony code in our process either way (the game's own co
 Only allowlisted modules are loaded as guest code. A module qualifies only if all its imports are provided by HLE modules (or by other allowlisted modules), so it runs on top of HLE. Details in [loader.md](loader.md).
 
 Reason: not every module is a candidate. Ones that reach into the kernel or hardware would drag LLE in through the back door.
+
+## 2026-11-19: Open fake-signed packages with their passcode
+
+ps5slop may open fake-signed `.pkg` files as a convenience, deriving the keys from the package's passcode (supplied by the user; all zeros for OpenOrbis builds). No Sony key material is embedded or used. Fake packages without a known passcode, and retail packages, stay out. The loader still runs from an unpacked `app0` folder. Details in [packages.md](packages.md).
+
+Reason: vic wants to run his own and other homebrew packages directly. The passcode route needs nothing but what is in the package plus the passcode, which the package's builder chose; verified against vic's own package.

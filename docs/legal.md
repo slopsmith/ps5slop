@@ -44,8 +44,8 @@ Projects that are built on leaked SDK material are not read at all.
 
 ## Console security
 
-No code that circumvents console security: no exploits, no key extraction, no decryption of protected content. Dumping is the user's own business and happens outside this repo, with their own hardware. The docs do not describe how to do it.
+No code that circumvents console security: no exploits, no key extraction, no decryption of protected content. One exception: opening a fake-signed package with its own passcode, which uses no Sony key material (see [packages.md](packages.md)). Opening packages with Sony keys (the fake-package RSA key, retail or licence keys) stays out. Dumping is the user's own business and happens outside this repo, with their own hardware. The docs do not describe how to do it.
 
 ## The check
 
-`scripts/check-forbidden [REVSET]` (also `jj check` once the repo alias is set, see [AGENTS.md](../AGENTS.md)) fails when a revision tracks files that look like console material: known file names, files under the reserved directories, SELF (PS4 and PS5) or package headers, ELF files with an OS-specific `e_type`, and anything over 4 MiB. Run it before every push. It is a safety net, not a proof: a file it accepts can still be forbidden.
+`scripts/check-forbidden [REVSET]` (also `jj check` once the repo alias is set, see [AGENTS.md](../AGENTS.md)) fails when a revision tracks files that look like console material: known file names, files under the reserved directories, SELF (PS4 and PS5) or package (PS4 and PS5) headers, ELF files with an OS-specific `e_type`, and anything over 4 MiB. Run it before every push. It is a safety net, not a proof: a file it accepts can still be forbidden.
