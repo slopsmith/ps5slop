@@ -39,6 +39,20 @@ pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 struct MutexState {
     owner: Option<u64>,
     count: u32,
+    /// Threads blocked in `acquire`.
+    waiters: u32,
+    /// Set when the mutex was released with waiters: only one of them may
+    /// take it, so a thread that unlocks and relocks in a loop cannot keep
+    /// it from them for good.
+    handoff: bool,
+}
+
+impl MutexState {
+    fn unlock(&mut self, released: &Condvar) {
+        self.owner = None;
+        self.handoff = self.waiters > 0;
+        released.notify_one();
+    }
 }
 
 struct HostMutex {
@@ -51,6 +65,9 @@ struct HostMutex {
 struct HostCond {
     generation: Mutex<u64>,
     signalled: Condvar,
+    /// The clock `pthread_cond_timedwait` deadlines are on (0 is
+    /// CLOCK_REALTIME).
+    clock: u64,
 }
 
 #[derive(Default)]
@@ -105,6 +122,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("pthread_mutex_unlock", mutex_unlock),
     f("pthread_condattr_init", condattr),
     f("pthread_condattr_destroy", condattr),
+    f("pthread_condattr_setclock", condattr_setclock),
     f("pthread_cond_init", cond_init),
     f("pthread_cond_destroy", cond_destroy),
     f("pthread_cond_wait", cond_wait),
@@ -189,10 +207,21 @@ fn mutexattr_init(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// Condition variable attributes carry nothing we use (clock and
-/// process-shared are ignored); the attribute word is zeroed.
+/// Condition variable attributes: the attribute word holds the clock id
+/// (process-shared is ignored).
 fn condattr(env: &mut Env) -> Result<Outcome, CallError> {
     env.mem.write_u64(env.arg(0), 0)?;
+    ret(0)
+}
+
+/// `pthread_condattr_setclock(attr, clock)`: CLOCK_REALTIME (0) or
+/// CLOCK_MONOTONIC (4), FreeBSD's numbers.
+fn condattr_setclock(env: &mut Env) -> Result<Outcome, CallError> {
+    let clock = env.arg(1) & 0xffff_ffff;
+    if !matches!(clock, 0 | 4) {
+        return ret(EINVAL);
+    }
+    env.mem.write_u64(env.arg(0), clock)?;
     ret(0)
 }
 
@@ -242,11 +271,16 @@ fn mutex_destroy(env: &mut Env) -> Result<Outcome, CallError> {
 /// Locks `m` for `me`, blocking unless `try_only`; returns the error number.
 fn acquire(env: &Env, m: &HostMutex, me: u64, try_only: bool) -> i32 {
     let mut s = lock(&m.state);
+    let mut waiting = false;
     loop {
         match s.owner {
-            None => {
+            None if !s.handoff || waiting => {
                 s.owner = Some(me);
                 s.count = 1;
+                s.handoff = false;
+                if waiting {
+                    s.waiters -= 1;
+                }
                 return 0;
             }
             Some(o) if o == me => {
@@ -259,10 +293,17 @@ fn acquire(env: &Env, m: &HostMutex, me: u64, try_only: bool) -> i32 {
                     EDEADLK
                 };
             }
-            Some(_) if try_only => return EBUSY,
-            Some(_) => {
+            _ if try_only => return EBUSY,
+            _ => {
                 if env.kernel.has_exited() {
+                    if waiting {
+                        s.waiters -= 1;
+                    }
                     return 0;
+                }
+                if !waiting {
+                    waiting = true;
+                    s.waiters += 1;
                 }
                 s = m
                     .released
@@ -282,8 +323,7 @@ fn release(m: &HostMutex, me: u64) -> i32 {
     }
     s.count -= 1;
     if s.count == 0 {
-        s.owner = None;
-        m.released.notify_one();
+        s.unlock(&m.released);
     }
     0
 }
@@ -312,8 +352,16 @@ fn cond(env: &Env, at: u64) -> Result<Arc<HostCond>, CallError> {
 }
 
 fn cond_init(env: &mut Env) -> Result<Outcome, CallError> {
+    let clock = match env.arg(1) {
+        0 => 0,
+        attr => env.mem.read_u64(attr)?,
+    };
     let id = new_handle(env)?;
-    lock(&env.kernel.objects.conds).insert(id, Arc::default());
+    let c = HostCond {
+        clock,
+        ..HostCond::default()
+    };
+    lock(&env.kernel.objects.conds).insert(id, Arc::new(c));
     env.mem.write_u64(env.arg(0), id)?;
     ret(0)
 }
@@ -339,9 +387,8 @@ fn wait(env: &mut Env, deadline: Option<Instant>) -> Result<Outcome, CallError> 
             return ret(EPERM);
         }
         let held = s.count;
-        s.owner = None;
         s.count = 0;
-        m.released.notify_one();
+        s.unlock(&m.released);
         held
     };
     let mut timed_out = false;
@@ -373,9 +420,17 @@ fn cond_wait(env: &mut Env) -> Result<Outcome, CallError> {
 }
 
 /// `pthread_cond_timedwait(cond, mutex, abstime)`: `abstime` is a
-/// CLOCK_REALTIME `struct timespec { i64 sec; i64 nsec; }`.
+/// `struct timespec { i64 sec; i64 nsec; }` on the condition's clock.
 fn cond_timedwait(env: &mut Env) -> Result<Outcome, CallError> {
-    let deadline = realtime_deadline(env, env.arg(2))?;
+    let deadline = match cond(env, env.arg(0))?.clock {
+        0 => realtime_deadline(env, env.arg(2))?,
+        _ => {
+            let ts = env.arg(2);
+            let (sec, nsec) = (env.mem.read_u64(ts)?, env.mem.read_u64(ts + 8)?);
+            let target = Duration::new(sec, nsec.min(999_999_999) as u32);
+            env.kernel.started + target
+        }
+    };
     wait(env, Some(deadline))
 }
 

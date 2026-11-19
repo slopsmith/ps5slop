@@ -65,7 +65,6 @@ pub static FUNCTIONS: &[Function] = &[
 pub static STUBS: &[Function] = &[
     f("socket", socket),
     f("__pthread_cxa_finalize", accept),
-    f("pthread_condattr_setclock", accept),
     f("sceKernelMlock", accept),
     f("sceKernelIsTrinityMode", accept),
 ];
