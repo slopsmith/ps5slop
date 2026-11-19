@@ -426,6 +426,8 @@ impl Ctx<'_> {
                 self.set(RBP as u8, i.osize64(), v);
             }
             0xcc => return Err(CpuFault::Breakpoint),
+            0x9b => {}
+            0xd8..=0xdf => self.x87_control()?,
             0xe3 => {
                 let rcx = if i.addr32 {
                     self.get(1, 4)
@@ -493,6 +495,25 @@ impl Ctx<'_> {
             _ => return self.unimplemented(),
         }
         Ok(Exit::Continue)
+    }
+
+    /// The x87 instructions that only touch the control and status words;
+    /// everything else on the x87 is not implemented yet.
+    fn x87_control(&mut self) -> Res<()> {
+        let i = self.insn;
+        match (i.op, self.rm(), i.ext()) {
+            (0xd9, Loc::Mem(a), 5) => self.cpu.fcw = self.load(a, 2)? as u16,
+            (0xd9, Loc::Mem(a), 7) => self.store(a, 2, self.cpu.fcw as u64)?,
+            (0xdd, Loc::Mem(a), 7) => self.store(a, 2, self.cpu.fsw as u64)?,
+            (0xdb, Loc::Reg(_), 4) if i.modrm == Some(0xe3) => {
+                self.cpu.fcw = crate::cpu::FCW_DEFAULT;
+                self.cpu.fsw = 0;
+            }
+            (0xdb, Loc::Reg(_), 4) if i.modrm == Some(0xe2) => self.cpu.fsw &= 0x7f00,
+            (0xdf, Loc::Reg(_), 4) if i.modrm == Some(0xe0) => self.set(0, 2, self.cpu.fsw as u64),
+            _ => return self.unimplemented(),
+        }
+        Ok(())
     }
 
     fn imul2(&mut self, dst: u8, a: u64, b: u64, size: u8) {

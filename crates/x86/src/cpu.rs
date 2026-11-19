@@ -23,6 +23,9 @@ pub mod flags {
 /// MXCSR after reset: all exceptions masked, round to nearest.
 pub const MXCSR_DEFAULT: u32 = 0x1f80;
 
+/// The x87 control word after FNINIT: all exceptions masked, 64-bit precision.
+pub const FCW_DEFAULT: u16 = 0x037f;
+
 pub mod reg {
     pub const RAX: usize = 0;
     pub const RCX: usize = 1;
@@ -46,6 +49,9 @@ pub struct Cpu {
     /// YMM0-15 as four 64-bit lanes each; XMMn is the low two.
     pub xmm: [[u64; 4]; 16],
     pub mxcsr: u32,
+    /// x87 control and status words.
+    pub fcw: u16,
+    pub fsw: u16,
 }
 
 impl Default for Cpu {
@@ -58,6 +64,8 @@ impl Default for Cpu {
             gs_base: 0,
             xmm: [[0; 4]; 16],
             mxcsr: MXCSR_DEFAULT,
+            fcw: FCW_DEFAULT,
+            fsw: 0,
         }
     }
 }
