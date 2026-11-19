@@ -33,3 +33,16 @@ Either way the guest's whole address space is one host reservation we own. That 
 ## Page size
 
 If Orbis really uses 16 KiB pages, macOS's 16 KiB pages match and protections can be applied page for page. If some guest behaviour needs 4 KiB granularity (sub-16 KiB protections, guard pages), the base-offset route has to emulate it in software, while the HVF route can use a 4 KiB granule.
+
+## The layout we use today
+
+Our choices, in `crates/ps5slop` and `crates/hle`, until real titles tell us otherwise:
+
+| Range | What |
+| --- | --- |
+| `0 .. 1 TiB` | The guest address space: one host reservation (`Memory::new`), host address = base + guest address |
+| `0x40_0000 ..` | The executable, at the PS4 base shadPS4 uses (unverified for PS5) |
+| `0x6_FFF0_0000 .. 0x7_0000_0000` | The main thread's stack, 1 MiB |
+| `0xFF_0000_0000 ..` | The HLE trap region, one 16-byte slot per imported function |
+
+Every mapped page is readable and writable on the host; the guest's protections live in `crates/memory`, which checks each access. This is simple and slow, and fine for the interpreter.

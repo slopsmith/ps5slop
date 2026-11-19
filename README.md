@@ -2,7 +2,7 @@
 
 A PS5 compatibility layer for Apple Silicon Macs. It runs a game's own x86-64 code, implements the Orbis kernel interface and system libraries in the host (HLE, the way Wine does it for Windows), and translates the GPU's command stream to Metal.
 
-Nothing runs yet. The architecture is still being discussed.
+Our own small test programs run under the interpreter. No game or homebrew app does yet.
 
 You supply your own games, dumped from your own console. Nothing from Sony is part of this project. See [docs/legal.md](docs/legal.md).
 
@@ -19,12 +19,14 @@ cargo run --release -p loader -- info OUT_DIR/eboot.bin
 cargo run --release -p loader -- imports OUT_DIR/eboot.bin --names names.txt   # label NIDs of names you know
 cargo run --release -p loader -- load OUT_DIR/eboot.bin   # lay out, relocate, list missing imports
 scripts/build-test-programs   # our own test programs -> target/test-programs/
+scripts/run-test-programs     # build, run under ps5slop, compare with expected output
+cargo run --release -p ps5slop -- run target/test-programs/hello.elf
 ```
 
 ## Docs
 
 - [Architecture](docs/architecture.md): overview, milestones and index of the other docs
-- [CPU](docs/cpu.md), [memory](docs/memory.md), [loader](docs/loader.md), [packages](docs/packages.md), [GPU](docs/gpu.md)
+- [CPU](docs/cpu.md), [memory](docs/memory.md), [loader](docs/loader.md), [packages](docs/packages.md), [HLE](docs/hle-kernel.md), [GPU](docs/gpu.md)
 - [Test targets and oracles](docs/test-targets.md)
 - [References and prior art](docs/references.md)
 - [Legal boundaries](docs/legal.md)

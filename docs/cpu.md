@@ -61,3 +61,14 @@ Without HVF, translated code runs in our process with guest addresses offset by 
 FEX is not a fallback: it was not designed for macOS, and forcing it in would mean porting and maintaining it alone. We may still read it for ideas (MIT) and use its tests as an oracle.
 
 The CPU sits behind one interface (run a thread until it calls into HLE, faults or is interrupted), so the interpreter and the JIT can be swapped without touching the loader or HLE code.
+
+## The interpreter today
+
+`crates/x86`: a decoder for 64-bit mode and an interpreter that runs one instruction at a time. It assumes user mode and long mode throughout, so there are no segments beyond the FS and GS bases, no paging and no privilege changes; 86slopper's interpreter, which covers real, protected and kernel mode, shares only its general shape (decode, then execute with eagerly computed flags).
+
+- **Decoder:** legacy prefixes, REX, the one-byte, `0F`, `0F38` and `0F3A` maps, ModRM and SIB, RIP-relative addressing, `67` for 32-bit addresses. VEX, EVEX and XOP are recognised and reported as unsupported.
+- **Instructions:** the integer subset compiled C uses: moves and extensions, the ALU group, shifts and rotates (including `shld`/`shrd`), multiply and divide, `push`/`pop`/`call`/`ret`/`leave`, branches and loops, `setcc`/`cmovcc`, bit tests and scans (`bsf`, `bsr`, `tzcnt`, `lzcnt`, `popcnt`), `xchg`, `xadd`, `cmpxchg`, `bswap`, string instructions with `rep`, `cpuid` (vendor string only), `rdtsc` (host time). Not yet: SSE, AVX, x87, `enter`, `lock`ed atomicity across threads.
+- **Faults:** a faulting instruction leaves the state as it was before it, and the run loop gets the fault and its address. Unimplemented instructions are reported by map and opcode.
+- **Memory:** goes through `crates/memory` with a guest-protection check on every access; nothing is optimised yet.
+
+**How it is tested:** unit tests whose encodings come from llvm-mc, and the test programs (`scripts/run-test-programs`). No public instruction test suite is wired up yet; picking one (and checking how its expected values were made) is the next step for correctness, before the JIT exists to be compared against.
