@@ -1,0 +1,9 @@
+[package]
+name = "gpu"
+description = "The PS5 GPU's command processor, and (later) rendering through Metal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

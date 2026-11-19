@@ -303,20 +303,31 @@ fn submit_flip(env: &mut Env) -> Result<Outcome, CallError> {
     if !is_open(env) {
         return ret(ERROR_INVALID_HANDLE);
     }
-    {
-        let mut port = lock(&env.kernel.videoout.port);
-        let front = usize::try_from(index).ok();
-        if front.is_some_and(|i| port.buffers.get(i).copied().flatten().is_none()) {
-            return ret(ERROR_INVALID_INDEX);
+    match env.kernel.flip(index, arg) {
+        true => ret(0),
+        false => ret(ERROR_INVALID_INDEX),
+    }
+}
+
+impl Kernel {
+    /// Puts buffer `index` on screen (-1 blanks it) and fires flip events
+    /// with `arg`; false if no buffer is registered at `index`.
+    pub(crate) fn flip(&self, index: i32, arg: u64) -> bool {
+        {
+            let mut port = lock(&self.videoout.port);
+            let front = usize::try_from(index).ok();
+            if front.is_some_and(|i| port.buffers.get(i).copied().flatten().is_none()) {
+                return false;
+            }
+            port.front = front;
+            port.flips += 1;
         }
-        port.front = front;
-        port.flips += 1;
+        self.trigger_event(FLIP_EVENT, EVENT_FILTER, arg);
+        if let Some(listener) = lock(&self.videoout.listener).as_ref() {
+            listener();
+        }
+        true
     }
-    env.kernel.trigger_event(FLIP_EVENT, EVENT_FILTER, arg);
-    if let Some(listener) = lock(&env.kernel.videoout.listener).as_ref() {
-        listener();
-    }
-    ret(0)
 }
 
 /// `sceVideoOutWaitVblank(handle)`: sleeps until the next 1/60 s boundary.

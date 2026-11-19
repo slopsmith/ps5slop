@@ -14,6 +14,7 @@ mod oracle;
 mod packets;
 mod registers;
 mod shader;
+mod submit;
 mod sync;
 
 use std::collections::HashMap;
@@ -34,6 +35,7 @@ pub struct Agc {
     /// Shader headers by code address, from `sceAgcCreateShader`.
     shaders: Mutex<HashMap<u64, u64>>,
     registry: Mutex<driver::Registry>,
+    gpu: submit::Gpu,
 }
 
 /// Every libSceAgc and libSceAgcDriver function, real ones first.
@@ -41,6 +43,7 @@ pub fn functions() -> impl Iterator<Item = &'static Function> {
     [
         FUNCTIONS,
         driver::FUNCTIONS,
+        submit::FUNCTIONS,
         packets::FUNCTIONS,
         control::FUNCTIONS,
         dma::FUNCTIONS,

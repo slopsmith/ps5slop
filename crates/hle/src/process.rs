@@ -361,7 +361,7 @@ impl Kernel {
         });
     }
 
-    fn this(&self) -> Arc<Kernel> {
+    pub(crate) fn this(&self) -> Arc<Kernel> {
         self.me.upgrade().expect("the kernel outlives its threads")
     }
 

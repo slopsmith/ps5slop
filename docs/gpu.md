@@ -56,6 +56,16 @@ This is probably one of RDNA2's 64 KiB swizzle modes; which one is unconfirmed. 
 
 Status, 2026-11-19: ScreenTester5 shows its menu, and a pad press changes the pattern (checked with a frame dump).
 
+## AGC (in progress)
+
+`libSceAgc` and `libSceAgcDriver` are implemented in HLE (`crates/hle/src/agc/`), ported from SharpEmu (GPL-2.0-or-later) and checked against console measurements published by prosper (`oracle.rs`; the measurements stay in `references/`). There is no official AGC documentation; see [references.md](references.md) for every source and [legal.md](legal.md) for why documentation others wrote from decompilation is usable as a specification.
+
+- Init, register defaults (versions 10 to 13), `CreateShader`, driver resource registration.
+- Command-buffer builders append PM4 at the descriptor's upward cursor (`cmdbuf.rs`), calling the title's buffer-full callback when needed. One family per file.
+- Submissions go to a GPU thread that runs them through `crates/gpu`'s command processor in order. It carries out what the CPU can observe (memory writes, end-of-pipe labels and their interrupts to the GPU event queues, waits, indirect buffers, flips), records register writes and counts draws and dispatches. Nothing is drawn yet; drawing will be Metal only, with no rendering on the CPU (vic, 2026-11-19).
+
+Known difference from the console: `sceAgcDcbResetQueue` writes a 2-dword marker where the console writes a longer, mode-dependent sequence (tags in the internal-data register `0x342`).
+
 ## Open questions
 
 - Which AGC functions a GameMaker or LÖVE title calls, and how much of their meaning we can infer from the PM4 they leave behind.
