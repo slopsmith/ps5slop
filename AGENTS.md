@@ -20,4 +20,5 @@ ps5slop is a PS5 compatibility layer (HLE, Wine-style) for Apple Silicon Macs, w
 - Be honest in docs: say what is verified (and how), what is assumed and what is unknown.
 - Measure before optimising. Test against an oracle wherever one exists (an interpreter, a public test suite, differential testing, our own test programs on vic's PS4).
 - There is no PS5 to measure on. Anything about PS5 behaviour that rests only on documentation or other emulators is marked unverified.
+- Build and lint inside `nix develop . -c ...` (`cargo test`, `cargo clippy --workspace --all-targets`). Nix only sees files git tracks, and jj does not stage files: a new file must be in a committed change (not only in `@`) before Nix sees it.
 - Use `pnpm`, never `npm`, if JavaScript tooling ever shows up.

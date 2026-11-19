@@ -6,6 +6,10 @@ Nothing runs yet. The architecture is still being discussed.
 
 You supply your own games, dumped from your own console. Nothing from Sony is part of this project. See [docs/legal.md](docs/legal.md).
 
+## Setup
+
+`nix develop` gives the toolchain: Rust with a matching clippy, and LLVM's `lld` for building test programs.
+
 ## Tools
 
 ```sh
