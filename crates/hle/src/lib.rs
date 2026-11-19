@@ -16,6 +16,7 @@ use x86::cpu::reg::*;
 pub mod errno;
 mod kernel;
 mod process;
+mod sysmodule;
 
 pub use process::{Kernel, Thread, ThreadError, TlsTemplate};
 
@@ -166,6 +167,7 @@ impl Hle {
     pub fn new() -> Self {
         let by_nid = kernel::FUNCTIONS
             .iter()
+            .chain(sysmodule::FUNCTIONS)
             .map(|f| ((nid(f.name), f.library.to_owned()), f))
             .collect();
         let variables = kernel::VARIABLES
