@@ -1,6 +1,6 @@
 # Loader and linking
 
-What the loader has to read, and what is publicly known about it. `crates/loader` implements reading, listing imports and laying out an image with relocations applied; running code is milestone 2.
+What the loader has to read, and what is publicly known about it. `crates/loader` implements reading, listing imports and laying out an image with relocations applied; running code is milestone 2. `crates/mkelf` writes the same format for our own test programs, from the same facts; vic's OpenOrbis build is the independent check that both read the format right.
 
 Sources are open-source emulators (shadPS4, KytyPS5, Prosperity), read through a research summary on 2026-11-19. They are a "public" source only in the sense that they are published; how their authors learned these facts is not always known. We use them for format facts, not code (see [references.md](references.md)). psdevwiki blocks automated fetches and has not been checked yet.
 

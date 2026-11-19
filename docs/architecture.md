@@ -34,7 +34,7 @@ Status: discussion. Nothing runs, and most of the design below is a proposal.
 
 Each step has a test program we can run and check. Steps 1 to 4 need only programs we write ourselves.
 
-1. **Load.** Parse our own test ELF (Sony program headers, `NID#LIB#MOD` imports), map it, resolve imports to HLE stubs, list what is missing. No code runs. *Status: parsing, layout and relocation work on vic's OpenOrbis build; our own test-ELF tool and HLE stubs are still to do.*
+1. **Load.** Parse our own test ELF (Sony program headers, `NID#LIB#MOD` imports), map it, resolve imports to HLE stubs, list what is missing. No code runs. *Status: done except for HLE stubs, which come with milestone 2. Parsing, layout and relocation work on vic's OpenOrbis build and on our own `hello` test program.*
 2. **Hello.** The interpreter runs a test program that prints through an HLE `sceKernelWrite` (or libc `write`) and exits with a status we check.
 3. **Kernel basics.** Our test programs exercise memory allocation (direct and flexible), TLS through FS, threads and mutexes, time and files under `/app0`. The same tests, built for the PS4, run on vic's console for comparison where that is practical.
 4. **Pixels without a GPU.** A test program fills a buffer on the CPU and flips it through HLE `libSceVideoOut`; the Mac shows it in a Metal window.
@@ -47,5 +47,6 @@ Each step has a test program we can run and check. Steps 1 to 4 need only progra
 
 - `pkg`: reads fake-signed PS4 packages and extracts them into `app0` folders, plus the `ps5slop-pkg` tool. See [packages.md](packages.md).
 - `loader`: reads ELF and fake-signed SELF files, the dynamic section and NID imports, and lays out an image with relocations applied, plus the `ps5slop-elf` tool. See [loader.md](loader.md).
+- `mkelf`: `ps5slop-mkelf`, which turns an ELF linked with `ld.lld -shared` into an Orbis executable, for our own test programs. See [test-targets.md](test-targets.md).
 
 The rest is not decided. A likely split for the rest is `x86` (decoder and interpreter), `hle` (kernel and libraries) and a binary crate, with `gpu` later.
