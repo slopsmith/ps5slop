@@ -4,6 +4,7 @@
 //! Formats and their sources are described in `docs/packages.md`.
 
 mod error;
+pub mod keys;
 mod package;
 mod read;
 

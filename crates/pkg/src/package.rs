@@ -2,6 +2,7 @@ use std::fs::File;
 use std::path::Path;
 
 use crate::error::invalid;
+use crate::keys::{self, EKPFS_INDEX, Passcode};
 use crate::read::{FileSlice, ReadAt, u32_be, u64_be};
 use crate::{Error, Result};
 
@@ -134,6 +135,17 @@ impl Package {
 
     pub fn entry(&self, id: u32) -> Option<&Entry> {
         self.entries.iter().find(|e| e.id == id)
+    }
+
+    /// The PFS image's root key, derived from the passcode and checked against the package.
+    pub fn ekpfs(&self, passcode: &Passcode) -> Result<[u8; 32]> {
+        let entry = self
+            .entry(entry_id::ENTRY_KEYS)
+            .ok_or_else(|| invalid("package has no entry-keys entry"))?;
+        let entry_keys = self.read_entry(entry)?;
+        let ekpfs = keys::derive_key(&self.header.content_id, passcode, EKPFS_INDEX);
+        keys::check_derived_key(&entry_keys, &self.header.content_id, &ekpfs, EKPFS_INDEX)?;
+        Ok(ekpfs)
     }
 
     /// The bytes of an entry stored in the clear.
