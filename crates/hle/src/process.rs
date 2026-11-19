@@ -136,6 +136,7 @@ pub struct Kernel {
     pub(crate) libc: crate::libc::State,
     /// The title folder, which the guest sees as `/app0`.
     pub(crate) app0: Option<PathBuf>,
+    pub(crate) started: std::time::Instant,
 }
 
 impl Kernel {
@@ -170,6 +171,7 @@ impl Kernel {
             jit: AtomicBool::new(false),
             libc: Default::default(),
             app0,
+            started: std::time::Instant::now(),
         })
     }
 

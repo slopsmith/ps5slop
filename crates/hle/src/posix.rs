@@ -15,6 +15,8 @@ pub static FUNCTIONS: &[Function] = &[
     f("mkdir", mkdir),
     f("gettimeofday", gettimeofday),
     f("nanosleep", nanosleep),
+    f("sceKernelUsleep", usleep),
+    f("sceKernelGetProcessTime", process_time),
     f("sysconf", sysconf),
     f("sysctl", sysctl),
     f("sysctlbyname", sysctl),
@@ -143,14 +145,30 @@ fn nanosleep(env: &mut Env) -> Result<Outcome, CallError> {
     if nsec >= 1_000_000_000 {
         return env.fail(errno::EINVAL);
     }
-    let end = Instant::now() + Duration::new(sec, nsec as u32);
+    sleep(env, Duration::new(sec, nsec as u32));
+    ret(0)
+}
+
+/// Sleeps for `time`, waking early only when the process exits.
+fn sleep(env: &Env, time: Duration) {
+    let end = Instant::now() + time;
     while let Some(left) = end.checked_duration_since(Instant::now()) {
         if env.kernel.has_exited() {
             break;
         }
         std::thread::sleep(left.min(POLL));
     }
+}
+
+/// `sceKernelUsleep(microseconds)`.
+fn usleep(env: &mut Env) -> Result<Outcome, CallError> {
+    sleep(env, Duration::from_micros(env.arg(0) as u32 as u64));
     ret(0)
+}
+
+/// `sceKernelGetProcessTime()`: microseconds since the process started.
+fn process_time(env: &mut Env) -> Result<Outcome, CallError> {
+    ret(env.kernel.started.elapsed().as_micros() as u64)
 }
 
 const SC_CLK_TCK: u64 = 3;
