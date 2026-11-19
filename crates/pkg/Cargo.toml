@@ -1,0 +1,9 @@
+[package]
+name = "pkg"
+description = "Reads fake-signed PS4 packages and their PFS images"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
