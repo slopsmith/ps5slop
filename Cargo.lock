@@ -541,6 +541,7 @@ checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 name = "hle"
 version = "0.1.0"
 dependencies = [
+ "jit",
  "loader",
  "memory",
  "x86",
@@ -601,6 +602,16 @@ name = "itoa"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bd1574e617a9a6c1f8f8181bd7e841e1f20e4277607ef28945765188d6284d4"
+
+[[package]]
+name = "jit"
+version = "0.1.0"
+dependencies = [
+ "a64",
+ "hvf",
+ "memory",
+ "x86",
+]
 
 [[package]]
 name = "jni"
