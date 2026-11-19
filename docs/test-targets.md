@@ -61,7 +61,7 @@ Candidates, simplest first:
 | Title | Source | What it exercises |
 | --- | --- | --- |
 | ScreenTester5 (`PPSA69420`, 1 MB) | github.com/Marice/ScreenTester5, GPL-3.0 | Colour patterns drawn on the CPU through VideoOut, the pad. **First target.** |
-| DriftCheck (`PPSA98766`) | github.com/felipemelchior/driftcheck5, GPL-3.0 | Everything the DualSense reports |
+| DriftCheck (`PPSA98766`) | github.com/felipemelchior/driftcheck5, GPL-3.0 | Everything the DualSense reports. Draws its screen under ps5slop since 2026-11-19 (see [hle-kernel.md](hle-kernel.md)) |
 | Raymarch tech demo | github.com/Alexius0815/ps5-raymarch-techdemo, GPL-3.0-or-later | Threads, VideoOut, AudioOut, pad; `--smoke-test` renders 180 frames and exits 0. Only ever run under another emulator (AnyPS5), not on a PS5 |
 | DOOM port | github.com/lowbit/ps5-doom, GPL-2.0 | The first GPU target: draws through AGC with an OpenCL kernel compiled for gfx1010; ships the freely distributable shareware WAD |
 | BennuGD2 PS5 runtime | github.com/Rufidj/BennuGD2 (`ps5` branch) | OpenGL through the PS5 Mesa port; its README records sandbox behaviour (`stat`, `getcwd`, `opendir` refused, `exit()` raising SIGSYS) |
