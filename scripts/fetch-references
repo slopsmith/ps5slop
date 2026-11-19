@@ -4,6 +4,8 @@
 #   ps5slop-asmtest as a hardware-checked oracle for the interpreter.
 #   references/src/sharpemu: SharpEmu (GPL-2.0-or-later), whose libSceAgc
 #   implementation we port.
+#   references/src/sharpemu-mac: SharpEmu's macOS fork (GPL-2.0-or-later),
+#   whose Metal backend, PS5 shader translator and audio code we port.
 #   references/src/prosper: prosper (no license), for its console-measured
 #   AGC packet bytes, used as a local test oracle only.
 #   references/src/{SharpProspero,OpenAGC}: documentation of AGC functions
@@ -32,6 +34,7 @@ fetch() {
 
 fetch FEX https://github.com/FEX-Emu/FEX.git be66e03d65217f53a7a2e5af46473cc9a79ce3f8 /unittests/ASM/ /LICENSE
 fetch sharpemu https://github.com/sharpemu/sharpemu.git f1af467a656d0a14b1f05a332e2757f5523a1489 /src/SharpEmu.Libs/Agc/ /src/SharpEmu.Libs/Gpu/GpuCommands/ /LICENSE* /README* /CONTRIBUTING*
+fetch sharpemu-mac https://github.com/sharpemu/sharpemu-mac.git 5cb184e4e4c98e71f2c28994b05fbe012a5f9f44 /src/SharpEmu.ShaderCompiler/ /src/SharpEmu.ShaderCompiler.Metal/ /src/graphics/SharpEmu.Gpu.Metal/ /src/SharpEmu.Libs/Gpu/ /src/SharpEmu.Libs/Agc/ /src/SharpEmu.Libs/Audio/ /src/SharpEmu.Libs/Ngs2/ /src/SharpEmu.Libs/VideoOut/ /docs/macos/ /LICENSE* /README*
 fetch prosper https://github.com/mattias800/prosper.git e35a74a20f4241ceaaa9974fd35cec92e868baea /prosper/tests/data/console_oracle/ /prosper/docs/gpu/ /README*
 fetch SharpProspero https://github.com/SvenGDK/SharpProspero.git 5dfdb4b0b166e83dc9ae275001afb695f12c7174 /src/SharpProspero/Interop/Agc/ /docs/ /LICENSE* /README*
 fetch OpenAGC https://github.com/OpenAGC/OpenAGC.git 3c7e8072f0d7684e930454794fd5c02056946d73 /docs/ /LICENSE* /README*

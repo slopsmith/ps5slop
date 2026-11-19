@@ -1,13 +1,55 @@
 //! The PS5 GPU as titles drive it: a command processor that walks the PM4
 //! packets in submitted command buffers. Packets the CPU can observe (memory
 //! writes, end-of-pipe labels and interrupts, waits, flips) take effect;
-//! register writes are recorded; draws and dispatches are counted until the
-//! Metal renderer exists. See `docs/gpu.md`. Packet meanings follow AMD's
+//! register writes are recorded; draws go to a [`Backend`], the Metal
+//! renderer on macOS. See `docs/gpu.md`. Packet meanings follow AMD's
 //! PM4 documentation and SharpEmu's interpreter (GPL-2.0-or-later).
 
+#[cfg(target_os = "macos")]
+pub mod metal;
 mod pm4;
+pub mod regs;
+pub mod shader;
+pub mod tiling;
 
 pub use pm4::{Processor, Stats};
+
+/// The register banks as a draw sees them.
+pub struct State<'a> {
+    pub context: &'a [u32],
+    pub sh: &'a [u32],
+    pub uconfig: &'a [u32],
+}
+
+/// A draw's vertex source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Draw {
+    Auto { count: u32, instances: u32 },
+    Indexed { count: u32, address: u64, instances: u32 },
+}
+
+/// Where draws and dispatches are carried out.
+pub trait Backend: Send {
+    fn draw(&mut self, host: &dyn Host, state: &State, draw: Draw);
+    /// A compute dispatch of `groups` thread groups.
+    fn dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]);
+    /// Finishes GPU work recorded so far, before the CPU may observe its results.
+    fn sync(&mut self);
+    /// As [`Backend::sync`], at a flip.
+    fn frame_done(&mut self);
+}
+
+/// Runs `f` inside an Objective-C autorelease pool where the platform has one.
+pub fn with_pool<R>(f: impl FnOnce() -> R) -> R {
+    #[cfg(target_os = "macos")]
+    {
+        objc2::rc::autoreleasepool(|_| f())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        f()
+    }
+}
 
 /// What the command processor needs from the rest of the emulator.
 pub trait Host {
@@ -21,6 +63,18 @@ pub trait Host {
     fn flip(&self, flip: Flip);
     /// True once the process is ending, so waits give up.
     fn exiting(&self) -> bool;
+    /// The host-backed guest range around `addr`, as `(start, end)`.
+    fn extent(&self, _addr: u64) -> Option<(u64, u64)> {
+        None
+    }
+    /// The host address of guest address `addr`.
+    fn host_pointer(&self, _addr: u64) -> Option<*mut u8> {
+        None
+    }
+    /// A number that changes whenever guest mappings change.
+    fn generation(&self) -> u64 {
+        0
+    }
 }
 
 /// A flip request from a command buffer.

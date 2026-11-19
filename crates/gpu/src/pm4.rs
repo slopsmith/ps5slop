@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use crate::{Error, Flip, Host};
+use crate::{Backend, Draw, Error, Flip, Host, State};
 
 const IT_NOP: u32 = 0x10;
 const IT_DISPATCH_DIRECT: u32 = 0x15;
@@ -27,6 +27,13 @@ const IT_SET_SH_REG: u32 = 0x76;
 const IT_SET_UCONFIG_REG: u32 = 0x79;
 const IT_SET_UCONFIG_REG_INDEX: u32 = 0x7A;
 const IT_WAIT_REG_MEM_64: u32 = 0x93;
+const IT_INDEX_BASE: u32 = 0x26;
+const IT_NUM_INSTANCES: u32 = 0x2F;
+const IT_SET_SH_REG_INDIRECT: u32 = 0x63;
+const IT_SET_UCONFIG_REG_INDIRECT: u32 = 0x64;
+const IT_SET_CONTEXT_REG_INDIRECT: u32 = 0x9F;
+/// Bits of a register-table offset that select something other than the register.
+const TABLE_SELECTOR: u32 = 0x7000_0000;
 
 /// Codes in a NOP's shader-type/index field that AGC's builders use for
 /// their own packets (SharpEmu's names).
@@ -70,6 +77,9 @@ pub struct Processor {
     pub sh: Vec<u32>,
     pub uconfig: Vec<u32>,
     pub stats: Stats,
+    pub backend: Option<Box<dyn Backend>>,
+    index_base: u64,
+    instances: u32,
 }
 
 impl Default for Processor {
@@ -79,6 +89,9 @@ impl Default for Processor {
             sh: vec![0; 0x400],
             uconfig: vec![0; 0x4000],
             stats: Stats::default(),
+            backend: None,
+            index_base: 0,
+            instances: 1,
         }
     }
 }
@@ -203,13 +216,91 @@ impl Processor {
             IT_SET_CONTEXT_REG => Self::set_registers(&mut self.context, p),
             IT_SET_SH_REG => Self::set_registers(&mut self.sh, p),
             IT_SET_UCONFIG_REG | IT_SET_UCONFIG_REG_INDEX => Self::set_registers(&mut self.uconfig, p),
-            IT_DRAW_INDEX_AUTO | IT_DRAW_INDEX_2 | IT_DRAW_INDEX_OFFSET_2 | IT_DRAW_INDIRECT
-            | IT_DRAW_INDEX_INDIRECT | IT_DRAW_INDIRECT_MULTI | IT_DRAW_INDEX_INDIRECT_MULTI
+            IT_SET_CONTEXT_REG_INDIRECT | IT_SET_SH_REG_INDIRECT | IT_SET_UCONFIG_REG_INDIRECT if p.len() >= 4 => {
+                let table = (p[0] & !3) as u64 | (p[1] as u64) << 32;
+                let entries = read_dwords(host, table, 2 * (p[3] & 0x3FFF) as usize)?;
+                let bank = match op {
+                    IT_SET_CONTEXT_REG_INDIRECT => &mut self.context,
+                    IT_SET_SH_REG_INDIRECT => &mut self.sh,
+                    _ => &mut self.uconfig,
+                };
+                for e in entries.as_chunks::<2>().0 {
+                    if e[0] == u32::MAX {
+                        continue;
+                    }
+                    if let Some(r) = bank.get_mut((e[0] & !TABLE_SELECTOR) as usize) {
+                        *r = e[1];
+                    }
+                }
+            }
+            IT_INDEX_BASE if p.len() >= 2 => self.index_base = addr(p[0], p[1]),
+            IT_NUM_INSTANCES if !p.is_empty() => self.instances = p[0].max(1),
+            IT_DRAW_INDEX_AUTO if !p.is_empty() => {
+                self.draw(host, op, p, Draw::Auto { count: p[0], instances: self.instances })
+            }
+            IT_DRAW_INDEX_2 if p.len() >= 4 => {
+                let draw = Draw::Indexed { count: p[3], address: addr(p[1], p[2]), instances: self.instances };
+                self.draw(host, op, p, draw)
+            }
+            IT_DRAW_INDEX_OFFSET_2 if p.len() >= 3 => {
+                let size = if self.uconfig[0x243] & 3 == 1 { 4 } else { 2 };
+                let address = self.index_base + p[1] as u64 * size;
+                let draw = Draw::Indexed { count: p[2], address, instances: self.instances };
+                self.draw(host, op, p, draw)
+            }
+            IT_DRAW_INDIRECT | IT_DRAW_INDEX_INDIRECT | IT_DRAW_INDIRECT_MULTI | IT_DRAW_INDEX_INDIRECT_MULTI
             | IT_DRAW_INDEX_MULTI_AUTO => self.stats.draws += 1,
-            IT_DISPATCH_DIRECT | IT_DISPATCH_INDIRECT => self.stats.dispatches += 1,
+            IT_DISPATCH_DIRECT if p.len() >= 3 => {
+                self.stats.dispatches += 1;
+                if let Some(b) = self.backend.as_mut() {
+                    let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig };
+                    b.dispatch(host, &state, [p[0], p[1], p[2]]);
+                }
+            }
+            IT_DISPATCH_INDIRECT => self.stats.dispatches += 1,
             _ => {}
         }
         Ok(())
+    }
+
+    fn draw(&mut self, host: &dyn Host, op: u32, p: &[u32], draw: Draw) {
+        self.stats.draws += 1;
+        self.dump_draw(op, p);
+        if let Some(b) = self.backend.as_mut() {
+            let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig };
+            b.draw(host, &state, draw);
+        }
+    }
+
+    fn sync(&mut self) {
+        if let Some(b) = self.backend.as_mut() {
+            b.sync();
+        }
+    }
+
+    fn dump_draw(&self, op: u32, p: &[u32]) {
+        static LEFT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+        use std::sync::atomic::Ordering::Relaxed;
+        if LEFT.load(Relaxed) == -1 {
+            let n = std::env::var("PS5SLOP_GPU_DUMP").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            LEFT.store(n, Relaxed);
+        }
+        if LEFT.fetch_sub(1, Relaxed) <= 0 {
+            return;
+        }
+        let c = &self.context;
+        let sh = &self.sh;
+        let u = &self.uconfig;
+        eprintln!("DRAW op={op:#x} payload={:x?}", p);
+        for (name, lo) in [("PS", 0x08usize), ("VS", 0x48), ("GS", 0x88), ("ES", 0xC8), ("HS", 0x108), ("LS", 0x148)] {
+            if sh[lo] != 0 || sh[lo + 1] != 0 {
+                eprintln!("  {name} pgm={:#x} rsrc1={:#x} rsrc2={:#x} user={:x?}", (sh[lo] as u64 | (sh[lo + 1] as u64) << 32) << 8, sh[lo + 2], sh[lo + 3], &sh[lo + 4..lo + 20]);
+            }
+        }
+        eprintln!("  stages={:#x} prim={:#x} idx={:#x} cb0 base={:#x} ext={:#x} view={:#x} info={:#x} attrib={:#x} attrib2={:#x} attrib3={:#x} target_mask={:#x} color_ctl={:#x} blend0={:#x}",
+            c[0x2D5], u[0x242], u[0x243], c[0x318], c[0x390], c[0x31B], c[0x31C], c[0x31D], c[0x3B0], c[0x3B8], c[0x8E], c[0x202], c[0x1E0]);
+        eprintln!("  vport scale/off={:?} scissor={:#x}/{:#x} vte={:#x} spi_ps_in={:#x}/{:#x} col_fmt={:#x} z_info={:#x} depth_ctl={:#x} ps_input_cntl0={:#x} vs_out={:#x} pos_fmt={:#x}",
+            c[0x10F..0x115].iter().map(|&v| f32::from_bits(v)).collect::<Vec<_>>(), c[0x90], c[0x91], c[0x206], c[0x1B3], c[0x1B4], c[0x1C5], c[0x10], c[0x200], c[0x191], c[0x1B1], c[0x1C3]);
     }
 
     /// SET_*_REG: a register offset (relative to the bank), then values.
@@ -288,6 +379,9 @@ impl Processor {
     }
 
     fn flip(&mut self, host: &dyn Host, flip: Flip) {
+        if let Some(b) = self.backend.as_mut() {
+            b.frame_done();
+        }
         self.stats.flips += 1;
         host.flip(flip);
     }
@@ -302,6 +396,7 @@ impl Processor {
     /// An end-of-pipe release: data select 1 writes 32 bits, 2 writes 64,
     /// 3 and 4 a clock; interrupt selects 1 and 2 raise an interrupt.
     fn release(&mut self, host: &dyn Host, data: u32, interrupt: u32, dest: u64, value: u64, context: u32) {
+        self.sync();
         match data {
             1 => {
                 host.write(dest, &(value as u32).to_le_bytes());

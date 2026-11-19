@@ -200,7 +200,10 @@ impl App {
         }
         self.flips = frame.flips;
         if let (Some(p), Some(w)) = (&mut self.presenter, &self.window) {
-            p.upload(&frame.rgba, frame.width, frame.height);
+            match &frame.texture {
+                Some(t) => p.show(&t.0),
+                None => p.upload(&frame.rgba, frame.width, frame.height),
+            }
             w.request_redraw();
         }
     }

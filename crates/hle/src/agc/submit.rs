@@ -79,18 +79,36 @@ impl gpu::Host for Host {
     fn exiting(&self) -> bool {
         self.kernel.has_exited()
     }
+
+    fn extent(&self, addr: u64) -> Option<(u64, u64)> {
+        self.mem.mapped_extent(addr)
+    }
+
+    fn host_pointer(&self, addr: u64) -> Option<*mut u8> {
+        (addr < self.mem.size()).then(|| self.mem.host_base().wrapping_add(addr as usize))
+    }
+
+    fn generation(&self) -> u64 {
+        self.mem.generation()
+    }
 }
 
 fn gpu_thread(host: Host, jobs: Receiver<Job>, stats: Arc<Mutex<gpu::Stats>>) {
     let mut processor = gpu::Processor::default();
+    #[cfg(target_os = "macos")]
+    if std::env::var_os("PS5SLOP_GPU_RENDER").is_none_or(|v| v != "0") {
+        processor.backend = gpu::metal::Metal::new().map(|m| Box::new(m) as Box<dyn gpu::Backend>);
+    }
     let report = std::env::var_os("PS5SLOP_GPU_STATS").is_some();
     let mut last_report = std::time::Instant::now();
     while let Ok(job) = jobs.recv() {
-        for (addr, dwords) in job.buffers {
-            if let Err(e) = processor.run(&host, addr, dwords) {
-                eprintln!("ps5slop: GPU: {e}");
+        gpu::with_pool(|| {
+            for (addr, dwords) in job.buffers {
+                if let Err(e) = processor.run(&host, addr, dwords) {
+                    eprintln!("ps5slop: GPU: {e}");
+                }
             }
-        }
+        });
         *lock(&stats) = processor.stats.clone();
         if report && last_report.elapsed().as_secs() >= 1 {
             last_report = std::time::Instant::now();
@@ -99,6 +117,7 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>, stats: Arc<Mutex<gpu::Stats>>) {
                 "ps5slop: GPU: {} submissions, {} packets, {} draws, {} dispatches, {} flips, {} interrupts, {} wait timeouts",
                 s.submissions, s.packets, s.draws, s.dispatches, s.flips, s.interrupts, s.timeouts
             );
+            eprintln!("ps5slop: GPU opcodes: {:x?}", s.opcodes);
         }
         if host.kernel.has_exited() {
             break;

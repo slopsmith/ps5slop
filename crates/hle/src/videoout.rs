@@ -70,6 +70,10 @@ pub struct Frame {
     pub rgba: Vec<u8>,
     /// Counts flips, so the host can tell new frames from old ones.
     pub flips: u64,
+    /// The GPU's texture for the buffer, when the GPU rendered it; `rgba`
+    /// is empty then.
+    #[cfg(target_os = "macos")]
+    pub texture: Option<gpu::metal::SharedTexture>,
 }
 
 impl Kernel {
@@ -91,6 +95,16 @@ impl Kernel {
             let (addr, layout) = port.buffers.get(port.front?).copied().flatten()?;
             (addr, layout, port.flips)
         };
+        #[cfg(target_os = "macos")]
+        if let Some(texture) = gpu::metal::frame(addr) {
+            return Some(Frame {
+                width: layout.width,
+                height: layout.height,
+                rgba: Vec::new(),
+                flips,
+                texture: Some(texture),
+            });
+        }
         let mut raw = vec![0u8; buffer_len(layout)];
         self.memory().read(addr, &mut raw).ok()?;
         let rgba = if layout.tiled {
@@ -103,6 +117,8 @@ impl Kernel {
             height: layout.height,
             rgba,
             flips,
+            #[cfg(target_os = "macos")]
+            texture: None,
         })
     }
 }

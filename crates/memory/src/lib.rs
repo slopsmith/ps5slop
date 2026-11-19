@@ -464,6 +464,30 @@ impl Memory {
             .collect()
     }
 
+    /// The host-backed range around `at`: adjacent mapped regions merged, as
+    /// `(start, end)`. Host pages stay readable and writable once mapped.
+    pub fn mapped_extent(&self, at: u64) -> Option<(u64, u64)> {
+        let regions = self.regions_read();
+        let (&start, r) = regions.range(..=at).next_back()?;
+        if at >= r.end || r.trap {
+            return None;
+        }
+        let (mut lo, mut hi) = (start, r.end);
+        for (&s, r) in regions.range(..start).rev() {
+            if r.end != lo || r.trap {
+                break;
+            }
+            lo = s;
+        }
+        for (&s, r) in regions.range(hi..) {
+            if s != hi || r.trap {
+                break;
+            }
+            hi = r.end;
+        }
+        Some((lo, hi))
+    }
+
     /// The region containing `at`, from this handle's cache when it is current.
     fn region(&self, at: u64) -> Option<Cached> {
         let generation = self.shared.generation.load(Ordering::Acquire);

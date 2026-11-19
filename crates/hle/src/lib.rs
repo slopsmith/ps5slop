@@ -16,6 +16,7 @@ use x86::cpu::reg::*;
 mod agc;
 mod dmem;
 mod equeue;
+pub use gpu;
 pub mod errno;
 mod file;
 mod heap;

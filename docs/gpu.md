@@ -1,6 +1,6 @@
 # GPU
 
-How the PS5's GPU work reaches Metal. Nothing is implemented, and very little here is verified. The GPU comes after the loader, the CPU and the kernel side (see [architecture.md](architecture.md)).
+How the PS5's GPU work reaches Metal. The command processor and the Metal plumbing exist; shader translation is in progress. Very little here is verified on a PS5. The GPU comes after the loader, the CPU and the kernel side (see [architecture.md](architecture.md)).
 
 ## What we know
 
@@ -51,6 +51,7 @@ The same shape as 86slopper's `radeon` 3D engine (its `docs/gpu.md`): interpret 
 | y0, y1, y2 | 4, 5, 6 |
 | y3 | 8, 12 |
 | y4, y5, y6 | 9, 10, 11 |
+| y6 | 14 |
 
 This is probably one of RDNA2's 64 KiB swizzle modes; which one is unconfirmed. We treat any other tiling mode as linear (unverified). `Kernel::frame` reads the front buffer from guest memory and untiles it for the host.
 
@@ -64,7 +65,23 @@ Status, 2026-11-19: ScreenTester5 shows its menu, and a pad press changes the pa
 - Command-buffer builders append PM4 at the descriptor's upward cursor (`cmdbuf.rs`), calling the title's buffer-full callback when needed. One family per file.
 - Submissions go to a GPU thread that runs them through `crates/gpu`'s command processor in order. It carries out what the CPU can observe (memory writes, end-of-pipe labels and their interrupts to the GPU event queues, waits, indirect buffers, flips), records register writes and counts draws and dispatches. Nothing is drawn yet; drawing will be Metal only, with no rendering on the CPU (vic, 2026-11-19).
 
+Register state reaches the processor mostly through register tables (`SET_CONTEXT_REG_INDIRECT` 0x9F, `SET_SH_REG_INDIRECT` 0x63, `SET_UCONFIG_REG_INDIRECT` 0x64: a guest address and a count of (offset, value) pairs, as SharpEmu-mac reads them). Balatro sets no context register any other way.
+
 Known difference from the console: `sceAgcDcbResetQueue` writes a 2-dword marker where the console writes a longer, mode-dependent sequence (tags in the internal-data register `0x342`).
+
+## Metal renderer (in progress)
+
+`crates/gpu/src/metal.rs`, structured after SharpEmu-mac's Metal backend (GPL-2.0-or-later; see its `docs/macos/metal-backend.md`):
+
+- **Guest memory** is wrapped in place as no-copy `MTLBuffer` windows of up to 64 MiB (`newBufferWithBytesNoCopy` over our host reservation), so vertex, index and storage bindings copy nothing. Windows are dropped when the guest's mappings change, since a remapped range gets new host pages.
+- **Render targets** are Metal textures keyed by guest address, filled from guest memory on first use. A flip of a buffer the GPU rendered shows that texture directly in the window (`gpu::metal::frame`); nothing is read back. Draws to the same targets share one render pass.
+- **Textures** are detiled from guest memory on the GPU by generated compute kernels (`tiling.rs` gives the address equations as Rust and as MSL), refreshed once per frame. A texture at a render target's address is that render target's texture.
+- **Sync** is simple for now: the processor finishes all recorded Metal work at end-of-pipe releases and flips, the points where the hardware waits for earlier work. `WRITE_DATA` and waits run at once, as the command processor does them on hardware.
+- **Shaders** go through `shader::translate`, which the GFX10 translator (`crates/gfx10`, in progress) will provide. Until then draws are skipped and reported.
+
+Swizzle modes: linear, `SW_64KB_S` (0x09) and the PS5's render-target mode 0x1B, whose equation SharpEmu-mac uses for textures and which equals the frame layout ScreenTester5 writes. A test checks one against the other, and a Metal test checks the GPU detiler against the CPU layout.
+
+What Balatro draws (2026-11-20): an NGG vertex program in the ES slot (`VGT_SHADER_STAGES_EN` 0x2002000) for every draw; clears as 3-vertex rectangle lists (primitive type 7) with a pixel shader writing a colour from user SGPRs; then its scene into a 1920x1080 BGRA8 canvas in mode 0x1B, which a final textured draw (T# in s0..s7, S# in s8..s11) puts on the display buffer.
 
 ## Open questions
 

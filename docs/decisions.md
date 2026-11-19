@@ -157,3 +157,9 @@ Reason: some PS5 imports have no public name to hash. The NID is what the title 
 `pthread_mutex_t`, `pthread_cond_t`, `pthread_rwlock_t`, their attributes, thread attributes and `sem_t` hold the address of a small zeroed block of guest memory, and our objects are keyed by it.
 
 Reason: Sony's libc reads through these as pointers (it faulted at the small counters we used before), as FreeBSD's pthread types are pointers.
+
+## 2026-11-20: Render targets live in Metal textures; flips present them directly
+
+Render targets are Metal textures keyed by guest address. A flip of a buffer the GPU rendered presents that texture in the window, and guest memory is not updated with the rendered pixels until something on the CPU needs them (not implemented yet). Guest memory is wrapped in place as no-copy buffers for everything else.
+
+Reason: vic wants all drawing on Metal, with no CPU rendering, and a read-back per frame would cost a full-frame copy for nothing. SharpEmu-mac (GPL-2.0-or-later) works this way on Apple Silicon and is the model we port from.

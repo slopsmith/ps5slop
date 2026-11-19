@@ -3,7 +3,7 @@
 
 use std::ptr::NonNull;
 
-use objc2::msg_send;
+use objc2::{Message, msg_send};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2_core_foundation::CGSize;
@@ -47,6 +47,8 @@ pub struct Presenter {
     linear: Retained<ProtocolObject<dyn MTLSamplerState>>,
     nearest: Retained<ProtocolObject<dyn MTLSamplerState>>,
     texture: Option<Retained<Texture>>,
+    /// Whether `texture` is ours to upload into, rather than the GPU's.
+    uploadable: bool,
     picture: (u32, u32),
     last: Option<Retained<CommandBuffer>>,
 }
@@ -106,6 +108,7 @@ impl Presenter {
             linear,
             nearest,
             texture: None,
+            uploadable: false,
             picture: (0, 0),
             last: None,
         };
@@ -125,12 +128,19 @@ impl Presenter {
         (s.width as u32, s.height as u32)
     }
 
+    /// Shows a texture the GPU rendered, from the next draw on.
+    pub fn show(&mut self, texture: &Texture) {
+        self.picture = (texture.width() as u32, texture.height() as u32);
+        self.texture = Some(texture.retain());
+        self.uploadable = false;
+    }
+
     /// Copies a frame of RGBA8 pixels into the texture the next draw shows.
     pub fn upload(&mut self, pixels: &[u8], w: u32, h: u32) {
         if w == 0 || h == 0 || pixels.len() < (w * h * 4) as usize {
             return;
         }
-        if self.picture != (w, h) || self.texture.is_none() {
+        if self.picture != (w, h) || self.texture.is_none() || !self.uploadable {
             let desc = unsafe {
                 MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
                     MTLPixelFormat::RGBA8Unorm,
@@ -142,6 +152,7 @@ impl Presenter {
             desc.setUsage(MTLTextureUsage::ShaderRead);
             desc.setStorageMode(MTLStorageMode::Shared);
             self.texture = self.device.newTextureWithDescriptor(&desc);
+            self.uploadable = true;
             self.picture = (w, h);
         }
         let Some(tex) = &self.texture else { return };
