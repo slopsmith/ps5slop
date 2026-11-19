@@ -48,3 +48,14 @@ Our choices, in `crates/ps5slop` and `crates/hle`, until real titles tell us oth
 | `0xFF_0000_0000 ..` | The HLE trap region, one 16-byte slot per imported function |
 
 Every mapped page is readable and writable on the host; the guest's protections live in `crates/memory`, which checks each access. This is simple and slow, and fine for the interpreter.
+
+## Threads and memory ordering
+
+Guest threads run on host threads (see [decisions.md](decisions.md)), so the address space is shared:
+
+- One reservation and one region table (behind a read-write lock). Each thread holds its own `Memory` handle, a clone that caches the last region it touched and drops the cache when a generation counter shows the table changed.
+- Unmapping replaces the host pages with fresh zero pages instead of making them inaccessible, so a thread racing with an unmap reads zeros rather than crashing the host.
+- **x86-TSO in software:** each guest load is followed by a load barrier, each guest store preceded by a store barrier. That permits only the reordering x86 permits (an earlier store with a later load). Accesses of 1, 2, 4 and 8 bytes are single host loads and stores, so aligned ones do not tear.
+- **Locked instructions** go through `Memory::atomic_update`, a compare-and-swap loop on host memory with sequentially consistent ordering. Misaligned locked accesses (which split across cache lines on x86 too) fall back to a lock that only excludes other atomic updates; a plain store from another thread could still slip in there.
+
+**Measured on 2026-11-19** with `crates/x86/examples/bench.rs` (a five-instruction loop with one load and one store per iteration, M4 Pro): 30.0 M instructions/s before the change, 25.8 M after. With the barriers removed again it was 25.7 to 26.0 M, so the barriers cost nothing measurable here; the slowdown comes from the shared region cache's generation check. Something to revisit when the interpreter is optimised.
