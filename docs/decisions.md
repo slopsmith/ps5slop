@@ -79,3 +79,11 @@ Reason: no public hardware-generated x86-64 suite exists; FEX runs these tests n
 OpenOrbis (its sources, its startup code and the binaries it builds) may be used as a reference for formats and interfaces. We still never import its NID-to-name lists or any other name database (see [loader.md](loader.md)).
 
 Reason: nothing suggests OpenOrbis derives from Sony's SDK; the earlier caution was only that the origin of its library stub lists is undocumented. vic's rule is to stop using a source when there is reason to believe it comes from proprietary SDK material.
+
+## 2026-11-19: One host thread per guest thread; TSO by barriers in the interpreter
+
+Each guest thread runs on its own host thread with its own CPU state. The interpreter provides x86's memory ordering in software: every guest load is followed by a load barrier and every guest store is preceded by a store barrier, which allows exactly the reordering x86-TSO allows (a store with a later load). Aligned 1-, 2-, 4- and 8-byte accesses are single host accesses, so they do not tear. Locked instructions (`lock`-prefixed read-modify-writes, `xchg` with memory, `cmpxchg`) run as real atomic compare-and-swap loops on host memory, so a plain store from another thread is never lost between their read and write.
+
+The guest address space becomes shared: one reservation, a region table behind a lock, and per-thread handles that cache the last region and notice changes through a generation counter. Unmapping never makes host pages inaccessible (they are replaced with fresh zero pages), so a thread racing with an unmap reads zeros instead of crashing the host.
+
+Reason: vic did not want cooperative scheduling on one host thread. Hardware TSO is not available to a macOS user process (see [cpu.md](cpu.md)); barriers in an interpreter are correct and cheap next to its other costs. The JIT plan is unchanged: hardware TSO inside an HVF VM.
