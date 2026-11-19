@@ -1,9 +1,11 @@
 //! Reads Orbis executables and modules. See `docs/loader.md`.
 
+pub mod dynamic;
 pub mod elf;
 mod error;
 pub mod nid;
 
+pub use dynamic::Dynamic;
 pub use elf::ElfFile;
 pub use error::Error;
 
