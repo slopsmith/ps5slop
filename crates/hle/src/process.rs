@@ -128,6 +128,8 @@ pub struct Kernel {
     pub(crate) sems: crate::sem::Semaphores,
     pub(crate) dmem: crate::dmem::DirectMemory,
     pub(crate) equeues: crate::equeue::Queues,
+    pub(crate) pad: crate::pad::Pad,
+    pub(crate) audio: crate::services::Audio,
     pub(crate) libc: crate::libc::State,
     /// The title folder, which the guest sees as `/app0`.
     pub(crate) app0: Option<PathBuf>,
@@ -159,6 +161,8 @@ impl Kernel {
             sems: Default::default(),
             dmem: Default::default(),
             equeues: Default::default(),
+            pad: Default::default(),
+            audio: Default::default(),
             libc: Default::default(),
             app0,
         })

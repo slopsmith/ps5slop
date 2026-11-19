@@ -53,6 +53,10 @@ Each thread's errno lives in its thread control block, at the thread pointer plu
 | libSceLibcInternal | `fopen`, `fclose`, `fread`, `fwrite`, `fgets`, `fseeko`, `ftello`, `fflush`, `ferror`, `fileno`, `__stdinp`, `__stdoutp`, `__stderrp` | `/app0/...` opens files in the title folder, read-only (writes fail with `EROFS`); other paths fail with `ENOENT`. stdout and stderr go to the host's; stdin is always at end of file. A FILE is an opaque handle, with the stream on the host | Path mapping unit-tested |
 | libSceLibcInternal | `_init_env`, `atexit`, `exit`, `_Exit`, `abort` | `_init_env` ignores the process parameters (layout unknown). `exit` runs the `atexit` handlers latest first, as guest calls | Reached by ScreenTester5 |
 | libSceLibcInternal | `qsort`, `bsearch`, `strto{l,ll,ul,ull,d}`, `atoi`, `atof`, `getenv`, `setenv`, `getcwd`, `strerror`, `time`, `rand`, `srand` | `qsort` is a heapsort calling the guest comparator (not stable). `getcwd` is `/app0`. The environment starts empty. `rand` is our own generator, so sequences differ from a console's | Number parsers unit-tested |
+| libSceUserService | `sceUserServiceInitialize`, `GetForegroundUser`, `GetLoginUserIdList`, `GetUserName` | One signed-in user, id 1, named `ps5slop` (our choices) | Reached by ScreenTester5 |
+| libSceSystemService | `sceSystemServiceHideSplashScreen`, `sceSystemServiceLaunchWebBrowser` | Succeed; the browser call prints the address on stderr | Reached by ScreenTester5 |
+| libSceAudioOut | `sceAudioOutInit`, `Open`, `Output`, `Close` | Samples are dropped. `Output` waits until the previous buffer would have finished playing, so audio threads keep a console's pace | |
+| libScePad | `scePadInit`, `Open`, `GetHandle`, `Close`, `ReadState`, `SetVibration`, `SetVibrationMode`, `SetLightBar` | One controller for user 1. `ReadState` reports what the host set with `Kernel::set_pad_input`, in OpenOrbis's `OrbisPadData` layout (the PS4's; unverified for the PS5). Vibration and the light bar are ignored | Layout unit-tested |
 | libSceSysmodule | `sceSysmoduleLoadModule`, `sceSysmoduleLoadModuleInternal` | Succeed without doing anything: every library is provided by the HLE layer | Called by vic's homebrew |
 
 **Variables.** Some imports are data, not functions: libkernel's `__stack_chk_guard` is read through its GOT entry, although OpenOrbis's stub declares it a function. So the symbol type cannot be trusted; the HLE layer knows its variables by name and binds them to readable memory in a data region next to the trap region.
@@ -94,7 +98,7 @@ ScreenTester5 (see [test-targets.md](test-targets.md)) loads and relocates (2,09
 
 It does not import from the `libc.prx` it ships.
 
-Status on 2026-11-19: the C library is in place (one libc import, NID `Fm-dmyywH9Q`, still has no name and no host function). ScreenTester5 runs through `_init_env` and its start-up code. With the libkernel functions above it gets through its set-up, including starting threads, and stops at its first system service call (libSceSystemService NID `Vo5V8KAwCmk`). One libkernel import (NID `FJmglmTMdr4`) and one libScePad import (`W2G-yoyMF5U`) still have no name.
+Status on 2026-11-19: the C library is in place (one libc import, NID `Fm-dmyywH9Q`, still has no name and no host function). ScreenTester5 runs through `_init_env` and its start-up code. With the libkernel functions above it gets through its set-up, including starting threads, and through the system services above, and stops at `sceVideoOutOpen`. One libkernel import (NID `FJmglmTMdr4`) still has no name.
 
 ## What a real executable needs next
 

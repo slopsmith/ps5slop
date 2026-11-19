@@ -19,13 +19,16 @@ pub mod errno;
 mod heap;
 mod kernel;
 mod libc;
+mod pad;
 mod posix;
 mod process;
 mod pthread;
 mod sem;
+mod services;
 mod sysmodule;
 mod thread;
 
+pub use pad::PadInput;
 pub use process::{Kernel, Thread, ThreadError, TlsTemplate};
 
 /// Where the trap region starts. Our choice, below 2^40 and away from where
@@ -242,6 +245,8 @@ impl Hle {
             .chain(equeue::FUNCTIONS)
             .chain(posix::FUNCTIONS)
             .chain(libc::functions())
+            .chain(services::FUNCTIONS)
+            .chain(pad::FUNCTIONS)
             .map(|f| ((nid(f.name), f.library.to_owned()), f))
             .collect();
         let variables = kernel::VARIABLES
