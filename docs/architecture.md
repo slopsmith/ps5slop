@@ -45,4 +45,6 @@ Each step has a test program we can run and check. Steps 1 to 4 need only progra
 
 ## Crates
 
-Not decided. The workspace is empty until the CPU question is settled. A likely first split is `loader` (formats and linking), `x86` (decoder and interpreter), `hle` (kernel and libraries) and a binary crate, with `gpu` later.
+- `pkg`: reads fake-signed PS4 packages and extracts them into `app0` folders, plus the `ps5slop-pkg` tool. See [packages.md](packages.md).
+
+The rest is not decided. A likely split is `loader` (formats and linking), `x86` (decoder and interpreter), `hle` (kernel and libraries) and a binary crate, with `gpu` later.

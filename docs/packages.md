@@ -1,6 +1,6 @@
 # Packages
 
-What a `.pkg` holds, and how we can open fake-signed ones. Nothing is implemented.
+What a `.pkg` holds, and how we open fake-signed ones. `crates/pkg` implements this for PS4 packages; PS5 packages are not handled yet.
 
 ## PS4 PKG
 
@@ -29,7 +29,25 @@ Every package has a 32-character passcode chosen by whoever built it. OpenOrbis 
 2. **Check:** the entry-keys entry (id `0x10`, 0x800 bytes) starts with SHA-256 of the padded content ID, then for each index i a 32-byte check value `SHA-256(DK(i)) XOR DK(i)` at `0x20 + 0x20*i`. A wrong passcode fails this check before we try to decrypt anything.
 3. **PFS keys:** `HMAC-SHA256(key = EKPFS, message = le32(1) || seed)`, where the 16-byte seed sits at `+0x370` in the PFS header. The first 16 bytes of the result are the XTS tweak key, the last 16 the data key.
 4. **Decryption:** AES-128-XTS over 0x1000-byte sectors, with the sector's index from the start of the PFS image as the tweak. The first 16 sectors (0x10000 bytes, the header block) are not encrypted.
-5. Inside the outer PFS is one file, `pfs_image.dat`, a PFSC-compressed inner PFS that holds the game's files. Not looked at yet.
+5. Inside the outer PFS is one file, `pfs_image.dat`, a PFSC-compressed inner PFS that holds the game's files.
+
+### PFS and PFSC
+
+From LibOrbisPkg's `PfsStructs.cs`, `PfsReader.cs` and `PFSCReader.cs` (facts only), checked against vic's package:
+
+- **Superblock** (little-endian): version 1, magic, mode at `0x1C`, block size at `0x20` (0x10000 in practice), inode count at `0x30`, inode block count at `0x40`, seed at `0x370`. Inodes fill blocks from block 1 on: 0xA8 bytes each in unsigned images, 0x2C8 in signed ones (each block pointer carries a 32-byte signature). Images with the 64-bit flag use other inode layouts; we refuse them for now.
+- **Inode:** flags at `0x04` (bit 0: compressed), two sizes at `0x08` and `0x10`, block count at `0x60`, then 12 direct and 5 indirect block pointers. A file whose second direct pointer is `0xFFFFFFFF` (or that has one block) is contiguous. Signed images can list blocks one by one, with indirect blocks holding 36-byte (signature, block) pairs.
+- **Sizes:** the first size is what the blocks store. For the PFSC file in vic's package the second size (LibOrbisPkg calls it `SizeCompressed`) is the *decompressed* length, which there is smaller than the stored one.
+- **Directories:** entries of inode (u32), type (u32: 2 file, 3 directory, 4 `.`, 5 `..`), name length, entry size, then the name. Inode 0 is the superroot; the files live under its `uroot` directory.
+- **PFSC:** a header (magic `PFSC`, block size, offset of a table of u64 block offsets, decompressed length), then blocks stored raw (exactly one block long), as zeros (longer), or as deflate data after a 2-byte zlib header (shorter).
+
+The outer image in vic's package is signed and encrypted with an all-zero seed; the inner one is what holds `eboot.bin`.
+
+### Extraction
+
+`ps5slop-pkg extract PKG DIR [--passcode P]` writes the inner image's files, then the clear `sce_sys` entries (`param.sfo`, icons, PlayGo files) that the image does not already hold. It refuses to overwrite files.
+
+**Checked on 2026-11-19** against vic's `pkgstore.pkg`: every file in the image matches `ps4build/pkg_scratch/` (the folder it was packed from) byte for byte. The only differences are ones the packer makes: it adds `keystone` and the PlayGo files, adds `PUBTOOLINFO` and `PUBTOOLVER` to `param.sfo`, and does not pack the `project.gp4` build file. The package also carries `sce_sys/about/right.sprx` from OpenOrbis, whose origin is unknown.
 
 **Verified on 2026-11-19** against vic's `pkgstore.pkg` with a throwaway script (Python `hashlib` and LibreSSL's `aes-128-xts`): `DK(1)` to `DK(3)` match the package's check values, and sectors from 16 on decrypt to structured data and zero runs with these keys, while other key orders give noise.
 

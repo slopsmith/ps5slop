@@ -25,6 +25,28 @@ pub mod entry_id {
     pub const PIC1_PNG: u32 = 0x1006;
 }
 
+/// Metadata entries that belong in the app's `sce_sys/` folder, by entry id
+/// (psdevwiki, "PKG files"; `0x1006` from vic's `ps4-pkg-db`).
+pub(crate) const SCE_SYS_ENTRIES: &[(u32, &str)] = &[
+    (0x1000, "param.sfo"),
+    (0x1001, "playgo-chunk.dat"),
+    (0x1002, "playgo-chunk.sha"),
+    (0x1003, "playgo-manifest.xml"),
+    (0x1004, "pronunciation.xml"),
+    (0x1005, "pronunciation.sig"),
+    (0x1006, "pic1.png"),
+    (0x1008, "app/playgo-chunk.dat"),
+    (0x1009, "app/playgo-chunk.sha"),
+    (0x100a, "app/playgo-manifest.xml"),
+    (0x1200, "icon0.png"),
+    (0x1220, "pic0.png"),
+    (0x1240, "snd0.at9"),
+    (0x1260, "changeinfo/changeinfo.xml"),
+    (0x1280, "icon0.dds"),
+    (0x12a0, "pic0.dds"),
+    (0x1400, "trophy/trophy00.trp"),
+];
+
 /// The fields of the package header that we use. All are big-endian on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Header {
@@ -135,6 +157,10 @@ impl Package {
 
     pub fn entry(&self, id: u32) -> Option<&Entry> {
         self.entries.iter().find(|e| e.id == id)
+    }
+
+    pub(crate) fn source(&self) -> &FileSlice {
+        &self.source
     }
 
     /// The PFS image's root key, derived from the passcode and checked against the package.

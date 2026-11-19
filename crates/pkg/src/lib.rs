@@ -4,6 +4,7 @@
 //! Formats and their sources are described in `docs/packages.md`.
 
 mod error;
+mod extract;
 pub mod keys;
 mod package;
 pub mod pfs;
@@ -12,6 +13,7 @@ mod read;
 mod xts;
 
 pub use error::Error;
+pub use extract::Extracted;
 pub use package::{Entry, Header, Package, entry_id};
 pub use pfsc::PfscReader;
 pub use read::{FileSlice, ReadAt};

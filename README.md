@@ -6,6 +6,13 @@ Nothing runs yet. The architecture is still being discussed.
 
 You supply your own games, dumped from your own console. Nothing from Sony is part of this project. See [docs/legal.md](docs/legal.md).
 
+## Tools
+
+```sh
+cargo run --release -p pkg -- info GAME.pkg
+cargo run --release -p pkg -- extract GAME.pkg OUT_DIR   # fake-signed packages; --passcode if not all zeros
+```
+
 ## Docs
 
 - [Architecture](docs/architecture.md): overview, milestones and index of the other docs
