@@ -21,6 +21,7 @@ Status: milestones 1 and 2 are done; our own test programs run under the interpr
 ## Docs by area
 
 - [cpu.md](cpu.md): running x86-64 on ARM64: Rosetta, FEX, our own translator, and whether Hypervisor.framework helps.
+- [jit.md](jit.md): the translator and the VM it runs in.
 - [memory.md](memory.md): the guest's address space, and what macOS lets us map.
 - [loader.md](loader.md): executable format, NIDs and linking.
 - [packages.md](packages.md): what a `.pkg` holds, and why we load unpacked folders.
