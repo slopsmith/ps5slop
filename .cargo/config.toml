@@ -2,6 +2,8 @@
 # panics cannot unwind on macOS 27, and its cc lacks the macOS SDK.
 [target.aarch64-apple-darwin]
 linker = "/usr/bin/cc"
+# Signs every binary cargo runs (including tests) with the hypervisor entitlement.
+runner = "scripts/hv-run.sh"
 
 [env]
 CC_aarch64_apple_darwin = "/usr/bin/cc"
