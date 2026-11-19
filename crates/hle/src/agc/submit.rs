@@ -68,7 +68,8 @@ impl gpu::Host for Host {
     }
 
     fn interrupt(&self, context: u32) {
-        self.kernel.trigger_event(GRAPHICS_EOP_EVENT, GRAPHICS_FILTER, context as u64);
+        self.kernel
+            .trigger_event(GRAPHICS_EOP_EVENT, GRAPHICS_FILTER, context as u64);
     }
 
     fn flip(&self, flip: gpu::Flip) {
@@ -146,7 +147,12 @@ fn submit_acb(env: &mut Env) -> Result<Outcome, CallError> {
 
 /// The `count` buffers whose addresses (u64s) and sizes (u32s) are listed
 /// at `addrs` and `sizes`.
-fn buffer_list(env: &Env, addrs: u64, sizes: u64, count: u64) -> Result<Option<Vec<(u64, u32)>>, CallError> {
+fn buffer_list(
+    env: &Env,
+    addrs: u64,
+    sizes: u64,
+    count: u64,
+) -> Result<Option<Vec<(u64, u32)>>, CallError> {
     if addrs == 0 || sizes == 0 || count > 1024 {
         return Ok(None);
     }

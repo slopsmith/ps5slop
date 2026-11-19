@@ -14,10 +14,16 @@ const BUFFER: u64 = 0x31_0000;
 const BUFFER_DWORDS: u64 = 1024;
 
 /// Builders whose output differs from the console on purpose, and why.
-const KNOWN_DIFFERENT: &[(&str, &str)] = &[(
-    "sceAgcDcbResetQueue",
-    "the console's reset sequence depends on the mode in ways one measurement does not show",
-)];
+const KNOWN_DIFFERENT: &[(&str, &str)] = &[
+    (
+        "sceAgcCbBranch",
+        "most of its arguments are on the stack, which held garbage when it was measured",
+    ),
+    (
+        "sceAgcDcbResetQueue",
+        "the console's reset sequence depends on the mode in ways one measurement does not show",
+    ),
+];
 
 struct Case {
     id: String,
