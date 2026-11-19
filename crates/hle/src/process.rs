@@ -3,8 +3,8 @@
 
 use std::fmt;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 
 use memory::{MapError, Memory, PAGE_SIZE, Prot};
 use x86::cpu::reg::*;
@@ -118,6 +118,11 @@ pub struct Kernel {
     result: Mutex<Option<Result<i32, ThreadError>>>,
     exit_signal: Condvar,
     pub(crate) objects: crate::pthread::Objects,
+    pub(crate) threads: crate::thread::Threads,
+    /// A weak handle on this kernel, for starting threads from host functions.
+    me: Weak<Kernel>,
+    /// Guest threads still running; the process ends when the last one does.
+    live: AtomicU64,
 }
 
 impl Kernel {
@@ -128,7 +133,7 @@ impl Kernel {
         stdout: Box<dyn Write + Send>,
         stderr: Box<dyn Write + Send>,
     ) -> Arc<Self> {
-        Arc::new(Self {
+        Arc::new_cyclic(|me| Self {
             hle,
             mem: Mutex::new(mem),
             stdout: Mutex::new(stdout),
@@ -138,6 +143,9 @@ impl Kernel {
             result: Mutex::new(None),
             exit_signal: Condvar::new(),
             objects: Default::default(),
+            threads: Default::default(),
+            me: me.clone(),
+            live: AtomicU64::new(0),
         })
     }
 
@@ -204,6 +212,7 @@ impl Kernel {
     /// exits, and returns how it ended.
     pub fn run_main(self: &Arc<Self>, cpu: Cpu) -> Result<i32, ThreadError> {
         let thread = Thread { tcb: cpu.fs_base };
+        self.live.fetch_add(1, Ordering::AcqRel);
         self.run_thread(cpu, self.memory(), thread);
         let mut slot = self.result.lock().unwrap_or_else(|e| e.into_inner());
         while slot.is_none() {
@@ -216,13 +225,18 @@ impl Kernel {
     }
 
     /// Starts a guest thread on a new host thread.
-    pub fn spawn(self: &Arc<Self>, cpu: Cpu) {
-        let kernel = self.clone();
+    pub(crate) fn spawn_thread(&self, cpu: Cpu) {
+        let kernel = self.this();
         let thread = Thread { tcb: cpu.fs_base };
+        self.live.fetch_add(1, Ordering::AcqRel);
         std::thread::spawn(move || {
             let mem = kernel.memory();
             kernel.run_thread(cpu, mem, thread);
         });
+    }
+
+    fn this(&self) -> Arc<Kernel> {
+        self.me.upgrade().expect("the kernel outlives its threads")
     }
 
     fn run_thread(&self, mut cpu: Cpu, mut mem: Memory, thread: Thread) {
@@ -242,6 +256,7 @@ impl Kernel {
                     match self.hle.call(addr, &mut env) {
                         Ok(Outcome::Return(_) | Outcome::Resume) => {}
                         Ok(Outcome::Exit(status)) => self.exit(Ok(status)),
+                        Ok(Outcome::ThreadExit) => break,
                         Err(error) => {
                             let caller = mem.read_u64(cpu.regs[RSP]).unwrap_or(0);
                             let cpu = Box::new(cpu.clone());
@@ -263,6 +278,9 @@ impl Kernel {
                     }));
                 }
             }
+        }
+        if self.live.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.exit(Ok(0));
         }
     }
 }

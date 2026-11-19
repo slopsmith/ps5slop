@@ -2,6 +2,7 @@
 //! (`sys/errno.h`), assumed rather than verified for Orbis.
 
 pub const EPERM: i32 = 1;
+pub const ESRCH: i32 = 3;
 pub const ENOENT: i32 = 2;
 pub const EBADF: i32 = 9;
 pub const EDEADLK: i32 = 11;

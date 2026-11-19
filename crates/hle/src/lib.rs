@@ -18,6 +18,7 @@ mod kernel;
 mod process;
 mod pthread;
 mod sysmodule;
+mod thread;
 
 pub use process::{Kernel, Thread, ThreadError, TlsTemplate};
 
@@ -44,6 +45,8 @@ pub enum Outcome {
     /// Continue the guest as the host function left the CPU (for example
     /// after setting it up to call a guest function).
     Resume,
+    /// The calling thread ends.
+    ThreadExit,
     /// The process exits with this status.
     Exit(i32),
 }
@@ -170,6 +173,7 @@ impl Hle {
             .iter()
             .chain(sysmodule::FUNCTIONS)
             .chain(pthread::FUNCTIONS)
+            .chain(thread::FUNCTIONS)
             .map(|f| ((nid(f.name), f.library.to_owned()), f))
             .collect();
         let variables = kernel::VARIABLES
