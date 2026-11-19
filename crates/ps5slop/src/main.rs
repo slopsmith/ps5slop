@@ -119,6 +119,7 @@ fn run(booted: ps5slop::Booted, headless: bool) -> Result<i32, ps5slop::Error> {
     if headless {
         booted.run()
     } else {
+        booted.kernel.use_audio_device();
         ps5slop::window::run(booted)
     }
 }

@@ -161,7 +161,8 @@ pub struct Kernel {
     pub(crate) dmem: crate::dmem::DirectMemory,
     pub(crate) equeues: crate::equeue::Queues,
     pub(crate) pad: crate::pad::Pad,
-    pub(crate) audio: crate::services::Audio,
+    pub(crate) audio: crate::audio::Audio,
+    pub(crate) ngs2: crate::ngs2::Ngs2,
     pub(crate) videoout: crate::videoout::VideoOut,
     pub(crate) rtld: crate::rtld::Rtld,
     /// Whether guest code runs in the JIT instead of the interpreter.
@@ -202,6 +203,7 @@ impl Kernel {
             equeues: Default::default(),
             pad: Default::default(),
             audio: Default::default(),
+            ngs2: Default::default(),
             videoout: Default::default(),
             rtld: Default::default(),
             jit: AtomicBool::new(false),

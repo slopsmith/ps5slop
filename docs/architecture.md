@@ -27,6 +27,7 @@ Status: milestones 1 and 2 are done; our own test programs run under the interpr
 - [packages.md](packages.md): what a `.pkg` holds, and why we load unpacked folders.
 - [hle-kernel.md](hle-kernel.md): how guest calls reach host functions, and which ones exist.
 - [gpu.md](gpu.md): the PS5 GPU, AGC and the Metal plan.
+- [audio.md](audio.md): AudioOut, NGS2 and the host's output device.
 - [test-targets.md](test-targets.md): test programs, commercial targets and the oracles we have without a PS5.
 - [references.md](references.md): prior art, licenses, and what we read.
 - [legal.md](legal.md): the hard rules.

@@ -14,6 +14,7 @@ use x86::Cpu;
 use x86::cpu::reg::*;
 
 mod agc;
+mod audio;
 mod dmem;
 mod equeue;
 pub use gpu;
@@ -480,6 +481,7 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(stubs::FUNCTIONS)
         .chain(savedata::FUNCTIONS)
         .chain(ngs2::FUNCTIONS)
+        .chain(audio::FUNCTIONS)
         .chain(agc::functions())
         .chain(placeholders())
         .chain(pthread::SCE_FUNCTIONS)

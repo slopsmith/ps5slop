@@ -163,3 +163,9 @@ Reason: Sony's libc reads through these as pointers (it faulted at the small cou
 Render targets are Metal textures keyed by guest address. A flip of a buffer the GPU rendered presents that texture in the window, and guest memory is not updated with the rendered pixels until something on the CPU needs them (not implemented yet). Guest memory is wrapped in place as no-copy buffers for everything else.
 
 Reason: vic wants all drawing on Metal, with no CPU rendering, and a read-back per frame would cost a full-frame copy for nothing. SharpEmu-mac (GPL-2.0-or-later) works this way on Apple Silicon and is the model we port from.
+
+## 2026-11-20: Audio through NGS2 ported from SharpEmu-mac, out through an AudioQueue
+
+libSceNgs2 is a port of SharpEmu-mac's (GPL-2.0-or-later) voice, mixer and waveform code, PCM only, with two rule changes Balatro needs (a voice ends only after playing its last block; a block's sample count is clamped to its data). AudioOut mixes its ports to stereo float and feeds the default output device through an AudioToolbox output queue, our own small FFI rather than a crate. The device opens only when the window is shown (`PS5SLOP_AUDIO` overrides); while it runs, its clock paces `sceAudioOutOutput`, otherwise the host clock does. `PS5SLOP_AUDIO_WAV` dumps what each port plays. Details in [audio.md](audio.md).
+
+Reason: Balatro, the first title to play sound, uses NGS2 with 16-bit WAVE files only, so a decoder is not needed yet. SharpEmu-mac is the most complete license-compatible description of NGS2. An AudioQueue needs a few C declarations, where a crate such as cpal would pull in a dependency tree. Pacing by the device keeps the title's audio clock and the speakers in step without drift, and the WAVE dump lets us check output without listening.
