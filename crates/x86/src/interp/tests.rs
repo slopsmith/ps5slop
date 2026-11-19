@@ -476,3 +476,29 @@ fn wide_float_conversions_cross_lanes() {
     assert_eq!(cpu.xmm[1], [1.5f64, -2.0, 3.25, 0.5].map(f64::to_bits));
     assert_eq!(cpu.xmm[2], [cpu.xmm[0][0], cpu.xmm[0][1], 0, 0]);
 }
+
+#[test]
+fn addsub_subtracts_even_lanes_and_adds_odd_ones() {
+    let (mut cpu, mem) = machine(
+        "addsubps xmm0, xmm1; addsubpd xmm2, xmm3",
+        &[0xf2, 0x0f, 0xd0, 0xc1, 0x66, 0x0f, 0xd0, 0xd3],
+    );
+    let f = |x: f32| x.to_bits() as u64;
+    cpu.xmm[0] = [f(5.0) | f(5.0) << 32, f(5.0) | f(5.0) << 32, 0, 0];
+    cpu.xmm[1] = [f(1.0) | f(2.0) << 32, f(3.0) | f(4.0) << 32, 0, 0];
+    cpu.xmm[2] = [10.0f64.to_bits(), 10.0f64.to_bits(), 0, 0];
+    cpu.xmm[3] = [1.0f64.to_bits(), 2.0f64.to_bits(), 0, 0];
+    steps(&mut cpu, &mem, 2);
+    assert_eq!(cpu.xmm[0][..2], [f(4.0) | f(7.0) << 32, f(2.0) | f(9.0) << 32]);
+    assert_eq!(cpu.xmm[2][..2], [9.0f64.to_bits(), 12.0f64.to_bits()]);
+}
+
+#[test]
+fn negated_fma_passes_nan_operands_through_unchanged() {
+    let (mut cpu, mem) = machine("vfnmsub213ss xmm2, xmm13, xmm14", &[0xc4, 0xc2, 0x11, 0xaf, 0xd6]);
+    cpu.xmm[2] = [0x3f80_0000, 0, 0, 0];
+    cpu.xmm[13] = [0xffc0_0000, 0, 0, 0];
+    cpu.xmm[14] = [0, 0, 0, 0];
+    steps(&mut cpu, &mem, 1);
+    assert_eq!(cpu.xmm[2][0] as u32, 0xffc0_0000);
+}

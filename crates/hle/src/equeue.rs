@@ -85,6 +85,10 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelDeleteEqueue", delete),
     f("sceKernelWaitEqueue", wait),
     f("sceKernelAddUserEvent", add_user_event),
+    f("sceKernelAddReadEvent", add_read_event),
+    f("sceKernelDeleteReadEvent", delete_read_event),
+    f("sceKernelAddWriteEvent", add_write_event),
+    f("sceKernelDeleteWriteEvent", delete_write_event),
     f("sceKernelAddUserEventEdge", add_user_event),
     f("sceKernelDeleteUserEvent", delete_user_event),
     f("sceKernelTriggerUserEvent", trigger_user_event),
@@ -195,6 +199,38 @@ fn write_events(env: &Env, out: u64, events: &[(u64, i16, u64, u64)]) -> Result<
         env.mem.write(out + i as u64 * EVENT_SIZE, &e)?;
     }
     Ok(())
+}
+
+/// FreeBSD's `EVFILT_READ` and `EVFILT_WRITE`.
+const EVFILT_READ: i16 = -1;
+const EVFILT_WRITE: i16 = -2;
+
+/// `sceKernelAdd{Read,Write}Event(queue, fd, size, udata)`: registered, but
+/// never triggered (no descriptor we provide becomes ready this way).
+fn add_fd_event(env: &Env, filter: i16) -> Result<Outcome, CallError> {
+    let ok = env.kernel.equeues.add(env.arg(0), env.arg(1) as u32 as u64, filter, env.arg(3));
+    Ok(Outcome::Return(if ok { 0 } else { sce_error(errno::EBADF) }))
+}
+
+fn delete_fd_event(env: &Env, filter: i16) -> Result<Outcome, CallError> {
+    let ok = env.kernel.equeues.remove(env.arg(0), env.arg(1) as u32 as u64, filter);
+    Ok(Outcome::Return(if ok { 0 } else { sce_error(errno::ENOENT) }))
+}
+
+fn add_read_event(env: &mut Env) -> Result<Outcome, CallError> {
+    add_fd_event(env, EVFILT_READ)
+}
+
+fn delete_read_event(env: &mut Env) -> Result<Outcome, CallError> {
+    delete_fd_event(env, EVFILT_READ)
+}
+
+fn add_write_event(env: &mut Env) -> Result<Outcome, CallError> {
+    add_fd_event(env, EVFILT_WRITE)
+}
+
+fn delete_write_event(env: &mut Env) -> Result<Outcome, CallError> {
+    delete_fd_event(env, EVFILT_WRITE)
 }
 
 /// FreeBSD's `EVFILT_USER`.

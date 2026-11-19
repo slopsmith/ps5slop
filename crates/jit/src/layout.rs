@@ -6,7 +6,7 @@ pub const IPA_BITS: u32 = 40;
 /// The runtime region: physical address (in the hole `docs/memory.md`
 /// reserves), size and virtual address (TTBR1).
 pub const RUNTIME_IPA: u64 = 0xfe_0000_0000;
-pub const RUNTIME_SIZE: usize = 64 << 20;
+pub const RUNTIME_SIZE: usize = 256 << 20;
 pub const RUNTIME_VA: u64 = 0xffff_ff80_0000_0000;
 
 pub const VECTORS: usize = 0;

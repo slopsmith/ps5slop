@@ -352,3 +352,82 @@ pub(super) fn update_prim_state(env: &mut Env) -> Result<Outcome, CallError> {
     }
     ret(0)
 }
+
+/// The `SPI_PS_INPUT_CNTL` value `CreateInterpolantMapping2` gives pixel
+/// input `ps`, with the matching geometry output semantic `gs`, if any.
+fn interpolant2(ps: u32, gs: Option<u32>) -> u32 {
+    let mode = (ps >> 20) & 3;
+    let mut f = if mode == 0 {
+        let f = (((ps >> 24) & 1) | u32::from(gs.is_none())) << 5;
+        two_bits(f, ps >> 28, 8)
+    } else {
+        let mut f = ((ps << 4) & 0x0300_0000) + 0x0008_0000;
+        if mode == 2 {
+            f &= 0xFFEF_FFDF;
+            f |= gs.map_or(0x20, |m| (!(m & ps) >> 16) & 0x20);
+            f = two_bits(f, ps >> 30, 8);
+        } else {
+            match gs {
+                Some(m) => {
+                    let masked = m & ps;
+                    f = (f & 0xFFFF_FFDF) | ((masked >> 15) & 0x20);
+                    f ^= 0x20;
+                    f = (f & 0xFFEF_FFFF) | ((!masked >> 1) & 0x0010_0000);
+                }
+                None => f |= 0x0010_0020,
+            }
+            f = two_bits(f, ps >> 28, 8);
+        }
+        two_bits(f, ps >> 30, 21)
+    };
+    f = match gs {
+        Some(m) => {
+            f = (f & 0xFFFF_FFE0) | ((m >> 8) & 0x1F);
+            let flat = if ps & 0x0040_0000 != 0 { 0x400 } else { (ps >> 14) & 0x400 };
+            (f & 0xFFFF_FBFF) | flat
+        }
+        None => f & 0xFFFF_FBE0,
+    };
+    f
+}
+
+/// SharpEmu's `sceAgcCreateInterpolantMapping2(registers, geometry, pixel)`:
+/// like [`create_interpolant_mapping`], with the newer value encoding.
+pub(super) fn create_interpolant_mapping2(env: &mut Env) -> Result<Outcome, CallError> {
+    let (out, geometry, pixel) = (env.arg(0), env.arg(1), env.arg(2));
+    if out == 0 {
+        return ret(ERROR_INVALID_ARGUMENT);
+    }
+    let mut values: Vec<u32> = (0..INTERPOLANTS as u32).collect();
+    let (inputs, count) = match pixel {
+        0 => (0, 0),
+        p => (env.mem.read_u64(p + INPUT_SEMANTICS)?, read_u32(env, p + NUM_INPUT_SEMANTICS)? as usize),
+    };
+    if count != 0 {
+        if inputs == 0 || geometry == 0 || count > INTERPOLANTS {
+            return ret(ERROR_INVALID_ARGUMENT);
+        }
+        let outputs = env.mem.read_u64(geometry + OUTPUT_SEMANTICS)?;
+        let mut n = [0u8; 2];
+        env.mem.read(geometry + NUM_OUTPUT_SEMANTICS, &mut n)?;
+        let n = u16::from_le_bytes(n) as u64;
+        if n != 0 && outputs == 0 {
+            return ret(ERROR_INVALID_ARGUMENT);
+        }
+        let gs: Vec<u32> = (0..n)
+            .map(|i| read_u32(env, outputs + 4 * i))
+            .collect::<Result<_, _>>()?;
+        for (i, v) in values.iter_mut().take(count).enumerate() {
+            let ps = read_u32(env, inputs + 4 * i as u64)?;
+            *v = interpolant2(ps, gs.iter().copied().find(|&g| g as u8 == ps as u8));
+        }
+    }
+    let bytes: Vec<u8> = values
+        .iter()
+        .enumerate()
+        .flat_map(|(i, v)| [SPI_PS_INPUT_CNTL_0 + i as u32, *v])
+        .flat_map(u32::to_le_bytes)
+        .collect();
+    env.mem.write(out, &bytes)?;
+    ret(0)
+}

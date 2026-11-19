@@ -62,6 +62,7 @@ pub static FUNCTIONS: &[Function] = &[
 /// Placeholders: they answer without doing the real work, and say so on
 /// stderr when called.
 pub static STUBS: &[Function] = &[
+    f("socket", socket),
     f("__pthread_cxa_finalize", accept),
     f("pthread_condattr_setclock", accept),
     f("sceKernelMlock", accept),
@@ -463,6 +464,12 @@ fn getpid(_: &mut Env) -> Result<Outcome, CallError> {
 fn getrusage(env: &mut Env) -> Result<Outcome, CallError> {
     env.mem.write(env.arg(1), &[0u8; 144])?;
     ret(0)
+}
+
+/// `socket(domain, type, protocol)`: there is no network, so no address
+/// family is supported.
+fn socket(env: &mut Env) -> Result<Outcome, CallError> {
+    env.fail(errno::EAFNOSUPPORT)
 }
 
 /// Calls with nothing to do. `sceKernelIsTrinityMode` (is this a PS5

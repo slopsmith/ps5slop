@@ -84,6 +84,8 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceAgcCreateShader", shader::create_shader),
     // SharpEmu's `sceAgcCreateInterpolantMapping`.
     f("#HV4j+E0MBHE", shader::create_interpolant_mapping),
+    // SharpEmu's `sceAgcCreateInterpolantMapping2`.
+    f("#dbOlWdppb4o", shader::create_interpolant_mapping2),
     f("sceAgcCreatePrimState", shader::create_prim_state),
     f("sceAgcUpdatePrimState", shader::update_prim_state),
 ];

@@ -13,10 +13,10 @@ const DESCRIPTOR: u64 = 0x30_0000;
 const BUFFER: u64 = 0x31_0000;
 const BUFFER_DWORDS: u64 = 1024;
 
-/// Builders whose output differs from the console on purpose, and why.
 /// Checked instead by `packets.rs`'s harness, which has the measured stack.
 const STACK_LEFTOVERS: &str = "output includes unknown stack slots";
 
+/// Builders whose output differs from the console on purpose, and why.
 const KNOWN_DIFFERENT: &[(&str, &str)] = &[
     ("sceAgcDcbAtomicGds", STACK_LEFTOVERS),
     ("sceAgcAcbAtomicGds", STACK_LEFTOVERS),

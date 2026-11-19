@@ -563,6 +563,21 @@ impl Ctx<'_> {
                 };
                 self.xset(d, r);
             }
+            (Pfx::P66 | Pfx::F2, 0xd0) => {
+                let (a, b) = (self.src1(), self.src128(true)?);
+                let r = if p == Pfx::F2 {
+                    let (la, lb) = (lanes::<4>(a), lanes::<4>(b));
+                    join::<4>(core::array::from_fn(|k| {
+                        let (x, y) = (la[k] as u32, lb[k] as u32);
+                        let v = if k % 2 == 0 { f32op(x, y, |x, y| x - y) } else { f32op(x, y, |x, y| x + y) };
+                        v as u64
+                    }))
+                } else {
+                    let (la, lb) = (lanes::<2>(a), lanes::<2>(b));
+                    join::<2>([f64op(la[0], lb[0], |x, y| x - y), f64op(la[1], lb[1], |x, y| x + y)])
+                };
+                self.xset(d, r);
+            }
             (_, 0x5a) => match p {
                 Pfx::None => {
                     let s = lanes::<4>(self.src_low(8)? as u128);
@@ -1164,6 +1179,7 @@ fn in_lane(op: u8, p: Pfx) -> bool {
         | 0xc2
         | 0xc6 => packed,
         0x12 | 0x16 => matches!(p, Pfx::F3 | Pfx::F2),
+        0xd0 => matches!(p, Pfx::P66 | Pfx::F2),
         0x5b => p != Pfx::F2,
         0x6f | 0x7f => matches!(p, Pfx::P66 | Pfx::F3),
         0x70 => p != Pfx::None,

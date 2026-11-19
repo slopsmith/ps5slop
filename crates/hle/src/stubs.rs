@@ -99,6 +99,56 @@ pub static FUNCTIONS: &[Function] = &[
 /// Placeholders: they answer without doing the real work, and say so on
 /// stderr when called.
 pub static STUBS: &[Function] = &[
+    Function {
+        library: "libSceNpEntitlementAccess",
+        name: "sceNpEntitlementAccessGetSkuFlag",
+        func: sku_flag,
+    },
+    Function {
+        library: "libSceAcm",
+        name: "sceAcmContextCreate",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceTextToSpeech2",
+        name: "sceTextToSpeech2Open",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceTextToSpeech2",
+        name: "sceTextToSpeech2Speak",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceTextToSpeech2",
+        name: "sceTextToSpeech2Cancel",
+        func: ok,
+    },
+    Function {
+        library: "libSceTextToSpeech2",
+        name: "sceTextToSpeech2Close",
+        func: ok,
+    },
+    Function {
+        library: "libSceHttp2",
+        name: "sceHttp2CreateRequestWithURL",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceHttp",
+        name: "sceHttpCreateConnectionWithURL",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceHttp",
+        name: "sceHttpCreateRequestWithURL",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpWebApi2",
+        name: "sceNpWebApi2CreateRequest",
+        func: unsupported,
+    },
     zero("libSceCommonDialog", "sceCommonDialogInitialize"),
     zero("libSceMsgDialog.native", "sceMsgDialogInitialize"),
     zero("libSceMsgDialog.native", "sceMsgDialogTerminate"),
@@ -332,5 +382,11 @@ fn app_param_int(env: &mut Env) -> Result<Outcome, CallError> {
         }
     };
     env.mem.write(env.arg(1), &value.to_le_bytes())?;
+    Ok(Outcome::Return(0))
+}
+
+/// `sceNpEntitlementAccessGetSkuFlag(&flag)`: the full game (3, unverified).
+fn sku_flag(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write(env.arg(0), &3u32.to_le_bytes())?;
     Ok(Outcome::Return(0))
 }

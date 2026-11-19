@@ -20,12 +20,29 @@ pub static VARIABLES: &[Variable] = &[
 ];
 
 pub static FUNCTIONS: &[Function] = &[
+    Function {
+        library: "libkernel",
+        name: "inet_ntop",
+        func: inet_ntop,
+    },
+    Function {
+        library: "libkernel",
+        name: "inet_pton",
+        func: inet_pton,
+    },
+    Function {
+        library: "libSceNetCtl",
+        name: "sceNetCtlGetInfo",
+        func: netctl_info,
+    },
     f("sceNetInit", ok),
     f("sceNetTerm", ok),
     f("sceNetPoolCreate", pool_create),
     f("sceNetPoolDestroy", ok),
     f("sceNetGetMacAddress", mac_address),
     f("sceNetEtherNtostr", ether_ntostr),
+    f("sceNetInetPton", inet_pton),
+    f("sceNetInetNtop", inet_ntop),
 ];
 
 /// A locally administered address (our choice).
@@ -69,4 +86,71 @@ fn ether_ntostr(env: &mut Env) -> Result<Outcome, CallError> {
     }
     env.mem.write(out, &text)?;
     Ok(Outcome::Return(0))
+}
+
+/// `sceNetCtlGetInfo(code, info)` for a disconnected interface, using
+/// OpenOrbis's info codes: our MAC, MTU 1500, link down, zero addresses.
+fn netctl_info(env: &mut Env) -> Result<Outcome, CallError> {
+    let mut info = [0u8; 256];
+    match env.arg(0) as u32 {
+        2 => info[..6].copy_from_slice(&MAC),
+        3 => info[..4].copy_from_slice(&1500u32.to_le_bytes()),
+        14..=18 => info[..8].copy_from_slice(b"0.0.0.0\0"),
+        1 | 4..=13 | 19..=21 => {}
+        _ => return Ok(Outcome::Return(crate::dmem::sce_error(crate::errno::EINVAL))),
+    }
+    env.mem.write(env.arg(1), &info)?;
+    Ok(Outcome::Return(0))
+}
+
+/// FreeBSD's `AF_INET` and `AF_INET6`.
+const AF_INET: u64 = 2;
+const AF_INET6: u64 = 28;
+
+/// `inet_pton(family, text, out)`: 1 when parsed, 0 for bad text.
+fn inet_pton(env: &mut Env) -> Result<Outcome, CallError> {
+    let (family, out) = (env.arg(0) as u32 as u64, env.arg(2));
+    let text = crate::libc::cstr(env, env.arg(1))?;
+    let text = String::from_utf8_lossy(&text);
+    let bytes = match family {
+        AF_INET => text.parse::<std::net::Ipv4Addr>().ok().map(|a| a.octets().to_vec()),
+        AF_INET6 => text.parse::<std::net::Ipv6Addr>().ok().map(|a| a.octets().to_vec()),
+        _ => return env.fail(crate::errno::EAFNOSUPPORT),
+    };
+    match bytes {
+        Some(b) => {
+            env.mem.write(out, &b)?;
+            Ok(Outcome::Return(1))
+        }
+        None => Ok(Outcome::Return(0)),
+    }
+}
+
+/// `inet_ntop(family, addr, out, size)`: `out`, or null when it is too small.
+fn inet_ntop(env: &mut Env) -> Result<Outcome, CallError> {
+    let (family, addr, out, size) = (env.arg(0) as u32 as u64, env.arg(1), env.arg(2), env.arg(3) as u32 as usize);
+    let text = match family {
+        AF_INET => {
+            let mut b = [0u8; 4];
+            env.mem.read(addr, &mut b)?;
+            std::net::Ipv4Addr::from(b).to_string()
+        }
+        AF_INET6 => {
+            let mut b = [0u8; 16];
+            env.mem.read(addr, &mut b)?;
+            std::net::Ipv6Addr::from(b).to_string()
+        }
+        _ => {
+            env.set_errno(crate::errno::EAFNOSUPPORT)?;
+            return Ok(Outcome::Return(0));
+        }
+    };
+    if text.len() + 1 > size {
+        env.set_errno(crate::errno::ENOSPC)?;
+        return Ok(Outcome::Return(0));
+    }
+    let mut b = text.into_bytes();
+    b.push(0);
+    env.mem.write(out, &b)?;
+    Ok(Outcome::Return(out))
 }

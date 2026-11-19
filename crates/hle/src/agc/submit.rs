@@ -83,6 +83,8 @@ impl gpu::Host for Host {
 
 fn gpu_thread(host: Host, jobs: Receiver<Job>, stats: Arc<Mutex<gpu::Stats>>) {
     let mut processor = gpu::Processor::default();
+    let report = std::env::var_os("PS5SLOP_GPU_STATS").is_some();
+    let mut last_report = std::time::Instant::now();
     while let Ok(job) = jobs.recv() {
         for (addr, dwords) in job.buffers {
             if let Err(e) = processor.run(&host, addr, dwords) {
@@ -90,6 +92,14 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>, stats: Arc<Mutex<gpu::Stats>>) {
             }
         }
         *lock(&stats) = processor.stats.clone();
+        if report && last_report.elapsed().as_secs() >= 1 {
+            last_report = std::time::Instant::now();
+            let s = &processor.stats;
+            eprintln!(
+                "ps5slop: GPU: {} submissions, {} packets, {} draws, {} dispatches, {} flips, {} interrupts, {} wait timeouts",
+                s.submissions, s.packets, s.draws, s.dispatches, s.flips, s.interrupts, s.timeouts
+            );
+        }
         if host.kernel.has_exited() {
             break;
         }

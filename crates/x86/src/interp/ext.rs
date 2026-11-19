@@ -737,16 +737,9 @@ impl Ctx<'_> {
             let (a, b, c) = (lanes::<2>(m1), lanes::<2>(m2), lanes::<2>(add));
             join::<2>(core::array::from_fn(|k| {
                 let (sub, neg) = lane(k);
-                let p = if neg {
-                    -f64::from_bits(a[k])
-                } else {
-                    f64::from_bits(a[k])
-                };
-                let c = if sub {
-                    -f64::from_bits(c[k])
-                } else {
-                    f64::from_bits(c[k])
-                };
+                let (p, c) = (f64::from_bits(a[k]), f64::from_bits(c[k]));
+                let p = if neg && !p.is_nan() { -p } else { p };
+                let c = if sub && !c.is_nan() { -c } else { c };
                 fma64(p, f64::from_bits(b[k]), c)
             }))
         } else {
@@ -754,9 +747,9 @@ impl Ctx<'_> {
             join::<4>(core::array::from_fn(|k| {
                 let (sub, neg) = lane(k);
                 let p = f32::from_bits(a[k] as u32);
-                let p = if neg { -p } else { p };
+                let p = if neg && !p.is_nan() { -p } else { p };
                 let c = f32::from_bits(c[k] as u32);
-                let c = if sub { -c } else { c };
+                let c = if sub && !c.is_nan() { -c } else { c };
                 fma32(p, f32::from_bits(b[k] as u32), c) as u64
             }))
         };

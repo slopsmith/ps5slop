@@ -478,7 +478,7 @@ impl Engine {
                 other => break other,
             }
         };
-        machine()?.verified(rip);
+        machine()?.verified(rip, mem);
         if !comparable {
             return Ok(Entry::Dispatch(self.cpsr()? & NZCV));
         }

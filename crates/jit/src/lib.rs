@@ -43,6 +43,9 @@ const EMPTY: u64 = u64::MAX;
 const ENTRY_FLUSH: usize = layout::CODE;
 const RESUME_FLUSH: usize = layout::CODE + 0x40;
 const DISPATCH: usize = layout::CODE + 0x80;
+/// Leaves the VM as a lookup miss: where blocks still being checked in
+/// verify mode exit, so each check runs exactly one block.
+const VERIFY_EXIT: usize = layout::CODE + 0x1C0;
 const NATIVE_MEMSET: usize = layout::CODE + 0x200;
 const NATIVE_MEMMOVE: usize = layout::CODE + 0x400;
 const NATIVE_END: usize = layout::CODE + 0x800;
@@ -73,8 +76,8 @@ pub fn set_native(addr: u64, native: Native) {
     }
 }
 
-/// Runs of each block verify mode checks against the interpreter. Verify
-/// mode keeps the lookup table empty, so every block exits on its own.
+/// Runs of each block verify mode checks against the interpreter before a
+/// copy with ordinary exits replaces it.
 const VERIFY_RUNS: u32 = 4;
 
 struct BlockInfo {
@@ -293,29 +296,16 @@ impl Machine {
     /// false if it cannot be translated or the cache is full.
     fn translate(&mut self, mem: &Memory, rip: u64) -> bool {
         if let Some(b) = self.blocks.get(&rip) {
-            if !self.verify {
+            if self.ready(b) {
                 let place = b.place;
                 self.enter(rip, place);
             }
             return true;
         }
-        if self.cache_full {
-            return false;
-        }
-        let place = self.code_next;
-        let Some(block) = translate::block(mem, rip, place, DISPATCH) else {
+        let exit = if self.verify { VERIFY_EXIT } else { DISPATCH };
+        let Some((place, block)) = self.emit(mem, rip, exit) else {
             return false;
         };
-        let len = block.code.len() * 4;
-        if place + len > layout::CODE_CACHE_END {
-            self.cache_full = true;
-            eprintln!("ps5slop: the JIT's code cache is full; interpreting new code from now on");
-            return false;
-        }
-        self.runtime.write_words(place, &block.code);
-        // SAFETY: the range was just written inside the runtime region.
-        unsafe { sys_icache_invalidate(self.runtime.as_ptr().add(place).cast(), len) };
-        self.code_next = (place + len).next_multiple_of(16);
         let insns = block.insns.len();
         self.blocks.insert(
             rip,
@@ -327,22 +317,55 @@ impl Machine {
         );
         self.by_place.insert(place, block.insns);
         if !self.verify {
-            self.enter(rip, place);
-            for (word, target) in block.chains {
-                let site = place + word as usize * 4;
-                match self.blocks.get(&target) {
-                    Some(b) => {
-                        let to = b.place;
-                        self.patch(site, to);
-                    }
-                    None => self.chain_wanted.entry(target).or_default().push(site),
-                }
-            }
-            for site in self.chain_wanted.remove(&rip).unwrap_or_default() {
-                self.patch(site, place);
-            }
+            self.link(rip, place, block.chains);
         }
         true
+    }
+
+    /// Whether the block may be entered in the lookup table and chained to:
+    /// always, except in verify mode before its checks are done.
+    fn ready(&self, b: &BlockInfo) -> bool {
+        !self.verify || b.verified >= VERIFY_RUNS
+    }
+
+    /// Translates the block at `rip` into the code cache, its exits going to
+    /// `exit`; where it went and what was translated.
+    fn emit(&mut self, mem: &Memory, rip: u64, exit: usize) -> Option<(usize, translate::Block)> {
+        if self.cache_full {
+            return None;
+        }
+        let place = self.code_next;
+        let block = translate::block(mem, rip, place, exit)?;
+        let len = block.code.len() * 4;
+        if place + len > layout::CODE_CACHE_END {
+            self.cache_full = true;
+            eprintln!("ps5slop: the JIT's code cache is full; interpreting new code from now on");
+            return None;
+        }
+        self.runtime.write_words(place, &block.code);
+        // SAFETY: the range was just written inside the runtime region.
+        unsafe { sys_icache_invalidate(self.runtime.as_ptr().add(place).cast(), len) };
+        self.code_next = (place + len).next_multiple_of(16);
+        Some((place, block))
+    }
+
+    /// Enters `rip`'s block at `place` and chains it both ways to ready
+    /// blocks (`chains`: exit word offset, target).
+    fn link(&mut self, rip: u64, place: usize, chains: Vec<(u32, u64)>) {
+        self.enter(rip, place);
+        for (word, target) in chains {
+            let site = place + word as usize * 4;
+            match self.blocks.get(&target).filter(|b| self.ready(b)) {
+                Some(b) => {
+                    let to = b.place;
+                    self.patch(site, to);
+                }
+                None => self.chain_wanted.entry(target).or_default().push(site),
+            }
+        }
+        for site in self.chain_wanted.remove(&rip).unwrap_or_default() {
+            self.patch(site, place);
+        }
     }
 
     /// Turns the branch to the dispatcher at runtime offset `site` into a
@@ -380,11 +403,22 @@ impl Machine {
         Some((layout::va(b.place), b.insns, b.verified < VERIFY_RUNS))
     }
 
-    /// Counts one checked run of the block at `rip`.
-    fn verified(&mut self, rip: u64) {
-        if let Some(b) = self.blocks.get_mut(&rip) {
-            b.verified += 1;
+    /// Counts one checked run of the block at `rip`. After the last, the
+    /// block is translated again with ordinary exits, entered and chained.
+    fn verified(&mut self, rip: u64, mem: &Memory) {
+        let Some(b) = self.blocks.get_mut(&rip) else { return };
+        b.verified += 1;
+        if b.verified != VERIFY_RUNS {
+            return;
         }
+        let Some((place, block)) = self.emit(mem, rip, DISPATCH) else {
+            return;
+        };
+        if let Some(b) = self.blocks.get_mut(&rip) {
+            b.place = place;
+        }
+        self.by_place.insert(place, block.insns);
+        self.link(rip, place, block.chains);
     }
 
     /// The guest RIP of the instruction whose translated code holds the
@@ -452,8 +486,11 @@ fn write_runtime(rt: &mut [u8]) {
     a.bind(miss);
     a.hvc(translate::HVC_MISS);
     let code = a.finish();
-    assert!(DISPATCH + code.len() * 4 <= NATIVE_MEMSET);
+    assert!(DISPATCH + code.len() * 4 <= VERIFY_EXIT);
     put(rt, DISPATCH, code);
+    let mut a = Asm::new();
+    a.hvc(translate::HVC_MISS);
+    put(rt, VERIFY_EXIT, a.finish());
     let code = native_memset();
     assert!(NATIVE_MEMSET + code.len() * 4 <= NATIVE_MEMMOVE);
     put(rt, NATIVE_MEMSET, code);
