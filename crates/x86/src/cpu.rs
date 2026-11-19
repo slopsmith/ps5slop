@@ -20,6 +20,9 @@ pub mod flags {
     pub const FIXED: u64 = 1 << 1 | IF;
 }
 
+/// MXCSR after reset: all exceptions masked, round to nearest.
+pub const MXCSR_DEFAULT: u32 = 0x1f80;
+
 pub mod reg {
     pub const RAX: usize = 0;
     pub const RCX: usize = 1;
@@ -40,6 +43,9 @@ pub struct Cpu {
     pub rflags: u64,
     pub fs_base: u64,
     pub gs_base: u64,
+    /// YMM0-15 as four 64-bit lanes each; XMMn is the low two.
+    pub xmm: [[u64; 4]; 16],
+    pub mxcsr: u32,
 }
 
 impl Default for Cpu {
@@ -50,6 +56,8 @@ impl Default for Cpu {
             rflags: flags::FIXED,
             fs_base: 0,
             gs_base: 0,
+            xmm: [[0; 4]; 16],
+            mxcsr: MXCSR_DEFAULT,
         }
     }
 }

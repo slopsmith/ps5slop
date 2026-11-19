@@ -238,14 +238,14 @@ fn shifts_and_rotates() {
 
 #[test]
 fn unimplemented_instructions_are_reported() {
-    let (mut cpu, mut mem) = machine("pxor xmm0, xmm0", &[0x66, 0x0f, 0xef, 0xc0]);
+    let (mut cpu, mut mem) = machine("fld1", &[0xd9, 0xe8]);
     assert_eq!(
         step(&mut cpu, &mut mem),
         Exit::Fault {
             rip: CODE,
             kind: CpuFault::Unimplemented {
-                map: Map::M0F,
-                op: 0xef
+                map: Map::Primary,
+                op: 0xd9
             }
         }
     );

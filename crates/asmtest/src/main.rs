@@ -398,6 +398,25 @@ fn compare(cpu: &Cpu, cfg: &Value) -> Outcome {
             cpu.regs[i]
         } else if reg == "RIP" {
             cpu.rip
+        } else if let Some(n) = reg
+            .strip_prefix("XMM")
+            .and_then(|n| n.parse::<usize>().ok())
+            .filter(|&n| n < 16)
+        {
+            let Some(list) = want.as_array() else {
+                wrong.push(format!("{reg}: expected a list of 64-bit values"));
+                continue;
+            };
+            for (k, v) in list.iter().enumerate() {
+                match (int(v), cpu.xmm[n].get(k)) {
+                    (Some(w), Some(&g)) if w == g => {}
+                    (Some(w), Some(&g)) => {
+                        wrong.push(format!("{reg}[{k}]={g:#x}, expected {w:#x}"))
+                    }
+                    _ => wrong.push(format!("{reg}[{k}]: unreadable")),
+                }
+            }
+            continue;
         } else {
             unchecked.push(reg);
             continue;

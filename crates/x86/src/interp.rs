@@ -34,6 +34,8 @@ pub enum CpuFault {
     /// A prefix family the decoder does not handle yet (VEX, EVEX, XOP).
     UnsupportedEncoding,
     DivideError,
+    /// #GP: for example a misaligned operand of an aligned SSE move.
+    GeneralProtection,
     Breakpoint,
     /// A privileged instruction (`hlt`, `in`, `out`, ...).
     Privileged,
@@ -654,6 +656,9 @@ impl Ctx<'_> {
     }
 
     fn map0f(&mut self) -> Res<Exit> {
+        if self.sse()? {
+            return Ok(Exit::Continue);
+        }
         let i = self.insn;
         let osz = i.osize();
         match i.op {
@@ -859,6 +864,8 @@ impl Ctx<'_> {
         self.cpu.regs[RDX] = d as u64;
     }
 }
+
+mod sse;
 
 #[cfg(test)]
 mod tests;
