@@ -20,6 +20,8 @@ struct Cli {
 enum Command {
     /// Prints the headers, segments, modules and libraries.
     Info { file: PathBuf },
+    /// Prints the raw tags of the dynamic section.
+    Tags { file: PathBuf },
     /// Lists every imported symbol by library.
     Imports {
         file: PathBuf,
@@ -98,6 +100,20 @@ fn run(cli: Cli) -> loader::Result<()> {
                 d.relocations.len(),
                 d.jump_slots.len()
             );
+        }
+        Command::Tags { file } => {
+            let elf = ElfFile::parse(std::fs::read(file)?)?;
+            let (i, _) = elf
+                .find(loader::elf::PT_DYNAMIC)
+                .ok_or_else(|| loader::Error::Invalid("no PT_DYNAMIC".into()))?;
+            for t in elf.segment_data(i)?.as_chunks::<16>().0 {
+                let tag = u64::from_le_bytes(t[..8].try_into().unwrap());
+                let value = u64::from_le_bytes(t[8..].try_into().unwrap());
+                println!("{tag:#010x} {value:#018x}");
+                if tag == 0 {
+                    break;
+                }
+            }
         }
         Command::Imports { file, names } => {
             let labels: HashMap<String, String> = match names {

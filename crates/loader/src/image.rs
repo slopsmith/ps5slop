@@ -122,6 +122,11 @@ impl Image {
             let data = elf.segment_data(i)?;
             let at = p.vaddr as usize;
             bytes[at..at + data.len()].copy_from_slice(data);
+            // PS5 files carry their dynamic tables in a segment the guest may
+            // not touch; it keeps its bytes here but gets no region.
+            if p.flags & (PF_R | PF_W | PF_X) == 0 {
+                continue;
+            }
             let start = p.vaddr / PAGE_SIZE * PAGE_SIZE;
             regions.push(Region {
                 offset: start,

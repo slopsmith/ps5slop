@@ -232,6 +232,29 @@ impl ElfFile {
         get(&self.data, start, len)
     }
 
+    /// `len` file bytes at image address `vaddr`, from the `PT_LOAD` segment
+    /// that holds them.
+    pub fn at_vaddr(&self, vaddr: u64, len: u64) -> Result<&[u8]> {
+        let (i, p) = self
+            .phdrs
+            .iter()
+            .enumerate()
+            .find(|(_, p)| {
+                p.p_type == PT_LOAD
+                    && vaddr >= p.vaddr
+                    && vaddr
+                        .checked_add(len)
+                        .is_some_and(|end| end <= p.vaddr + p.filesz)
+            })
+            .ok_or_else(|| {
+                invalid(format!(
+                    "{len} bytes at {vaddr:#x} are not in a loaded segment"
+                ))
+            })?;
+        let start = (vaddr - p.vaddr) as usize;
+        Ok(&self.segment_data(i)?[start..start + len as usize])
+    }
+
     /// The first program header of a type, with its index.
     pub fn find(&self, p_type: u32) -> Option<(usize, &ProgramHeader)> {
         self.phdrs

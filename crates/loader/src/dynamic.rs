@@ -34,6 +34,59 @@ pub const DT_SCE_STRSZ: u64 = 0x6100_0037;
 pub const DT_SCE_SYMTAB: u64 = 0x6100_0039;
 pub const DT_SCE_SYMTABSZ: u64 = 0x6100_003f;
 
+// The PS5 numbers of the module and library tags (KytyPS5's `elf.h` calls them `_1`).
+pub const DT_SCE_ORIGINAL_FILENAME_1: u64 = 0x6100_0041;
+pub const DT_SCE_MODULE_INFO_1: u64 = 0x6100_0043;
+pub const DT_SCE_NEEDED_MODULE_1: u64 = 0x6100_0045;
+pub const DT_SCE_EXPORT_LIB_1: u64 = 0x6100_0047;
+pub const DT_SCE_IMPORT_LIB_1: u64 = 0x6100_0049;
+
+const DT_PLTRELSZ: u64 = 2;
+const DT_PLTGOT: u64 = 3;
+const DT_STRTAB: u64 = 5;
+const DT_SYMTAB: u64 = 6;
+const DT_RELA: u64 = 7;
+const DT_RELASZ: u64 = 8;
+const DT_STRSZ: u64 = 10;
+const DT_JMPREL: u64 = 23;
+
+/// Which tags address the tables.
+struct TableTags {
+    strtab: u64,
+    strsz: u64,
+    symtab: u64,
+    symtabsz: u64,
+    rela: u64,
+    relasz: u64,
+    jmprel: u64,
+    pltrelsz: u64,
+    pltgot: u64,
+}
+
+const TABLE_TAGS_PS4: TableTags = TableTags {
+    strtab: DT_SCE_STRTAB,
+    strsz: DT_SCE_STRSZ,
+    symtab: DT_SCE_SYMTAB,
+    symtabsz: DT_SCE_SYMTABSZ,
+    rela: DT_SCE_RELA,
+    relasz: DT_SCE_RELASZ,
+    jmprel: DT_SCE_JMPREL,
+    pltrelsz: DT_SCE_PLTRELSZ,
+    pltgot: DT_SCE_PLTGOT,
+};
+
+const TABLE_TAGS_PS5: TableTags = TableTags {
+    strtab: DT_STRTAB,
+    strsz: DT_STRSZ,
+    symtab: DT_SYMTAB,
+    symtabsz: DT_SCE_SYMTABSZ,
+    rela: DT_RELA,
+    relasz: DT_RELASZ,
+    jmprel: DT_JMPREL,
+    pltrelsz: DT_PLTRELSZ,
+    pltgot: DT_PLTGOT,
+};
+
 pub const SYM_SIZE: usize = 24;
 pub const RELA_SIZE: usize = 24;
 
@@ -130,9 +183,12 @@ impl Dynamic {
         let (dyn_index, _) = elf
             .find(PT_DYNAMIC)
             .ok_or_else(|| invalid("no PT_DYNAMIC segment"))?;
-        let (data_index, _) = elf
-            .find(PT_SCE_DYNLIBDATA)
-            .ok_or_else(|| invalid("no PT_SCE_DYNLIBDATA segment"))?;
+        // PS4 files keep the tables in PT_SCE_DYNLIBDATA, addressed by DT_SCE_* offsets;
+        // PS5 files keep them in loaded memory, addressed by the standard tags.
+        let dynlib = match elf.find(PT_SCE_DYNLIBDATA) {
+            Some((i, _)) => Some(elf.segment_data(i)?),
+            None => None,
+        };
         let tags: Vec<(u64, u64)> = elf
             .segment_data(dyn_index)?
             .as_chunks::<16>()
@@ -141,12 +197,19 @@ impl Dynamic {
             .map(|t| (u64_le(t, 0), u64_le(t, 8)))
             .take_while(|&(tag, _)| tag != DT_NULL)
             .collect();
-        let data = elf.segment_data(data_index)?;
         let one = |tag| tags.iter().find(|t| t.0 == tag).map(|t| t.1);
+        let t = if dynlib.is_some() {
+            TABLE_TAGS_PS4
+        } else {
+            TABLE_TAGS_PS5
+        };
         let table = |off_tag, size_tag, what: &str| -> Result<&[u8]> {
             match (one(off_tag), one(size_tag)) {
-                (Some(off), Some(size)) => slice(data, off, size)
-                    .ok_or_else(|| invalid(format!("{what} is outside PT_SCE_DYNLIBDATA"))),
+                (Some(off), Some(size)) => match dynlib {
+                    Some(data) => slice(data, off, size)
+                        .ok_or_else(|| invalid(format!("{what} is outside PT_SCE_DYNLIBDATA"))),
+                    None => elf.at_vaddr(off, size),
+                },
                 (None, None) => Ok(&[]),
                 _ => Err(invalid(format!(
                     "{what} has an offset or a size but not both"
@@ -154,7 +217,7 @@ impl Dynamic {
             }
         };
 
-        let strtab = table(DT_SCE_STRTAB, DT_SCE_STRSZ, "string table")?;
+        let strtab = table(t.strtab, t.strsz, "string table")?;
         let string = |off: u64| -> Result<String> {
             let rest = usize::try_from(off)
                 .ok()
@@ -168,7 +231,7 @@ impl Dynamic {
         };
 
         let mut d = Dynamic {
-            pltgot: one(DT_SCE_PLTGOT),
+            pltgot: one(t.pltgot),
             init: one(DT_INIT),
             fini: one(DT_FINI),
             init_array: one(DT_INIT_ARRAY).zip(one(DT_INIT_ARRAYSZ)),
@@ -196,16 +259,18 @@ impl Dynamic {
             };
             match tag {
                 DT_NEEDED => d.needed.push(string(v)?),
-                DT_SCE_ORIGINAL_FILENAME => d.original_filename = Some(string(v)?),
-                DT_SCE_MODULE_INFO => d.modules.push(module()?),
-                DT_SCE_NEEDED_MODULE => d.needed_modules.push(module()?),
-                DT_SCE_EXPORT_LIB => d.export_libs.push(library()?),
-                DT_SCE_IMPORT_LIB => d.import_libs.push(library()?),
+                DT_SCE_ORIGINAL_FILENAME | DT_SCE_ORIGINAL_FILENAME_1 => {
+                    d.original_filename = Some(string(v)?)
+                }
+                DT_SCE_MODULE_INFO | DT_SCE_MODULE_INFO_1 => d.modules.push(module()?),
+                DT_SCE_NEEDED_MODULE | DT_SCE_NEEDED_MODULE_1 => d.needed_modules.push(module()?),
+                DT_SCE_EXPORT_LIB | DT_SCE_EXPORT_LIB_1 => d.export_libs.push(library()?),
+                DT_SCE_IMPORT_LIB | DT_SCE_IMPORT_LIB_1 => d.import_libs.push(library()?),
                 _ => {}
             }
         }
 
-        let symtab = table(DT_SCE_SYMTAB, DT_SCE_SYMTABSZ, "symbol table")?;
+        let symtab = table(t.symtab, t.symtabsz, "symbol table")?;
         d.symbols = symtab
             .as_chunks::<SYM_SIZE>()
             .0
@@ -219,8 +284,8 @@ impl Dynamic {
                 })
             })
             .collect::<Result<_>>()?;
-        d.relocations = parse_relas(table(DT_SCE_RELA, DT_SCE_RELASZ, "relocation table")?);
-        d.jump_slots = parse_relas(table(DT_SCE_JMPREL, DT_SCE_PLTRELSZ, "jump slot table")?);
+        d.relocations = parse_relas(table(t.rela, t.relasz, "relocation table")?);
+        d.jump_slots = parse_relas(table(t.jmprel, t.pltrelsz, "jump slot table")?);
         Ok(d)
     }
 
