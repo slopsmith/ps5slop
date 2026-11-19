@@ -280,3 +280,32 @@ fn cpuid_reports_a_zen2_with_lzcnt_and_avx2() {
     steps(&mut cpu, &mut mem, 1);
     assert_ne!(cpu.regs[RBX] & 1 << 5, 0);
 }
+
+#[test]
+fn locked_increments_from_several_threads_are_atomic() {
+    let (cpu, mem) = machine(
+        "l: lock inc qword ptr [rdi]; dec ecx; jnz l; hlt",
+        &[0xf0, 0x48, 0xff, 0x07, 0xff, 0xc9, 0x75, 0xf8, 0xf4],
+    );
+    let threads = 4;
+    let per_thread = 20_000;
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            let mut cpu = cpu.clone();
+            let mut mem = mem.clone();
+            s.spawn(move || {
+                cpu.regs[RDI] = DATA;
+                cpu.regs[RCX] = per_thread;
+                let exit = run(&mut cpu, &mut mem, u64::MAX);
+                assert!(matches!(
+                    exit,
+                    Exit::Fault {
+                        kind: CpuFault::Privileged,
+                        ..
+                    }
+                ));
+            });
+        }
+    });
+    assert_eq!(mem.read_u64(DATA).unwrap(), threads * per_thread);
+}

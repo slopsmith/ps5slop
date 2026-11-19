@@ -262,13 +262,39 @@ impl Ctx<'_> {
         })
     }
 
-    fn alu_rm(&mut self, op: u8, dst: Loc, src: u64, size: u8) -> Res<()> {
-        let a = self.read(dst, size)?;
-        let (r, f) = alu::group1(op, a, src, self.cpu.flag(CF), size);
-        self.cpu.set_arith(f);
-        if op != 7 {
-            self.write(dst, size, r)?;
+    /// Stores `f(old)` at `loc` (unless `None`) and returns `old`; with `atomic`,
+    /// a memory operand is updated atomically, as by a locked instruction.
+    fn modify(
+        &mut self,
+        loc: Loc,
+        size: u8,
+        atomic: bool,
+        f: impl Fn(u64) -> Option<u64>,
+    ) -> Res<u64> {
+        match loc {
+            Loc::Mem(a) if atomic => Ok(self
+                .mem
+                .atomic_update(a, size, |old| f(old).map(|v| v & mask(size)))?),
+            _ => {
+                let old = self.read(loc, size)?;
+                if let Some(new) = f(old) {
+                    self.write(loc, size, new)?;
+                }
+                Ok(old)
+            }
         }
+    }
+
+    fn alu_rm(&mut self, op: u8, dst: Loc, src: u64, size: u8) -> Res<()> {
+        let cf = self.cpu.flag(CF);
+        let old = if op == 7 {
+            self.read(dst, size)?
+        } else {
+            self.modify(dst, size, self.insn.lock, |a| {
+                Some(alu::group1(op, a, src, cf, size).0)
+            })?
+        };
+        self.cpu.set_arith(alu::group1(op, old, src, cf, size).1);
         Ok(())
     }
 
@@ -329,10 +355,8 @@ impl Ctx<'_> {
             }
             0x86 | 0x87 => {
                 let size = if op == 0x86 { 1 } else { osz };
-                let loc = self.rm();
-                let a = self.read(loc, size)?;
                 let b = self.get(i.reg, size);
-                self.write(loc, size, b)?;
+                let a = self.modify(self.rm(), size, true, |_| Some(b))?;
                 self.set(i.reg, size, a);
             }
             0x88 | 0x89 => {
@@ -469,11 +493,11 @@ impl Ctx<'_> {
                 let size = if op == 0xfe { 1 } else { osz };
                 match i.ext() {
                     0 | 1 => {
-                        let loc = self.rm();
-                        let a = self.read(loc, size)?;
-                        let (r, f) = alu::inc_dec(a, i.ext() == 1, self.cpu.rflags, size);
-                        self.cpu.set_arith(f);
-                        self.write(loc, size, r)?;
+                        let (dec, flags) = (i.ext() == 1, self.cpu.rflags);
+                        let a = self.modify(self.rm(), size, i.lock, |a| {
+                            Some(alu::inc_dec(a, dec, flags, size).0)
+                        })?;
+                        self.cpu.set_arith(alu::inc_dec(a, dec, flags, size).1);
                     }
                     2 if op == 0xff => {
                         let target = self.read(self.rm(), 8)?;
@@ -531,20 +555,14 @@ impl Ctx<'_> {
     fn group3(&mut self, size: u8) -> Res<()> {
         let i = self.insn;
         let loc = self.rm();
+        if matches!(i.ext(), 2 | 3) {
+            return self.not_neg(loc, size);
+        }
         let a = self.read(loc, size)?;
         match i.ext() {
             0 | 1 => {
                 let (_, f) = alu::logic(a & self.imm(), size);
                 self.cpu.set_arith(f);
-            }
-            2 => self.write(loc, size, !a)?,
-            3 => {
-                let (r, mut f) = alu::sub(0, a, false, size);
-                if a & mask(size) == 0 {
-                    f &= !CF;
-                }
-                self.cpu.set_arith(f);
-                self.write(loc, size, r)?;
             }
             4 | 5 => {
                 let acc = self.get(0, size);
@@ -612,6 +630,25 @@ impl Ctx<'_> {
                     self.set(RDX as u8, size, r);
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn not_neg(&mut self, loc: Loc, size: u8) -> Res<()> {
+        let i = self.insn;
+        match i.ext() {
+            2 => {
+                self.modify(loc, size, i.lock, |a| Some(!a))?;
+            }
+            3 => {
+                let a = self.modify(loc, size, i.lock, |a| Some(alu::sub(0, a, false, size).0))?;
+                let mut f = alu::sub(0, a, false, size).1;
+                if a & mask(size) == 0 {
+                    f &= !CF;
+                }
+                self.cpu.set_arith(f);
+            }
+            _ => unreachable!("only NOT and NEG"),
         }
         Ok(())
     }
@@ -756,17 +793,12 @@ impl Ctx<'_> {
             }
             0xb0 | 0xb1 => {
                 let size = if i.op == 0xb0 { 1 } else { osz };
-                let loc = self.rm();
-                let cur = self.read(loc, size)?;
                 let acc = self.get(0, size);
+                let src = self.get(i.reg, size);
+                let cur =
+                    self.modify(self.rm(), size, i.lock, |cur| (cur == acc).then_some(src))?;
                 self.cpu.set_arith(alu::sub(acc, cur, false, size).1);
-                if acc == cur {
-                    let v = self.get(i.reg, size);
-                    self.write(loc, size, v)?;
-                } else {
-                    if let Loc::Mem(_) = loc {
-                        self.write(loc, size, cur)?;
-                    }
+                if acc != cur {
                     self.set(0, size, cur);
                 }
             }
@@ -820,13 +852,20 @@ impl Ctx<'_> {
             }
             0xc0 | 0xc1 => {
                 let size = if i.op == 0xc0 { 1 } else { osz };
-                let loc = self.rm();
-                let a = self.read(loc, size)?;
                 let b = self.get(i.reg, size);
-                let (r, f) = alu::add(a, b, false, size);
+                let loc = self.rm();
+                let a = match loc {
+                    Loc::Reg(r) => self.get(r, size),
+                    Loc::Mem(_) => {
+                        self.modify(loc, size, i.lock, |a| Some(alu::add(a, b, false, size).0))?
+                    }
+                };
+                let (sum, f) = alu::add(a, b, false, size);
                 self.cpu.set_arith(f);
                 self.set(i.reg, size, a);
-                self.write(loc, size, r)?;
+                if let Loc::Reg(r) = loc {
+                    self.set(r, size, sum);
+                }
             }
             0xc8..=0xcf => {
                 let v = self.get(i.rm, osz);
@@ -865,15 +904,19 @@ impl Ctx<'_> {
             }
             (loc, _) => (loc, offset & (bits - 1)),
         };
-        let v = self.read(loc, osz)?;
-        self.cpu.set_flag(CF, v >> bit & 1 != 0);
-        let r = match op {
-            0 => return Ok(()),
-            1 => v | 1 << bit,
-            2 => v & !(1 << bit),
-            _ => v ^ 1 << bit,
+        let v = if op == 0 {
+            self.read(loc, osz)?
+        } else {
+            self.modify(loc, osz, i.lock, |v| {
+                Some(match op {
+                    1 => v | 1 << bit,
+                    2 => v & !(1 << bit),
+                    _ => v ^ 1 << bit,
+                })
+            })?
         };
-        self.write(loc, osz, r)
+        self.cpu.set_flag(CF, v >> bit & 1 != 0);
+        Ok(())
     }
 
     fn cpuid(&mut self) {
