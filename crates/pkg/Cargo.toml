@@ -7,5 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+aes = "0.9"
 hmac = "0.12"
 sha2 = "0.10"
+xts-mode = "0.6"
