@@ -53,13 +53,11 @@ pub static FUNCTIONS: &[Function] = &[
 
 /// Placeholders: they answer without doing the real work, and say so on
 /// stderr when called.
-pub static STUBS: &[Function] = &[
-    Function {
-        library: "libSceLibcInternalExt",
-        name: "sceLibcHeapGetTraceInfo",
-        func: heap_trace_info,
-    },
-];
+pub static STUBS: &[Function] = &[Function {
+    library: "libSceLibcInternalExt",
+    name: "sceLibcHeapGetTraceInfo",
+    func: heap_trace_info,
+}];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
     Function {

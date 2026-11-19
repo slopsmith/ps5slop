@@ -432,7 +432,11 @@ fn report_stub(
         Ok(o) => format!("{o:?}"),
         Err(e) => format!("Err({e})"),
     };
-    let quiet = if n + 1 == STUB_REPORTS { " (further calls not shown)" } else { "" };
+    let quiet = if n + 1 == STUB_REPORTS {
+        " (further calls not shown)"
+    } else {
+        ""
+    };
     eprintln!(
         "STUB! {}: {}({:#x}, {:#x}, {:#x}, {:#x}, ...) -> {result}{quiet}",
         f.library, f.name, args[0], args[1], args[2], args[3]
@@ -444,8 +448,7 @@ fn placeholders() -> impl Iterator<Item = &'static Function> {
     stubs::STUBS
         .iter()
         .chain(ngs2::STUBS)
-        .chain(agc::STUBS)
-        .chain(agc::DRIVER_STUBS)
+        .chain(agc::stubs())
         .chain(savedata::STUBS)
         .chain(posix::STUBS)
         .chain(services::STUBS)
@@ -476,8 +479,7 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(stubs::FUNCTIONS)
         .chain(savedata::FUNCTIONS)
         .chain(ngs2::FUNCTIONS)
-        .chain(agc::FUNCTIONS)
-        .chain(agc::DRIVER_FUNCTIONS)
+        .chain(agc::functions())
         .chain(placeholders())
         .chain(pthread::SCE_FUNCTIONS)
         .chain(thread::SCE_FUNCTIONS)

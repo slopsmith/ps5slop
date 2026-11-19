@@ -7,8 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{CallError, Env, Function, Outcome};
 
-pub static FUNCTIONS: &[Function] = &[
-];
+pub static FUNCTIONS: &[Function] = &[];
 
 /// Placeholders: they answer without doing the real work, and say so on
 /// stderr when called.
@@ -41,7 +40,8 @@ fn ok(_: &mut Env) -> Result<Outcome, CallError> {
 static NEXT: AtomicU64 = AtomicU64::new(0x1000);
 
 fn new_handle(env: &Env, out: u64) -> Result<Outcome, CallError> {
-    env.mem.write_u64(out, NEXT.fetch_add(1, Ordering::Relaxed))?;
+    env.mem
+        .write_u64(out, NEXT.fetch_add(1, Ordering::Relaxed))?;
     Ok(Outcome::Return(0))
 }
 

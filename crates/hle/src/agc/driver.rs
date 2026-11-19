@@ -36,22 +36,31 @@ impl Default for Registry {
     }
 }
 
-pub static FUNCTIONS: &[Function] = &[
-    f("sceAgcDriverGetResourceRegistrationMaxNameLength", max_name_length),
-    f("sceAgcDriverQueryResourceRegistrationUserMemoryRequirements", memory_requirements),
+pub(super) static FUNCTIONS: &[Function] = &[
+    f(
+        "sceAgcDriverGetResourceRegistrationMaxNameLength",
+        max_name_length,
+    ),
+    f(
+        "sceAgcDriverQueryResourceRegistrationUserMemoryRequirements",
+        memory_requirements,
+    ),
     f("sceAgcDriverInitResourceRegistration", init_registration),
     f("sceAgcDriverGetDefaultOwner", default_owner),
     f("sceAgcDriverRegisterDefaultOwner", register_default_owner),
     f("sceAgcDriverRegisterOwner", register_owner),
     f("sceAgcDriverRegisterResource", register_resource),
     f("sceAgcDriverUnregisterResource", unregister_resource),
-    f("sceAgcDriverUnregisterAllResourcesForOwner", unregister_owner_resources),
+    f(
+        "sceAgcDriverUnregisterAllResourcesForOwner",
+        unregister_owner_resources,
+    ),
     f("sceAgcDriverUnregisterOwnerAndResources", unregister_owner),
 ];
 
 /// Placeholders: they answer without doing the real work, and say so on
 /// stderr when called.
-pub static STUBS: &[Function] = &[
+pub(super) static STUBS: &[Function] = &[
     f("sceAgcDriverSetTFRing", ok),
     f("sceAgcDriverSetHsOffchipParam", ok),
 ];
@@ -72,7 +81,8 @@ fn max_name_length(env: &mut Env) -> Result<Outcome, CallError> {
     if env.arg(0) == 0 {
         return ret(ERROR_INVALID_ARGUMENT);
     }
-    env.mem.write(env.arg(0), &(NAME_MAX as u32).to_le_bytes())?;
+    env.mem
+        .write(env.arg(0), &(NAME_MAX as u32).to_le_bytes())?;
     ret(0)
 }
 
@@ -145,13 +155,21 @@ fn register_resource(env: &mut Env) -> Result<Outcome, CallError> {
 }
 
 fn unregister_resource(env: &mut Env) -> Result<Outcome, CallError> {
-    let removed = lock(&env.kernel.agc.registry).resources.remove(&(env.arg(0) as u32));
-    ret(if removed.is_some() { 0 } else { ERROR_INVALID_ARGUMENT })
+    let removed = lock(&env.kernel.agc.registry)
+        .resources
+        .remove(&(env.arg(0) as u32));
+    ret(if removed.is_some() {
+        0
+    } else {
+        ERROR_INVALID_ARGUMENT
+    })
 }
 
 fn unregister_owner_resources(env: &mut Env) -> Result<Outcome, CallError> {
     let owner = env.arg(0) as u32;
-    lock(&env.kernel.agc.registry).resources.retain(|_, r| r.0 != owner);
+    lock(&env.kernel.agc.registry)
+        .resources
+        .retain(|_, r| r.0 != owner);
     ret(0)
 }
 

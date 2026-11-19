@@ -178,9 +178,7 @@ pub static FUNCTIONS: &[Function] = &[
 
 /// Placeholders: they answer without doing the real work, and say so on
 /// stderr when called.
-pub static STUBS: &[Function] = &[
-    f("sceVideoOutGetOutputStatus", output_status),
-];
+pub static STUBS: &[Function] = &[f("sceVideoOutGetOutputStatus", output_status)];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
     Function {

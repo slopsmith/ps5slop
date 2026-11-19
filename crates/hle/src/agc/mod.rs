@@ -2,9 +2,19 @@
 //! Ported from SharpEmu (GPL-2.0-or-later) and checked against console
 //! measurements where we have them; see `docs/gpu.md`.
 
+mod cmdbuf;
+mod control;
 mod defaults;
+mod dma;
+mod draw;
 mod driver;
+mod events;
+#[cfg(test)]
+mod oracle;
+mod packets;
+mod registers;
 mod shader;
+mod sync;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -26,20 +36,53 @@ pub struct Agc {
     registry: Mutex<driver::Registry>,
 }
 
-pub use driver::{FUNCTIONS as DRIVER_FUNCTIONS, STUBS as DRIVER_STUBS};
+/// Every libSceAgc and libSceAgcDriver function, real ones first.
+pub fn functions() -> impl Iterator<Item = &'static Function> {
+    [
+        FUNCTIONS,
+        driver::FUNCTIONS,
+        packets::FUNCTIONS,
+        control::FUNCTIONS,
+        dma::FUNCTIONS,
+        draw::FUNCTIONS,
+        events::FUNCTIONS,
+        registers::FUNCTIONS,
+        sync::FUNCTIONS,
+    ]
+    .into_iter()
+    .flatten()
+}
+
+/// The placeholders among them.
+pub fn stubs() -> impl Iterator<Item = &'static Function> {
+    [
+        STUBS,
+        driver::STUBS,
+        packets::STUBS,
+        control::STUBS,
+        dma::STUBS,
+        draw::STUBS,
+        events::STUBS,
+        registers::STUBS,
+        sync::STUBS,
+    ]
+    .into_iter()
+    .flatten()
+}
 
 pub static FUNCTIONS: &[Function] = &[
     f("sceAgcInit_0090", init),
     f("sceAgcGetRegisterDefaults2", register_defaults),
-    f("sceAgcGetRegisterDefaults2Internal", register_defaults_internal),
+    f(
+        "sceAgcGetRegisterDefaults2Internal",
+        register_defaults_internal,
+    ),
     f("sceAgcCreateShader", shader::create_shader),
 ];
 
 /// Placeholders: they answer without doing the real work, and say so on
 /// stderr when called.
-pub static STUBS: &[Function] = &[
-    f("sceAgcGetIsTrinityMode", ok),
-];
+pub static STUBS: &[Function] = &[f("sceAgcGetIsTrinityMode", ok)];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
     Function {
@@ -112,7 +155,9 @@ fn place(env: &Env, d: &CompactDefaults) -> Result<u64, CallError> {
         .kernel
         .heap
         .alloc_aligned(env.mem, len, 0x1000)
-        .ok_or(CallError::Abort("no guest memory for AGC register defaults"))?;
+        .ok_or(CallError::Abort(
+            "no guest memory for AGC register defaults",
+        ))?;
     env.mem.write(at, &build(d, at))?;
     Ok(at)
 }
@@ -140,14 +185,24 @@ fn build(d: &CompactDefaults, base: u64) -> Vec<u8> {
     }
     let types_at = at;
     let mut b = vec![0u8; types_at + d.types.len() * 4];
-    let put32 = |b: &mut Vec<u8>, at: usize, v: u32| b[at..at + 4].copy_from_slice(&v.to_le_bytes());
-    let put64 = |b: &mut Vec<u8>, at: usize, v: u64| b[at..at + 8].copy_from_slice(&v.to_le_bytes());
+    let put32 =
+        |b: &mut Vec<u8>, at: usize, v: u32| b[at..at + 4].copy_from_slice(&v.to_le_bytes());
+    let put64 =
+        |b: &mut Vec<u8>, at: usize, v: u64| b[at..at + 8].copy_from_slice(&v.to_le_bytes());
     for (k, (regs, ptrs)) in tables.iter().enumerate() {
-        let table = if ptrs.is_empty() { 0 } else { base + ptr_at[k] as u64 };
+        let table = if ptrs.is_empty() {
+            0
+        } else {
+            base + ptr_at[k] as u64
+        };
         put64(&mut b, 8 * k, table);
         put32(&mut b, 0x20 + 4 * k, (regs.len() / 2) as u32);
         for (i, &p) in ptrs.iter().enumerate() {
-            put64(&mut b, ptr_at[k] + 8 * i, base + (regs_at[k] + p as usize * 8) as u64);
+            put64(
+                &mut b,
+                ptr_at[k] + 8 * i,
+                base + (regs_at[k] + p as usize * 8) as u64,
+            );
         }
         for (i, &r) in regs.iter().enumerate() {
             put32(&mut b, regs_at[k] + 4 * i, r);
@@ -167,7 +222,12 @@ mod tests {
 
     #[test]
     fn default_tables_are_well_formed() {
-        for d in [&defaults::PUBLIC_V10, &defaults::INTERNAL_V10, &defaults::PUBLIC_V11, &defaults::INTERNAL_V11] {
+        for d in [
+            &defaults::PUBLIC_V10,
+            &defaults::INTERNAL_V10,
+            &defaults::PUBLIC_V11,
+            &defaults::INTERNAL_V11,
+        ] {
             assert_eq!(d.types.len() % 3, 0);
             for (regs, ptrs) in [
                 (d.table0, d.table0_ptr),

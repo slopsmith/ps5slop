@@ -118,7 +118,9 @@ impl Files {
         fd: i32,
         f: impl FnOnce(&std::path::Path, &mut usize) -> T,
     ) -> Option<T> {
-        lock(&self.directories).get_mut(&fd).map(|(p, pos)| f(p, pos))
+        lock(&self.directories)
+            .get_mut(&fd)
+            .map(|(p, pos)| f(p, pos))
     }
 }
 

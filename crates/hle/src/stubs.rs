@@ -163,15 +163,42 @@ pub static STUBS: &[Function] = &[
         "libSceNpUniversalDataSystem",
         "sceNpUniversalDataSystemRegisterContext",
     ),
-    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemDestroyHandle"),
-    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemAbortHandle"),
-    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemPostEvent"),
-    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemDestroyContext"),
-    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemDestroyEvent"),
-    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemEventPropertyObjectSetString"),
-    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemEventPropertyObjectSetInt32"),
-    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemEventPropertyObjectSetArray"),
-    zero("libSceNpUniversalDataSystem", "sceNpUniversalDataSystemEventPropertyArraySetString"),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemDestroyHandle",
+    ),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemAbortHandle",
+    ),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemPostEvent",
+    ),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemDestroyContext",
+    ),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemDestroyEvent",
+    ),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemEventPropertyObjectSetString",
+    ),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemEventPropertyObjectSetInt32",
+    ),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemEventPropertyObjectSetArray",
+    ),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemEventPropertyArraySetString",
+    ),
     zero("libSceNpGameIntent", "sceNpGameIntentInitialize"),
     zero("libSceNpGameIntent", "sceNpGameIntentTerminate"),
     out_id::<0>("libSceNpTrophy2", "sceNpTrophy2CreateContext"),

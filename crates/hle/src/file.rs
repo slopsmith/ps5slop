@@ -365,7 +365,11 @@ fn read_directory(env: &Env) -> Result<Result<u64, i32>, CallError> {
             .flatten()
             .flatten()
             .filter_map(|e| {
-                let kind = if e.file_type().ok()?.is_dir() { DT_DIR } else { DT_REG };
+                let kind = if e.file_type().ok()?.is_dir() {
+                    DT_DIR
+                } else {
+                    DT_REG
+                };
                 Some((e.file_name().into_string().ok()?, kind))
             })
             .collect();

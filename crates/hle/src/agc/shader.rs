@@ -74,7 +74,14 @@ pub(super) fn create_shader(env: &mut Env) -> Result<Outcome, CallError> {
     if read_u32(env, header)? != FILE_HEADER || read_u32(env, header + 4)? != VERSION {
         return ret(ERROR_INVALID_ARGUMENT);
     }
-    for field in [CX_REGISTERS, SH_REGISTERS, USER_DATA, SPECIALS, INPUT_SEMANTICS, OUTPUT_SEMANTICS] {
+    for field in [
+        CX_REGISTERS,
+        SH_REGISTERS,
+        USER_DATA,
+        SPECIALS,
+        INPUT_SEMANTICS,
+        OUTPUT_SEMANTICS,
+    ] {
         relocate(env, header + field)?;
     }
     env.mem.write_u64(header + CODE, code)?;
@@ -106,7 +113,11 @@ fn patch_program_registers(env: &Env, header: u64, code: u64) -> Result<u64, Cal
     }
     let may_lack = matches!(kind, GS_FRONT | HS_FRONT | FUNCTION);
     if count == 0 {
-        return Ok(if may_lack { 0 } else { ERROR_INCOMPLETE_REGISTERS });
+        return Ok(if may_lack {
+            0
+        } else {
+            ERROR_INCOMPLETE_REGISTERS
+        });
     }
     if regs == 0 {
         return Ok(ERROR_INCOMPLETE_REGISTERS);
@@ -136,10 +147,22 @@ fn patch_program_registers(env: &Env, header: u64, code: u64) -> Result<u64, Cal
         }),
     };
     let Some((lo, hi)) = pair else {
-        let has_any = offsets.iter().any(|o| PGM_PAIRS.iter().any(|p| p.0 == *o || p.1 == *o));
-        return Ok(if may_lack && !has_any { 0 } else { ERROR_INCOMPLETE_REGISTERS });
+        let has_any = offsets
+            .iter()
+            .any(|o| PGM_PAIRS.iter().any(|p| p.0 == *o || p.1 == *o));
+        return Ok(if may_lack && !has_any {
+            0
+        } else {
+            ERROR_INCOMPLETE_REGISTERS
+        });
     };
-    env.mem.write(regs + 8 * lo as u64 + 4, &((code >> 8) as u32).to_le_bytes())?;
-    env.mem.write(regs + 8 * hi as u64 + 4, &(((code >> 40) & 0xff) as u32).to_le_bytes())?;
+    env.mem.write(
+        regs + 8 * lo as u64 + 4,
+        &((code >> 8) as u32).to_le_bytes(),
+    )?;
+    env.mem.write(
+        regs + 8 * hi as u64 + 4,
+        &(((code >> 40) & 0xff) as u32).to_le_bytes(),
+    )?;
     Ok(0)
 }
