@@ -309,3 +309,33 @@ fn locked_increments_from_several_threads_are_atomic() {
     });
     assert_eq!(mem.read_u64(DATA).unwrap(), threads * per_thread);
 }
+
+fn ps(v: [f32; 8]) -> [u64; 4] {
+    core::array::from_fn(|i| v[2 * i].to_bits() as u64 | (v[2 * i + 1].to_bits() as u64) << 32)
+}
+
+#[test]
+fn vex_256_operations_cover_both_halves_without_touching_the_sources() {
+    let (mut cpu, mut mem) = machine("vaddps ymm1, ymm2, ymm3", &[0xc5, 0xec, 0x58, 0xcb]);
+    cpu.xmm[2] = ps([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+    cpu.xmm[3] = ps([10.0; 8]);
+    steps(&mut cpu, &mut mem, 1);
+    assert_eq!(
+        cpu.xmm[1],
+        ps([11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0])
+    );
+    assert_eq!(cpu.xmm[2], ps([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]));
+}
+
+#[test]
+fn vex_128_clears_the_upper_half_and_legacy_sse_keeps_it() {
+    let (mut cpu, mut mem) = machine(
+        "vpxor xmm4, xmm4, xmm4; pxor xmm5, xmm5",
+        &[0xc5, 0xd9, 0xef, 0xe4, 0x66, 0x0f, 0xef, 0xed],
+    );
+    cpu.xmm[4] = [1, 2, 3, 4];
+    cpu.xmm[5] = [1, 2, 3, 4];
+    steps(&mut cpu, &mut mem, 2);
+    assert_eq!(cpu.xmm[4], [0; 4]);
+    assert_eq!(cpu.xmm[5], [0, 0, 3, 4]);
+}

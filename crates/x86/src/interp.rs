@@ -97,6 +97,8 @@ pub fn step(cpu: &mut Cpu, mem: &mut Memory) -> Exit {
         mem,
         insn,
         next: rip + insn.len as u64,
+        half: 0,
+        wide: false,
     };
     match ctx.exec() {
         Ok(exit) => exit,
@@ -119,6 +121,10 @@ struct Ctx<'a> {
     insn: Insn,
     /// Address of the next instruction.
     next: u64,
+    /// The 128-bit half of a YMM operand an in-lane vector operation is on.
+    half: u8,
+    /// Set while a 256-bit in-lane operation runs, half by half.
+    wide: bool,
 }
 
 impl Ctx<'_> {

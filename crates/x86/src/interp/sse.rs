@@ -6,6 +6,10 @@
 
 use super::*;
 
+/// MXCSR's denormals-are-zero and flush-to-zero bits.
+const MXCSR_DAZ: u32 = 1 << 6;
+const MXCSR_FTZ: u32 = 1 << 15;
+
 /// The x86 default NaNs produced by invalid operations.
 const F32_INDEFINITE: u32 = 0xffc0_0000;
 const F64_INDEFINITE: u64 = 0xfff8_0000_0000_0000;
@@ -204,31 +208,68 @@ impl Ctx<'_> {
         }
     }
 
+    /// The current 128-bit half of register `r`.
     pub(super) fn xget(&self, r: u8) -> u128 {
         let x = self.cpu.xmm[r as usize];
-        x[0] as u128 | (x[1] as u128) << 64
+        let h = 2 * self.half as usize;
+        x[h] as u128 | (x[h + 1] as u128) << 64
     }
 
+    /// Writes the current half of register `r`. A VEX.128 write also clears
+    /// the upper half; a legacy SSE write keeps it.
     pub(super) fn xset(&mut self, r: u8, v: u128) {
+        let h = 2 * self.half as usize;
+        let clear_upper = self.insn.vex.is_some() && !self.wide;
         let x = &mut self.cpu.xmm[r as usize];
-        x[0] = v as u64;
-        x[1] = (v >> 64) as u64;
+        x[h] = v as u64;
+        x[h + 1] = (v >> 64) as u64;
+        if clear_upper {
+            x[2] = 0;
+            x[3] = 0;
+        }
+    }
+
+    /// The first source: VEX.vvvv, or the destination for legacy SSE.
+    pub(super) fn src1(&self) -> u128 {
+        match self.insn.vex {
+            Some(v) => self.xget(v.vvvv),
+            None => self.xget(self.insn.reg),
+        }
+    }
+
+    /// Whether a memory operand must be aligned: legacy SSE requires it of
+    /// most 128-bit operands, VEX only of the explicitly aligned moves.
+    fn must_align(&self, legacy: bool) -> bool {
+        let i = self.insn;
+        match i.vex {
+            None => legacy,
+            Some(_) => {
+                legacy
+                    && (matches!(i.op, 0x28 | 0x29 | 0x2b | 0xe7)
+                        || (matches!(i.op, 0x6f | 0x7f) && i.opsize_prefix))
+            }
+        }
+    }
+
+    fn check_align(&self, addr: u64, aligned: bool) -> Res<()> {
+        let width = if self.wide { 32 } else { 16 };
+        if self.must_align(aligned) && !addr.is_multiple_of(width) {
+            return Err(CpuFault::GeneralProtection);
+        }
+        Ok(())
     }
 
     fn load128(&self, addr: u64, aligned: bool) -> Res<u128> {
-        if aligned && !addr.is_multiple_of(16) {
-            return Err(CpuFault::GeneralProtection);
-        }
+        self.check_align(addr, aligned)?;
         let mut b = [0u8; 16];
-        self.mem.read(addr, &mut b)?;
+        self.mem.read(addr + 16 * self.half as u64, &mut b)?;
         Ok(u128::from_le_bytes(b))
     }
 
     fn store128(&mut self, addr: u64, v: u128, aligned: bool) -> Res<()> {
-        if aligned && !addr.is_multiple_of(16) {
-            return Err(CpuFault::GeneralProtection);
-        }
-        self.mem.write(addr, &v.to_le_bytes())?;
+        self.check_align(addr, aligned)?;
+        self.mem
+            .write(addr + 16 * self.half as u64, &v.to_le_bytes())?;
         Ok(())
     }
 
@@ -244,19 +285,60 @@ impl Ctx<'_> {
     fn src_low(&self, bytes: u8) -> Res<u64> {
         match self.rm() {
             Loc::Reg(r) => Ok(self.xget(r) as u64 & alu::mask(bytes)),
-            Loc::Mem(a) => self.load(a, bytes),
+            Loc::Mem(a) => self.load(a + 16 * self.half as u64, bytes),
         }
     }
 
+    /// Writes the low `bytes` of register `r`; the rest comes from `r` itself
+    /// (legacy SSE) or from VEX.vvvv.
     fn set_low(&mut self, r: u8, bytes: u8, v: u64) {
         let m = alu::mask(bytes) as u128;
-        let x = (self.xget(r) & !m) | (v as u128 & m);
-        self.xset(r, x);
+        let base = match self.insn.vex {
+            Some(x) => self.xget(x.vvvv),
+            None => self.xget(r),
+        };
+        self.xset(r, (base & !m) | (v as u128 & m));
     }
 
-    /// Runs `i` if it is an SSE or SSE2 instruction we implement; returns
-    /// whether it was one.
+    /// Runs `i` if it is an SSE/SSE2 instruction or its VEX form that we
+    /// implement; returns whether it was one.
     pub(super) fn sse(&mut self) -> Res<bool> {
+        let i = self.insn;
+        let Some(vex) = i.vex else {
+            return self.sse_op();
+        };
+        if i.map == Map::M0F && i.op == 0x77 {
+            for x in self.cpu.xmm.iter_mut() {
+                if vex.l {
+                    *x = [0; 4];
+                } else {
+                    x[2] = 0;
+                    x[3] = 0;
+                }
+            }
+            return Ok(true);
+        }
+        if !vex.l || scalar(i.op, self.pfx()) {
+            return self.sse_op();
+        }
+        if !in_lane(i.op, self.pfx()) {
+            return Ok(false);
+        }
+        self.wide = true;
+        let first = self.sse_op();
+        let result = match first {
+            Ok(true) => {
+                self.half = 1;
+                self.sse_op()
+            }
+            other => other,
+        };
+        self.half = 0;
+        self.wide = false;
+        result
+    }
+
+    fn sse_op(&mut self) -> Res<bool> {
         let i = self.insn;
         let p = self.pfx();
         let d = i.reg;
@@ -300,7 +382,7 @@ impl Ctx<'_> {
             }
             (Pfx::None | Pfx::P66, 0x12 | 0x16) => {
                 let high = op == 0x16;
-                let cur = self.xget(d);
+                let cur = self.src1();
                 let v = match self.rm() {
                     Loc::Reg(r) if p == Pfx::None => {
                         let s = self.xget(r);
@@ -348,7 +430,7 @@ impl Ctx<'_> {
                 self.xset(d, join::<4>([x, x, y, y]));
             }
             (Pfx::None, 0x14 | 0x15) => {
-                let (a, b) = (lanes::<4>(self.xget(d)), lanes::<4>(self.src128(true)?));
+                let (a, b) = (lanes::<4>(self.src1()), lanes::<4>(self.src128(true)?));
                 let r = if op == 0x14 {
                     [a[0], b[0], a[1], b[1]]
                 } else {
@@ -357,7 +439,7 @@ impl Ctx<'_> {
                 self.xset(d, join::<4>(r));
             }
             (Pfx::P66, 0x14 | 0x15) => {
-                let (a, b) = (lanes::<2>(self.xget(d)), lanes::<2>(self.src128(true)?));
+                let (a, b) = (lanes::<2>(self.src1()), lanes::<2>(self.src128(true)?));
                 let r = if op == 0x14 {
                     [a[0], b[0]]
                 } else {
@@ -435,7 +517,7 @@ impl Ctx<'_> {
             }
             (_, 0x51 | 0x58 | 0x59 | 0x5c..=0x5f) => self.float_arith(p)?,
             (_, 0x54..=0x57) if matches!(p, Pfx::None | Pfx::P66) => {
-                let (a, b) = (self.xget(d), self.src128(true)?);
+                let (a, b) = (self.src1(), self.src128(true)?);
                 let r = match op {
                     0x54 => a & b,
                     0x55 => !a & b,
@@ -552,8 +634,8 @@ impl Ctx<'_> {
             }
             (Pfx::P66, 0x71..=0x73) => {
                 let count = self.imm() as u8 as u64;
-                let r = i.rm;
-                let v = self.xget(r);
+                let v = self.xget(i.rm);
+                let r = i.vex.map_or(i.rm, |x| x.vvvv);
                 let res = match (op, i.ext()) {
                     (0x71, 2) => self.shift_lanes::<8>(v, count, 0),
                     (0x71, 4) => self.shift_lanes::<8>(v, count, 1),
@@ -582,8 +664,11 @@ impl Ctx<'_> {
                 self.xset(r, res);
             }
             (Pfx::P66, 0xd1 | 0xd2 | 0xd3 | 0xe1 | 0xe2 | 0xf1 | 0xf2 | 0xf3) => {
-                let count = self.src128(true)? as u64;
-                let v = self.xget(d);
+                let half = std::mem::replace(&mut self.half, 0);
+                let count = self.src128(true);
+                self.half = half;
+                let count = count? as u64;
+                let v = self.src1();
                 let kind = match op & 0xf0 {
                     0xd0 => 0,
                     0xe0 => 1,
@@ -607,7 +692,7 @@ impl Ctx<'_> {
                 | 0xf4..=0xf6
                 | 0xf8..=0xfe,
             ) => {
-                let (a, b) = (self.xget(d), self.src128(true)?);
+                let (a, b) = (self.src1(), self.src128(true)?);
                 self.xset(d, int_op(op, a, b));
             }
             (Pfx::P66, 0xd7) => {
@@ -618,7 +703,7 @@ impl Ctx<'_> {
             (Pfx::P66, 0xc4) => {
                 let v = self.read(self.rm(), 2)?;
                 let k = (self.imm() & 7) as usize;
-                let mut l = lanes::<8>(self.xget(d));
+                let mut l = lanes::<8>(self.src1());
                 l[k] = v;
                 self.xset(d, join::<8>(l));
             }
@@ -628,14 +713,14 @@ impl Ctx<'_> {
                 self.set(d, 4, v);
             }
             (Pfx::None, 0xc6) => {
-                let (a, b) = (lanes::<4>(self.xget(d)), lanes::<4>(self.src128(true)?));
+                let (a, b) = (lanes::<4>(self.src1()), lanes::<4>(self.src128(true)?));
                 let imm = self.imm() as u8;
                 let s = |l: &[u64; 4], k: u8| l[((imm >> (2 * k)) & 3) as usize];
                 self.xset(d, join::<4>([s(&a, 0), s(&a, 1), s(&b, 2), s(&b, 3)]));
             }
             (Pfx::P66, 0xc6) => {
-                let (a, b) = (lanes::<2>(self.xget(d)), lanes::<2>(self.src128(true)?));
-                let imm = self.imm();
+                let (a, b) = (lanes::<2>(self.src1()), lanes::<2>(self.src128(true)?));
+                let imm = self.imm() >> (2 * self.half);
                 self.xset(
                     d,
                     join::<2>([a[(imm & 1) as usize], b[((imm >> 1) & 1) as usize]]),
@@ -643,7 +728,7 @@ impl Ctx<'_> {
             }
             (_, 0xc2) => {
                 let pred = self.imm() as u8;
-                let a = self.xget(d);
+                let a = self.src1();
                 match p {
                     Pfx::None | Pfx::P66 => {
                         let b = self.src128(true)?;
@@ -733,8 +818,18 @@ impl Ctx<'_> {
     fn float_arith(&mut self, p: Pfx) -> Res<()> {
         let op = self.insn.op;
         let d = self.insn.reg;
+        let daz = self.cpu.mxcsr & MXCSR_DAZ != 0;
+        let ftz = self.cpu.mxcsr & MXCSR_FTZ != 0;
         let f32f = |a: u32, b: u32| -> u32 {
-            match op {
+            let zero_in = |x: u32| {
+                if daz && x & 0x7f80_0000 == 0 {
+                    x & 0x8000_0000
+                } else {
+                    x
+                }
+            };
+            let (a, b) = (zero_in(a), zero_in(b));
+            let r = match op {
                 0x51 => sqrt32(b),
                 0x58 => f32op(a, b, |x, y| x + y),
                 0x59 => f32op(a, b, |x, y| x * y),
@@ -742,10 +837,19 @@ impl Ctx<'_> {
                 0x5d => minmax32(a, b, false),
                 0x5e => f32op(a, b, |x, y| x / y),
                 _ => minmax32(a, b, true),
+            };
+            if ftz && r & 0x7f80_0000 == 0 {
+                r & 0x8000_0000
+            } else {
+                r
             }
         };
         let f64f = |a: u64, b: u64| -> u64 {
-            match op {
+            let exp = 0x7ff0_0000_0000_0000u64;
+            let sign = 1u64 << 63;
+            let zero_in = |x: u64| if daz && x & exp == 0 { x & sign } else { x };
+            let (a, b) = (zero_in(a), zero_in(b));
+            let r = match op {
                 0x51 => sqrt64(b),
                 0x58 => f64op(a, b, |x, y| x + y),
                 0x59 => f64op(a, b, |x, y| x * y),
@@ -753,9 +857,10 @@ impl Ctx<'_> {
                 0x5d => minmax64(a, b, false),
                 0x5e => f64op(a, b, |x, y| x / y),
                 _ => minmax64(a, b, true),
-            }
+            };
+            if ftz && r & exp == 0 { r & sign } else { r }
         };
-        let a = self.xget(d);
+        let a = self.src1();
         match p {
             Pfx::None => {
                 let b = self.src128(true)?;
@@ -780,7 +885,7 @@ impl Ctx<'_> {
     fn unpack_pack(&mut self) -> Res<()> {
         let op = self.insn.op;
         let d = self.insn.reg;
-        let (a, b) = (self.xget(d), self.src128(true)?);
+        let (a, b) = (self.src1(), self.src128(true)?);
         let unpack = |n: usize, high: bool| -> u128 {
             let bits = 128 / n;
             let m = if bits == 64 {
@@ -841,6 +946,48 @@ impl Ctx<'_> {
         };
         self.xset(d, r);
         Ok(())
+    }
+}
+
+/// Whether `0F op` is a scalar operation, for which VEX.L is ignored.
+fn scalar(op: u8, p: Pfx) -> bool {
+    match p {
+        Pfx::F3 | Pfx::F2 => matches!(
+            op,
+            0x10 | 0x11 | 0x2a | 0x2c | 0x2d | 0x51 | 0x58 | 0x59 | 0x5a | 0x5c..=0x5f | 0xc2
+        ),
+        _ => matches!(op, 0x2e | 0x2f),
+    }
+}
+
+/// Whether a 256-bit VEX form of `0F op` works on each 128-bit half on its own.
+fn in_lane(op: u8, p: Pfx) -> bool {
+    let packed = matches!(p, Pfx::None | Pfx::P66);
+    match op {
+        0x10
+        | 0x11
+        | 0x14
+        | 0x15
+        | 0x28
+        | 0x29
+        | 0x2b
+        | 0x51
+        | 0x54..=0x59
+        | 0x5c..=0x5f
+        | 0xc2
+        | 0xc6 => packed,
+        0x12 | 0x16 => matches!(p, Pfx::F3 | Pfx::F2),
+        0x5b => p != Pfx::F2,
+        0x6f | 0x7f => matches!(p, Pfx::P66 | Pfx::F3),
+        0x70 => p != Pfx::None,
+        0x60..=0x6d
+        | 0x71..=0x76
+        | 0xd1..=0xd5
+        | 0xd8..=0xe5
+        | 0xe7..=0xef
+        | 0xf1..=0xf6
+        | 0xf8..=0xfe => p == Pfx::P66,
+        _ => false,
     }
 }
 
