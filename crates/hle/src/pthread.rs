@@ -355,14 +355,19 @@ fn cond_wait(env: &mut Env) -> Result<Outcome, CallError> {
 /// `pthread_cond_timedwait(cond, mutex, abstime)`: `abstime` is a
 /// CLOCK_REALTIME `struct timespec { i64 sec; i64 nsec; }`.
 fn cond_timedwait(env: &mut Env) -> Result<Outcome, CallError> {
-    let ts = env.arg(2);
+    let deadline = realtime_deadline(env, env.arg(2))?;
+    wait(env, Some(deadline))
+}
+
+/// The instant a CLOCK_REALTIME `struct timespec { i64 sec; i64 nsec; }`
+/// at `ts` names.
+pub(crate) fn realtime_deadline(env: &Env, ts: u64) -> Result<Instant, CallError> {
     let (sec, nsec) = (env.mem.read_u64(ts)?, env.mem.read_u64(ts + 8)?);
-    let target = Duration::new(sec, nsec as u32);
+    let target = Duration::new(sec, nsec.min(999_999_999) as u32);
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    let deadline = Instant::now() + target.saturating_sub(now);
-    wait(env, Some(deadline))
+    Ok(Instant::now() + target.saturating_sub(now))
 }
 
 fn cond_signal(env: &mut Env) -> Result<Outcome, CallError> {

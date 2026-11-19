@@ -1,0 +1,297 @@
+//! libkernel's smaller POSIX functions: files by path, time, signals (which
+//! we never deliver), scheduling, `sysconf`, and the dynamic linker
+//! interface (which loads nothing yet). Constants are FreeBSD's.
+
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use crate::dmem::sce_error;
+use crate::libc::{FdInfo, host_path};
+use crate::pthread::{POLL, ret as ret_errno};
+use crate::{CallError, Env, Function, Outcome, errno};
+
+pub static FUNCTIONS: &[Function] = &[
+    f("stat", stat),
+    f("fstat", fstat),
+    f("mkdir", mkdir),
+    f("gettimeofday", gettimeofday),
+    f("nanosleep", nanosleep),
+    f("sysconf", sysconf),
+    f("sysctl", sysctl),
+    f("sysctlbyname", sysctl),
+    f("sigaction", sigaction),
+    f("signal", signal),
+    f("sigemptyset", sigemptyset),
+    f("sigaddset", sigaddset),
+    f("pthread_sigmask", pthread_sigmask),
+    f("pthread_setcanceltype", pthread_setcanceltype),
+    f("pthread_getschedparam", pthread_getschedparam),
+    f("pthread_setschedparam", pthread_setschedparam),
+    f("sched_get_priority_min", sched_get_priority_min),
+    f("sched_get_priority_max", sched_get_priority_max),
+    f("dlopen", dlopen),
+    f("dlsym", dlsym),
+    f("dlclose", dlclose),
+    f("dlerror", dlerror),
+    f("sceKernelSendNotificationRequest", send_notification),
+];
+
+const fn f(name: &'static str, func: crate::HostFn) -> Function {
+    Function {
+        library: "libkernel",
+        name,
+        func,
+    }
+}
+
+fn ret(v: u64) -> Result<Outcome, CallError> {
+    Ok(Outcome::Return(v))
+}
+
+const EROFS: i32 = 30;
+const S_IFCHR: u16 = 0o020000;
+const S_IFDIR: u16 = 0o040000;
+const S_IFREG: u16 = 0o100000;
+/// The size of `struct stat` in the pre-FreeBSD-12 layout shadPS4 uses for
+/// the PS4. Unverified for the PS5.
+const STAT_SIZE: usize = 120;
+
+/// Writes a `struct stat` for a file of `mode` and `size`.
+fn write_stat(
+    env: &Env,
+    at: u64,
+    mode: u16,
+    size: u64,
+    mtime: Option<SystemTime>,
+) -> Result<(), CallError> {
+    let mut sb = [0u8; STAT_SIZE];
+    sb[8..10].copy_from_slice(&mode.to_le_bytes());
+    sb[10..12].copy_from_slice(&1u16.to_le_bytes());
+    let t = mtime
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .unwrap_or_default();
+    for off in [24, 40, 56, 104] {
+        sb[off..off + 8].copy_from_slice(&t.as_secs().to_le_bytes());
+        sb[off + 8..off + 16].copy_from_slice(&(t.subsec_nanos() as u64).to_le_bytes());
+    }
+    sb[72..80].copy_from_slice(&size.to_le_bytes());
+    sb[80..88].copy_from_slice(&size.div_ceil(512).to_le_bytes());
+    sb[88..92].copy_from_slice(&0x4000u32.to_le_bytes());
+    env.mem.write(at, &sb)?;
+    Ok(())
+}
+
+fn write_metadata(env: &Env, at: u64, m: &std::fs::Metadata) -> Result<(), CallError> {
+    let mode = if m.is_dir() {
+        S_IFDIR | 0o555
+    } else {
+        S_IFREG | 0o444
+    };
+    write_stat(env, at, mode, m.len(), m.modified().ok())
+}
+
+/// `stat(path, sb)`: only paths under `/app0` exist.
+fn stat(env: &mut Env) -> Result<Outcome, CallError> {
+    let path = super::libc::cstr(env, env.arg(0))?;
+    let meta = host_path(env.kernel.app0.as_deref(), &path).and_then(|p| std::fs::metadata(p).ok());
+    match meta {
+        Some(m) => {
+            write_metadata(env, env.arg(1), &m)?;
+            ret(0)
+        }
+        None => env.fail(errno::ENOENT),
+    }
+}
+
+fn fstat(env: &mut Env) -> Result<Outcome, CallError> {
+    let (fd, at) = (env.arg(0) as i32, env.arg(1));
+    match env.kernel.libc.files.fd_info(fd) {
+        Some(FdInfo::Console) => write_stat(env, at, S_IFCHR | 0o666, 0, None)?,
+        Some(FdInfo::File(m)) => write_metadata(env, at, &m)?,
+        None => return env.fail(errno::EBADF),
+    }
+    ret(0)
+}
+
+/// `mkdir(path, mode)`: `/app0` is read-only and nothing else exists yet.
+fn mkdir(env: &mut Env) -> Result<Outcome, CallError> {
+    let path = super::libc::cstr(env, env.arg(0))?;
+    let in_app0 = path == b"/app0" || path.starts_with(b"/app0/");
+    env.fail(if in_app0 { EROFS } else { errno::ENOENT })
+}
+
+/// `gettimeofday(tv, tz)`, with `struct timeval { i64 sec; i64 usec; }`.
+fn gettimeofday(env: &mut Env) -> Result<Outcome, CallError> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    if env.arg(0) != 0 {
+        env.mem.write_u64(env.arg(0), now.as_secs())?;
+        env.mem
+            .write_u64(env.arg(0) + 8, now.subsec_micros() as u64)?;
+    }
+    ret(0)
+}
+
+/// `nanosleep(req, rem)`, waking early only when the process exits.
+fn nanosleep(env: &mut Env) -> Result<Outcome, CallError> {
+    let req = env.arg(0);
+    let (sec, nsec) = (env.mem.read_u64(req)?, env.mem.read_u64(req + 8)?);
+    if nsec >= 1_000_000_000 {
+        return env.fail(errno::EINVAL);
+    }
+    let end = Instant::now() + Duration::new(sec, nsec as u32);
+    while let Some(left) = end.checked_duration_since(Instant::now()) {
+        if env.kernel.has_exited() {
+            break;
+        }
+        std::thread::sleep(left.min(POLL));
+    }
+    ret(0)
+}
+
+const SC_CLK_TCK: u64 = 3;
+const SC_OPEN_MAX: u64 = 5;
+const SC_PAGESIZE: u64 = 47;
+const SC_NPROCESSORS_CONF: u64 = 57;
+const SC_NPROCESSORS_ONLN: u64 = 58;
+/// CPU cores we report (our choice; the PS5 has 8, of which games get fewer).
+const CPUS: u64 = 8;
+
+fn sysconf(env: &mut Env) -> Result<Outcome, CallError> {
+    match env.arg(0) {
+        SC_CLK_TCK => ret(128),
+        SC_OPEN_MAX => ret(1024),
+        SC_PAGESIZE => ret(memory::PAGE_SIZE),
+        SC_NPROCESSORS_CONF | SC_NPROCESSORS_ONLN => ret(CPUS),
+        _ => env.fail(errno::EINVAL),
+    }
+}
+
+/// `sysctl` and `sysctlbyname`: no names are known yet.
+fn sysctl(env: &mut Env) -> Result<Outcome, CallError> {
+    env.fail(errno::ENOENT)
+}
+
+/// `struct sigaction`: handler, flags and a 128-bit mask, padded.
+const SIGACTION_SIZE: usize = 32;
+const SIGSET_SIZE: usize = 16;
+const MAX_SIGNAL: u64 = 128;
+
+/// `sigaction(sig, act, oact)`: accepted and never delivered; the old
+/// action reads as the default.
+fn sigaction(env: &mut Env) -> Result<Outcome, CallError> {
+    let (sig, oact) = (env.arg(0) as i32, env.arg(2));
+    if sig <= 0 || sig as u64 > MAX_SIGNAL {
+        return env.fail(errno::EINVAL);
+    }
+    if oact != 0 {
+        env.mem.write(oact, &[0; SIGACTION_SIZE])?;
+    }
+    ret(0)
+}
+
+/// `signal(sig, handler)`: returns `SIG_DFL`.
+fn signal(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
+fn sigemptyset(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write(env.arg(0), &[0; SIGSET_SIZE])?;
+    ret(0)
+}
+
+fn sigaddset(env: &mut Env) -> Result<Outcome, CallError> {
+    let (set, sig) = (env.arg(0), env.arg(1) as i32 as i64);
+    if sig <= 0 || sig as u64 > MAX_SIGNAL {
+        return env.fail(errno::EINVAL);
+    }
+    let bit = sig as u64 - 1;
+    let word = set + bit / 32 * 4;
+    let mut b = [0u8; 4];
+    env.mem.read(word, &mut b)?;
+    let v = u32::from_le_bytes(b) | 1 << (bit % 32);
+    env.mem.write(word, &v.to_le_bytes())?;
+    ret(0)
+}
+
+/// `pthread_sigmask(how, set, oset)`: the mask is always empty.
+fn pthread_sigmask(env: &mut Env) -> Result<Outcome, CallError> {
+    if env.arg(2) != 0 {
+        env.mem.write(env.arg(2), &[0; SIGSET_SIZE])?;
+    }
+    ret_errno(0)
+}
+
+/// `pthread_setcanceltype(type, oldtype)`: threads are never cancelled.
+fn pthread_setcanceltype(env: &mut Env) -> Result<Outcome, CallError> {
+    if env.arg(1) != 0 {
+        env.mem.write(env.arg(1), &0u32.to_le_bytes())?;
+    }
+    ret_errno(0)
+}
+
+const SCHED_OTHER: u32 = 2;
+/// Orbis thread priorities: lower is more urgent. Range and default from
+/// shadPS4 (PS4); unverified for the PS5.
+const PRIORITY_HIGHEST: u32 = 256;
+const PRIORITY_LOWEST: u32 = 767;
+const PRIORITY_DEFAULT: u32 = 700;
+
+/// `pthread_getschedparam(thread, policy, param)`.
+fn pthread_getschedparam(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write(env.arg(1), &SCHED_OTHER.to_le_bytes())?;
+    env.mem.write(env.arg(2), &PRIORITY_DEFAULT.to_le_bytes())?;
+    ret_errno(0)
+}
+
+/// `pthread_setschedparam`: accepted; host threads keep their priority.
+fn pthread_setschedparam(_: &mut Env) -> Result<Outcome, CallError> {
+    ret_errno(0)
+}
+
+fn sched_get_priority_min(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(PRIORITY_HIGHEST as u64)
+}
+
+fn sched_get_priority_max(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(PRIORITY_LOWEST as u64)
+}
+
+/// `dlopen(path, mode)`: loading modules is not supported yet.
+fn dlopen(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
+fn dlsym(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
+fn dlclose(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
+fn dlerror(env: &mut Env) -> Result<Outcome, CallError> {
+    ret(super::libc::heap_cstr(
+        env,
+        b"ps5slop cannot load modules yet",
+    )?)
+}
+
+/// Where the text sits in a notification request (OpenOrbis's
+/// `OrbisNotificationRequest`), and its size.
+const NOTIFICATION_MESSAGE: u64 = 45;
+const NOTIFICATION_MESSAGE_LEN: usize = 1024;
+
+/// `sceKernelSendNotificationRequest(device, request, size, blocking)`:
+/// prints the message on stderr.
+fn send_notification(env: &mut Env) -> Result<Outcome, CallError> {
+    let mut text = env
+        .mem
+        .read_cstr(env.arg(1) + NOTIFICATION_MESSAGE, NOTIFICATION_MESSAGE_LEN)?;
+    text.splice(0..0, b"[notification] ".iter().copied());
+    text.push(b'\n');
+    if env.kernel.write_output(2, &text).is_err() {
+        return ret(sce_error(errno::EINVAL));
+    }
+    ret(0)
+}

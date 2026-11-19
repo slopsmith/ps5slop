@@ -125,6 +125,9 @@ pub struct Kernel {
     /// Guest threads still running; the process ends when the last one does.
     live: AtomicU64,
     pub(crate) heap: crate::heap::Heap,
+    pub(crate) sems: crate::sem::Semaphores,
+    pub(crate) dmem: crate::dmem::DirectMemory,
+    pub(crate) equeues: crate::equeue::Queues,
     pub(crate) libc: crate::libc::State,
     /// The title folder, which the guest sees as `/app0`.
     pub(crate) app0: Option<PathBuf>,
@@ -153,6 +156,9 @@ impl Kernel {
             me: me.clone(),
             live: AtomicU64::new(0),
             heap: Default::default(),
+            sems: Default::default(),
+            dmem: Default::default(),
+            equeues: Default::default(),
             libc: Default::default(),
             app0,
         })

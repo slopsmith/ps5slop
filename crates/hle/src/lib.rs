@@ -13,12 +13,16 @@ use memory::{Fault, MapError, Memory, PAGE_SIZE, Prot};
 use x86::Cpu;
 use x86::cpu::reg::*;
 
+mod dmem;
+mod equeue;
 pub mod errno;
 mod heap;
 mod kernel;
 mod libc;
+mod posix;
 mod process;
 mod pthread;
+mod sem;
 mod sysmodule;
 mod thread;
 
@@ -233,6 +237,10 @@ impl Hle {
             .chain(sysmodule::FUNCTIONS)
             .chain(pthread::FUNCTIONS)
             .chain(thread::FUNCTIONS)
+            .chain(sem::FUNCTIONS)
+            .chain(dmem::FUNCTIONS)
+            .chain(equeue::FUNCTIONS)
+            .chain(posix::FUNCTIONS)
             .chain(libc::functions())
             .map(|f| ((nid(f.name), f.library.to_owned()), f))
             .collect();
@@ -581,6 +589,32 @@ mod tests {
         assert_eq!(libkernel(&k, "pthread_getspecific", 1, &[key]), 0xaaaa);
         assert_eq!(libkernel(&k, "pthread_getspecific", 2, &[key]), 0xbbbb);
         assert_eq!(libkernel(&k, "pthread_getspecific", 3, &[key]), 0);
+    }
+
+    #[test]
+    fn semaphores_count_posts_and_refuse_to_go_below_zero() {
+        let mut hle = Hle::new();
+        for name in [
+            "sem_init",
+            "sem_trywait",
+            "sem_post",
+            "sem_getvalue",
+            "__error",
+        ] {
+            hle.stub_by_name("libkernel", name);
+        }
+        let (k, cpu, _) = guest(hle);
+        let me = cpu.fs_base;
+        let (sem, value) = (0x20_0000, 0x20_0100);
+        assert_eq!(libkernel(&k, "sem_init", me, &[sem, 0, 1]), 0);
+        assert_eq!(libkernel(&k, "sem_trywait", me, &[sem]), 0);
+        assert_eq!(libkernel(&k, "sem_trywait", me, &[sem]), u64::MAX);
+        assert_eq!(libkernel(&k, "sem_post", me, &[sem]), 0);
+        assert_eq!(libkernel(&k, "sem_post", me, &[sem]), 0);
+        libkernel(&k, "sem_getvalue", me, &[sem, value]);
+        let mut b = [0u8; 4];
+        k.memory().read(value, &mut b).unwrap();
+        assert_eq!(u32::from_le_bytes(b), 2);
     }
 
     #[test]

@@ -51,6 +51,23 @@ pub(crate) struct Files {
     streams: Mutex<HashMap<u64, Stream>>,
 }
 
+/// What a file descriptor from a stream refers to.
+pub(crate) enum FdInfo {
+    Console,
+    File(std::fs::Metadata),
+}
+
+impl Files {
+    pub(crate) fn fd_info(&self, fd: i32) -> Option<FdInfo> {
+        let streams = lock(&self.streams);
+        let s = streams.values().find(|s| s.fd == fd)?;
+        match &s.target {
+            Target::Console(_) => Some(FdInfo::Console),
+            Target::Host(f) => f.metadata().ok().map(FdInfo::File),
+        }
+    }
+}
+
 impl Default for Files {
     fn default() -> Self {
         let console = |fd| Stream {

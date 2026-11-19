@@ -37,6 +37,16 @@ Each thread's errno lives in its thread control block, at the thread pointer plu
 | libkernel | `pthread_once` | The routine runs as a guest call; other callers wait | `threads` test program |
 | libkernel | `pthread_create`, `join`, `detach`, `exit`, `self`, `equal` | `pthread_t` is the thread pointer; attributes are ignored and every thread gets a 1 MiB stack (the Orbis default is unknown) | `threads` test program, 30 runs out of 30 |
 | libkernel | `__stack_chk_fail`, `__stack_chk_guard` (variable) | Stops the process / a fixed non-zero canary in the HLE data region (`0xFF_8000_0000`) | `__stack_chk_guard` used by vic's homebrew |
+| libkernel | `sem_init`, `sem_destroy`, `sem_wait`, `sem_trywait`, `sem_timedwait`, `sem_post`, `sem_getvalue` | Our handle in the first word of `sem_t`; errors set errno and return -1 | Unit test |
+| libkernel | `sceKernelGetDirectMemorySize`, `sceKernelAllocateDirectMemory`, `sceKernelAllocateMainDirectMemory`, `sceKernelReleaseDirectMemory`, `sceKernelMapDirectMemory` | 12 GiB of direct memory (our choice), first-fit allocation. Each map gets fresh memory: two maps of one range do not alias, and released ranges stay mapped. GPU protection bits grant CPU access. Errors are `0x80020000` + errno | Allocator unit-tested; reached by ScreenTester5 |
+| libkernel | `sceKernelCreateEqueue`, `sceKernelDeleteEqueue`, `sceKernelWaitEqueue` | Events are `struct kevent`s, reported once per trigger (as with `EV_CLEAR`). Other libraries register and trigger them through `Kernel::add_event` and `Kernel::trigger_event`. A timeout returns `0x8002003C` (`ETIMEDOUT`) | Unit test of the queue logic |
+| libkernel | `pthread_attr_{init,destroy,setdetachstate,setstacksize}`, `pthread_set_name_np` | `pthread_create` uses the stack size and detach state; names are dropped | Reached by ScreenTester5 |
+| libkernel | `stat`, `fstat`, `mkdir` | `stat` sees only `/app0`; `fstat` works on descriptors of stdio streams. `struct stat` uses the pre-FreeBSD-12 layout shadPS4 uses for the PS4 (unverified for the PS5). `mkdir` fails (`EROFS` in `/app0`, `ENOENT` elsewhere) | |
+| libkernel | `gettimeofday`, `nanosleep`, `sysconf`, `sysctl`, `sysctlbyname` | `sysconf` knows the page size (16 KiB), CPU count (8, our choice), clock ticks and open files. `sysctl` knows no names yet and fails with `ENOENT` | |
+| libkernel | `sigaction`, `signal`, `sigemptyset`, `sigaddset`, `pthread_sigmask`, `pthread_setcanceltype` | Accepted, never acted on: signals are not delivered and threads are not cancelled | |
+| libkernel | `pthread_{get,set}schedparam`, `sched_get_priority_{min,max}` | Priorities 256 (most urgent) to 767, default 700, from shadPS4 (PS4). Host threads keep their own priority | |
+| libkernel | `dlopen`, `dlsym`, `dlclose`, `dlerror` | Load nothing: `dlopen` returns null | |
+| libkernel | `sceKernelSendNotificationRequest` | Prints the message on stderr | |
 | libSceLibcInternal | `mem*`, `str*`, `ctype` functions, `wcs*` (16-bit `wchar_t`), `mbrtowc`, `wcrtomb`, `wcstombs` (UTF-8) | C standard semantics; FreeBSD's choices where it leaves room | Unit tests for the parsers. Orbis's locale behaviour is unknown |
 | libSceLibcInternal | `sprintf`, `snprintf`, `vsnprintf`, `fprintf`, `vsscanf` | Our own printf and scanf engines. Variadic arguments come from registers and the stack, or a SysV `va_list`. `%ls` and `%lc` take 16-bit characters | Unit tests. Float output uses Rust's formatting, so the last digit of long expansions may differ from Orbis |
 | libSceLibcInternal | `sin`, `cos`, `pow`, `atan2`, ... (the `<math.h>` functions ScreenTester5 imports, double and float) | The host's libm | May differ from Orbis in the last bit |
@@ -84,7 +94,7 @@ ScreenTester5 (see [test-targets.md](test-targets.md)) loads and relocates (2,09
 
 It does not import from the `libc.prx` it ships.
 
-Status on 2026-11-19: the C library is in place (one libc import, NID `Fm-dmyywH9Q`, still has no name and no host function). ScreenTester5 runs through `_init_env` and its start-up code and stops at the first libkernel function we lack (NID `pDuPEf3m4fI`).
+Status on 2026-11-19: the C library is in place (one libc import, NID `Fm-dmyywH9Q`, still has no name and no host function). ScreenTester5 runs through `_init_env` and its start-up code. With the libkernel functions above it gets through its set-up, including starting threads, and stops at its first system service call (libSceSystemService NID `Vo5V8KAwCmk`). One libkernel import (NID `FJmglmTMdr4`) and one libScePad import (`W2G-yoyMF5U`) still have no name.
 
 ## What a real executable needs next
 

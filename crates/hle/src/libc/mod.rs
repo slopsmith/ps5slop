@@ -14,7 +14,7 @@ mod stdio;
 mod stdlib;
 mod string;
 
-pub(crate) use stdio::Files;
+pub(crate) use stdio::{FdInfo, Files, host_path};
 
 pub const LIBRARY: &str = "libSceLibcInternal";
 
@@ -81,7 +81,7 @@ const fn f(name: &'static str, func: crate::HostFn) -> Function {
 const MAX_STRING: usize = 1 << 20;
 
 /// The NUL-terminated string at `addr`.
-fn cstr(env: &Env, addr: u64) -> Result<Vec<u8>, CallError> {
+pub(crate) fn cstr(env: &Env, addr: u64) -> Result<Vec<u8>, CallError> {
     Ok(env.mem.read_cstr(addr, MAX_STRING)?)
 }
 
@@ -102,7 +102,7 @@ fn wstr(env: &Env, addr: u64) -> Result<Vec<u16>, CallError> {
 
 /// Copies `s` and a NUL into the heap and returns its address (0 when the
 /// heap is full).
-fn heap_cstr(env: &Env, s: &[u8]) -> Result<u64, CallError> {
+pub(crate) fn heap_cstr(env: &Env, s: &[u8]) -> Result<u64, CallError> {
     let Some(at) = env.kernel.heap.alloc(env.mem, s.len() as u64 + 1) else {
         return Ok(0);
     };
