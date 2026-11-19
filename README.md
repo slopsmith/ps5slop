@@ -26,7 +26,7 @@ cargo run --release -p ps5slop -- run games/TITLE   # an app folder; opens a win
 cargo run --release -p ps5slop -- run --headless --dump-frame out.ppm --after 10 games/TITLE
 ```
 
-In the window, the keyboard stands in for the controller: arrow keys for the D-pad, X Cross, C Circle, Z Square, V Triangle, Q/E for L1/R1, 1/3 for L2/R2, Enter for Options, T for the touchpad button. Closing the window ends the guest.
+A DualShock 4, DualSense or other controller macOS knows (through its GameController framework) works as the pad; plug it in or pair it before starting. The keyboard works too, and the two combine: arrow keys for the D-pad, X Cross, C Circle, Z Square, V Triangle, Q/E for L1/R1, 1/3 for L2/R2, Enter for Options, T for the touchpad button. Closing the window ends the guest.
 
 ## Docs
 

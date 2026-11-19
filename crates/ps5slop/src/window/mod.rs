@@ -1,16 +1,18 @@
 //! The window: winit for the window and keyboard, Metal for drawing. It
 //! runs on the main thread (AppKit requires it); the guest runs on its own.
 
+mod gamepad;
 mod layout;
 mod present;
 
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use hle::{Kernel, PadInput};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
@@ -20,6 +22,8 @@ use present::Presenter;
 
 /// The PS5's usual output size, for the first window.
 const FIRST_SIZE: (u32, u32) = (1920, 1080);
+/// How often controllers are polled.
+const PAD_POLL: Duration = Duration::from_millis(8);
 
 enum Wake {
     Frame,
@@ -37,6 +41,7 @@ pub fn run(booted: Booted) -> Result<i32, Error> {
             return booted.run();
         }
     };
+    gamepad::init();
     let proxy = event_loop.create_proxy();
     let frames = proxy.clone();
     kernel.set_flip_listener(Box::new(move || {
@@ -53,7 +58,8 @@ pub fn run(booted: Booted) -> Result<i32, Error> {
         window: None,
         presenter: None,
         flips: 0,
-        pad: PadInput::default(),
+        keys: PadInput::default(),
+        sent: PadInput::default(),
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("ps5slop: window: {e}");
@@ -74,7 +80,9 @@ struct App {
     window: Option<Window>,
     presenter: Option<Presenter>,
     flips: u64,
-    pad: PadInput,
+    /// What the keyboard holds, and what the guest was last given.
+    keys: PadInput,
+    sent: PadInput,
 }
 
 /// The pad button a key stands for, as `ORBIS_PAD_BUTTON_*` bits.
@@ -108,13 +116,22 @@ impl App {
         };
         let Some(bit) = button(code) else { return };
         if ev.state == ElementState::Pressed {
-            self.pad.buttons |= bit;
+            self.keys.buttons |= bit;
         } else {
-            self.pad.buttons &= !bit;
+            self.keys.buttons &= !bit;
         }
-        self.pad.l2 = if self.pad.buttons & L2 != 0 { 255 } else { 0 };
-        self.pad.r2 = if self.pad.buttons & R2 != 0 { 255 } else { 0 };
-        self.kernel.set_pad_input(self.pad);
+        self.keys.l2 = if self.keys.buttons & L2 != 0 { 255 } else { 0 };
+        self.keys.r2 = if self.keys.buttons & R2 != 0 { 255 } else { 0 };
+        self.update_pad();
+    }
+
+    /// Gives the guest the keyboard and controller state, if it changed.
+    fn update_pad(&mut self) {
+        let input = gamepad::merge(gamepad::read(), self.keys);
+        if input != self.sent {
+            self.sent = input;
+            self.kernel.set_pad_input(input);
+        }
     }
 
     fn take_frame(&mut self) {
@@ -166,6 +183,11 @@ impl ApplicationHandler<Wake> for App {
         self.take_frame();
     }
 
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.update_pad();
+        event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + PAD_POLL));
+    }
+
     fn user_event(&mut self, event_loop: &ActiveEventLoop, wake: Wake) {
         match wake {
             Wake::Frame => self.take_frame(),
@@ -195,10 +217,10 @@ impl ApplicationHandler<Wake> for App {
             }
             WindowEvent::KeyboardInput { event, .. } => self.key(event),
             WindowEvent::Focused(false) => {
-                self.pad.buttons = 0;
-                self.pad.l2 = 0;
-                self.pad.r2 = 0;
-                self.kernel.set_pad_input(self.pad);
+                self.keys.buttons = 0;
+                self.keys.l2 = 0;
+                self.keys.r2 = 0;
+                self.update_pad();
             }
             _ => {}
         }

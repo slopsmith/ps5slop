@@ -103,3 +103,9 @@ The VideoOut window reuses 86slopper's winit and `CAMetalLayer` code (vic's own,
 AppKit needs its event loop on the main thread, so `ps5slop run` starts the guest's main thread on a second host thread and runs the window on the first. VideoOut tells the window about flips through a callback; the window reads the front buffer from guest memory, untiles it on the host and uploads it to Metal. `--headless` runs without a window, and `--dump-frame` writes the screen to a file, which gives tests a way to check what a title drew.
 
 Reason: it keeps the guest unaware of the window, and untiling on the CPU is simple and fast enough until the GPU work brings Metal-side surfaces.
+
+## 2026-11-19: Controllers through Apple's GameController framework
+
+The window reads controllers through GameController (`objc2-game-controller`), polled every 8 ms on the main thread, and merges them with the keyboard mapping. It names the DualShock 4 and DualSense buttons directly and has the touchpad button; it can also drive the light bar and rumble later, which `gilrs` (the cross-platform alternative) cannot do well on macOS.
+
+Reason: vic wants to use a PS4 controller, and GameController maps almost one-to-one onto `ScePadData`.
