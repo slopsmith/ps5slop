@@ -47,8 +47,12 @@ Exports seem to carry NIDs only: shadPS4's loader (`Module::LoadSymbols`) parses
 
 An import we have no name for stays an opaque NID. The HLE layer can still log it and fail loudly.
 
+## Sony modules as guest code (semi-LLE)
+
+Games ship some Sony libraries in their own folder (`sce_module/`), and users may supply firmware modules from their own console. We may load either kind as ordinary guest code instead of writing an HLE version, as shadPS4 does for a whitelist. The modules come from the user at run time and are never committed (see [legal.md](legal.md)). HLE stays the default for anything that talks to the kernel, the GPU or other hardware.
+
 ## Open questions
 
 - PS5 `PROCPARAM` layout and what the runtime reads from it (SDK version, heap sizes, and so on).
 - How module start and stop functions, TLS images and init arrays are laid out for `ET_SCE_DYNAMIC` modules.
-- Games ship some modules in their own folder, and some of those are Sony libraries. Do we always HLE those, or may we run the user's copy as guest code, as shadPS4 does for a whitelist? Running user-supplied code commits nothing to the repo, but it is a policy question for vic.
+- Which Sony modules are worth loading as guest code (see below) and which we must HLE because they reach into the kernel or hardware.

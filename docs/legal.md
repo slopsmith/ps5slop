@@ -6,7 +6,7 @@ These are hard rules. If something is not clearly covered, stop and ask vic befo
 
 - Proprietary Sony material of any kind: firmware, system modules (`.sprx`, `.prx` and similar), keys, game binaries (encrypted or decrypted), game assets, shader binaries and GPU microcode.
 - Reverse-engineered parts of proprietary modules: disassembly or decompiler output, function-by-function ports, and tables, constants or structures copied out of a dump. The one exception is symbol metadata, below.
-- Anything a user supplies: their dumped games, firmware files and keys. These live outside the repo or under gitignored paths (`games/`, `firmware/`, `keys/`, `dumps/`, `references/`).
+- Anything a user supplies: their dumped games, firmware files and keys. Loading a user-supplied Sony module as guest code at run time is allowed (see [loader.md](loader.md)); committing it is not. These live outside the repo or under gitignored paths (`games/`, `firmware/`, `keys/`, `dumps/`, `references/`).
 - Leaked SDK material: headers, samples, documentation or tools from Sony's official SDK. Not even "just to check a struct layout".
 - Links to places that host any of the above.
 

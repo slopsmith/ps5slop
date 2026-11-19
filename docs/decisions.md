@@ -43,3 +43,9 @@ Reason: OpenOrbis is known to work on the PS4 (vic has built homebrew with it), 
 ## 2026-11-19: First test programs come from our own tool
 
 A small Rust tool turns an ELF built with `clang -target x86_64-unknown-freebsd` into the Sony layout (`ET_SCE_DYNEXEC`, `PT_SCE_DYNLIBDATA`, `NID#LIB#MOD` imports for names we choose). We own every byte of it. Its accuracy rests on the public format facts in [loader.md](loader.md); the PS4 conformance programs will catch mistakes.
+
+## 2026-11-19: Semi-LLE of user-supplied Sony modules
+
+Sony modules from the game's own folder or from the user's firmware dump may be loaded and run as guest code, instead of an HLE version. They are supplied at run time and never committed. HLE stays the default for modules that reach into the kernel or hardware.
+
+Reason: an HLE layer runs Sony code in our process either way (the game's own code is linked against it), and loading libraries the user already has saves reimplementing them.
