@@ -27,9 +27,9 @@ enum Command {
         dump_frame: Option<PathBuf>,
         #[arg(long, value_name = "SECONDS", default_value_t = 5.0)]
         after: f64,
-        /// Runs guest code in the JIT instead of the interpreter.
+        /// Runs guest code in the interpreter instead of the JIT.
         #[arg(long)]
-        jit: bool,
+        interpreter: bool,
         /// The host folder the guest sees as `/data` (default: a folder per
         /// title under ~/Library/Application Support/ps5slop).
         #[arg(long, value_name = "DIR")]
@@ -43,7 +43,7 @@ fn main() -> ExitCode {
         headless,
         dump_frame,
         after,
-        jit,
+        interpreter,
         data,
     } = Cli::parse().command;
     let path = if path.is_dir() {
@@ -90,7 +90,7 @@ fn main() -> ExitCode {
             hle::Vfs::new(app0, data),
         )
         .and_then(|booted| {
-            booted.kernel.use_jit(jit);
+            booted.kernel.use_jit(!interpreter);
             if let Some(out) = dump_frame {
                 dump_after(booted.kernel.clone(), out, after);
             }

@@ -15,6 +15,7 @@ const XA: V = V(0);
 const XB: V = V(1);
 const XR: V = V(2);
 const XT: V = V(3);
+const XS: V = V(4);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pfx {
@@ -120,6 +121,9 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x1d6 => p == Pfx::P66 && !wide,
         0x1d7 => p == Pfx::P66 && i.mem.is_none() && !wide,
         _ if packed_int(op) => p == Pfx::P66 && (op != 0x200 || i.map == Map::M0F38),
+        0x258 | 0x259 | 0x278 | 0x279 => i.vex.is_some() && p == Pfx::P66 && !i.rex_w(),
+        0x245 | 0x247 => i.vex.is_some() && p == Pfx::P66,
+        0x246 => i.vex.is_some() && p == Pfx::P66 && !i.rex_w(),
         0x2f2 => i.vex.is_some() && p == Pfx::None,
         0x2f7 => i.vex.is_some(),
         0x3f0 => i.vex.is_some() && p == Pfx::F2,
@@ -152,6 +156,37 @@ impl Translator {
         }
         match op {
             0x2f2 | 0x2f7 | 0x3f0 => return self.bmi(i, op, p, flags),
+            0x258 | 0x259 | 0x278 | 0x279 => {
+                let size = match op {
+                    0x278 => 0,
+                    0x279 => 1,
+                    0x258 => 2,
+                    _ => 3,
+                };
+                match i.mem {
+                    Some(_) => {
+                        let w = [Width::B, Width::H, Width::W, Width::X][size as usize];
+                        self.a.ldr(w, A, ADDR, 0);
+                        self.a.dup_gen(size, XR, A);
+                    }
+                    None => {
+                        self.a.ldr_q(XB, CTX, ymm(i.rm, 0));
+                        self.a.dup_elem(size, XR, XB);
+                    }
+                }
+                for h in 0..halves {
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
+            0x245..=0x247 => {
+                let size = if i.rex_w() { 3 } else { 2 };
+                for h in 0..halves {
+                    self.a.ldr_q(XA, CTX, ymm(src1, h));
+                    self.rm_half(i, h, XB);
+                    self.variable_shift(op, size);
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
             0x177 => {
                 let all = i.vex.is_some_and(|v| v.l);
                 for n in 0..16 {
@@ -346,6 +381,29 @@ impl Translator {
                 a.vec3(true, u, size, opcode, XR, XA, XB);
             }
         }
+    }
+
+    /// VPSRLV, VPSRAV or VPSLLV: XR = XA shifted by the counts in XB. NEON uses
+    /// only a count's low byte, so counts of the width or more are masked.
+    fn variable_shift(&mut self, op: u16, size: u32) {
+        let esize = 8u64 << size;
+        let a = &mut self.a;
+        a.mov_imm(Size::X, A, esize - 1);
+        a.dup_gen(size, XT, A);
+        if op == 0x246 {
+            a.vec3(true, true, size, 0b01101, XS, XB, XT);
+            a.neg_v(size, XS, XS);
+            a.vec3(true, false, size, 0b01000, XR, XA, XS);
+            return;
+        }
+        a.vec3(true, true, size, 0b00110, XT, XB, XT);
+        if op == 0x245 {
+            a.neg_v(size, XS, XB);
+        } else {
+            a.vec3(true, false, 2, 0b00011, XS, XB, XB);
+        }
+        a.vec3(true, true, size, 0b01000, XR, XA, XS);
+        a.vec3(true, false, 1, 0b00011, XR, XR, XT);
     }
 
     /// XA = XA shifted by `n` as group 12/13/14 `ext` says, per 128-bit half.

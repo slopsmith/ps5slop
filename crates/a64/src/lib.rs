@@ -1438,6 +1438,22 @@ impl Asm {
         self.emit(0x4e00_0000 | (rm.0 as u32) << 16 | (rn.0 as u32) << 5 | rd.0 as u32)
     }
 
+    /// DUP (element): every element of `rd` = element 0 of `rn`, elements of
+    /// 1 << `size` bytes.
+    pub fn dup_elem(&mut self, size: u32, rd: V, rn: V) {
+        self.emit(0x4e00_0400 | (1 << size) << 16 | (rn.0 as u32) << 5 | rd.0 as u32)
+    }
+
+    /// DUP (general): every element of `rd` = the low 1 << `size` bytes of `rn`.
+    pub fn dup_gen(&mut self, size: u32, rd: V, rn: Reg) {
+        self.emit(0x4e00_0c00 | (1 << size) << 16 | (rn.0 as u32) << 5 | rd.0 as u32)
+    }
+
+    /// NEG on 16 bytes of elements of 1 << `size` bytes.
+    pub fn neg_v(&mut self, size: u32, rd: V, rn: V) {
+        self.emit(0x6e20_b800 | size << 22 | (rn.0 as u32) << 5 | rd.0 as u32)
+    }
+
     /// MOVI: every byte of `rd` = `imm`.
     pub fn movi_b(&mut self, rd: V, imm: u8) {
         let imm = imm as u32;

@@ -124,7 +124,7 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         (Map::Primary, 0x50..=0x5f | 0x68 | 0x6a) if i.osize64() == 8 => (false, none),
         (Map::Primary, 0x70..=0x7f) if cond(i.op).is_some() => (true, reads),
         (Map::Primary, 0x90) if i.rex & 1 == 0 => (false, none),
-        (Map::Primary, 0xb8..=0xbf) => (false, none),
+        (Map::Primary, 0xb0..=0xbf) => (false, none),
         (Map::Primary, 0xc1 | 0xd1) if matches!(i.ext(), 4 | 5 | 7) && i.osize() >= 4 => (
             false,
             FlagUse {
@@ -145,6 +145,26 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         ),
         (Map::Primary, 0xff) if matches!(i.ext(), 2 | 4) => (true, none),
         (Map::M0F, 0x1f) => (false, none),
+        (Map::M0F, 0xae)
+            if !i.opsize_prefix
+                && matches!((i.ext(), i.mem.is_some()), (5..=7, false) | (7, true)) =>
+        {
+            (false, none)
+        }
+        (Map::M0F, 0xa3) if i.mem.is_none() && i.osize() >= 4 => (
+            false,
+            FlagUse {
+                reads: true,
+                writes: true,
+            },
+        ),
+        (Map::M0F, 0xba) if i.ext() == 4 && i.osize() >= 4 => (
+            false,
+            FlagUse {
+                reads: true,
+                writes: true,
+            },
+        ),
         (Map::M0F, 0x40..=0x4f) if cond(i.op).is_some() && i.osize() >= 4 => (false, reads),
         (Map::M0F, 0x80..=0x8f) if cond(i.op).is_some() => (true, reads),
         (Map::M0F, 0x90..=0x9f) if cond(i.op).is_some() => (false, reads),
@@ -502,8 +522,8 @@ impl Translator {
                 self.a.mov_imm(Size::X, B, i.imm as u64 & mask(size));
                 self.set_rm(i, size, B);
             }
-            (Map::Primary, 0xb8..=0xbf) => {
-                let size = i.osize();
+            (Map::Primary, 0xb0..=0xbf) => {
+                let size = if i.op < 0xb8 { 1 } else { i.osize() };
                 self.a.mov_imm(Size::X, B, i.imm as u64 & mask(size));
                 self.set(i.rm, size, rex, B);
             }
@@ -541,6 +561,26 @@ impl Translator {
             }
             (Map::Primary, 0x68 | 0x6a) => self.push_const(i.imm as u64),
             (Map::Primary, 0x90) | (Map::M0F, 0x1f) => {}
+            (Map::M0F, 0xae) => {
+                if i.ext() == 6 {
+                    self.a.dmb(0xb);
+                }
+            }
+            (Map::M0F, 0xa3 | 0xba) => {
+                let size = i.osize();
+                let bits = size as u64 * 8;
+                self.get_rm(i, size, next);
+                if i.op == 0xa3 {
+                    self.get(B, i.reg, size, rex);
+                } else {
+                    self.a.mov_imm(Size::X, B, i.imm as u64 & (bits - 1));
+                }
+                self.a.lsrv(sz(size), T, A, B);
+                self.a.mrs(U, a64::sysreg::NZCV);
+                assert!(self.a.logic_imm(Logic::Eor, Size::X, T, T, 1));
+                self.a.bfi(Size::X, U, T, 29, 1);
+                self.a.msr(a64::sysreg::NZCV, U);
+            }
             (Map::Primary, 0xc1 | 0xd1) => {
                 let size = i.osize();
                 let bits = size as u32 * 8;

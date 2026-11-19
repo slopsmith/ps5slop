@@ -121,3 +121,9 @@ Reason: hardware TSO and MMU-checked guest addresses remove the two largest cost
 Titles see a writable `/data`, backed by `~/Library/Application Support/ps5slop/<title folder>/data` unless `--data` names another folder. `/app0` stays read-only.
 
 Reason: titles need somewhere to write logs and, later, saves (DriftCheck logs to `/data/driftcheck`). A folder per title keeps them apart; Application Support is where macOS apps keep such data.
+
+## 2026-11-19: The JIT is the default
+
+`ps5slop run` translates guest code and runs it in the VM; `--interpreter` runs the interpreter only. Threads beyond the VM's 64 vCPUs, and instructions the translator does not handle, still use the interpreter.
+
+Reason: with SSE/AVX integer code and BMI translated, ScreenTester5 draws its menu in 0.2 s instead of 2.5 s, and verify mode shows no differences on ScreenTester5 or DriftCheck. vic asked for it.
