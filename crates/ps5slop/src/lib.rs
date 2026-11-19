@@ -6,7 +6,7 @@ use std::io::Write;
 
 use hle::{CallError, Env, Hle, Outcome};
 use loader::{Dynamic, ElfFile, Image};
-use memory::{MapError, Memory, Prot};
+use memory::{MapError, Memory, PAGE_SIZE, Prot};
 use x86::cpu::reg::*;
 use x86::{Cpu, CpuFault, Exit};
 
@@ -17,6 +17,12 @@ pub const ADDRESS_SPACE: u64 = 1 << 40;
 pub const IMAGE_BASE: u64 = 0x40_0000;
 pub const STACK_TOP: u64 = 0x7_0000_0000;
 pub const STACK_SIZE: u64 = 1 << 20;
+/// The entry parameter block and its strings.
+pub const PROCESS_ARGS: u64 = 0x7_0000_0000;
+/// The main thread's static TLS and thread control block.
+pub const MAIN_TLS: u64 = 0x7_0001_0000;
+/// Room for the thread control block above the thread pointer.
+const TCB_SIZE: u64 = 0x1000;
 
 /// Instructions between checks of the run loop.
 const SLICE: u64 = 1 << 20;
@@ -121,16 +127,28 @@ impl Process {
             mem.write_host(addr, bytes).expect("region was just mapped");
         }
         mem.map(STACK_TOP - STACK_SIZE, STACK_SIZE, Prot::RW, "main stack")?;
-        let entry_return = hle.stub_by_name(hle::INTERNAL, hle::RETURN_FROM_ENTRY);
+        let exit = hle.stub_by_name(hle::INTERNAL, hle::PROGRAM_EXIT);
         hle.map(&mut mem)?;
 
         let mut cpu = Cpu {
             rip: image.entry,
             ..Cpu::default()
         };
-        cpu.regs[RSP] = STACK_TOP - 16;
-        mem.write_u64(cpu.regs[RSP], entry_return)
-            .expect("stack was just mapped");
+        cpu.fs_base = setup_tls(&mut mem, &image)?;
+        let params = setup_args(&mut mem, &["eboot.bin"])?;
+        cpu.regs[RDI] = params;
+        cpu.regs[RSI] = exit;
+        // The kernel leaves argc and argv[0] on top of the stack, with RSP 8 off a
+        // 16-byte boundary (shadPS4 RunMainEntry; OpenOrbis's startup reads them).
+        let mut sp = STACK_TOP - 8 - 16;
+        for word in [
+            mem.read_u64(params + 8).unwrap(),
+            mem.read_u64(params).unwrap(),
+        ] {
+            sp -= 8;
+            mem.write_u64(sp, word).expect("stack was just mapped");
+        }
+        cpu.regs[RSP] = sp;
         let unimplemented = hle.unimplemented();
         Ok(Self {
             cpu,
@@ -180,4 +198,40 @@ impl Process {
             }
         }
     }
+}
+
+/// Writes the entry parameter block `{ i32 argc; u32 pad; char *argv[]; }`
+/// (shadPS4's `EntryParams`) with its strings, and returns its address.
+fn setup_args(mem: &mut Memory, args: &[&str]) -> Result<u64, Error> {
+    mem.map(PROCESS_ARGS, PAGE_SIZE, Prot::RW, "process args")?;
+    let mut block = (args.len() as u64).to_le_bytes().to_vec();
+    let mut strings = Vec::new();
+    let strings_at = PROCESS_ARGS + 8 + 8 * (args.len() as u64 + 1);
+    for a in args {
+        block.extend_from_slice(&(strings_at + strings.len() as u64).to_le_bytes());
+        strings.extend_from_slice(a.as_bytes());
+        strings.push(0);
+    }
+    block.extend_from_slice(&0u64.to_le_bytes());
+    block.extend_from_slice(&strings);
+    mem.write(PROCESS_ARGS, &block)
+        .expect("args page was just mapped");
+    Ok(PROCESS_ARGS)
+}
+
+/// Sets up the main thread's static TLS (x86-64 variant II: FS points at a
+/// self-pointer with the TLS image below it) and returns the FS base.
+fn setup_tls(mem: &mut Memory, image: &Image) -> Result<u64, Error> {
+    let (init, init_size, size, align) = match image.tls {
+        Some(t) => (t.init_offset, t.init_size, t.size, t.align.max(16)),
+        None => (0, 0, 0, 16),
+    };
+    let offset = size.next_multiple_of(align);
+    let len = (offset + TCB_SIZE).next_multiple_of(PAGE_SIZE);
+    mem.map(MAIN_TLS, len, Prot::RW, "main thread tls")?;
+    let tcb = MAIN_TLS + offset;
+    let data = &image.bytes[init as usize..(init + init_size) as usize];
+    mem.write(tcb - offset, data).expect("tls was just mapped");
+    mem.write_u64(tcb, tcb).expect("tls was just mapped");
+    Ok(tcb)
 }

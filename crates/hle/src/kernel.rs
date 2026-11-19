@@ -16,8 +16,8 @@ pub static FUNCTIONS: &[Function] = &[
     },
     Function {
         library: crate::INTERNAL,
-        name: crate::RETURN_FROM_ENTRY,
-        func: return_from_entry,
+        name: crate::PROGRAM_EXIT,
+        func: exit,
     },
 ];
 
@@ -44,9 +44,4 @@ fn write(env: &mut Env) -> Result<Outcome, CallError> {
 /// `exit(status)`.
 fn exit(env: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Exit(env.arg(0) as i32))
-}
-
-/// Where the entry point returns to: the process exits with RAX as status.
-fn return_from_entry(env: &mut Env) -> Result<Outcome, CallError> {
-    Ok(Outcome::Exit(env.cpu.regs[x86::cpu::reg::RAX] as i32))
 }

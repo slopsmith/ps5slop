@@ -21,8 +21,8 @@ mod kernel;
 pub const TRAP_BASE: u64 = 0x00ff_0000_0000;
 /// The library name of functions only ps5slop itself calls.
 pub const INTERNAL: &str = "ps5slop";
-/// The internal function an entry point returns to.
-pub const RETURN_FROM_ENTRY: &str = "return_from_entry";
+/// The exit function handed to the entry point in RSI: `exit(status)`.
+pub const PROGRAM_EXIT: &str = "program_exit";
 
 /// Bytes of trap region per function.
 const STUB_SIZE: u64 = 16;
