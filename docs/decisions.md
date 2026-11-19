@@ -87,3 +87,13 @@ Each guest thread runs on its own host thread with its own CPU state. The interp
 The guest address space becomes shared: one reservation, a region table behind a lock, and per-thread handles that cache the last region and notice changes through a generation counter. Unmapping never makes host pages inaccessible (they are replaced with fresh zero pages), so a thread racing with an unmap reads zeros instead of crashing the host.
 
 Reason: vic did not want cooperative scheduling on one host thread. Hardware TSO is not available to a macOS user process (see [cpu.md](cpu.md)); barriers in an interpreter are correct and cheap next to its other costs. The JIT plan is unchanged: hardware TSO inside an HVF VM.
+
+## 2026-11-19: The homebrew template's reverse-engineered files stay unread
+
+The PS5 homebrew template (ps5-native-app-boilerplate) says it used reverse engineering to learn interface facts for its generated `libc.prx`. Its `libc_builder.cpp` and `api-surface.txt` are not read for this project. Running the `libc.prx` a homebrew title ships is fine: it is part of that title. The template's other source files (its startup code, build scripts) may be read for facts; vic agreed on 2026-11-19.
+
+Reason: our rule is to build from public documentation, observed behaviour and clean-room notes, not from reverse-engineered material.
+
+## 2026-11-19: Reuse 86slopper's window code
+
+The VideoOut window reuses 86slopper's winit and `CAMetalLayer` code (vic's own, same license).

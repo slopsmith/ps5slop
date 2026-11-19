@@ -38,6 +38,16 @@ x86-64 ELF with Sony-specific types in the OS range:
 
 KytyPS5, which targets PS5, uses the same values as shadPS4 (PS4). Finer PS4/PS5 differences (contents of `PROCPARAM`, any new tags) are unknown.
 
+### PS5 executables
+
+Seen in PS5 homebrew built with the community template (ScreenTester5, 2026-11-19), and matching KytyPS5's `elf.h` for the tag numbers:
+
+- There is no `PT_SCE_DYNLIBDATA`. `PT_DYNAMIC` and the string, symbol, hash and relocation tables sit inside a `PT_LOAD` segment with no permissions, and the tables are found through the **standard** tags (`DT_STRTAB`, `DT_STRSZ`, `DT_SYMTAB`, `DT_RELA`, `DT_RELASZ`, `DT_JMPREL`, `DT_PLTRELSZ`, `DT_PLTGOT`, `DT_HASH`) as image addresses. `DT_SCE_SYMTABSZ` (`0x6100003F`) still gives the symbol table's size.
+- Modules and libraries use new tag numbers with the same packing: original filename `0x61000041`, module info `0x61000043`, needed module `0x61000045`, export library `0x61000047`, import library `0x61000049`. In ScreenTester5, module ids count from 1 and library ids from 0.
+- The metadata segment can share a 16 KiB page with the data segment before it; the loader keeps its bytes but maps no region for it, since the guest never reads it.
+- The code segment is execute-only.
+- Whether commercial PS5 executables look the same is unverified: these come from a community toolchain (clang 18's `x86_64-sie-ps5` target).
+
 ### The dynamic section
 
 From shadPS4's `module.cpp`, `module.h`, `elf.h` and `linker.cpp` (facts only):

@@ -68,7 +68,7 @@ Candidates, simplest first:
 
 Legal notes from the survey:
 
-- The template's documentation says reverse engineering was used to learn interface facts for its `libc.prx`. Its builder sources and API-surface list are therefore not read here until vic decides (see [legal.md](legal.md)). Running a title's own `libc.prx` as guest code is a different matter: it is part of the homebrew, not a Sony module.
+- The template's documentation says reverse engineering was used to learn interface facts for its `libc.prx`. Its `libc_builder.cpp` and `api-surface.txt` are therefore not read here (see [decisions.md](decisions.md)). Running a title's own `libc.prx` as guest code is a different matter: it is part of the homebrew, not a Sony module.
 - LibProsperoPKG bundles key material (passcode and token files, a keys class). We only ever read its format write-up (see [references.md](references.md)); its code is not read or used.
 
 ## Homebrew (PS4 era and payloads)
