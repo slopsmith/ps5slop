@@ -4,7 +4,7 @@
 //! protections are checked here on each access. Threads share an address
 //! space through cloned handles. See `docs/memory.md`.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
@@ -153,6 +153,16 @@ struct Cached {
 pub struct Memory {
     shared: Arc<Shared>,
     last: Cell<Option<Cached>>,
+    journal: RefCell<Option<Vec<Write>>>,
+}
+
+/// A write recorded by [`Memory::start_journal`]: where, and the bytes
+/// before and after.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Write {
+    pub addr: u64,
+    pub old: Vec<u8>,
+    pub new: Vec<u8>,
 }
 
 impl Clone for Memory {
@@ -160,6 +170,7 @@ impl Clone for Memory {
         Self {
             shared: self.shared.clone(),
             last: Cell::new(None),
+            journal: RefCell::new(None),
         }
     }
 }
@@ -198,6 +209,7 @@ impl Memory {
                 misaligned_atomics: Mutex::new(()),
             }),
             last: Cell::new(None),
+            journal: RefCell::new(None),
         })
     }
 
@@ -444,7 +456,31 @@ impl Memory {
         }
     }
 
+    /// Records every write made through this handle until
+    /// [`Memory::take_journal`], for checking one executor against another.
+    pub fn start_journal(&self) {
+        *self.journal.borrow_mut() = Some(Vec::new());
+    }
+
+    /// Stops recording and returns the writes, oldest first.
+    pub fn take_journal(&self) -> Vec<Write> {
+        self.journal.borrow_mut().take().unwrap_or_default()
+    }
+
+    fn record(&self, addr: u64, new: &[u8]) {
+        if let Some(j) = self.journal.borrow_mut().as_mut() {
+            let mut old = vec![0u8; new.len()];
+            self.copy_out(addr, &mut old);
+            j.push(Write {
+                addr,
+                old,
+                new: new.to_vec(),
+            });
+        }
+    }
+
     fn copy_in(&self, addr: u64, data: &[u8]) {
+        self.record(addr, data);
         let p = self.host(addr);
         // SAFETY: the caller checked the range; host pages of mapped regions are writable.
         unsafe {
@@ -529,7 +565,18 @@ impl Memory {
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     ) {
-                        Ok(_) => return Ok(old as u64),
+                        Ok(_) => {
+                            if let Some(j) = self.journal.borrow_mut().as_mut() {
+                                let n = size as usize;
+                                let (o, w) = ((old as u64).to_le_bytes(), new.to_le_bytes());
+                                j.push(Write {
+                                    addr,
+                                    old: o[..n].to_vec(),
+                                    new: w[..n].to_vec(),
+                                });
+                            }
+                            return Ok(old as u64);
+                        }
                         Err(cur) => old = cur,
                     }
                 }
