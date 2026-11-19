@@ -13,6 +13,7 @@ use memory::{Fault, MapError, Memory, PAGE_SIZE, Prot};
 use x86::Cpu;
 use x86::cpu::reg::*;
 
+pub mod errno;
 mod kernel;
 mod process;
 
@@ -103,6 +104,19 @@ pub struct Env<'a> {
 }
 
 impl Env<'_> {
+    /// Sets the calling thread's errno.
+    pub fn set_errno(&self, errno: i32) -> Result<(), CallError> {
+        self.mem
+            .write(self.thread.errno_addr(), &errno.to_le_bytes())?;
+        Ok(())
+    }
+
+    /// Fails a POSIX-style call: errno is set and the call returns -1.
+    pub fn fail(&self, errno: i32) -> Result<Outcome, CallError> {
+        self.set_errno(errno)?;
+        Ok(Outcome::Return(-1i64 as u64))
+    }
+
     /// Integer argument `n` in the SysV AMD64 convention.
     pub fn arg(&self, n: usize) -> u64 {
         const ORDER: [usize; 6] = [RDI, RSI, RDX, RCX, R8, R9];
@@ -363,6 +377,23 @@ mod tests {
         assert_eq!(hle.stub_by_name("libkernel", "__stack_chk_guard"), guard);
         let (kernel, _, _) = guest(hle);
         assert_ne!(kernel.memory().read_u64(guard).unwrap(), 0);
+    }
+
+    #[test]
+    fn failing_calls_set_the_calling_threads_errno() {
+        let mut hle = Hle::new();
+        let ioctl = hle.stub_by_name("libkernel", "ioctl");
+        let error = hle.stub_by_name("libkernel", "__error");
+        let (kernel, mut cpu, _) = guest(hle);
+        assert_eq!(
+            call(&kernel, ioctl, &mut cpu).unwrap(),
+            Outcome::Return(u64::MAX)
+        );
+        cpu.regs[RSP] -= 8;
+        call(&kernel, error, &mut cpu).unwrap();
+        let mut b = [0u8; 4];
+        kernel.memory().read(cpu.regs[RAX], &mut b).unwrap();
+        assert_eq!(i32::from_le_bytes(b), errno::ENOTTY);
     }
 
     #[test]

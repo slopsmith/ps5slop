@@ -3,7 +3,7 @@
 
 use memory::{PAGE_SIZE, Prot};
 
-use crate::{CallError, Env, Function, Outcome, Variable};
+use crate::{CallError, Env, Function, Outcome, Variable, errno};
 
 pub static VARIABLES: &[Variable] = &[Variable {
     library: "libkernel",
@@ -19,6 +19,16 @@ pub static FUNCTIONS: &[Function] = &[
     },
     Function {
         library: "libkernel",
+        name: "__error",
+        func: error,
+    },
+    Function {
+        library: "libkernel",
+        name: "ioctl",
+        func: ioctl,
+    },
+    Function {
+        library: "libkernel",
         name: "mmap",
         func: mmap,
     },
@@ -30,6 +40,11 @@ pub static FUNCTIONS: &[Function] = &[
     Function {
         library: "libkernel",
         name: "write",
+        func: write,
+    },
+    Function {
+        library: "libkernel",
+        name: "_write",
         func: write,
     },
     Function {
@@ -117,4 +132,14 @@ fn munmap(env: &mut Env) -> Result<Outcome, CallError> {
         Ok(()) => Ok(Outcome::Return(0)),
         Err(_) => Ok(Outcome::Return(-1i64 as u64)),
     }
+}
+
+/// `__error()`: the address of the calling thread's errno.
+fn error(env: &mut Env) -> Result<Outcome, CallError> {
+    Ok(Outcome::Return(env.thread.errno_addr()))
+}
+
+/// `ioctl(fd, request, ...)`: no descriptor supports any request yet.
+fn ioctl(env: &mut Env) -> Result<Outcome, CallError> {
+    env.fail(errno::ENOTTY)
 }
