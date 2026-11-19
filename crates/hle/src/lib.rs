@@ -78,7 +78,7 @@ pub enum CallError {
     /// A call to a function we do not implement.
     Unimplemented {
         nid: String,
-        name: Option<&'static str>,
+        name: Option<String>,
         library: String,
     },
     /// A guest pointer argument that faults.
@@ -230,6 +230,8 @@ pub struct Hle {
     /// Variables handed out so far: address and contents.
     data: Vec<(u64, &'static Variable)>,
     data_end: u64,
+    /// Names for NIDs: ours, from every library, and an optional local list.
+    names: HashMap<String, String>,
 }
 
 impl Default for Hle {
@@ -240,20 +242,7 @@ impl Default for Hle {
 
 impl Hle {
     pub fn new() -> Self {
-        let by_nid = kernel::FUNCTIONS
-            .iter()
-            .chain(sysmodule::FUNCTIONS)
-            .chain(pthread::FUNCTIONS)
-            .chain(thread::FUNCTIONS)
-            .chain(sem::FUNCTIONS)
-            .chain(dmem::FUNCTIONS)
-            .chain(equeue::FUNCTIONS)
-            .chain(posix::FUNCTIONS)
-            .chain(file::FUNCTIONS)
-            .chain(libc::functions())
-            .chain(services::FUNCTIONS)
-            .chain(pad::FUNCTIONS)
-            .chain(videoout::FUNCTIONS)
+        let by_nid = functions()
             .map(|f| ((nid(f.name), f.library.to_owned()), f))
             .collect();
         let variables = kernel::VARIABLES
@@ -268,6 +257,7 @@ impl Hle {
             variables,
             data: Vec::new(),
             data_end: DATA_BASE + FIXED_DATA,
+            names: names(),
         };
         let internal: Vec<&str> = hle
             .by_nid
@@ -329,12 +319,22 @@ impl Hle {
         self.stub(&nid(name), library)
     }
 
-    /// `(library, NID)` of every stub with no host function behind it.
-    pub fn unimplemented(&self) -> Vec<(String, String)> {
+    /// A name for `nid`, if we know one: a function we implement (in any
+    /// library), or one from the `PS5SLOP_NAMES` list.
+    pub fn name_of(&self, nid: &str) -> Option<&str> {
+        self.names.get(nid).map(String::as_str)
+    }
+
+    /// `(library, NID, name if known)` of every stub with no host function
+    /// behind it.
+    pub fn unimplemented(&self) -> Vec<(String, String, Option<String>)> {
         self.stubs
             .iter()
             .filter(|s| s.func.is_none())
-            .map(|s| (s.library.clone(), s.nid.clone()))
+            .map(|s| {
+                let name = self.name_of(&s.nid).map(str::to_owned);
+                (s.library.clone(), s.nid.clone(), name)
+            })
             .collect()
     }
 
@@ -367,7 +367,7 @@ impl Hle {
             .ok_or(CallError::NotAStub(addr))?;
         let f = stub.func.ok_or_else(|| CallError::Unimplemented {
             nid: stub.nid.clone(),
-            name: None,
+            name: self.name_of(&stub.nid).map(str::to_owned),
             library: stub.library.clone(),
         })?;
         count_call(f);
@@ -380,6 +380,50 @@ impl Hle {
         }
         Ok(out)
     }
+}
+
+/// Every function we implement.
+fn functions() -> impl Iterator<Item = &'static Function> {
+    kernel::FUNCTIONS
+        .iter()
+        .chain(sysmodule::FUNCTIONS)
+        .chain(pthread::FUNCTIONS)
+        .chain(thread::FUNCTIONS)
+        .chain(sem::FUNCTIONS)
+        .chain(dmem::FUNCTIONS)
+        .chain(equeue::FUNCTIONS)
+        .chain(posix::FUNCTIONS)
+        .chain(file::FUNCTIONS)
+        .chain(libc::functions())
+        .chain(services::FUNCTIONS)
+        .chain(pad::FUNCTIONS)
+        .chain(videoout::FUNCTIONS)
+}
+
+/// Names for NIDs: everything we implement, and the names listed (one per
+/// line) in the file `PS5SLOP_NAMES` points to, hashed here.
+fn names() -> HashMap<String, String> {
+    let mut names = HashMap::new();
+    let ours = functions().map(|f| f.name).chain(
+        kernel::VARIABLES
+            .iter()
+            .chain(libc::VARIABLES)
+            .map(|v| v.name),
+    );
+    for name in ours {
+        names.insert(nid(name), name.to_owned());
+    }
+    if let Some(path) = std::env::var_os("PS5SLOP_NAMES") {
+        match std::fs::read_to_string(&path) {
+            Ok(list) => {
+                for name in list.lines().map(str::trim).filter(|n| !n.is_empty()) {
+                    names.entry(nid(name)).or_insert_with(|| name.to_owned());
+                }
+            }
+            Err(e) => eprintln!("ps5slop: cannot read {}: {e}", path.to_string_lossy()),
+        }
+    }
+    names
 }
 
 /// Host calls by function, counted in statistics mode (`PS5SLOP_JIT_STATS`).
@@ -513,7 +557,7 @@ mod tests {
         let stub = hle.stub("AAAAAAAAAAA", "libSceFoo");
         assert_eq!(
             hle.unimplemented(),
-            [("libSceFoo".to_owned(), "AAAAAAAAAAA".to_owned())]
+            [("libSceFoo".to_owned(), "AAAAAAAAAAA".to_owned(), None)]
         );
         let (kernel, mut cpu, _) = guest(hle);
         assert!(matches!(

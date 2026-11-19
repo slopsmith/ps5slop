@@ -1,0 +1,15 @@
+#!/bin/sh
+# Prints candidate function names, one per line, from public headers: the
+# macOS SDK and, if fetched into references/, the OpenOrbis toolchain. For
+# PS5SLOP_NAMES and scripts/nid. The list is generated locally and never
+# committed (see docs/legal.md: no NID-to-name databases in the repo).
+# Usage: scripts/names > references/names.txt
+set -e
+root=$(cd "$(dirname "$0")/.." && pwd)
+sdk=$(xcrun --show-sdk-path)/usr/include
+{
+	cat "$sdk"/*.h "$sdk"/sys/*.h 2>/dev/null
+	if [ -d "$root/references/src/OpenOrbis/include" ]; then
+		find "$root/references/src/OpenOrbis/include" -name '*.h' -exec cat {} +
+	fi
+} | grep -oE '\b_*[A-Za-z][A-Za-z0-9_]*\b' | sort -u

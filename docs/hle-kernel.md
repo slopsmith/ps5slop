@@ -64,7 +64,7 @@ Each thread's errno lives in its thread control block, at the thread pointer plu
 
 **Variables.** Some imports are data, not functions: libkernel's `__stack_chk_guard` is read through its GOT entry, although OpenOrbis's stub declares it a function. So the symbol type cannot be trusted; the HLE layer knows its variables by name and binds them to readable memory in a data region next to the trap region.
 
-**Finding names for NIDs.** When a program stops at an unimplemented NID, we hash candidate names ourselves (function names from public API headers, such as the OpenOrbis headers) until one matches. That table stays local; we do not commit or import NID-to-name databases.
+**Finding names for NIDs.** When a program stops at an unimplemented NID, we hash candidate names ourselves (function names from public API headers, such as the OpenOrbis headers) until one matches. That table stays local; we do not commit or import NID-to-name databases. Errors and `PS5SLOP_LIST_UNIMPLEMENTED=1` name an import when we know the name: any function we implement, in any library, and the names in the file `PS5SLOP_NAMES` points to. `scripts/names > references/names.txt` writes such a list from the macOS SDK and OpenOrbis headers (gitignored). For Balatro it names 287 of 566 missing imports.
 
 ## The guest file system
 

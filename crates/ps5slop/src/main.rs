@@ -71,8 +71,8 @@ fn main() -> ExitCode {
             process.unimplemented.len()
         );
         if std::env::var_os("PS5SLOP_LIST_UNIMPLEMENTED").is_some() {
-            for (library, nid) in &process.unimplemented {
-                eprintln!("  {library} {nid}");
+            for (library, nid, name) in &process.unimplemented {
+                eprintln!("  {library} {nid} {}", name.as_deref().unwrap_or(""));
             }
         }
     }

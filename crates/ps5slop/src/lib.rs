@@ -67,7 +67,7 @@ pub struct Process {
     hle: Hle,
     tls: TlsTemplate,
     /// Imports no host function implements yet, as `(library, NID)`.
-    pub unimplemented: Vec<(String, String)>,
+    pub unimplemented: Vec<(String, String, Option<String>)>,
 }
 
 impl Process {
