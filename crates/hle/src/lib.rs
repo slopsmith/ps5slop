@@ -21,6 +21,7 @@ mod heap;
 mod kernel;
 mod libc;
 mod net;
+mod ngs2;
 mod pad;
 mod posix;
 mod process;
@@ -420,6 +421,7 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(net::FUNCTIONS)
         .chain(stubs::FUNCTIONS)
         .chain(savedata::FUNCTIONS)
+        .chain(ngs2::FUNCTIONS)
         .chain(pthread::SCE_FUNCTIONS)
         .chain(thread::SCE_FUNCTIONS)
 }

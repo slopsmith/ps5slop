@@ -71,6 +71,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("libSceAudioOut", "sceAudioOutOpen", audio_open),
     f("libSceAudioOut", "sceAudioOutOutput", audio_output),
     f("libSceAudioOut", "sceAudioOutClose", audio_close),
+    f("libSceAudioOut", "sceAudioOutSetVolume", ok),
 ];
 
 const fn f(library: &'static str, name: &'static str, func: crate::HostFn) -> Function {
