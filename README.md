@@ -11,3 +11,5 @@ You supply your own games, dumped from your own console. Nothing from Sony is pa
 - [Architecture](docs/architecture.md): overview and index of the other docs
 - [Legal boundaries](docs/legal.md)
 - [Decisions](docs/decisions.md)
+
+Licensed under GPL-2.0-or-later. See [LICENSE](LICENSE) and the license notes in [docs/references.md](docs/references.md).
