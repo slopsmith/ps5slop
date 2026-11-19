@@ -3,7 +3,6 @@
 
 use std::fmt;
 use std::io::Write;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use hle::{Hle, Kernel, ThreadError, TlsTemplate};
@@ -129,13 +128,12 @@ impl Process {
     }
 
     /// Starts the kernel, so the host can attach to it (a window, input)
-    /// before the guest runs. `app0` is the title folder, which the guest
-    /// sees as `/app0`.
+    /// before the guest runs, with the guest's file system `vfs`.
     pub fn boot(
         self,
         stdout: Box<dyn Write + Send>,
         stderr: Box<dyn Write + Send>,
-        app0: Option<PathBuf>,
+        vfs: hle::Vfs,
     ) -> Result<Booted, Error> {
         let Process {
             mut cpu,
@@ -144,7 +142,7 @@ impl Process {
             tls,
             ..
         } = self;
-        let kernel = Kernel::new(hle, mem, tls, stdout, stderr, app0);
+        let kernel = Kernel::new(hle, mem, tls, stdout, stderr, vfs);
         cpu.fs_base = kernel.new_tls(&kernel.memory())?;
         Ok(Booted { kernel, cpu })
     }

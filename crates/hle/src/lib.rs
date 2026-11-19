@@ -28,10 +28,12 @@ mod sem;
 mod services;
 mod sysmodule;
 mod thread;
+mod vfs;
 mod videoout;
 
 pub use pad::PadInput;
 pub use process::{Kernel, Thread, ThreadError, TlsTemplate};
+pub use vfs::Vfs;
 pub use videoout::Frame;
 
 /// Where the trap region starts. Our choice, below 2^40 and away from where
@@ -424,7 +426,7 @@ mod tests {
             TlsTemplate::default(),
             Box::new(out.clone()),
             Box::new(std::io::sink()),
-            app0,
+            Vfs::new(app0, None),
         );
         cpu.fs_base = kernel.new_tls(&kernel.memory()).unwrap();
         (kernel, cpu, out)

@@ -15,7 +15,7 @@ mod stdio;
 mod stdlib;
 mod string;
 
-pub(crate) use stdio::{FdInfo, Files, host_path};
+pub(crate) use stdio::{FdInfo, Files};
 
 pub const LIBRARY: &str = "libSceLibcInternal";
 

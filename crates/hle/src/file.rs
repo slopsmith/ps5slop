@@ -1,13 +1,13 @@
 //! libkernel's file descriptors: the POSIX calls (`open`, `read`, `close`),
 //! which fail with errno and -1, and their `sceKernel*` twins, which return
-//! `0x80020000` + errno. Only `/app0` exists, read-only. Flag values are
-//! FreeBSD's.
+//! `0x80020000` + errno. Paths go through the guest's file system (see
+//! `vfs.rs`). Flag values are FreeBSD's.
 
-use std::fs::File;
+use std::fs::OpenOptions;
 
 use crate::dmem::sce_error;
-use crate::libc::{cstr, host_path};
-use crate::posix::mkdir_error;
+use crate::libc::cstr;
+use crate::vfs::io_errno;
 use crate::{CallError, Env, Function, Outcome, errno};
 
 pub static FUNCTIONS: &[Function] = &[
@@ -37,6 +37,12 @@ fn ret(v: u64) -> Result<Outcome, CallError> {
 }
 
 const O_ACCMODE: u64 = 3;
+const O_WRONLY: u64 = 1;
+const O_RDWR: u64 = 2;
+const O_APPEND: u64 = 0x8;
+const O_CREAT: u64 = 0x200;
+const O_TRUNC: u64 = 0x400;
+const O_EXCL: u64 = 0x800;
 /// Reads larger than this are cut short.
 const MAX_READ: u64 = 1 << 24;
 
@@ -55,18 +61,33 @@ fn finish(env: &Env, style: Style, r: Result<u64, i32>) -> Result<Outcome, CallE
     }
 }
 
-/// `open(path, flags, mode)`: opens a file under `/app0` for reading.
+/// `open(path, flags, mode)`: files under `/app0` for reading, under
+/// `/data` for anything.
 fn open_file(env: &Env) -> Result<Result<u64, i32>, CallError> {
     let (path, flags) = (cstr(env, env.arg(0))?, env.arg(1));
-    let Some(host) = host_path(env.kernel.app0.as_deref(), &path) else {
+    let Some((host, writable)) = env.kernel.vfs.resolve(&path) else {
         return Ok(Err(errno::ENOENT));
     };
-    if flags & O_ACCMODE != 0 {
+    let access = flags & O_ACCMODE;
+    let wants_write = access != 0 || flags & (O_CREAT | O_TRUNC | O_APPEND) != 0;
+    if wants_write && !writable {
         return Ok(Err(errno::EROFS));
     }
-    Ok(match File::open(host) {
+    let mut o = OpenOptions::new();
+    o.read(access != O_WRONLY)
+        .write(matches!(access, O_WRONLY | O_RDWR))
+        .append(flags & O_APPEND != 0)
+        .truncate(flags & O_TRUNC != 0);
+    if flags & O_CREAT != 0 {
+        if flags & O_EXCL != 0 {
+            o.create_new(true);
+        } else {
+            o.create(true);
+        }
+    }
+    Ok(match o.open(host) {
         Ok(file) => Ok(env.kernel.libc.files.open_fd(file) as u64),
-        Err(_) => Err(errno::ENOENT),
+        Err(e) => Err(io_errno(&e)),
     })
 }
 
@@ -130,22 +151,39 @@ fn sce_close(env: &mut Env) -> Result<Outcome, CallError> {
     finish(env, Style::Sce, close_file(env))
 }
 
-/// `sceKernelWrite(fd, buf, len)`: fds 1 and 2 go to the host's stdout and
-/// stderr; descriptor files are read-only.
-fn sce_write(env: &mut Env) -> Result<Outcome, CallError> {
+/// `write(fd, buf, len)`: fds 1 and 2 go to the host's stdout and stderr,
+/// other descriptors to their files.
+pub(crate) fn write_file(env: &Env) -> Result<Result<u64, i32>, CallError> {
     let (fd, buf, len) = (env.arg(0) as i32, env.arg(1), env.arg(2).min(MAX_READ));
-    if !matches!(fd, 1 | 2) {
-        return ret(sce_error(errno::EBADF));
-    }
     let mut data = vec![0u8; len as usize];
     env.mem.read(buf, &mut data)?;
-    match env.kernel.write_output(fd, &data) {
-        Ok(()) => ret(len),
-        Err(_) => ret(sce_error(errno::EINVAL)),
+    if matches!(fd, 1 | 2) {
+        return Ok(env
+            .kernel
+            .write_output(fd, &data)
+            .map(|_| len)
+            .map_err(|_| errno::EIO));
     }
+    Ok(match env.kernel.libc.files.write_fd(fd, &data) {
+        Some(Ok(())) => Ok(len),
+        Some(Err(e)) => Err(io_errno(&e)),
+        None => Err(errno::EBADF),
+    })
+}
+
+fn sce_write(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = write_file(env)?;
+    finish(env, Style::Sce, r)
+}
+
+/// `write` and `_write`, with errno.
+pub(crate) fn write(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = write_file(env)?;
+    finish(env, Style::Posix, r)
 }
 
 fn sce_mkdir(env: &mut Env) -> Result<Outcome, CallError> {
     let path = cstr(env, env.arg(0))?;
-    ret(sce_error(mkdir_error(&path)))
+    let r = env.kernel.vfs.mkdir(&path).map(|_| 0);
+    finish(env, Style::Sce, r)
 }

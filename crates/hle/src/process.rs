@@ -3,7 +3,6 @@
 
 use std::fmt;
 use std::io::Write;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 
@@ -134,8 +133,8 @@ pub struct Kernel {
     /// Whether guest code runs in the JIT instead of the interpreter.
     jit: AtomicBool,
     pub(crate) libc: crate::libc::State,
-    /// The title folder, which the guest sees as `/app0`.
-    pub(crate) app0: Option<PathBuf>,
+    /// The guest's file system.
+    pub(crate) vfs: crate::Vfs,
     pub(crate) started: std::time::Instant,
 }
 
@@ -146,7 +145,7 @@ impl Kernel {
         tls: TlsTemplate,
         stdout: Box<dyn Write + Send>,
         stderr: Box<dyn Write + Send>,
-        app0: Option<PathBuf>,
+        vfs: crate::Vfs,
     ) -> Arc<Self> {
         Arc::new_cyclic(|me| Self {
             hle,
@@ -170,7 +169,8 @@ impl Kernel {
             videoout: Default::default(),
             jit: AtomicBool::new(false),
             libc: Default::default(),
-            app0,
+            vfs,
+
             started: std::time::Instant::now(),
         })
     }

@@ -4,10 +4,15 @@
 pub const EPERM: i32 = 1;
 pub const ESRCH: i32 = 3;
 pub const ENOENT: i32 = 2;
+pub const EIO: i32 = 5;
 pub const EBADF: i32 = 9;
 pub const EDEADLK: i32 = 11;
 pub const ENOMEM: i32 = 12;
+pub const EACCES: i32 = 13;
 pub const EBUSY: i32 = 16;
+pub const EEXIST: i32 = 17;
+pub const ENOTDIR: i32 = 20;
+pub const EISDIR: i32 = 21;
 pub const EINVAL: i32 = 22;
 pub const ENOTTY: i32 = 25;
 pub const EROFS: i32 = 30;

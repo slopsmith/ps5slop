@@ -30,6 +30,10 @@ enum Command {
         /// Runs guest code in the JIT instead of the interpreter.
         #[arg(long)]
         jit: bool,
+        /// The host folder the guest sees as `/data` (default: a folder per
+        /// title under ~/Library/Application Support/ps5slop).
+        #[arg(long, value_name = "DIR")]
+        data: Option<PathBuf>,
     },
 }
 
@@ -40,6 +44,7 @@ fn main() -> ExitCode {
         dump_frame,
         after,
         jit,
+        data,
     } = Cli::parse().command;
     let path = if path.is_dir() {
         path.join("eboot.bin")
@@ -72,11 +77,17 @@ fn main() -> ExitCode {
         }
     }
     let app0 = path.parent().map(|p| p.to_path_buf());
+    let data = data.or_else(|| default_data(&path));
+    if let Some(d) = &data
+        && let Err(e) = std::fs::create_dir_all(d)
+    {
+        eprintln!("ps5slop: cannot make {}: {e}", d.display());
+    }
     let status = process
         .boot(
             Box::new(std::io::stdout()),
             Box::new(std::io::stderr()),
-            app0,
+            hle::Vfs::new(app0, data),
         )
         .and_then(|booted| {
             booted.kernel.use_jit(jit);
@@ -130,4 +141,16 @@ fn dump_after(kernel: std::sync::Arc<hle::Kernel>, out: PathBuf, seconds: f64) {
         }
         kernel.exit(Ok(0));
     });
+}
+
+/// `~/Library/Application Support/ps5slop/<title>/data`, where `<title>` is
+/// the app folder's name (or the executable's, outside one).
+fn default_data(eboot: &std::path::Path) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    let title = match eboot.parent() {
+        Some(dir) if eboot.file_name().is_some_and(|n| n == "eboot.bin") => dir.file_name()?,
+        _ => eboot.file_stem()?,
+    };
+    let root = PathBuf::from(home).join("Library/Application Support/ps5slop");
+    Some(root.join(title).join("data"))
 }

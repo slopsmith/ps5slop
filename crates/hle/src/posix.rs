@@ -5,7 +5,7 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::dmem::sce_error;
-use crate::libc::{FdInfo, host_path};
+use crate::libc::FdInfo;
 use crate::pthread::{POLL, ret as ret_errno};
 use crate::{CallError, Env, Function, Outcome, errno};
 
@@ -90,10 +90,14 @@ fn write_metadata(env: &Env, at: u64, m: &std::fs::Metadata) -> Result<(), CallE
     write_stat(env, at, mode, m.len(), m.modified().ok())
 }
 
-/// `stat(path, sb)`: only paths under `/app0` exist.
+/// `stat(path, sb)`.
 fn stat(env: &mut Env) -> Result<Outcome, CallError> {
     let path = super::libc::cstr(env, env.arg(0))?;
-    let meta = host_path(env.kernel.app0.as_deref(), &path).and_then(|p| std::fs::metadata(p).ok());
+    let meta = env
+        .kernel
+        .vfs
+        .resolve(&path)
+        .and_then(|(p, _)| std::fs::metadata(p).ok());
     match meta {
         Some(m) => {
             write_metadata(env, env.arg(1), &m)?;
@@ -113,16 +117,13 @@ fn fstat(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// `mkdir(path, mode)`: `/app0` is read-only and nothing else exists yet.
+/// `mkdir(path, mode)`.
 fn mkdir(env: &mut Env) -> Result<Outcome, CallError> {
     let path = super::libc::cstr(env, env.arg(0))?;
-    env.fail(mkdir_error(&path))
-}
-
-/// Why making the directory `path` fails.
-pub(crate) fn mkdir_error(path: &[u8]) -> i32 {
-    let in_app0 = path == b"/app0" || path.starts_with(b"/app0/");
-    if in_app0 { errno::EROFS } else { errno::ENOENT }
+    match env.kernel.vfs.mkdir(&path) {
+        Ok(()) => ret(0),
+        Err(e) => env.fail(e),
+    }
 }
 
 /// `gettimeofday(tv, tz)`, with `struct timeval { i64 sec; i64 usec; }`.

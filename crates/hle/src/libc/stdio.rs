@@ -1,11 +1,10 @@
 //! `<stdio.h>` streams. A `FILE *` is an address we hand out; the stream
 //! behind it lives on the host. The guest never sees the inside of a FILE.
-//! Paths under `/app0` open files in the title folder, read-only.
+//! Paths go through the guest's file system (see `vfs.rs`).
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 use super::format::{Args, printf};
@@ -86,6 +85,14 @@ impl Files {
         lock(&self.descriptors).get_mut(&fd).map(|f| f.read(buf))
     }
 
+    /// Writes `data` to descriptor `fd`; `None` when `fd` is not an open
+    /// descriptor file.
+    pub(crate) fn write_fd(&self, fd: i32, data: &[u8]) -> Option<std::io::Result<()>> {
+        lock(&self.descriptors)
+            .get_mut(&fd)
+            .map(|f| f.write_all(data))
+    }
+
     /// Closes descriptor `fd`; false when it was not open.
     pub(crate) fn close_fd(&self, fd: i32) -> bool {
         lock(&self.descriptors).remove(&fd).is_some()
@@ -118,36 +125,40 @@ impl Default for Files {
     }
 }
 
-/// The host path for guest path `path`, if it names something in the
-/// title folder.
-pub(crate) fn host_path(app0: Option<&Path>, path: &[u8]) -> Option<PathBuf> {
-    let path = std::str::from_utf8(path).ok()?;
-    let rest = path.strip_prefix("/app0")?;
-    if !(rest.is_empty() || rest.starts_with('/')) {
-        return None;
-    }
-    let rest = Path::new(rest.trim_start_matches('/'));
-    if rest
-        .components()
-        .any(|c| !matches!(c, Component::Normal(_)))
-    {
-        return None;
-    }
-    Some(app0?.join(rest))
+/// How `fopen` mode `mode` (`r`, `w`, `a`, each optionally with `+`)
+/// opens a file.
+fn open_options(mode: &[u8]) -> Option<OpenOptions> {
+    let plus = mode.contains(&b'+');
+    let mut o = OpenOptions::new();
+    match mode.first()? {
+        b'r' => o.read(true).write(plus),
+        b'w' => o.write(true).read(plus).create(true).truncate(true),
+        b'a' => o.append(true).read(plus).create(true),
+        _ => return None,
+    };
+    Some(o)
 }
 
 fn fopen(env: &mut Env) -> Result<Outcome, CallError> {
     let path = cstr(env, env.arg(0))?;
     let mode = cstr(env, env.arg(1))?;
-    if mode.first() != Some(&b'r') || mode.contains(&b'+') {
-        env.set_errno(errno::EROFS)?;
+    let Some(options) = open_options(&mode) else {
+        env.set_errno(errno::EINVAL)?;
         return ret(0);
-    }
-    let file = host_path(env.kernel.app0.as_deref(), &path)
-        .and_then(|p| OpenOptions::new().read(true).open(p).ok());
-    let Some(file) = file else {
-        env.set_errno(errno::ENOENT)?;
-        return ret(0);
+    };
+    let file = match env.kernel.vfs.resolve(&path) {
+        None => Err(errno::ENOENT),
+        Some((_, false)) if mode.first() != Some(&b'r') || mode.contains(&b'+') => {
+            Err(errno::EROFS)
+        }
+        Some((host, _)) => options.open(host).map_err(|e| crate::vfs::io_errno(&e)),
+    };
+    let file = match file {
+        Ok(f) => f,
+        Err(e) => {
+            env.set_errno(e)?;
+            return ret(0);
+        }
     };
     let Some(at) = env.kernel.heap.alloc(env.mem, FILE_SIZE) else {
         env.set_errno(errno::ENOMEM)?;
@@ -356,24 +367,4 @@ fn ferror(env: &mut Env) -> Result<Outcome, CallError> {
 fn fileno(env: &mut Env) -> Result<Outcome, CallError> {
     let file = env.arg(0);
     with_stream(env, file, EOF, |s| Ok(s.fd as u32 as u64))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_paths_inside_app0_map_to_the_title_folder() {
-        let app0 = Path::new("/titles/X");
-        let map = |p: &[u8]| host_path(Some(app0), p);
-        assert_eq!(
-            map(b"/app0/sce_sys/param.json"),
-            Some(app0.join("sce_sys/param.json"))
-        );
-        assert_eq!(map(b"/app0"), Some(app0.to_path_buf()));
-        assert_eq!(map(b"/app0/../etc/passwd"), None);
-        assert_eq!(map(b"/app0x/file"), None);
-        assert_eq!(map(b"/data/file"), None);
-        assert_eq!(host_path(None, b"/app0/file"), None);
-    }
 }

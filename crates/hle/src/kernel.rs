@@ -40,12 +40,12 @@ pub static FUNCTIONS: &[Function] = &[
     Function {
         library: "libkernel",
         name: "write",
-        func: write,
+        func: crate::file::write,
     },
     Function {
         library: "libkernel",
         name: "_write",
-        func: write,
+        func: crate::file::write,
     },
     Function {
         library: "libkernel",
@@ -63,21 +63,6 @@ pub static FUNCTIONS: &[Function] = &[
         func: stray_callback_return,
     },
 ];
-
-/// Guest writes larger than this are cut, like a short write.
-const MAX_WRITE: u64 = 1 << 20;
-
-/// `write(fd, buf, len)`: fd 1 and 2 go to our stdout and stderr; other
-/// descriptors do not exist yet and fail with -1.
-fn write(env: &mut Env) -> Result<Outcome, CallError> {
-    let (fd, buf, len) = (env.arg(0) as i32, env.arg(1), env.arg(2).min(MAX_WRITE));
-    let mut data = vec![0u8; len as usize];
-    env.mem.read(buf, &mut data)?;
-    match env.kernel.write_output(fd, &data) {
-        Ok(()) => Ok(Outcome::Return(len)),
-        Err(_) => Ok(Outcome::Return(-1i64 as u64)),
-    }
-}
 
 /// `exit(status)`.
 fn exit(env: &mut Env) -> Result<Outcome, CallError> {

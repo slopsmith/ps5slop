@@ -115,3 +115,9 @@ Reason: vic wants to use a PS4 controller, and GameController maps almost one-to
 Translated code runs on HVF vCPUs with hardware TSO (`ACTLR_EL1.EnTSO`) and our own page tables mapping guest addresses one to one, as in 86slopper. One vCPU per guest thread; threads beyond the VM's 64 vCPUs run in the interpreter. The interpreter's TSO-by-barriers decision stays for the interpreter. Details and measurements in [cpu.md](cpu.md#hypervisorframework).
 
 Reason: hardware TSO and MMU-checked guest addresses remove the two largest costs of x86 on ARM (ordering every access, and checking or offsetting every address). 86slopper already runs this way on vic's machine, and its `hvf` and `jit` code can be reused (vic's own, same license). vCPUs are cheap to make (~15 µs), so threads that start and end often are not a problem; the 64-vCPU limit is handled by the interpreter fallback. Decided earlier than [cpu.md](cpu.md)'s plan (a commercial title reaching the GPU) because ScreenTester5 already shows the interpreter is too slow (a full 1080p redraw takes ~2 s), and vic asked to start the JIT.
+
+## 2026-11-19: `/data` is a per-title folder on the host
+
+Titles see a writable `/data`, backed by `~/Library/Application Support/ps5slop/<title folder>/data` unless `--data` names another folder. `/app0` stays read-only.
+
+Reason: titles need somewhere to write logs and, later, saves (DriftCheck logs to `/data/driftcheck`). A folder per title keeps them apart; Application Support is where macOS apps keep such data.
