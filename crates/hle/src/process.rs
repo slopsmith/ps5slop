@@ -131,6 +131,8 @@ pub struct Kernel {
     pub(crate) pad: crate::pad::Pad,
     pub(crate) audio: crate::services::Audio,
     pub(crate) videoout: crate::videoout::VideoOut,
+    /// Whether guest code runs in the JIT instead of the interpreter.
+    jit: AtomicBool,
     pub(crate) libc: crate::libc::State,
     /// The title folder, which the guest sees as `/app0`.
     pub(crate) app0: Option<PathBuf>,
@@ -165,6 +167,7 @@ impl Kernel {
             pad: Default::default(),
             audio: Default::default(),
             videoout: Default::default(),
+            jit: AtomicBool::new(false),
             libc: Default::default(),
             app0,
         })
@@ -199,6 +202,30 @@ impl Kernel {
         }
         self.exited.store(true, Ordering::Release);
         self.exit_signal.notify_all();
+        if self.jit.load(Ordering::Relaxed) {
+            jit::kick_all();
+        }
+    }
+
+    /// Runs guest code in the JIT (translated, inside a VM) instead of the
+    /// interpreter. Set before the guest starts.
+    pub fn use_jit(&self, on: bool) {
+        self.jit.store(on, Ordering::Relaxed);
+    }
+
+    /// Guest instructions run so far: (interpreted, translated).
+    pub fn instructions(&self) -> (u64, u64) {
+        jit::instructions()
+    }
+
+    /// Runs guest code on this thread until it calls into the host, faults
+    /// or the process exits.
+    pub(crate) fn execute(&self, cpu: &mut Cpu, mem: &Memory) -> Exit {
+        if self.jit.load(Ordering::Relaxed) {
+            jit::run(cpu, mem, &|| self.has_exited())
+        } else {
+            jit::interpret(cpu, mem, SLICE)
+        }
     }
 
     /// Makes a thread's static TLS block in the x86-64 "variant II" layout
@@ -265,7 +292,7 @@ impl Kernel {
             if self.has_exited() {
                 break;
             }
-            match x86::run(&mut cpu, &mem, SLICE) {
+            match self.execute(&mut cpu, &mem) {
                 Exit::Continue | Exit::Limit => {}
                 Exit::Trap(addr) => {
                     let mut env = Env {

@@ -166,7 +166,7 @@ impl Env<'_> {
             if self.kernel.has_exited() {
                 break Err(CallError::Exited);
             }
-            match x86::run(self.cpu, self.mem, 1 << 16) {
+            match self.kernel.execute(self.cpu, self.mem) {
                 x86::Exit::Continue | x86::Exit::Limit => {}
                 x86::Exit::Trap(t) if t == back => break Ok(self.cpu.regs[RAX]),
                 x86::Exit::Trap(t) => match self.kernel.hle.call(t, self) {
