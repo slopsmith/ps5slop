@@ -22,7 +22,9 @@ Each such fact in the docs names its source. Facts with no public source are mar
 
 ## How we implement system libraries
 
-Clean room. We implement the Orbis library and kernel interfaces from public documentation, observed behaviour and notes written by someone who did not read the proprietary code. We do not translate proprietary code into ours, even loosely.
+Clean room. We implement the Orbis and Prospero library and kernel interfaces from public documentation, observed behaviour and notes written by others. We do not translate proprietary code into ours, even loosely.
+
+**Where the line is (vic, 2026-11-19):** we never decompile or disassemble Sony's system code ourselves. Public documentation that others wrote, even if they learned it by decompiling, may be used as a specification: names, signatures, structure layouts, the command packets a function emits, behaviour. We write our own code from it. Not usable: decompiler output itself, code that is a port of Sony's code (whatever its license), and leaked SDK material.
 
 ## Analysing user-supplied binaries
 
@@ -30,7 +32,7 @@ Locally, on the user's own dumps, and with nothing but our conclusions entering 
 
 - **Games:** fine to analyse, for example counting instruction classes to see what the CPU must support, or logging which imports a game uses.
 - **System modules, to some extent:** reading their metadata (which libraries and NIDs a module exports, library and module names and versions, imports) is fine, and such symbol tables may be committed as part of the HLE OS code. Nothing else from a module is committed: no code, data tables, constants or structure layouts.
-- **Out of line:** decompiling or disassembling how a module works, and using any output of that, even indirectly. Our implementation must never be informed by it.
+- **Out of line:** decompiling or disassembling how a module works ourselves, and using the output of that. (Documentation others published is a different matter, see above.)
 
 ## Toolchains for test programs
 

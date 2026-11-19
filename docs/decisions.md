@@ -140,6 +140,12 @@ The interpreter's x87 keeps its eight registers as `f64`. 80-bit loads round to 
 
 Reason: titles reach x87 only through `long double` code in their C++ runtime (Minecraft's start-up loads an 80-bit value). Exact 80-bit arithmetic would need a soft-float implementation of every operation, for code that is rare in games. FEX offers the same trade-off as its reduced-precision mode, and its `X87_F64` tests check it.
 
+## 2026-11-19: Public documentation is usable even if others wrote it from decompilation
+
+We never decompile or disassemble Sony's system code ourselves. Documentation that other people published (notes, wikis, the interface facts other projects describe) may be used as a specification, whatever its origin; we write our own code from it. Code is still only copied under compatible licenses, never decompiler output or ports of Sony code, and leaked SDK material stays out. Details in [legal.md](legal.md).
+
+Reason: vic, while planning a fully HLE `libSceAgc`: there is no official AGC documentation, and the public knowledge about it comes from the scene's reverse engineering. The line that matters is that we do not do that analysis ourselves.
+
 ## 2026-11-19: Imports without a public name bind by NID
 
 An HLE function named `#<NID>` binds to that NID. We use it only when no name matches and the title's own code shows what the import does.
