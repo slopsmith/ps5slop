@@ -205,6 +205,18 @@ impl Memory {
         self.shared.size
     }
 
+    /// A number that changes whenever regions are mapped, unmapped or
+    /// change protection, for code that mirrors the region table.
+    pub fn generation(&self) -> u64 {
+        self.shared.generation.load(Ordering::Acquire)
+    }
+
+    /// The host address that guest address 0 corresponds to; guest address
+    /// `a` is at `host_base() + a`. For mapping guest memory into a VM.
+    pub fn host_base(&self) -> *mut u8 {
+        self.shared.base.as_ptr()
+    }
+
     fn regions_read(&self) -> std::sync::RwLockReadGuard<'_, BTreeMap<u64, Region>> {
         self.shared
             .regions
