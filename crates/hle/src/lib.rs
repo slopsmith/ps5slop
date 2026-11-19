@@ -14,7 +14,9 @@ use x86::Cpu;
 use x86::cpu::reg::*;
 
 pub mod errno;
+mod heap;
 mod kernel;
+mod libc;
 mod process;
 mod pthread;
 mod sysmodule;
@@ -31,8 +33,10 @@ pub const INTERNAL: &str = "ps5slop";
 /// registers it with `atexit`, so it returns.
 pub const LOADER_TEARDOWN: &str = "loader_teardown";
 
-/// Where host-provided variables live (readable and writable).
+/// Where host-provided variables live (readable and writable). The first
+/// [`FIXED_DATA`] bytes hold objects at fixed addresses (stdio's FILEs).
 pub const DATA_BASE: u64 = 0x00ff_8000_0000;
+pub const FIXED_DATA: u64 = 0x1000;
 
 /// The internal function a guest callback returns to.
 pub const CALLBACK_RETURN: &str = "callback_return";
@@ -229,10 +233,12 @@ impl Hle {
             .chain(sysmodule::FUNCTIONS)
             .chain(pthread::FUNCTIONS)
             .chain(thread::FUNCTIONS)
+            .chain(libc::functions())
             .map(|f| ((nid(f.name), f.library.to_owned()), f))
             .collect();
         let variables = kernel::VARIABLES
             .iter()
+            .chain(libc::VARIABLES)
             .map(|v| ((nid(v.name), v.library.to_owned()), v))
             .collect();
         let mut hle = Self {
@@ -241,7 +247,7 @@ impl Hle {
             stub_index: HashMap::new(),
             variables,
             data: Vec::new(),
-            data_end: DATA_BASE,
+            data_end: DATA_BASE + FIXED_DATA,
         };
         let internal: Vec<&str> = hle
             .by_nid
@@ -392,6 +398,7 @@ mod tests {
             TlsTemplate::default(),
             Box::new(out.clone()),
             Box::new(std::io::sink()),
+            None,
         );
         cpu.fs_base = kernel.new_tls(&kernel.memory()).unwrap();
         (kernel, cpu, out)
@@ -595,6 +602,25 @@ mod tests {
         };
         assert_eq!(env.call_guest(0x30_0000, &[2, 3]).unwrap(), 5);
         assert_eq!(cpu, before);
+    }
+
+    #[test]
+    fn snprintf_reads_variadic_integer_and_float_arguments() {
+        let mut hle = Hle::new();
+        let stub = hle.stub_by_name("libSceLibcInternal", "snprintf");
+        let (kernel, mut cpu, _) = guest(hle);
+        let mem = kernel.memory();
+        let (buf, fmt, name) = (0x20_0000, 0x20_0100, 0x20_0200);
+        mem.write(fmt, b"%s=%04d %.2f%%\0").unwrap();
+        mem.write(name, b"x\0").unwrap();
+        cpu.regs[RDI] = buf;
+        cpu.regs[RSI] = 9;
+        cpu.regs[RDX] = fmt;
+        cpu.regs[RCX] = name;
+        cpu.regs[R8] = -42i64 as u64;
+        cpu.xmm[0][0] = 1.5f64.to_bits();
+        assert_eq!(call(&kernel, stub, &mut cpu).unwrap(), Outcome::Return(12));
+        assert_eq!(mem.read_cstr(buf, 64).unwrap(), b"x=-042 1");
     }
 
     #[test]

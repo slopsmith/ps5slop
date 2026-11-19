@@ -46,7 +46,12 @@ fn main() -> ExitCode {
             process.unimplemented.len()
         );
     }
-    let status = process.run(Box::new(std::io::stdout()), Box::new(std::io::stderr()));
+    let app0 = path.parent().map(|p| p.to_path_buf());
+    let status = process.run(
+        Box::new(std::io::stdout()),
+        Box::new(std::io::stderr()),
+        app0,
+    );
     match status {
         Ok(code) => ExitCode::from(code as u8),
         Err(e) => {

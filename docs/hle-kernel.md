@@ -37,6 +37,12 @@ Each thread's errno lives in its thread control block, at the thread pointer plu
 | libkernel | `pthread_once` | The routine runs as a guest call; other callers wait | `threads` test program |
 | libkernel | `pthread_create`, `join`, `detach`, `exit`, `self`, `equal` | `pthread_t` is the thread pointer; attributes are ignored and every thread gets a 1 MiB stack (the Orbis default is unknown) | `threads` test program, 30 runs out of 30 |
 | libkernel | `__stack_chk_fail`, `__stack_chk_guard` (variable) | Stops the process / a fixed non-zero canary in the HLE data region (`0xFF_8000_0000`) | `__stack_chk_guard` used by vic's homebrew |
+| libSceLibcInternal | `mem*`, `str*`, `ctype` functions, `wcs*` (16-bit `wchar_t`), `mbrtowc`, `wcrtomb`, `wcstombs` (UTF-8) | C standard semantics; FreeBSD's choices where it leaves room | Unit tests for the parsers. Orbis's locale behaviour is unknown |
+| libSceLibcInternal | `sprintf`, `snprintf`, `vsnprintf`, `fprintf`, `vsscanf` | Our own printf and scanf engines. Variadic arguments come from registers and the stack, or a SysV `va_list`. `%ls` and `%lc` take 16-bit characters | Unit tests. Float output uses Rust's formatting, so the last digit of long expansions may differ from Orbis |
+| libSceLibcInternal | `sin`, `cos`, `pow`, `atan2`, ... (the `<math.h>` functions ScreenTester5 imports, double and float) | The host's libm | May differ from Orbis in the last bit |
+| libSceLibcInternal | `fopen`, `fclose`, `fread`, `fwrite`, `fgets`, `fseeko`, `ftello`, `fflush`, `ferror`, `fileno`, `__stdinp`, `__stdoutp`, `__stderrp` | `/app0/...` opens files in the title folder, read-only (writes fail with `EROFS`); other paths fail with `ENOENT`. stdout and stderr go to the host's; stdin is always at end of file. A FILE is an opaque handle, with the stream on the host | Path mapping unit-tested |
+| libSceLibcInternal | `_init_env`, `atexit`, `exit`, `_Exit`, `abort` | `_init_env` ignores the process parameters (layout unknown). `exit` runs the `atexit` handlers latest first, as guest calls | Reached by ScreenTester5 |
+| libSceLibcInternal | `qsort`, `bsearch`, `strto{l,ll,ul,ull,d}`, `atoi`, `atof`, `getenv`, `setenv`, `getcwd`, `strerror`, `time`, `rand`, `srand` | `qsort` is a heapsort calling the guest comparator (not stable). `getcwd` is `/app0`. The environment starts empty. `rand` is our own generator, so sequences differ from a console's | Number parsers unit-tested |
 | libSceSysmodule | `sceSysmoduleLoadModule`, `sceSysmoduleLoadModuleInternal` | Succeed without doing anything: every library is provided by the HLE layer | Called by vic's homebrew |
 
 **Variables.** Some imports are data, not functions: libkernel's `__stack_chk_guard` is read through its GOT entry, although OpenOrbis's stub declares it a function. So the symbol type cannot be trusted; the HLE layer knows its variables by name and binds them to readable memory in a data region next to the trap region.
@@ -77,6 +83,8 @@ ScreenTester5 (see [test-targets.md](test-targets.md)) loads and relocates (2,09
 - **libSceUserService, libSceSystemService, libSceAudioOut, libSceKeyboard, libSceImeDialog, libScePosixForWebKit (17).**
 
 It does not import from the `libc.prx` it ships.
+
+Status on 2026-11-19: the C library is in place (one libc import, NID `Fm-dmyywH9Q`, still has no name and no host function). ScreenTester5 runs through `_init_env` and its start-up code and stops at the first libkernel function we lack (NID `pDuPEf3m4fI`).
 
 ## What a real executable needs next
 

@@ -3,6 +3,7 @@
 
 use std::fmt;
 use std::io::Write;
+use std::path::PathBuf;
 
 use hle::{Hle, Kernel, ThreadError, TlsTemplate};
 use loader::{Dynamic, ElfFile, Image};
@@ -123,11 +124,13 @@ impl Process {
         })
     }
 
-    /// Runs until the guest exits, and returns its exit status.
+    /// Runs until the guest exits, and returns its exit status. `app0` is the
+    /// title folder, which the guest sees as `/app0`.
     pub fn run(
         self,
         stdout: Box<dyn Write + Send>,
         stderr: Box<dyn Write + Send>,
+        app0: Option<PathBuf>,
     ) -> Result<i32, Error> {
         let Process {
             mut cpu,
@@ -136,7 +139,7 @@ impl Process {
             tls,
             ..
         } = self;
-        let kernel = Kernel::new(hle, mem, tls, stdout, stderr);
+        let kernel = Kernel::new(hle, mem, tls, stdout, stderr, app0);
         cpu.fs_base = kernel.new_tls(&kernel.memory())?;
         Ok(kernel.run_main(cpu)?)
     }

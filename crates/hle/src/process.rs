@@ -3,6 +3,7 @@
 
 use std::fmt;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 
@@ -123,6 +124,10 @@ pub struct Kernel {
     me: Weak<Kernel>,
     /// Guest threads still running; the process ends when the last one does.
     live: AtomicU64,
+    pub(crate) heap: crate::heap::Heap,
+    pub(crate) libc: crate::libc::State,
+    /// The title folder, which the guest sees as `/app0`.
+    pub(crate) app0: Option<PathBuf>,
 }
 
 impl Kernel {
@@ -132,6 +137,7 @@ impl Kernel {
         tls: TlsTemplate,
         stdout: Box<dyn Write + Send>,
         stderr: Box<dyn Write + Send>,
+        app0: Option<PathBuf>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|me| Self {
             hle,
@@ -146,6 +152,9 @@ impl Kernel {
             threads: Default::default(),
             me: me.clone(),
             live: AtomicU64::new(0),
+            heap: Default::default(),
+            libc: Default::default(),
+            app0,
         })
     }
 
