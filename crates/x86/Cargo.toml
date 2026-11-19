@@ -1,0 +1,9 @@
+[package]
+name = "x86"
+description = "x86-64 user-mode decoder and interpreter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
