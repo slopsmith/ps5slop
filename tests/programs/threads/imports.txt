@@ -1,0 +1,9 @@
+pthread_create libkernel
+pthread_join libkernel
+pthread_mutex_lock libkernel
+pthread_mutex_unlock libkernel
+pthread_cond_wait libkernel
+pthread_cond_signal libkernel
+pthread_once libkernel
+write libkernel
+exit libkernel

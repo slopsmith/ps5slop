@@ -1,0 +1,1 @@
+counter 4000, inits 1, results 12
