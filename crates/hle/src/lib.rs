@@ -27,8 +27,9 @@ pub use process::{Kernel, Thread, ThreadError, TlsTemplate};
 pub const TRAP_BASE: u64 = 0x00ff_0000_0000;
 /// The library name of functions only ps5slop itself calls.
 pub const INTERNAL: &str = "ps5slop";
-/// The exit function handed to the entry point in RSI: `exit(status)`.
-pub const PROGRAM_EXIT: &str = "program_exit";
+/// The teardown callback handed to the entry point in RSI. Start-up code
+/// registers it with `atexit`, so it returns.
+pub const LOADER_TEARDOWN: &str = "loader_teardown";
 
 /// Where host-provided variables live (readable and writable).
 pub const DATA_BASE: u64 = 0x00ff_8000_0000;

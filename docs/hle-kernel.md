@@ -48,7 +48,7 @@ Each thread's errno lives in its thread control block, at the thread pointer plu
 The entry point gets what shadPS4's `RunMainEntry` passes, which OpenOrbis's startup code (`_start` in its `crt1.o`) relies on:
 
 - `rdi`: the entry parameter block `{ i32 argc; u32 pad; char *argv[]; }`, with `argv` ending in a null pointer. We pass one argument, `eboot.bin`.
-- `rsi`: an exit function, `exit(status)`; ours is the internal `ps5slop::program_exit` slot.
+- `rsi`: a loader teardown callback. The PS5 homebrew template's `_start(process_parameters, loader_teardown)` registers it with `atexit`, so it is called during `exit` and must return. Ours is the internal `ps5slop::loader_teardown`, which does nothing. What the real loader does in it is unknown.
 - `rsp`: 8 bytes off a 16-byte boundary, with the parameter block's first two words (argc and `argv[0]`) copied to the top of the stack.
 - FS base: the main thread's thread pointer. Static TLS uses the x86-64 "variant II" layout: FS points at a word that holds its own address, and the executable's `PT_TLS` image sits just below it.
 

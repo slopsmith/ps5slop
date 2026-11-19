@@ -18,6 +18,7 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 | 2026-11-19 | psdevwiki PKG files (vic's saved copy) | PKG entries, entry keys, PFS encryption | Facts ([packages.md](packages.md)) |
 | 2026-11-19 | LibProsperoPKG `docs/ps5-pkg-format.md` (GPL-3.0) | PS5 package layout | Facts only, unverified ([packages.md](packages.md)). The library itself bundles key material; never read or use its code. |
 | 2026-11-19 | PS5 homebrew survey (READMEs, release notes, the homebrew.page catalog) | Which native PS5 homebrew exists and how it is built | Facts ([test-targets.md](test-targets.md)) |
+| 2026-11-19 | ps5-native-app-boilerplate start-up code `app_crt.cpp` (GPL-3.0-or-later; never its `libc_builder.cpp` or `api-surface.txt`) | What the entry point does with its arguments | Fact only: `_start(process_parameters, loader_teardown)` registers the second argument with `atexit` ([hle-kernel.md](hle-kernel.md)). No code. |
 
 Add a row whenever someone reads another project's source for this repo.
 

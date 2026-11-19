@@ -54,8 +54,8 @@ pub static FUNCTIONS: &[Function] = &[
     },
     Function {
         library: crate::INTERNAL,
-        name: crate::PROGRAM_EXIT,
-        func: exit,
+        name: crate::LOADER_TEARDOWN,
+        func: loader_teardown,
     },
     Function {
         library: crate::INTERNAL,
@@ -155,4 +155,9 @@ fn stray_callback_return(_: &mut Env) -> Result<Outcome, CallError> {
     Err(CallError::Abort(
         "return to the callback stub outside a callback",
     ))
+}
+
+/// The entry point's teardown callback: nothing to tear down yet.
+fn loader_teardown(_: &mut Env) -> Result<Outcome, CallError> {
+    Ok(Outcome::Return(0))
 }

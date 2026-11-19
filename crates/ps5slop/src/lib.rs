@@ -83,7 +83,7 @@ impl Process {
             mem.write_host(addr, bytes).expect("region was just mapped");
         }
         mem.map(STACK_TOP - STACK_SIZE, STACK_SIZE, Prot::RW, "main stack")?;
-        let exit = hle.stub_by_name(hle::INTERNAL, hle::PROGRAM_EXIT);
+        let teardown = hle.internal(hle::LOADER_TEARDOWN);
         hle.map(&mem)?;
 
         let tls = match image.tls {
@@ -101,7 +101,7 @@ impl Process {
         };
         let params = setup_args(&mem, &["eboot.bin"])?;
         cpu.regs[RDI] = params;
-        cpu.regs[RSI] = exit;
+        cpu.regs[RSI] = teardown;
         // The kernel leaves argc and argv[0] on top of the stack, with RSP 8 off a
         // 16-byte boundary (shadPS4 RunMainEntry; OpenOrbis's startup reads them).
         let mut sp = STACK_TOP - 8 - 16;
