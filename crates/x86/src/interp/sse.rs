@@ -183,10 +183,12 @@ pub(super) fn to_int(f: f64, rc: u32, truncate: bool, bits: u32) -> u64 {
     }
 }
 
-/// CMPPS/CMPSS predicate `p` (0-7).
+/// CMPPS/CMPSS predicate `p` (0-31; bit 3 flips how unordered compares,
+/// bit 4 only picks signalling or quiet).
 fn cmp_pred(a: f64, b: f64, p: u8) -> bool {
     let un = a.is_nan() || b.is_nan();
-    match p & 7 {
+    let flip = p & 8 != 0 && un;
+    flip ^ match p & 7 {
         0 => a == b,
         1 => a < b,
         2 => a <= b,
@@ -197,6 +199,11 @@ fn cmp_pred(a: f64, b: f64, p: u8) -> bool {
         _ => !un,
     }
 }
+
+/// The state components XCR0 enables: x87, SSE and AVX (see `cpuid.rs`).
+pub(super) const XCR0: u64 = 7;
+/// The MXCSR bits that may be set (DAZ included).
+const MXCSR_MASK: u32 = 0xffff;
 
 impl Ctx<'_> {
     pub(super) fn pfx(&self) -> Pfx {
@@ -788,12 +795,156 @@ impl Ctx<'_> {
                     self.cpu.mxcsr = v;
                 }
                 (3, Loc::Mem(a)) => self.store(a, 4, self.cpu.mxcsr as u64)?,
+                (0, Loc::Mem(a)) => self.fxsave(a)?,
+                (1, Loc::Mem(a)) => self.fxrstor(a)?,
+                (4 | 6, Loc::Mem(a)) => self.xsave(a, false)?,
+                (5, Loc::Mem(a)) => self.xrstor(a)?,
                 (5..=7, Loc::Reg(_)) | (7, Loc::Mem(_)) => {}
                 _ => return Ok(false),
             },
             _ => return Ok(false),
         }
         Ok(true)
+    }
+
+    /// FXSAVE's 512-byte area: control, status and abridged tag words,
+    /// MXCSR (with its mask), ST(0)-ST(7) and XMM0-15. The last-instruction
+    /// pointers save as zeros.
+    pub(super) fn fxsave(&mut self, a: u64) -> Res<()> {
+        let area = self.x87_area();
+        for (k, w) in area.iter().enumerate() {
+            self.store(a + 8 * k as u64, 8, *w)?;
+        }
+        self.store(a + 24, 8, self.cpu.mxcsr as u64 | (MXCSR_MASK as u64) << 32)?;
+        for n in 0..16 {
+            let x = self.cpu.xmm[n];
+            self.store(a + 160 + 16 * n as u64, 8, x[0])?;
+            self.store(a + 168 + 16 * n as u64, 8, x[1])?;
+        }
+        Ok(())
+    }
+
+    /// The x87 part of the FXSAVE area (its first 160 bytes, MXCSR's
+    /// slot left zero).
+    fn x87_area(&self) -> [u64; 20] {
+        let mut area = [0u64; 20];
+        area[0] = self.cpu.fcw as u64 | (self.cpu.fsw as u64) << 16 | (self.cpu.ftag as u64) << 32;
+        let top = (self.cpu.fsw >> 11) as usize & 7;
+        for k in 0..8 {
+            let v = f64::from_bits(self.cpu.st[(top + k) & 7]);
+            let (mant, se) = super::x87::to_extended(v);
+            area[4 + 2 * k] = mant;
+            area[5 + 2 * k] = se as u64;
+        }
+        area
+    }
+
+    fn load_x87_area(&mut self, a: u64) -> Res<()> {
+        let words = self.load(a, 8)?;
+        self.cpu.fcw = words as u16;
+        self.cpu.fsw = (words >> 16) as u16;
+        self.cpu.ftag = (words >> 32) as u8;
+        let top = (self.cpu.fsw >> 11) as usize & 7;
+        for k in 0..8 {
+            let at = a + 32 + 16 * k as u64;
+            let v = super::x87::from_extended(self.load(at, 8)?, self.load(at + 8, 2)? as u16);
+            self.cpu.st[(top + k) & 7] = v.to_bits();
+        }
+        Ok(())
+    }
+
+    pub(super) fn fxrstor(&mut self, a: u64) -> Res<()> {
+        let mxcsr = self.load(a + 24, 4)? as u32;
+        if mxcsr & !MXCSR_MASK != 0 {
+            return Err(CpuFault::GeneralProtection);
+        }
+        self.load_x87_area(a)?;
+        self.cpu.mxcsr = mxcsr;
+        for n in 0..16 {
+            self.cpu.xmm[n][0] = self.load(a + 160 + 16 * n as u64, 8)?;
+            self.cpu.xmm[n][1] = self.load(a + 168 + 16 * n as u64, 8)?;
+        }
+        Ok(())
+    }
+
+    /// XSAVE/XSAVEOPT (and XSAVEC, `compact`) of the components EDX:EAX
+    /// asks for out of XCR0: x87 and SSE in the legacy area, the YMM upper
+    /// halves at 576, and the header's XSTATE_BV (and XCOMP_BV).
+    pub(super) fn xsave(&mut self, a: u64, compact: bool) -> Res<()> {
+        let rfbm = (self.cpu.regs[RAX] as u32 as u64 | self.cpu.regs[RDX] << 32) & XCR0;
+        if rfbm & 3 != 0 {
+            let mut area = [0u64; 64];
+            area[..20].copy_from_slice(&self.x87_area());
+            area[3] = self.cpu.mxcsr as u64 | (MXCSR_MASK as u64) << 32;
+            for n in 0..16 {
+                area[20 + 2 * n] = self.cpu.xmm[n][0];
+                area[21 + 2 * n] = self.cpu.xmm[n][1];
+            }
+            for (k, &w) in area.iter().enumerate().take(52) {
+                let sse = (3..4).contains(&k) || (20..52).contains(&k);
+                let x87_part = k < 20 && k != 3;
+                if (sse && rfbm & 6 != 0) || (x87_part && rfbm & 1 != 0) {
+                    self.store(a + 8 * k as u64, 8, w)?;
+                }
+            }
+        }
+        if rfbm & 4 != 0 {
+            for n in 0..16 {
+                self.store(a + 576 + 16 * n as u64, 8, self.cpu.xmm[n][2])?;
+                self.store(a + 584 + 16 * n as u64, 8, self.cpu.xmm[n][3])?;
+            }
+        }
+        let bv = self.load(a + 512, 8)?;
+        self.store(a + 512, 8, (bv & !rfbm) | rfbm)?;
+        if compact {
+            self.store(a + 520, 8, rfbm | 1 << 63)?;
+        }
+        Ok(())
+    }
+
+    /// XRSTOR: components EDX:EAX asks for come from the area when its
+    /// XSTATE_BV has them, and are reset to their initial state otherwise.
+    pub(super) fn xrstor(&mut self, a: u64) -> Res<()> {
+        let rfbm = (self.cpu.regs[RAX] as u32 as u64 | self.cpu.regs[RDX] << 32) & XCR0;
+        let bv = self.load(a + 512, 8)?;
+        if rfbm & 1 != 0 {
+            if bv & 1 != 0 {
+                self.load_x87_area(a)?;
+            } else {
+                self.cpu.fcw = 0x37f;
+                self.cpu.fsw = 0;
+                self.cpu.ftag = 0;
+                self.cpu.st = [0; 8];
+            }
+        }
+        if rfbm & 6 != 0 {
+            let mxcsr = self.load(a + 24, 4)? as u32;
+            if mxcsr & !MXCSR_MASK != 0 {
+                return Err(CpuFault::GeneralProtection);
+            }
+            self.cpu.mxcsr = mxcsr;
+        }
+        for n in 0..16 {
+            if rfbm & 2 != 0 {
+                let (lo, hi) = if bv & 2 != 0 {
+                    (self.load(a + 160 + 16 * n as u64, 8)?, self.load(a + 168 + 16 * n as u64, 8)?)
+                } else {
+                    (0, 0)
+                };
+                self.cpu.xmm[n][0] = lo;
+                self.cpu.xmm[n][1] = hi;
+            }
+            if rfbm & 4 != 0 {
+                let (lo, hi) = if bv & 4 != 0 {
+                    (self.load(a + 576 + 16 * n as u64, 8)?, self.load(a + 584 + 16 * n as u64, 8)?)
+                } else {
+                    (0, 0)
+                };
+                self.cpu.xmm[n][2] = lo;
+                self.cpu.xmm[n][3] = hi;
+            }
+        }
+        Ok(())
     }
 
     /// Lane shifts: `kind` 0 logical right, 1 arithmetic right, 2 left.

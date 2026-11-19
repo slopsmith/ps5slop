@@ -4,7 +4,7 @@
 //! are used.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+
 use std::sync::{Arc, Condvar, Mutex};
 
 use x86::Cpu;
@@ -52,7 +52,6 @@ impl Default for Attr {
 #[derive(Default)]
 pub struct Threads {
     records: Mutex<HashMap<u64, Arc<Record>>>,
-    next_attr: AtomicU64,
     attrs: Mutex<HashMap<u64, Attr>>,
 }
 
@@ -97,7 +96,7 @@ fn attr(env: &Env, at: u64) -> Result<Option<Attr>, CallError> {
 
 fn attr_init(env: &mut Env) -> Result<Outcome, CallError> {
     let threads = &env.kernel.threads;
-    let id = threads.next_attr.fetch_add(1, Ordering::Relaxed) + 1;
+    let id = crate::pthread::new_handle(env)?;
     lock(&threads.attrs).insert(id, Attr::default());
     env.mem.write_u64(env.arg(0), id)?;
     ret(0)
@@ -239,3 +238,103 @@ fn detach(env: &mut Env) -> Result<Outcome, CallError> {
     }
     ret(0)
 }
+
+macro_rules! sce_wrappers {
+    ($($sce:ident => $posix:ident),* $(,)?) => {
+        $(fn $sce(env: &mut Env) -> Result<Outcome, CallError> {
+            crate::pthread::sce($posix(env))
+        })*
+    };
+}
+
+sce_wrappers! {
+    sce_create => create,
+    sce_join => join,
+    sce_detach => detach,
+    sce_attr_init => attr_init,
+    sce_attr_destroy => attr_destroy,
+    sce_attr_setdetachstate => attr_setdetachstate,
+    sce_attr_setstacksize => attr_setstacksize,
+}
+
+/// Accepted and ignored: affinity, priorities, scheduling policy and
+/// inheritance, and names (host threads keep their own).
+fn sce_ok(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
+/// `scePthreadAttrGetdetachstate(attr, state)`.
+fn sce_attr_getdetachstate(env: &mut Env) -> Result<Outcome, CallError> {
+    let Some(a) = attr(env, env.arg(0))? else {
+        return crate::pthread::sce(ret(EINVAL));
+    };
+    env.mem
+        .write(env.arg(1), &(a.detached as u32).to_le_bytes())?;
+    ret(0)
+}
+
+/// `scePthreadAttrGetschedparam(attr, param)`: the default priority.
+fn sce_attr_getschedparam(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write(env.arg(1), &PRIORITY_DEFAULT.to_le_bytes())?;
+    ret(0)
+}
+
+/// `scePthreadAttrGetaffinity(attr, mask)`: every CPU.
+fn sce_attr_getaffinity(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write_u64(env.arg(1), ALL_CPUS)?;
+    ret(0)
+}
+
+/// `scePthreadAttrGet(thread, attr)`: fresh default attributes.
+fn sce_attr_get(env: &mut Env) -> Result<Outcome, CallError> {
+    let threads = &env.kernel.threads;
+    let id = crate::pthread::new_handle(env)?;
+    lock(&threads.attrs).insert(id, Attr::default());
+    env.mem.write_u64(env.arg(1), id)?;
+    ret(0)
+}
+
+/// `scePthreadGetname(thread, name)`: names are not kept.
+fn sce_getname(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write(env.arg(1), b"thread\0")?;
+    ret(0)
+}
+
+/// `scePthreadGetthreadid()`: a number unique to the thread.
+fn sce_getthreadid(env: &mut Env) -> Result<Outcome, CallError> {
+    ret((env.thread.tcb >> 14) as i32)
+}
+
+fn sce_yield(_: &mut Env) -> Result<Outcome, CallError> {
+    std::thread::yield_now();
+    ret(0)
+}
+
+/// Orbis's default thread priority (shadPS4, PS4; unverified for the PS5).
+const PRIORITY_DEFAULT: u32 = 700;
+const ALL_CPUS: u64 = 0xff;
+
+pub static SCE_FUNCTIONS: &[Function] = &[
+    f("scePthreadCreate", sce_create),
+    f("scePthreadJoin", sce_join),
+    f("scePthreadDetach", sce_detach),
+    f("scePthreadExit", exit),
+    f("scePthreadYield", sce_yield),
+    f("scePthreadGetthreadid", sce_getthreadid),
+    f("scePthreadGetname", sce_getname),
+    f("scePthreadRename", sce_ok),
+    f("scePthreadSetaffinity", sce_ok),
+    f("scePthreadSetprio", sce_ok),
+    f("scePthreadAttrInit", sce_attr_init),
+    f("scePthreadAttrDestroy", sce_attr_destroy),
+    f("scePthreadAttrSetdetachstate", sce_attr_setdetachstate),
+    f("scePthreadAttrGetdetachstate", sce_attr_getdetachstate),
+    f("scePthreadAttrSetstacksize", sce_attr_setstacksize),
+    f("scePthreadAttrSetaffinity", sce_ok),
+    f("scePthreadAttrGetaffinity", sce_attr_getaffinity),
+    f("scePthreadAttrSetschedpolicy", sce_ok),
+    f("scePthreadAttrSetschedparam", sce_ok),
+    f("scePthreadAttrGetschedparam", sce_attr_getschedparam),
+    f("scePthreadAttrSetinheritsched", sce_ok),
+    f("scePthreadAttrGet", sce_attr_get),
+];

@@ -230,6 +230,9 @@ impl Ctx<'_> {
         if self.pfx() != Pfx::P66 {
             return none();
         }
+        if i.map == Map::M0F38 && i.op == 0x17 {
+            return self.ptest();
+        }
         if self.cross_lane()? {
             return Ok(true);
         }
@@ -266,6 +269,9 @@ impl Ctx<'_> {
         let vex = i.vex.is_some();
         let w = i.rex_w();
         let half = self.half as u32;
+        if i.map == Map::M0F3A && (0x60..=0x63).contains(&op) {
+            return self.string_compare();
+        }
         if i.map == Map::M0F38 {
             if (0x96..=0xbf).contains(&op) {
                 return self.fma();
@@ -1202,6 +1208,139 @@ impl Ctx<'_> {
             }
             _ => return Ok(false),
         }
+        Ok(true)
+    }
+
+    /// PCMPESTRM, PCMPESTRI, PCMPISTRM and PCMPISTRI, as the SDM's "Packed
+    /// String Compare" describes them.
+    fn string_compare(&mut self) -> Res<bool> {
+        let i = self.insn;
+        let imm = self.imm() as u8;
+        let words = imm & 1 != 0;
+        let signed = imm & 2 != 0;
+        let n = if words { 8 } else { 16 };
+        let a = self.xget(i.reg);
+        let b = self.src128(false)?;
+        let elem = |v: u128, k: usize| -> i64 {
+            let raw = if words {
+                (v >> (16 * k)) as u16 as u64
+            } else {
+                (v >> (8 * k)) as u8 as u64
+            };
+            match (signed, words) {
+                (true, true) => raw as u16 as i16 as i64,
+                (true, false) => raw as u8 as i8 as i64,
+                _ => raw as i64,
+            }
+        };
+        let explicit = i.op <= 0x61;
+        let len = |reg: usize, v: u128| -> usize {
+            if explicit {
+                let raw = self.get(reg as u8, if i.rex_w() { 8 } else { 4 });
+                let l = if i.rex_w() {
+                    raw as i64
+                } else {
+                    raw as i32 as i64
+                };
+                (l.unsigned_abs() as usize).min(n)
+            } else {
+                (0..n).find(|&k| elem(v, k) == 0).unwrap_or(n)
+            }
+        };
+        let (la, lb) = (len(RAX, a), len(RDX, b));
+        let agg = (imm >> 2) & 3;
+        let bool_res = |j: usize, k: usize| -> bool {
+            let (aj, bk) = (j < la, k < lb);
+            match agg {
+                0 | 1 if !aj || !bk => false,
+                2 if !aj && !bk => true,
+                2 if !aj || !bk => false,
+                3 if !aj => true,
+                3 if !bk => false,
+                1 if j.is_multiple_of(2) => elem(b, k) >= elem(a, j),
+                1 => elem(b, k) <= elem(a, j),
+                _ => elem(b, k) == elem(a, j),
+            }
+        };
+        let mut res = 0u32;
+        for k in 0..n {
+            let bit = match agg {
+                0 => (0..n).any(|j| bool_res(j, k)),
+                1 => (0..n)
+                    .step_by(2)
+                    .any(|j| bool_res(j, k) && bool_res(j + 1, k)),
+                2 => bool_res(k, k),
+                _ => (0..n - k).all(|j| bool_res(j, k + j)),
+            };
+            res |= (bit as u32) << k;
+        }
+        let all = (1u32 << n) - 1;
+        let res = match (imm >> 4) & 3 {
+            1 => !res & all,
+            3 => res ^ ((1u32 << lb) - 1),
+            _ => res,
+        };
+        if i.op & 1 == 1 {
+            let index = if res == 0 {
+                n as u32
+            } else if imm & 0x40 != 0 {
+                31 - res.leading_zeros()
+            } else {
+                res.trailing_zeros()
+            };
+            self.cpu.regs[RCX] = index as u64;
+        } else {
+            let mask = if imm & 0x40 == 0 {
+                res as u128
+            } else {
+                (0..n).fold(0u128, |m, k| {
+                    let ones: u128 = if words { 0xffff } else { 0xff };
+                    if res >> k & 1 != 0 {
+                        m | ones << (k * if words { 16 } else { 8 })
+                    } else {
+                        m
+                    }
+                })
+            };
+            self.xset(0, mask);
+        }
+        let mut f = 0;
+        if res != 0 {
+            f |= CF;
+        }
+        if lb < n {
+            f |= ZF;
+        }
+        if la < n {
+            f |= SF;
+        }
+        if res & 1 != 0 {
+            f |= OF;
+        }
+        self.cpu.set_arith(f);
+        Ok(true)
+    }
+
+    /// PTEST/VPTEST: ZF when `a AND b` is all zero, CF when `(NOT a) AND b`
+    /// is, over the whole operand; the other arithmetic flags clear.
+    fn ptest(&mut self) -> Res<bool> {
+        let i = self.insn;
+        let wide = i.vex.is_some_and(|v| v.l);
+        let a = self.cpu.xmm[i.reg as usize];
+        let b: [u64; 4] = match self.rm() {
+            Loc::Mem(addr) => {
+                let mut v = [0u64; 4];
+                for (k, lane) in v.iter_mut().enumerate().take(if wide { 4 } else { 2 }) {
+                    *lane = self.load(addr + 8 * k as u64, 8)?;
+                }
+                v
+            }
+            Loc::Reg(r) => self.cpu.xmm[r as usize],
+        };
+        let n = if wide { 4 } else { 2 };
+        let zf = (0..n).all(|k| a[k] & b[k] == 0);
+        let cf = (0..n).all(|k| !a[k] & b[k] == 0);
+        self.cpu.set_arith(if zf { ZF } else { 0 } | if cf { CF } else { 0 });
         Ok(true)
     }
 }

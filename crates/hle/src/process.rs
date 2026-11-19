@@ -29,6 +29,8 @@ pub enum ThreadError {
     Guest {
         fault: CpuFault,
         cpu: Box<Cpu>,
+        /// What the faulting address is, when we know (an import's stub).
+        note: Option<String>,
     },
     /// A host function failed; `caller` is the return address it was called with.
     Call {
@@ -47,8 +49,12 @@ pub enum ThreadError {
 impl fmt::Display for ThreadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ThreadError::Guest { fault, cpu } => {
-                write!(f, "guest fault {fault:?} at {:#x}\n{}", cpu.rip, dump(cpu))
+            ThreadError::Guest { fault, cpu, note } => {
+                write!(f, "guest fault {fault:?} at {:#x}", cpu.rip)?;
+                if let Some(n) = note {
+                    write!(f, " ({n})")?;
+                }
+                write!(f, "\n{}", dump(cpu))
             }
             ThreadError::Call { error, caller, cpu } => {
                 write!(f, "{error}, called from {caller:#x}\n{}", dump(cpu))
@@ -85,12 +91,39 @@ fn dump(cpu: &Cpu) -> String {
     s + &format!("rip {:016x}  rflags {:08x}", cpu.rip, cpu.rflags)
 }
 
-/// The executable's TLS image, copied into every new thread's TLS block.
+/// One module's static TLS: its initial image, its size, and how far below
+/// the thread pointer it sits.
 #[derive(Debug, Clone, Default)]
-pub struct TlsTemplate {
+pub struct TlsBlock {
     pub init: Vec<u8>,
     pub size: u64,
-    pub align: u64,
+    pub offset: u64,
+}
+
+/// The static TLS of the executable and its modules, copied into every new
+/// thread. Block `i` belongs to TLS module id `i + 1`; the executable is 1.
+#[derive(Debug, Clone, Default)]
+pub struct TlsTemplate {
+    pub blocks: Vec<TlsBlock>,
+}
+
+impl TlsTemplate {
+    /// Adds a module's TLS image (`size` bytes, aligned to `align`) below the
+    /// blocks already there, and returns its TLS module id.
+    pub fn add(&mut self, init: Vec<u8>, size: u64, align: u64) -> u64 {
+        let below = self.blocks.last().map_or(0, |b| b.offset);
+        let offset = (below + size).next_multiple_of(align.max(1));
+        self.blocks.push(TlsBlock { init, size, offset });
+        self.blocks.len() as u64
+    }
+
+    /// The distance from the lowest block to the thread pointer.
+    fn span(&self) -> u64 {
+        self.blocks
+            .last()
+            .map_or(0, |b| b.offset)
+            .next_multiple_of(64)
+    }
 }
 
 /// What a host function knows about the guest thread that called it.
@@ -130,6 +163,7 @@ pub struct Kernel {
     pub(crate) pad: crate::pad::Pad,
     pub(crate) audio: crate::services::Audio,
     pub(crate) videoout: crate::videoout::VideoOut,
+    pub(crate) rtld: crate::rtld::Rtld,
     /// Whether guest code runs in the JIT instead of the interpreter.
     jit: AtomicBool,
     pub(crate) libc: crate::libc::State,
@@ -167,6 +201,7 @@ impl Kernel {
             pad: Default::default(),
             audio: Default::default(),
             videoout: Default::default(),
+            rtld: Default::default(),
             jit: AtomicBool::new(false),
             libc: Default::default(),
             vfs,
@@ -249,18 +284,26 @@ impl Kernel {
     /// (FS points at a word holding its own address, the TLS image below it)
     /// and returns the thread pointer.
     pub fn new_tls(&self, mem: &Memory) -> Result<u64, ThreadError> {
-        let align = self.tls.align.max(16);
-        let offset = self.tls.size.next_multiple_of(align);
+        let offset = self.tls.span();
         let len = (offset + TCB_SIZE).next_multiple_of(PAGE_SIZE);
         let at = mem
             .find_free(TLS_AREA, len)
             .ok_or(ThreadError::Map(MapError::OutOfRange))?;
         mem.map(at, len, Prot::RW, "thread tls")?;
         let tcb = at + offset;
-        mem.write(tcb - offset, &self.tls.init)
-            .expect("tls was just mapped");
+        for b in &self.tls.blocks {
+            mem.write(tcb - b.offset, &b.init)
+                .expect("tls was just mapped");
+        }
         mem.write_u64(tcb, tcb).expect("tls was just mapped");
         Ok(tcb)
+    }
+
+    /// The address of a TLS variable on thread `tcb`: TLS module `module`,
+    /// offset `offset`, for `__tls_get_addr`.
+    pub fn tls_address(&self, tcb: u64, module: u64, offset: u64) -> Option<u64> {
+        let b = self.tls.blocks.get(module.checked_sub(1)? as usize)?;
+        Some(tcb - b.offset + offset)
     }
 
     /// Maps a stack of `size` bytes and returns its top.
@@ -273,11 +316,25 @@ impl Kernel {
         Ok(at + size)
     }
 
-    /// Runs the main thread on the calling host thread until the process
-    /// exits, and returns how it ended.
-    pub fn run_main(self: &Arc<Self>, cpu: Cpu) -> Result<i32, ThreadError> {
+    /// Runs each module initialiser in `inits`, then the main thread, on the
+    /// calling host thread until the process exits, and returns how it ended.
+    pub fn run_main(self: &Arc<Self>, mut cpu: Cpu, inits: &[u64]) -> Result<i32, ThreadError> {
         let thread = Thread { tcb: cpu.fs_base };
         self.live.fetch_add(1, Ordering::AcqRel);
+        let mem = self.memory();
+        for &init in inits {
+            let mut env = Env {
+                cpu: &mut cpu,
+                mem: &mem,
+                kernel: self,
+                thread,
+            };
+            if let Err(error) = env.call_guest(init, &[0, 0, 0]) {
+                let caller = init;
+                let cpu = Box::new(cpu.clone());
+                self.exit(Err(ThreadError::Call { error, caller, cpu }));
+            }
+        }
         self.run_thread(cpu, self.memory(), thread);
         let mut slot = self.result.lock().unwrap_or_else(|e| e.into_inner());
         while slot.is_none() {
@@ -337,9 +394,21 @@ impl Kernel {
                     }));
                 }
                 Exit::Fault { kind, .. } => {
+                    let note = match kind {
+                        CpuFault::Memory(f) => self.hle.describe(f.addr),
+                        CpuFault::Unimplemented { .. } => {
+                            let mut b = [0u8; 15];
+                            mem.fetch(cpu.rip, &mut b).ok().map(|()| {
+                                let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
+                                format!("bytes {}", hex.join(" "))
+                            })
+                        }
+                        _ => None,
+                    };
                     self.exit(Err(ThreadError::Guest {
                         fault: kind,
                         cpu: Box::new(cpu.clone()),
+                        note,
                     }));
                 }
             }

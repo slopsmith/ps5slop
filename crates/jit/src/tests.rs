@@ -74,6 +74,23 @@ fn mapping_changes_reach_the_vm_after_a_sync() {
     cpu.release(&mut m);
 }
 
+#[test]
+fn memory_mapped_again_with_the_same_bounds_reaches_the_vm() {
+    let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
+    let mem = guest();
+    let mut m = machine().unwrap();
+    mem.map(0x60_0000, PAGE_SIZE, Prot::RW, "first").unwrap();
+    m.sync(&mem).unwrap();
+    let pc = m.load_code(0x1000, &increment());
+    let mut cpu = Cpu::new(&mut m).unwrap().unwrap();
+    mem.map_over(0x60_0000, PAGE_SIZE, Prot::RW, "second").unwrap();
+    assert!(m.sync(&mem).unwrap());
+    cpu.set_reg(0, 0x60_0000).unwrap();
+    assert_eq!(cpu.run(&m, pc).unwrap(), Exit::Hvc(7));
+    assert_eq!(mem.read_u64(0x60_0000).unwrap(), 1);
+    cpu.release(&mut m);
+}
+
 const CODE: u64 = 0x40_0000;
 const STACK: u64 = 0x10_0000;
 const TRAP: u64 = 0xff_0000_0000;

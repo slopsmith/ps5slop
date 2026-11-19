@@ -113,6 +113,9 @@ pub struct RegionInfo {
     pub name: String,
 }
 
+/// Past this many unread fresh ranges, everything counts as fresh.
+const FRESH_LIMIT: usize = 4096;
+
 struct Shared {
     /// Unique to this reservation in the process.
     id: u64,
@@ -123,6 +126,8 @@ struct Shared {
     generation: AtomicU64,
     /// Serialises locked operations on misaligned addresses, which host atomics cannot do.
     misaligned_atomics: Mutex<()>,
+    /// Ranges whose host pages were replaced since the last [`Memory::take_fresh`].
+    fresh: Mutex<Vec<(u64, u64)>>,
 }
 
 // The reservation is owned by `Shared` and only reached through `Memory` handles,
@@ -213,6 +218,7 @@ impl Memory {
                 regions: RwLock::new(BTreeMap::new()),
                 generation: AtomicU64::new(0),
                 misaligned_atomics: Mutex::new(()),
+                fresh: Mutex::new(Vec::new()),
             }),
             last: Cell::new(None),
             journal: RefCell::new(None),
@@ -288,7 +294,19 @@ impl Memory {
         if p == libc::MAP_FAILED {
             return Err(MapError::Host(io::Error::last_os_error()));
         }
+        let mut fresh = self.shared.fresh.lock().unwrap_or_else(|e| e.into_inner());
+        if fresh.len() >= FRESH_LIMIT {
+            fresh.clear();
+            fresh.push((0, u64::MAX));
+        }
+        fresh.push((addr, addr + len));
         Ok(())
+    }
+
+    /// The ranges given new host pages since the last call. Anything that
+    /// mapped the old pages elsewhere (a VM's stage 2) must map them again.
+    pub fn take_fresh(&self) -> Vec<(u64, u64)> {
+        std::mem::take(&mut *self.shared.fresh.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Maps zero-filled memory at `[addr, addr + len)`.
@@ -335,13 +353,72 @@ impl Memory {
         Ok(())
     }
 
+        /// Maps `len` bytes at `addr` like `mmap` with `MAP_FIXED`: whatever was
+    /// mapped there is replaced (regions are split as needed). Trap regions
+    /// cannot be replaced.
+    pub fn map_over(&self, addr: u64, len: u64, prot: Prot, name: &str) -> Result<(), MapError> {
+        self.check_range(addr, len)?;
+        let mut regions = self.regions_write();
+        carve(&mut regions, addr, addr + len)?;
+        regions.insert(
+            addr,
+            Region {
+                end: addr + len,
+                prot,
+                trap: false,
+                name: name.to_owned(),
+            },
+        );
+        self.host_fresh(addr, len)?;
+        drop(regions);
+        self.changed();
+        Ok(())
+    }
+
+    /// Unmaps whatever lies in `addr..addr + len`, splitting regions that
+    /// stick out, and drops its contents.
+    pub fn unmap_range(&self, addr: u64, len: u64) -> Result<(), MapError> {
+        self.check_range(addr, len)?;
+        let mut regions = self.regions_write();
+        carve(&mut regions, addr, addr + len)?;
+        self.host_fresh(addr, len)?;
+        drop(regions);
+        self.changed();
+        Ok(())
+    }
+
+    /// Changes the protection of everything mapped in `addr..addr + len`,
+    /// splitting regions that stick out.
+    pub fn protect_range(&self, addr: u64, len: u64, prot: Prot) -> Result<(), MapError> {
+        self.check_range(addr, len)?;
+        let end = addr + len;
+        let mut regions = self.regions_write();
+        let inside: Vec<(u64, Region)> = regions
+            .range(..end)
+            .filter(|(s, r)| r.end > addr && **s < end)
+            .map(|(&s, r)| (s, r.clone()))
+            .collect();
+        if inside.iter().any(|(_, r)| r.trap) {
+            return Err(MapError::Overlaps);
+        }
+        carve(&mut regions, addr, end)?;
+        for (s, r) in inside {
+            let (from, to) = (s.max(addr), r.end.min(end));
+            regions.insert(from, Region { end: to, prot, ..r });
+        }
+        drop(regions);
+        self.changed();
+        Ok(())
+    }
+
     /// Unmaps the region starting exactly at `addr` and drops its contents.
     pub fn unmap(&self, addr: u64) -> Result<(), MapError> {
         let mut regions = self.regions_write();
         let r = regions.remove(&addr).ok_or(MapError::OutOfRange)?;
+        self.host_fresh(addr, r.end - addr)?;
         drop(regions);
         self.changed();
-        self.host_fresh(addr, r.end - addr)
+        Ok(())
     }
 
     /// Changes the guest protection of the region starting exactly at `addr`.
@@ -643,9 +720,50 @@ impl Memory {
     }
 }
 
+
+/// Removes `start..end` from the region table, keeping the parts of
+/// regions that stick out on either side. Trap regions cannot be cut.
+fn carve(regions: &mut BTreeMap<u64, Region>, start: u64, end: u64) -> Result<(), MapError> {
+    let hit: Vec<u64> = regions
+        .range(..end)
+        .filter(|(_, r)| r.end > start)
+        .map(|(&s, _)| s)
+        .collect();
+    if hit.iter().any(|s| regions[s].trap) {
+        return Err(MapError::Overlaps);
+    }
+    for s in hit {
+        let r = regions.remove(&s).expect("listed above");
+        if s < start {
+            regions.insert(s, Region { end: start, ..r.clone() });
+        }
+        if r.end > end {
+            regions.insert(end, Region { end: r.end, ..r });
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn range_operations_split_regions_like_mmap() {
+        let mem = Memory::new(1 << 32).unwrap();
+        let p = PAGE_SIZE;
+        mem.map(0x10_0000, 8 * p, Prot::NONE, "reserved").unwrap();
+        mem.map_over(0x10_0000 + 2 * p, 2 * p, Prot::RW, "inside").unwrap();
+        mem.write(0x10_0000 + 2 * p, b"hi").unwrap();
+        assert!(mem.read(0x10_0000, &mut [0u8; 1]).is_err());
+        mem.protect_range(0x10_0000 + 3 * p, 4 * p, Prot::READ).unwrap();
+        assert!(mem.write(0x10_0000 + 3 * p, b"x").is_err());
+        assert!(mem.write(0x10_0000 + 2 * p, b"x").is_ok());
+        mem.unmap_range(0x10_0000 + 2 * p, p).unwrap();
+        assert!(mem.read(0x10_0000 + 2 * p, &mut [0u8; 1]).is_err());
+        let starts: Vec<u64> = mem.regions().iter().map(|r| r.start - 0x10_0000).collect();
+        assert_eq!(starts, [0, 3 * p, 4 * p, 7 * p]);
+    }
 
     const GIB: u64 = 1 << 30;
 

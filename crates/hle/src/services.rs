@@ -16,6 +16,9 @@ const USER_ID_INVALID: i32 = -1;
 /// `SceUserServiceLoginUserIdList` holds four ids.
 const LOGIN_LIST_LEN: usize = 4;
 
+/// Our guess; unverified.
+const SYSTEM_SERVICE_ERROR_PARAMETER: u64 = 0x80A1_0003;
+
 const AUDIO_ERROR_INVALID_PORT: u64 = 0x8026_0003;
 const AUDIO_ERROR_INVALID_FORMAT: u64 = 0x8026_0007;
 const AUDIO_ERROR_INVALID_SAMPLE_FREQ: u64 = 0x8026_0008;
@@ -47,6 +50,11 @@ pub static FUNCTIONS: &[Function] = &[
         "libSceSystemService",
         "sceSystemServiceLaunchWebBrowser",
         launch_web_browser,
+    ),
+    f(
+        "libSceSystemService",
+        "sceSystemServiceParamGetInt",
+        param_get_int,
     ),
     f("libSceAudioOut", "sceAudioOutInit", ok),
     f("libSceAudioOut", "sceAudioOutOpen", audio_open),
@@ -93,6 +101,23 @@ fn user_name(env: &mut Env) -> Result<Outcome, CallError> {
     let n = USER_NAME.len().min(size - 1);
     env.mem.write(buf, &USER_NAME[..n])?;
     env.mem.write(buf + n as u64, &[0])?;
+    ret(0)
+}
+
+/// `sceSystemServiceParamGetInt(id, &value)`: English, ISO dates, 24-hour
+/// time, UTC, no daylight saving, no parental limit, cross confirms.
+fn param_get_int(env: &mut Env) -> Result<Outcome, CallError> {
+    let value: i32 = match env.arg(0) as u32 {
+        1 => 1,
+        2 => 0,
+        3 => 1,
+        4 => 0,
+        5 => 0,
+        7 => 0,
+        1000 => 1,
+        _ => return ret(SYSTEM_SERVICE_ERROR_PARAMETER),
+    };
+    env.mem.write(env.arg(1), &value.to_le_bytes())?;
     ret(0)
 }
 

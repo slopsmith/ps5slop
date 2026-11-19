@@ -9,7 +9,7 @@
 //! number instead of setting errno.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -68,7 +68,6 @@ struct HostRwLock {
 /// The kernel objects behind guest handles.
 #[derive(Default)]
 pub struct Objects {
-    next: AtomicU64,
     mutexes: Mutex<HashMap<u64, Arc<HostMutex>>>,
     conds: Mutex<HashMap<u64, Arc<HostCond>>>,
     rwlocks: Mutex<HashMap<u64, Arc<HostRwLock>>>,
@@ -79,11 +78,21 @@ pub struct Objects {
     once_done: Condvar,
 }
 
-impl Objects {
-    fn new_handle(&self) -> u64 {
-        self.next.fetch_add(1, Ordering::Relaxed) + 1
-    }
+/// A new handle for a pthread object: the address of a small zeroed block
+/// of guest memory, since guest code (Sony's libc) reads through
+/// `pthread_mutex_t` and its siblings as pointers.
+pub(crate) fn new_handle(env: &Env) -> Result<u64, CallError> {
+    let at = env
+        .kernel
+        .heap
+        .alloc(env.mem, HANDLE_SIZE)
+        .ok_or(CallError::Abort("out of memory for pthread objects"))?;
+    env.mem.write(at, &[0; HANDLE_SIZE as usize])?;
+    Ok(at)
 }
+
+/// The guest memory behind each handle.
+const HANDLE_SIZE: u64 = 64;
 
 pub static FUNCTIONS: &[Function] = &[
     f("pthread_mutexattr_init", mutexattr_init),
@@ -94,6 +103,8 @@ pub static FUNCTIONS: &[Function] = &[
     f("pthread_mutex_lock", mutex_lock),
     f("pthread_mutex_trylock", mutex_trylock),
     f("pthread_mutex_unlock", mutex_unlock),
+    f("pthread_condattr_init", condattr),
+    f("pthread_condattr_destroy", condattr),
     f("pthread_cond_init", cond_init),
     f("pthread_cond_destroy", cond_destroy),
     f("pthread_cond_wait", cond_wait),
@@ -104,6 +115,8 @@ pub static FUNCTIONS: &[Function] = &[
     f("pthread_rwlock_destroy", rwlock_destroy),
     f("pthread_rwlock_rdlock", rwlock_rdlock),
     f("pthread_rwlock_wrlock", rwlock_wrlock),
+    f("pthread_rwlock_tryrdlock", rwlock_tryrdlock),
+    f("pthread_rwlock_trywrlock", rwlock_trywrlock),
     f("pthread_rwlock_unlock", rwlock_unlock),
     f("pthread_key_create", key_create),
     f("pthread_key_delete", key_delete),
@@ -138,7 +151,7 @@ fn handle(env: &Env, at: u64, make: impl FnOnce(u64)) -> Result<u64, CallError> 
     if current != 0 {
         return Ok(current);
     }
-    let id = env.kernel.objects.new_handle();
+    let id = new_handle(env)?;
     let old = env.mem.atomic_update(at, 8, |v| (v == 0).then_some(id))?;
     if old != 0 {
         return Ok(old);
@@ -170,9 +183,16 @@ fn new_mutex(kind: u64) -> HostMutex {
 }
 
 fn mutexattr_init(env: &mut Env) -> Result<Outcome, CallError> {
-    let id = env.kernel.objects.new_handle();
+    let id = new_handle(env)?;
     lock(&env.kernel.objects.mutex_attrs).insert(id, PTHREAD_MUTEX_ERRORCHECK);
     env.mem.write_u64(env.arg(0), id)?;
+    ret(0)
+}
+
+/// Condition variable attributes carry nothing we use (clock and
+/// process-shared are ignored); the attribute word is zeroed.
+fn condattr(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write_u64(env.arg(0), 0)?;
     ret(0)
 }
 
@@ -206,7 +226,7 @@ fn mutex_init(env: &mut Env) -> Result<Outcome, CallError> {
             None => return ret(EINVAL),
         }
     };
-    let id = env.kernel.objects.new_handle();
+    let id = new_handle(env)?;
     lock(&env.kernel.objects.mutexes).insert(id, Arc::new(new_mutex(kind)));
     env.mem.write_u64(env.arg(0), id)?;
     ret(0)
@@ -292,7 +312,7 @@ fn cond(env: &Env, at: u64) -> Result<Arc<HostCond>, CallError> {
 }
 
 fn cond_init(env: &mut Env) -> Result<Outcome, CallError> {
-    let id = env.kernel.objects.new_handle();
+    let id = new_handle(env)?;
     lock(&env.kernel.objects.conds).insert(id, Arc::default());
     env.mem.write_u64(env.arg(0), id)?;
     ret(0)
@@ -386,7 +406,7 @@ fn rwlock(env: &Env, at: u64) -> Result<Arc<HostRwLock>, CallError> {
 }
 
 fn rwlock_init(env: &mut Env) -> Result<Outcome, CallError> {
-    let id = env.kernel.objects.new_handle();
+    let id = new_handle(env)?;
     lock(&env.kernel.objects.rwlocks).insert(id, Arc::default());
     env.mem.write_u64(env.arg(0), id)?;
     ret(0)
@@ -399,13 +419,15 @@ fn rwlock_destroy(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-fn rwlock_take(env: &mut Env, write: bool) -> Result<Outcome, CallError> {
+/// Takes the lock for reading or writing; without `wait`, fails with
+/// EBUSY instead of waiting.
+fn rwlock_take(env: &mut Env, write: bool, wait: bool) -> Result<Outcome, CallError> {
     let l = rwlock(env, env.arg(0))?;
     let me = env.thread.tcb;
     let mut s = lock(&l.state);
     loop {
         if s.writer == Some(me) {
-            return ret(EDEADLK);
+            return ret(if wait { EDEADLK } else { EBUSY });
         }
         if s.writer.is_none() && (!write || s.readers == 0) {
             if write {
@@ -414,6 +436,9 @@ fn rwlock_take(env: &mut Env, write: bool) -> Result<Outcome, CallError> {
                 s.readers += 1;
             }
             return ret(0);
+        }
+        if !wait {
+            return ret(EBUSY);
         }
         if env.kernel.has_exited() {
             return ret(0);
@@ -427,11 +452,19 @@ fn rwlock_take(env: &mut Env, write: bool) -> Result<Outcome, CallError> {
 }
 
 fn rwlock_rdlock(env: &mut Env) -> Result<Outcome, CallError> {
-    rwlock_take(env, false)
+    rwlock_take(env, false, true)
 }
 
 fn rwlock_wrlock(env: &mut Env) -> Result<Outcome, CallError> {
-    rwlock_take(env, true)
+    rwlock_take(env, true, true)
+}
+
+fn rwlock_tryrdlock(env: &mut Env) -> Result<Outcome, CallError> {
+    rwlock_take(env, false, false)
+}
+
+fn rwlock_trywrlock(env: &mut Env) -> Result<Outcome, CallError> {
+    rwlock_take(env, true, false)
 }
 
 fn rwlock_unlock(env: &mut Env) -> Result<Outcome, CallError> {
@@ -548,3 +581,109 @@ fn self_(env: &mut Env) -> Result<Outcome, CallError> {
 fn equal(env: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return((env.arg(0) == env.arg(1)) as u64))
 }
+
+/// Sony's error convention for `scePthread*`: 0, or `0x80020000` + errno.
+pub(crate) fn sce(out: Result<Outcome, CallError>) -> Result<Outcome, CallError> {
+    match out? {
+        Outcome::Return(v) if v as u32 != 0 => {
+            Ok(Outcome::Return(crate::dmem::sce_error(v as i32)))
+        }
+        other => Ok(other),
+    }
+}
+
+macro_rules! sce_wrappers {
+    ($($sce:ident => $posix:ident),* $(,)?) => {
+        $(fn $sce(env: &mut Env) -> Result<Outcome, CallError> {
+            sce($posix(env))
+        })*
+    };
+}
+
+sce_wrappers! {
+    sce_mutexattr_init => mutexattr_init,
+    sce_mutexattr_destroy => mutexattr_destroy,
+    sce_mutexattr_settype => mutexattr_settype,
+    sce_mutex_init => mutex_init,
+    sce_mutex_destroy => mutex_destroy,
+    sce_mutex_lock => mutex_lock,
+    sce_mutex_trylock => mutex_trylock,
+    sce_mutex_unlock => mutex_unlock,
+    sce_cond_init => cond_init,
+    sce_cond_destroy => cond_destroy,
+    sce_cond_wait => cond_wait,
+    sce_cond_signal => cond_signal,
+    sce_rwlock_init => rwlock_init,
+    sce_rwlock_destroy => rwlock_destroy,
+    sce_rwlock_rdlock => rwlock_rdlock,
+    sce_rwlock_wrlock => rwlock_wrlock,
+    sce_rwlock_tryrdlock => rwlock_tryrdlock,
+    sce_rwlock_trywrlock => rwlock_trywrlock,
+    sce_rwlock_unlock => rwlock_unlock,
+    sce_key_create => key_create,
+    sce_key_delete => key_delete,
+    sce_setspecific => setspecific,
+    sce_once => once,
+}
+
+/// `scePthreadCondTimedwait(cond, mutex, usec)`: a relative timeout.
+fn sce_cond_timedwait(env: &mut Env) -> Result<Outcome, CallError> {
+    let usec = env.arg(2) as u32 as u64;
+    sce(wait(
+        env,
+        Some(Instant::now() + Duration::from_micros(usec)),
+    ))
+}
+
+/// `scePthreadMutexTimedlock(mutex, usec)`.
+fn sce_mutex_timedlock(env: &mut Env) -> Result<Outcome, CallError> {
+    let m = mutex(env, env.arg(0))?;
+    let deadline = Instant::now() + Duration::from_micros(env.arg(1) as u32 as u64);
+    loop {
+        let r = acquire(env, &m, env.thread.tcb, true);
+        if r != EBUSY || Instant::now() >= deadline || env.kernel.has_exited() {
+            return sce(ret(if r == EBUSY { ETIMEDOUT } else { r }));
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// `scePthreadCondattrInit`/`Destroy`: condition attributes are not kept.
+fn sce_ok(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
+pub static SCE_FUNCTIONS: &[Function] = &[
+    f("scePthreadMutexattrInit", sce_mutexattr_init),
+    f("scePthreadMutexattrDestroy", sce_mutexattr_destroy),
+    f("scePthreadMutexattrSettype", sce_mutexattr_settype),
+    f("scePthreadMutexInit", sce_mutex_init),
+    f("scePthreadMutexDestroy", sce_mutex_destroy),
+    f("scePthreadMutexLock", sce_mutex_lock),
+    f("scePthreadMutexTrylock", sce_mutex_trylock),
+    f("scePthreadMutexTimedlock", sce_mutex_timedlock),
+    f("scePthreadMutexUnlock", sce_mutex_unlock),
+    f("scePthreadCondattrInit", sce_ok),
+    f("scePthreadCondattrDestroy", sce_ok),
+    f("scePthreadCondInit", sce_cond_init),
+    f("scePthreadCondDestroy", sce_cond_destroy),
+    f("scePthreadCondWait", sce_cond_wait),
+    f("scePthreadCondTimedwait", sce_cond_timedwait),
+    f("scePthreadCondSignal", sce_cond_signal),
+    f("scePthreadCondSignalto", sce_cond_signal),
+    f("scePthreadCondBroadcast", sce_cond_signal),
+    f("scePthreadRwlockInit", sce_rwlock_init),
+    f("scePthreadRwlockDestroy", sce_rwlock_destroy),
+    f("scePthreadRwlockRdlock", sce_rwlock_rdlock),
+    f("scePthreadRwlockWrlock", sce_rwlock_wrlock),
+    f("scePthreadRwlockTryrdlock", sce_rwlock_tryrdlock),
+    f("scePthreadRwlockTrywrlock", sce_rwlock_trywrlock),
+    f("scePthreadRwlockUnlock", sce_rwlock_unlock),
+    f("scePthreadKeyCreate", sce_key_create),
+    f("scePthreadKeyDelete", sce_key_delete),
+    f("scePthreadSetspecific", sce_setspecific),
+    f("scePthreadGetspecific", getspecific),
+    f("scePthreadOnce", sce_once),
+    f("scePthreadSelf", self_),
+    f("scePthreadEqual", equal),
+];

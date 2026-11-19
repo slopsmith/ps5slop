@@ -200,6 +200,20 @@ fn skip_list(root: &Path) -> BTreeMap<String, String> {
             }
         }
     }
+    let mut x87 = Vec::new();
+    collect(root, &root.join("X87"), &mut x87);
+    for name in x87 {
+        let file = &name["X87/".len()..];
+        let f64_twin = root.join(format!("X87_F64/{}_F64.asm", file.trim_end_matches(".asm")));
+        let reason = if f64_twin.exists() {
+            "has an X87_F64 version; our x87 computes in double precision"
+        } else if file.starts_with("precision_test_") || file == "FXAM_Simple.asm" {
+            "needs 80-bit precision; our x87 computes in double precision"
+        } else {
+            continue;
+        };
+        out.entry(name).or_insert_with(|| reason.to_owned());
+    }
     out
 }
 
@@ -218,8 +232,13 @@ fn config(text: &str) -> Result<Value, String> {
     ))
 }
 
+/// A number written as a hex or decimal string, alone or as the only item of
+/// a list (some tests write general registers that way).
 fn int(v: &Value) -> Option<u64> {
-    let s = v.as_str()?;
+    let s = match v.as_array() {
+        Some(list) if list.len() == 1 => list[0].as_str()?,
+        _ => v.as_str()?,
+    };
     match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         Some(hex) => u64::from_str_radix(hex, 16).ok(),
         None => s.parse().ok(),

@@ -127,3 +127,21 @@ Reason: titles need somewhere to write logs and, later, saves (DriftCheck logs t
 `ps5slop run` translates guest code and runs it in the VM; `--interpreter` runs the interpreter only. Threads beyond the VM's 64 vCPUs, and instructions the translator does not handle, still use the interpreter.
 
 Reason: with SSE/AVX integer code and BMI translated, ScreenTester5 draws its menu in 0.2 s instead of 2.5 s, and verify mode shows no differences on ScreenTester5 or DriftCheck. vic asked for it.
+
+## 2026-11-19: Load the modules a title imports from, and Sony's libc
+
+`ps5slop run` loads the modules an executable imports from: the title's own modules always, and modules from `sce_module/` (Sony's) when `ALLOWED_SYSTEM_MODULES` names them, starting with `libc`. Details in [loader.md](loader.md#modules).
+
+Reason: commercial titles (Balatro, Minecraft) import a C and C++ runtime from the `libc.prx` they ship: iostreams, locales, exception support. Reimplementing that in the HLE layer makes no sense. The module is the user's own copy, loaded at run time, never distributed, and it runs on top of our HLE `libkernel`, which is what the semi-LLE allowlist asks for. Minecraft also ships modules of its own that have to load anyway. vic may drop the allowlist later.
+
+## 2026-11-19: The x87 computes in double precision
+
+The interpreter's x87 keeps its eight registers as `f64`. 80-bit loads round to double, and 80-bit stores widen.
+
+Reason: titles reach x87 only through `long double` code in their C++ runtime (Minecraft's start-up loads an 80-bit value). Exact 80-bit arithmetic would need a soft-float implementation of every operation, for code that is rare in games. FEX offers the same trade-off as its reduced-precision mode, and its `X87_F64` tests check it.
+
+## 2026-11-19: pthread handles are guest addresses
+
+`pthread_mutex_t`, `pthread_cond_t`, `pthread_rwlock_t`, their attributes, thread attributes and `sem_t` hold the address of a small zeroed block of guest memory, and our objects are keyed by it.
+
+Reason: Sony's libc reads through these as pointers (it faulted at the small counters we used before), as FreeBSD's pthread types are pointers.

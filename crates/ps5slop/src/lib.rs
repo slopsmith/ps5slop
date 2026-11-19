@@ -5,12 +5,18 @@ use std::fmt;
 use std::io::Write;
 use std::sync::Arc;
 
+use std::collections::HashMap;
+use std::path::Path;
+
 use hle::{Hle, Kernel, ThreadError, TlsTemplate};
-use loader::{Dynamic, ElfFile, Image};
+use loader::Image;
+use loader::elf::PT_TLS;
 use memory::{MapError, Memory, PAGE_SIZE, Prot};
+use modules::Unit;
 use x86::Cpu;
 use x86::cpu::reg::*;
 
+pub mod modules;
 #[cfg(all(target_os = "macos", feature = "window"))]
 pub mod window;
 
@@ -66,41 +72,83 @@ pub struct Process {
     mem: Memory,
     hle: Hle,
     tls: TlsTemplate,
-    /// Imports no host function implements yet, as `(library, NID)`.
+    /// Module initialisers, to run before the entry point.
+    inits: Vec<u64>,
+    module_infos: Vec<hle::ModuleInfo>,
+    proc_param: Option<u64>,
+    /// Modules loaded besides the executable: name and base address.
+    pub modules: Vec<(String, u64)>,
+    /// Imports nothing provides yet, as `(library, NID, name if known)`.
     pub unimplemented: Vec<(String, String, Option<String>)>,
 }
 
 impl Process {
-    /// Loads an executable (plain ELF or fake-signed SELF) and prepares its
-    /// main thread to start at the entry point.
-    pub fn load(file: Vec<u8>) -> Result<Self, Error> {
-        let elf = ElfFile::parse(file)?;
-        let dynamic = Dynamic::parse(&elf)?;
-        let mut hle = Hle::new();
-        let image = Image::load(&elf, &dynamic, IMAGE_BASE, 1, &mut hle)?;
-        let mem = Memory::new(ADDRESS_SPACE).map_err(|e| Error::Map(MapError::Host(e)))?;
-        for r in &image.regions {
-            let p = r.protection;
-            let addr = image.base + r.offset;
-            mem.map(addr, r.size, Prot::new(p.read, p.write, p.execute), "image")?;
-            let bytes = &image.bytes[r.offset as usize..(r.offset + r.size) as usize];
-            mem.write_host(addr, bytes).expect("region was just mapped");
+    /// Loads an executable (plain ELF or fake-signed SELF), and the modules it
+    /// imports from that `dir` (its title folder) holds, and prepares its main
+    /// thread to start at the entry point.
+    pub fn load(file: Vec<u8>, dir: Option<&Path>) -> Result<Self, Error> {
+        let mut main = Unit::parse("eboot".into(), file)?;
+        main.file = "eboot.bin".into();
+        main.base = IMAGE_BASE;
+        let found = dir.map(modules::candidates).unwrap_or_default();
+        let mut units = vec![main];
+        let mut next = modules::MODULE_AREA;
+        for (name, path) in modules::choose(&units[0], &found) {
+            let file = std::fs::read(&path).map_err(|e| Error::Map(MapError::Host(e)))?;
+            let mut unit = Unit::parse(name, file)?;
+            unit.file = path.file_name().map_or(String::new(), |f| f.to_string_lossy().into_owned());
+            unit.base = next;
+            next = (next + unit.size() + PAGE_SIZE).next_multiple_of(PAGE_SIZE);
+            units.push(unit);
         }
+        let mut exports = HashMap::new();
+        for u in &units {
+            for (key, addr) in u.exports() {
+                exports.entry(key).or_insert(addr);
+            }
+        }
+
+        let mut hle = Hle::new();
+        let mem = Memory::new(ADDRESS_SPACE).map_err(|e| Error::Map(MapError::Host(e)))?;
+        let mut tls = TlsTemplate::default();
+        let mut images = Vec::new();
+        let mut module_infos = Vec::new();
+        for (k, u) in units.iter().enumerate() {
+            let tls_segment = u
+                .elf
+                .find(PT_TLS)
+                .map(|(_, p)| (p.vaddr, p.filesz, p.memsz, p.align));
+            let tls_id = match tls_segment {
+                Some((_, _, size, align)) => tls.add(Vec::new(), size, align),
+                None if k == 0 => tls.add(Vec::new(), 0, 1),
+                None => 0,
+            };
+            let mut linker = modules::Linker {
+                exports: &exports,
+                hle: &mut hle,
+            };
+            let image = Image::load(&u.elf, &u.dynamic, u.base, tls_id, &mut linker)?;
+            if let Some((vaddr, filesz, _, _)) = tls_segment {
+                let init = image.bytes[vaddr as usize..(vaddr + filesz) as usize].to_vec();
+                tls.blocks[tls_id as usize - 1].init = init;
+            }
+            for r in &image.regions {
+                let p = r.protection;
+                let addr = image.base + r.offset;
+                mem.map(addr, r.size, Prot::new(p.read, p.write, p.execute), &u.name)?;
+                let bytes = &image.bytes[r.offset as usize..(r.offset + r.size) as usize];
+                mem.write_host(addr, bytes).expect("region was just mapped");
+            }
+            module_infos.push(modules::info(u, &image));
+            images.push(image);
+        }
+        let inits = initialisers(&units, &images);
         mem.map(STACK_TOP - STACK_SIZE, STACK_SIZE, Prot::RW, "main stack")?;
         let teardown = hle.internal(hle::LOADER_TEARDOWN);
         hle.map(&mem)?;
 
-        let tls = match image.tls {
-            Some(t) => TlsTemplate {
-                init: image.bytes[t.init_offset as usize..(t.init_offset + t.init_size) as usize]
-                    .to_vec(),
-                size: t.size,
-                align: t.align,
-            },
-            None => TlsTemplate::default(),
-        };
         let mut cpu = Cpu {
-            rip: image.entry,
+            rip: images[0].entry,
             ..Cpu::default()
         };
         let params = setup_args(&mem, &["eboot.bin"])?;
@@ -118,11 +166,20 @@ impl Process {
         }
         cpu.regs[RSP] = sp;
         let unimplemented = hle.unimplemented();
+        let modules = units[1..]
+            .iter()
+            .map(|u| (u.name.clone(), u.base))
+            .collect();
+        let proc_param = images[0].proc_param;
         Ok(Self {
             cpu,
             mem,
             hle,
             tls,
+            inits,
+            module_infos,
+            proc_param,
+            modules,
             unimplemented,
         })
     }
@@ -140,11 +197,20 @@ impl Process {
             mem,
             hle,
             tls,
+            inits,
+            proc_param,
+            module_infos,
             ..
         } = self;
         let kernel = Kernel::new(hle, mem, tls, stdout, stderr, vfs);
         cpu.fs_base = kernel.new_tls(&kernel.memory())?;
-        Ok(Booted { kernel, cpu })
+        if let Some(p) = proc_param {
+            kernel.set_proc_param(p);
+        }
+        for info in module_infos {
+            kernel.add_module(info);
+        }
+        Ok(Booted { kernel, cpu, inits })
     }
 }
 
@@ -152,13 +218,14 @@ impl Process {
 pub struct Booted {
     pub kernel: Arc<Kernel>,
     cpu: Cpu,
+    inits: Vec<u64>,
 }
 
 impl Booted {
     /// Runs the main thread on this host thread until the guest exits, and
     /// returns its exit status.
     pub fn run(self) -> Result<i32, Error> {
-        Ok(self.kernel.run_main(self.cpu)?)
+        Ok(self.kernel.run_main(self.cpu, &self.inits)?)
     }
 }
 
@@ -179,4 +246,46 @@ fn setup_args(mem: &Memory, args: &[&str]) -> Result<u64, Error> {
     mem.write(PROCESS_ARGS, &block)
         .expect("args page was just mapped");
     Ok(PROCESS_ARGS)
+}
+
+/// The modules' initialisers, dependencies first: a module's entry point
+/// (`module_start`) if it has one, else its `DT_INIT` and init array.
+fn initialisers(units: &[Unit], images: &[Image]) -> Vec<u64> {
+    fn visit(k: usize, units: &[Unit], seen: &mut Vec<bool>, order: &mut Vec<usize>) {
+        if seen[k] {
+            return;
+        }
+        seen[k] = true;
+        for need in &units[k].dynamic.needed_modules {
+            if let Some(d) = units.iter().position(|u| u.name == need.name) {
+                visit(d, units, seen, order);
+            }
+        }
+        order.push(k);
+    }
+    let (mut seen, mut order) = (vec![false; units.len()], Vec::new());
+    seen[0] = true;
+    for k in 1..units.len() {
+        visit(k, units, &mut seen, &mut order);
+    }
+    let mut out = Vec::new();
+    for (u, image) in order.into_iter().map(|k| (&units[k], &images[k])) {
+        if u.elf.header().entry != 0 {
+            out.push(image.entry);
+            continue;
+        }
+        if let Some(init) = u.dynamic.init {
+            out.push(u.base + init);
+        }
+        if let Some((addr, size)) = u.dynamic.init_array {
+            for k in 0..size / 8 {
+                let at = (addr + 8 * k) as usize;
+                let f = u64::from_le_bytes(image.bytes[at..at + 8].try_into().expect("8 bytes"));
+                if f != 0 && f != u64::MAX {
+                    out.push(f);
+                }
+            }
+        }
+    }
+    out
 }

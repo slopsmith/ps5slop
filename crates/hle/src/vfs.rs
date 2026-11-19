@@ -37,6 +37,15 @@ impl Vfs {
         Self { mounts }
     }
 
+    /// Adds a mount point: guest path `guest` backed by host folder `host`.
+    pub fn mount(&mut self, guest: &'static str, host: PathBuf, writable: bool) {
+        self.mounts.push(Mount {
+            guest,
+            host,
+            writable,
+        });
+    }
+
     /// The host path for guest path `path`, and whether it may be written;
     /// `None` outside every mount, or for paths that climb out with `..`.
     pub fn resolve(&self, path: &[u8]) -> Option<(PathBuf, bool)> {

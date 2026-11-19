@@ -58,7 +58,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let process = match Process::load(file) {
+    let process = match Process::load(file, path.parent()) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("ps5slop: {e}");
@@ -78,16 +78,21 @@ fn main() -> ExitCode {
     }
     let app0 = path.parent().map(|p| p.to_path_buf());
     let data = data.or_else(|| default_data(&path));
-    if let Some(d) = &data
-        && let Err(e) = std::fs::create_dir_all(d)
-    {
-        eprintln!("ps5slop: cannot make {}: {e}", d.display());
+    let temp = data.as_ref().map(|d| d.with_file_name("temp"));
+    for d in data.iter().chain(&temp) {
+        if let Err(e) = std::fs::create_dir_all(d) {
+            eprintln!("ps5slop: cannot make {}: {e}", d.display());
+        }
+    }
+    let mut vfs = hle::Vfs::new(app0, data);
+    if let Some(t) = temp {
+        vfs.mount("/temp0", t, true);
     }
     let status = process
         .boot(
             Box::new(std::io::stdout()),
             Box::new(std::io::stderr()),
-            hle::Vfs::new(app0, data),
+            vfs,
         )
         .and_then(|booted| {
             booted.kernel.use_jit(!interpreter);

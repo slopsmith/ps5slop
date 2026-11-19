@@ -87,3 +87,16 @@ Only modules on an **allowlist** are candidates. A module gets on it only if eve
 - PS5 `PROCPARAM` layout and what the runtime reads from it (SDK version, heap sizes, and so on).
 - How module start and stop functions, TLS images and init arrays are laid out for `ET_SCE_DYNAMIC` modules.
 - Which modules go on the semi-LLE allowlist first. The OpenOrbis samples ship `libc.prx` and `libSceFios2.prx` in `sce_module/`; where those files come from is unknown.
+
+## Modules
+
+Status (2026-11-19): Balatro loads its own `sce_module/libc.prx` (Sony's C library, which only needs `libkernel`), binds its 183 `libc` imports to it, runs its initialiser, and reaches `main`. Implemented in `crates/ps5slop/src/modules.rs` and `Process::load`.
+
+- **Finding modules.** Each import names a module. The candidates are the `.prx`/`.sprx` files in the title folder and in `sce_module/`, by the module name their own tables give.
+- **Choosing.** Only modules that the executable, or a module already chosen, imports from are loaded, so homebrew that never imports from its `libc.prx` does not load it. Game modules (outside `sce_module`, such as Minecraft's `libfmod.prx`) always load. Modules in `sce_module/` are Sony's and load only if `ALLOWED_SYSTEM_MODULES` names them; today that is `libc`. Everything else stays with the HLE layer. Whether to drop the allowlist will be revisited (vic, 2026-11-19).
+- **Layout.** The executable stays at `0x40_0000`; modules follow one another from `0x8_0000_0000` (our choice; see [memory.md](memory.md)).
+- **Binding.** Every unit's exports (global or weak symbols with a value, as `(library, NID)`) are collected before anything is relocated. An import binds to a module export first, then to an HLE stub.
+- **TLS.** One static layout holds the executable's block (TLS module id 1) and each module's below it, in the variant II layout. `R_X86_64_DTPMOD64` gets the module's id, and `__tls_get_addr` maps (module, offset) to the calling thread's block. Balatro's `libc.prx` uses only `RELATIVE`, `GLOB_DAT`, `JUMP_SLOT` and `DTPMOD64` relocations.
+- **Initialisers.** Before the entry point, on the main thread, dependencies first: a module's entry point (`module_start`) if it has one, else its `DT_INIT` and init array. Their arguments are zeros (what Orbis passes is unknown). Finalisers are not run yet.
+
+What Sony's libc expects from the loader (`_sceKernelSetThreadDtors`, `_sceKernelRtldSetApplicationHeapAPI`, `sceKernelGetProcParam`...) is in [hle-kernel.md](hle-kernel.md). Its code is never disassembled: what it needs is learned from the calls it makes and their arguments.

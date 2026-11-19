@@ -34,8 +34,28 @@ pub static FUNCTIONS: &[Function] = &[
     },
     Function {
         library: "libkernel",
+        name: "__tls_get_addr",
+        func: tls_get_addr,
+    },
+    Function {
+        library: "libkernel",
         name: "munmap",
         func: munmap,
+    },
+    Function {
+        library: "libkernel",
+        name: "sceKernelMunmap",
+        func: sce_munmap,
+    },
+    Function {
+        library: "libkernel",
+        name: "mprotect",
+        func: mprotect,
+    },
+    Function {
+        library: "libkernel",
+        name: "sceKernelMprotect",
+        func: sce_mprotect,
     },
     Function {
         library: "libkernel",
@@ -110,18 +130,55 @@ fn mmap(env: &mut Env) -> Result<Outcome, CallError> {
             None => return Ok(Outcome::Return(MAP_FAILED)),
         }
     };
-    match env.mem.map(at, len, prot, "mmap") {
+    let mapped = if flags & MAP_FIXED != 0 {
+        env.mem.map_over(at, len, prot, "mmap")
+    } else {
+        env.mem.map(at, len, prot, "mmap")
+    };
+    match mapped {
         Ok(()) => Ok(Outcome::Return(at)),
         Err(_) => Ok(Outcome::Return(MAP_FAILED)),
     }
 }
 
 /// `munmap(addr, len)`: only whole mappings made by `mmap`.
+/// `munmap(addr, len)`: whatever is mapped in the range.
 fn munmap(env: &mut Env) -> Result<Outcome, CallError> {
-    match env.mem.unmap(env.arg(0)) {
+    let len = env.arg(1).next_multiple_of(PAGE_SIZE);
+    match env.mem.unmap_range(env.arg(0), len) {
         Ok(()) => Ok(Outcome::Return(0)),
-        Err(_) => Ok(Outcome::Return(-1i64 as u64)),
+        Err(_) => env.fail(errno::EINVAL),
     }
+}
+
+fn sce_munmap(env: &mut Env) -> Result<Outcome, CallError> {
+    let len = env.arg(1).next_multiple_of(PAGE_SIZE);
+    match env.mem.unmap_range(env.arg(0), len) {
+        Ok(()) => Ok(Outcome::Return(0)),
+        Err(_) => Ok(Outcome::Return(crate::dmem::sce_error(errno::EINVAL))),
+    }
+}
+
+/// `mprotect(addr, len, prot)`, with the CPU bits of `prot`.
+fn mprotect(env: &mut Env) -> Result<Outcome, CallError> {
+    match protect(env) {
+        Ok(()) => Ok(Outcome::Return(0)),
+        Err(_) => env.fail(errno::EINVAL),
+    }
+}
+
+fn sce_mprotect(env: &mut Env) -> Result<Outcome, CallError> {
+    match protect(env) {
+        Ok(()) => Ok(Outcome::Return(0)),
+        Err(_) => Ok(Outcome::Return(crate::dmem::sce_error(errno::EINVAL))),
+    }
+}
+
+fn protect(env: &Env) -> Result<(), memory::MapError> {
+    let (addr, len, p) = (env.arg(0), env.arg(1).next_multiple_of(PAGE_SIZE), env.arg(2));
+    let gpu = p & 0x30 != 0;
+    let prot = Prot::new(p & (PROT_READ | PROT_WRITE) != 0 || gpu, p & PROT_WRITE != 0 || p & 0x20 != 0, p & PROT_EXEC != 0);
+    env.mem.protect_range(addr, len, prot)
 }
 
 /// `__error()`: the address of the calling thread's errno.
@@ -145,4 +202,14 @@ fn stray_callback_return(_: &mut Env) -> Result<Outcome, CallError> {
 /// The entry point's teardown callback: nothing to tear down yet.
 fn loader_teardown(_: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(0))
+}
+
+/// `__tls_get_addr(&{module, offset})`: a TLS variable of the calling thread.
+fn tls_get_addr(env: &mut Env) -> Result<Outcome, CallError> {
+    let index = env.arg(0);
+    let (module, offset) = (env.mem.read_u64(index)?, env.mem.read_u64(index + 8)?);
+    match env.kernel.tls_address(env.thread.tcb, module, offset) {
+        Some(addr) => Ok(Outcome::Return(addr)),
+        None => Err(CallError::Abort("__tls_get_addr for a module without TLS")),
+    }
 }

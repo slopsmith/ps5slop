@@ -28,7 +28,7 @@ Status (2026-11-19): stages A and B work, C and D are under way, and the JIT is 
 
 **vCPUs:** one per guest thread, created on that guest thread's host thread (HVF binds a vCPU to its thread). The VM allows 64; further threads run in the interpreter.
 
-**Memory changes** (`mmap`, `munmap`, protection changes) bump `Memory`'s generation. Before a vCPU enters the VM it brings the stage-2 mappings and TTBR0 tables up to date and flushes its TLB if anything changed. A change made while other vCPUs run kicks them out (`hv_vcpus_exit`) so they resync.
+**Memory changes** (`mmap`, `munmap`, protection changes) bump `Memory`'s generation. Mapping or unmapping replaces the host pages under a range (a fresh `MAP_FIXED` mapping, so freed memory reads as zeros), and the VM's stage 2 still points at the old pages; `Memory::take_fresh` lists those ranges, and the sync maps them again. Without this, Minecraft's start-up wrote to pages the interpreter and host functions never saw (found with verify mode). Before a vCPU enters the VM it brings the stage-2 mappings and TTBR0 tables up to date and flushes its TLB if anything changed. A change made while other vCPUs run kicks them out (`hv_vcpus_exit`) so they resync.
 
 ## Translated code
 

@@ -12,8 +12,13 @@ use crate::{CallError, Env, Function, Outcome, errno};
 pub static FUNCTIONS: &[Function] = &[
     f("stat", stat),
     f("fstat", fstat),
+    f("sceKernelStat", sce_stat),
+    f("sceKernelFstat", sce_fstat),
     f("mkdir", mkdir),
     f("gettimeofday", gettimeofday),
+    f("clock_gettime", clock_gettime),
+    f("clock_getres", clock_getres),
+    f("sceKernelClockGettime", sce_clock_gettime),
     f("nanosleep", nanosleep),
     f("sceKernelUsleep", usleep),
     f("sceKernelGetProcessTime", process_time),
@@ -90,8 +95,7 @@ fn write_metadata(env: &Env, at: u64, m: &std::fs::Metadata) -> Result<(), CallE
     write_stat(env, at, mode, m.len(), m.modified().ok())
 }
 
-/// `stat(path, sb)`.
-fn stat(env: &mut Env) -> Result<Outcome, CallError> {
+fn stat_path(env: &Env) -> Result<Result<(), i32>, CallError> {
     let path = super::libc::cstr(env, env.arg(0))?;
     let meta = env
         .kernel
@@ -99,22 +103,42 @@ fn stat(env: &mut Env) -> Result<Outcome, CallError> {
         .resolve(&path)
         .and_then(|(p, _)| std::fs::metadata(p).ok());
     match meta {
-        Some(m) => {
-            write_metadata(env, env.arg(1), &m)?;
-            ret(0)
-        }
-        None => env.fail(errno::ENOENT),
+        Some(m) => write_metadata(env, env.arg(1), &m).map(Ok),
+        None => Ok(Err(errno::ENOENT)),
     }
 }
 
-fn fstat(env: &mut Env) -> Result<Outcome, CallError> {
+fn stat_fd(env: &Env) -> Result<Result<(), i32>, CallError> {
     let (fd, at) = (env.arg(0) as i32, env.arg(1));
     match env.kernel.libc.files.fd_info(fd) {
         Some(FdInfo::Console) => write_stat(env, at, S_IFCHR | 0o666, 0, None)?,
         Some(FdInfo::File(m)) => write_metadata(env, at, &m)?,
-        None => return env.fail(errno::EBADF),
+        None => return Ok(Err(errno::EBADF)),
     }
-    ret(0)
+    Ok(Ok(()))
+}
+
+/// `stat(path, sb)`.
+fn stat(env: &mut Env) -> Result<Outcome, CallError> {
+    match stat_path(env)? {
+        Ok(()) => ret(0),
+        Err(e) => env.fail(e),
+    }
+}
+
+fn fstat(env: &mut Env) -> Result<Outcome, CallError> {
+    match stat_fd(env)? {
+        Ok(()) => ret(0),
+        Err(e) => env.fail(e),
+    }
+}
+
+fn sce_stat(env: &mut Env) -> Result<Outcome, CallError> {
+    ret(stat_path(env)?.map_or_else(sce_error, |()| 0))
+}
+
+fn sce_fstat(env: &mut Env) -> Result<Outcome, CallError> {
+    ret(stat_fd(env)?.map_or_else(sce_error, |()| 0))
 }
 
 /// `mkdir(path, mode)`.
@@ -168,6 +192,58 @@ fn usleep(env: &mut Env) -> Result<Outcome, CallError> {
 }
 
 /// `sceKernelGetProcessTime()`: microseconds since the process started.
+/// The time on FreeBSD clock `id`; the non-realtime ones count from start.
+fn clock(env: &Env, id: u64) -> Option<Duration> {
+    match id {
+        0 | 9 | 10 | 13 => Some(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default(),
+        ),
+        1 | 2 | 4 | 5 | 7 | 8 | 11 | 12 | 14 | 15 => Some(env.kernel.started.elapsed()),
+        _ => None,
+    }
+}
+
+/// Writes a `struct timespec { i64 sec; i64 nsec; }`.
+fn write_timespec(env: &Env, at: u64, t: Duration) -> Result<(), CallError> {
+    env.mem.write_u64(at, t.as_secs())?;
+    env.mem.write_u64(at + 8, t.subsec_nanos() as u64)?;
+    Ok(())
+}
+
+/// `clock_gettime(id, tp)`.
+fn clock_gettime(env: &mut Env) -> Result<Outcome, CallError> {
+    match clock(env, env.arg(0)) {
+        Some(t) => {
+            write_timespec(env, env.arg(1), t)?;
+            ret(0)
+        }
+        None => env.fail(errno::EINVAL),
+    }
+}
+
+fn sce_clock_gettime(env: &mut Env) -> Result<Outcome, CallError> {
+    match clock(env, env.arg(0)) {
+        Some(t) => {
+            write_timespec(env, env.arg(1), t)?;
+            ret(0)
+        }
+        None => ret(sce_error(errno::EINVAL)),
+    }
+}
+
+/// `clock_getres(id, tp)`: one microsecond (our choice).
+fn clock_getres(env: &mut Env) -> Result<Outcome, CallError> {
+    if clock(env, env.arg(0)).is_none() {
+        return env.fail(errno::EINVAL);
+    }
+    if env.arg(1) != 0 {
+        write_timespec(env, env.arg(1), Duration::from_micros(1))?;
+    }
+    ret(0)
+}
+
 fn process_time(env: &mut Env) -> Result<Outcome, CallError> {
     ret(env.kernel.started.elapsed().as_micros() as u64)
 }

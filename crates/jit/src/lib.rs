@@ -223,6 +223,13 @@ impl Machine {
         }
         let regions: Vec<_> = mem.regions().into_iter().filter(|r| !r.trap).collect();
         let wanted: Vec<(u64, u64)> = regions.iter().map(|r| (r.start, r.end)).collect();
+        let fresh = mem.take_fresh();
+        let stale = |&(s, e): &(u64, u64)| fresh.iter().any(|&(fs, fe)| fs < e && s < fe);
+        let (old, kept): (Vec<_>, Vec<_>) = self.mapped.drain(..).partition(stale);
+        for (start, end) in old {
+            self.vm.unmap(start, (end - start) as usize)?;
+        }
+        self.mapped = kept;
         for &(start, end) in self.mapped.iter().filter(|m| !wanted.contains(m)) {
             self.vm.unmap(start, (end - start) as usize)?;
         }

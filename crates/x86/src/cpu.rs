@@ -49,9 +49,14 @@ pub struct Cpu {
     /// YMM0-15 as four 64-bit lanes each; XMMn is the low two.
     pub xmm: [[u64; 4]; 16],
     pub mxcsr: u32,
-    /// x87 control and status words.
+    /// x87 control and status words (the status word holds TOP).
     pub fcw: u16,
     pub fsw: u16,
+    /// x87 data registers R0-R7 as `f64` bits: we compute in double
+    /// precision, not 80-bit (see `docs/decisions.md`).
+    pub st: [u64; 8],
+    /// Bit `i` is set when R`i` holds a value.
+    pub ftag: u8,
 }
 
 impl Default for Cpu {
@@ -66,6 +71,8 @@ impl Default for Cpu {
             mxcsr: MXCSR_DEFAULT,
             fcw: FCW_DEFAULT,
             fsw: 0,
+            st: [0; 8],
+            ftag: 0,
         }
     }
 }

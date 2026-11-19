@@ -21,4 +21,5 @@ pub const EAGAIN: i32 = 35;
 pub const ETIMEDOUT: i32 = 60;
 pub const ENOSYS: i32 = 78;
 pub const EOVERFLOW: i32 = 84;
+pub const ECANCELED: i32 = 85;
 pub const EILSEQ: i32 = 86;

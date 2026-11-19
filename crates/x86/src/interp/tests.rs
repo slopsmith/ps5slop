@@ -238,14 +238,14 @@ fn shifts_and_rotates() {
 
 #[test]
 fn unimplemented_instructions_are_reported() {
-    let (mut cpu, mem) = machine("fld1", &[0xd9, 0xe8]);
+    let (mut cpu, mem) = machine("fbld tbyte ptr [rax]", &[0xdf, 0x20]);
     assert_eq!(
         step(&mut cpu, &mem),
         Exit::Fault {
             rip: CODE,
             kind: CpuFault::Unimplemented {
                 map: Map::Primary,
-                op: 0xd9
+                op: 0xdf
             }
         }
     );
@@ -407,4 +407,54 @@ fn gather_loads_masked_elements_and_clears_the_mask() {
     assert_eq!(cpu.xmm[0][0], 103 | 101 << 32);
     assert_eq!(cpu.xmm[0][1], 107 | 0xdead_beef << 32);
     assert_eq!(cpu.xmm[5], [0; 4]);
+}
+
+#[test]
+fn x87_loads_adds_and_stores_extended_values() {
+    let (mut cpu, mem) = machine(
+        "fld tbyte ptr [rdi]; fld st(0); faddp st(1), st; fstp tbyte ptr [rdi+16]",
+        &[0xdb, 0x2f, 0xd9, 0xc0, 0xde, 0xc1, 0xdb, 0x7f, 0x10],
+    );
+    mem.write(DATA, &0xc000_0000_0000_0000u64.to_le_bytes()).unwrap();
+    mem.write(DATA + 8, &0x3fffu16.to_le_bytes()).unwrap();
+    cpu.regs[RDI] = DATA;
+    steps(&mut cpu, &mem, 4);
+    let mut out = [0u8; 10];
+    mem.read(DATA + 16, &mut out).unwrap();
+    assert_eq!(u64::from_le_bytes(out[..8].try_into().unwrap()), 0xc000_0000_0000_0000);
+    assert_eq!(u16::from_le_bytes([out[8], out[9]]), 0x4000);
+    assert_eq!((cpu.ftag, (cpu.fsw >> 11) & 7), (0, 0));
+}
+
+#[test]
+fn x87_integer_division_rounds_and_fcomip_sets_flags() {
+    let (mut cpu, mem) = machine(
+        "fild dword ptr [rdi]; fild dword ptr [rdi+4]; fdivp st(1), st; \
+         fistp qword ptr [rdi+8]; fld1; fldz; fcomip st, st(1); fstp st(0)",
+        &[
+            0xdb, 0x07, 0xdb, 0x47, 0x04, 0xde, 0xf9, 0xdf, 0x7f, 0x08, 0xd9, 0xe8, 0xd9, 0xee,
+            0xdf, 0xf1, 0xdd, 0xd8,
+        ],
+    );
+    mem.write(DATA, &7i32.to_le_bytes()).unwrap();
+    mem.write(DATA + 4, &2i32.to_le_bytes()).unwrap();
+    cpu.regs[RDI] = DATA;
+    steps(&mut cpu, &mem, 8);
+    assert_eq!(mem.read_u64(DATA + 8).unwrap(), 4);
+    assert!(cpu.flag(CF) && !cpu.flag(ZF) && !cpu.flag(PF));
+    assert_eq!(cpu.ftag, 0);
+}
+
+#[test]
+fn extended_values_round_to_the_nearest_double() {
+    use super::x87::{from_extended, to_extended};
+    for v in [1.5, -0.0, f64::INFINITY, 5e-324, -1e300, 0.1] {
+        let (m, se) = to_extended(v);
+        assert_eq!(from_extended(m, se).to_bits(), v.to_bits(), "{v}");
+    }
+    assert!(from_extended(0xc000_0000_0000_0000, 0x7fff).is_nan());
+    let just_above_half = 1 << 63 | 1 << 10 | 1;
+    assert_eq!(from_extended(just_above_half, 0x3fff), 1.0 + f64::EPSILON);
+    assert_eq!(from_extended(1 << 63 | 1 << 10, 0x3fff), 1.0);
+    assert_eq!(from_extended(1 << 63, 0x3fff + 1024), f64::INFINITY);
 }

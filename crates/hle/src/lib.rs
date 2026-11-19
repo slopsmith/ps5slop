@@ -20,19 +20,23 @@ mod file;
 mod heap;
 mod kernel;
 mod libc;
+mod net;
 mod pad;
 mod posix;
 mod process;
 mod pthread;
+mod rtld;
 mod sem;
 mod services;
+mod stubs;
 mod sysmodule;
 mod thread;
 mod vfs;
 mod videoout;
 
 pub use pad::PadInput;
-pub use process::{Kernel, Thread, ThreadError, TlsTemplate};
+pub use process::{Kernel, Thread, ThreadError, TlsBlock, TlsTemplate};
+pub use rtld::ModuleInfo;
 pub use vfs::Vfs;
 pub use videoout::Frame;
 
@@ -243,11 +247,16 @@ impl Default for Hle {
 impl Hle {
     pub fn new() -> Self {
         let by_nid = functions()
-            .map(|f| ((nid(f.name), f.library.to_owned()), f))
+            .flat_map(|f| {
+                let posix = (f.library == "libkernel")
+                    .then(|| ((nid(f.name), "libScePosix".to_owned()), f));
+                std::iter::once(((nid(f.name), f.library.to_owned()), f)).chain(posix)
+            })
             .collect();
         let variables = kernel::VARIABLES
             .iter()
             .chain(libc::VARIABLES)
+            .chain(net::VARIABLES)
             .map(|v| ((nid(v.name), v.library.to_owned()), v))
             .collect();
         let mut hle = Self {
@@ -317,6 +326,14 @@ impl Hle {
     /// The stub address of a function by name.
     pub fn stub_by_name(&mut self, library: &str, name: &str) -> u64 {
         self.stub(&nid(name), library)
+    }
+
+        /// What lives at trap-region address `addr`: the import whose stub it is.
+    pub fn describe(&self, addr: u64) -> Option<String> {
+        let index = (addr.checked_sub(TRAP_BASE)? / STUB_SIZE) as usize;
+        let s = self.stubs.get(index)?;
+        let name = self.name_of(&s.nid).unwrap_or("?");
+        Some(format!("the stub of {} {} {name}", s.library, s.nid))
     }
 
     /// A name for `nid`, if we know one: a function we implement (in any
@@ -398,6 +415,11 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(services::FUNCTIONS)
         .chain(pad::FUNCTIONS)
         .chain(videoout::FUNCTIONS)
+        .chain(rtld::FUNCTIONS)
+        .chain(net::FUNCTIONS)
+        .chain(stubs::FUNCTIONS)
+        .chain(pthread::SCE_FUNCTIONS)
+        .chain(thread::SCE_FUNCTIONS)
 }
 
 /// Names for NIDs: everything we implement, and the names listed (one per
@@ -408,7 +430,8 @@ fn names() -> HashMap<String, String> {
         kernel::VARIABLES
             .iter()
             .chain(libc::VARIABLES)
-            .map(|v| v.name),
+                .chain(net::VARIABLES)
+                .map(|v| v.name),
     );
     for name in ours {
         names.insert(nid(name), name.to_owned());

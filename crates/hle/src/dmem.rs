@@ -63,6 +63,9 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelAllocateMainDirectMemory", allocate_main),
     f("sceKernelReleaseDirectMemory", release),
     f("sceKernelMapDirectMemory", map),
+    f("sceKernelMapNamedDirectMemory", map),
+    f("sceKernelReserveVirtualRange", reserve),
+    f("sceKernelVirtualQuery", virtual_query),
 ];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
@@ -160,14 +163,71 @@ fn map(env: &mut Env) -> Result<Outcome, CallError> {
             None => return ret(sce_error(errno::ENOMEM)),
         }
     };
-    if env
-        .mem
-        .map(at, len, Prot::new(read, write, exec), "direct memory")
-        .is_err()
+    let mapped = if flags & MAP_FIXED != 0 {
+        env.mem.map_over(at, len, Prot::new(read, write, exec), "direct memory")
+    } else {
+        env.mem.map(at, len, Prot::new(read, write, exec), "direct memory")
+    };
+    if mapped.is_err()
     {
         return ret(sce_error(errno::ENOMEM));
     }
     env.mem.write_u64(addr_at, at)?;
+    ret(0)
+}
+
+
+/// `sceKernelReserveVirtualRange(*addr, len, flags, align)`: address space
+/// no access is allowed to, for fixed maps to go into later.
+fn reserve(env: &mut Env) -> Result<Outcome, CallError> {
+    let (addr_at, len, flags, align) = (env.arg(0), env.arg(1), env.arg(2), env.arg(3));
+    if !valid(len, align) {
+        return ret(sce_error(errno::EINVAL));
+    }
+    let wanted = env.mem.read_u64(addr_at)?;
+    let at = if flags & MAP_FIXED != 0 {
+        wanted
+    } else {
+        match find_aligned(env.mem, wanted.max(MAP_AREA), len, align.max(PAGE_SIZE)) {
+            Some(a) => a,
+            None => return ret(sce_error(errno::ENOMEM)),
+        }
+    };
+    if env.mem.map_over(at, len, Prot::NONE, "reserved").is_err() {
+        return ret(sce_error(errno::ENOMEM));
+    }
+    env.mem.write_u64(addr_at, at)?;
+    ret(0)
+}
+
+/// `sceKernelVirtualQuery(addr, flags, info, size)`: the mapping holding
+/// `addr` (flag 1: or the next one), as `OrbisKernelVirtualQueryInfo`.
+fn virtual_query(env: &mut Env) -> Result<Outcome, CallError> {
+    let (addr, flags, info, size) = (env.arg(0), env.arg(1), env.arg(2), env.arg(3) as usize);
+    let found = env
+        .mem
+        .regions()
+        .into_iter()
+        .filter(|r| !r.trap)
+        .find(|r| r.end > addr && (r.start <= addr || flags & 1 != 0));
+    let Some(r) = found else {
+        return ret(sce_error(errno::EACCES));
+    };
+    let bit = |a: memory::Access, v: u32| if r.prot.allows(a) { v } else { 0 };
+    let prot = bit(memory::Access::Read, 1) | bit(memory::Access::Write, 2) | bit(memory::Access::Execute, 4);
+    let kinds = (r.name == "mmap") as u32
+        | ((r.name == "direct memory") as u32) << 1
+        | (r.name.contains("stack") as u32) << 2
+        | ((prot != 0) as u32) << 4;
+    let mut b = [0u8; 72];
+    b[0..8].copy_from_slice(&r.start.to_le_bytes());
+    b[8..16].copy_from_slice(&r.end.to_le_bytes());
+    b[24..28].copy_from_slice(&prot.to_le_bytes());
+    b[32..36].copy_from_slice(&kinds.to_le_bytes());
+    let name = r.name.as_bytes();
+    let n = name.len().min(31);
+    b[36..36 + n].copy_from_slice(&name[..n]);
+    env.mem.write(info, &b[..size.min(72)])?;
     ret(0)
 }
 
