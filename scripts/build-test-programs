@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Builds every test program in tests/programs/<name>/ into
+# target/test-programs/<name>.elf. Run inside `nix develop` (needs ld.lld).
+# Each program is C sources plus imports.txt (see ps5slop-mkelf --help).
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+out="$root/target/test-programs"
+mkdir -p "$out"
+cargo build -q --release -p mkelf --manifest-path "$root/Cargo.toml"
+mkelf="$root/target/release/ps5slop-mkelf"
+
+for dir in "$root"/tests/programs/*/; do
+	name="$(basename "$dir")"
+	objs=()
+	for src in "$dir"*.c; do
+		obj="$out/$name-$(basename "$src" .c).o"
+		/usr/bin/clang --target=x86_64-unknown-freebsd -O2 -fPIC -ffreestanding \
+			-fno-stack-protector -fno-builtin -c "$src" -o "$obj"
+		objs+=("$obj")
+	done
+	ld.lld -shared -e _start -z max-page-size=0x4000 -z separate-loadable-segments -o "$out/$name.so" "${objs[@]}"
+	"$mkelf" "$out/$name.so" "$out/$name.elf" --imports "$dir/imports.txt" --name "$name"
+	echo "built $out/$name.elf"
+done

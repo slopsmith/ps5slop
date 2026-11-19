@@ -22,6 +22,10 @@ The first programs we load are ones we write: a small x86-64 ELF built with clan
 
 Binaries are built from source; they are never committed (`scripts/check-forbidden` refuses ELF files with Sony `e_type` values anyway).
 
+How they are built (`scripts/build-test-programs`, inside `nix develop`): each program is a folder in `tests/programs/` with C sources and an `imports.txt` that names the library (and module) of every imported function. Apple's clang compiles for `x86_64-unknown-freebsd`, `ld.lld -shared -e _start` links with 16 KiB pages and page-separated segments, and `ps5slop-mkelf` turns the result into an Orbis executable in `target/test-programs/`.
+
+- `hello`: calls `write` and `exit` from `libkernel`. It loads and relocates; the two imports are reported missing until the HLE layer provides them. Which library really exports those names on Orbis is not checked yet; the program only has to agree with our own HLE.
+
 ## PS4 conformance programs
 
 A test program that runs both on vic's PS4 and on our HLE layer, with the outputs compared, would give us a real behavioural oracle for the kernel and library side. It is practical, with limits:

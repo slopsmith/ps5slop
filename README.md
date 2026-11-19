@@ -18,6 +18,7 @@ cargo run --release -p pkg -- extract GAME.pkg OUT_DIR   # fake-signed packages;
 cargo run --release -p loader -- info OUT_DIR/eboot.bin
 cargo run --release -p loader -- imports OUT_DIR/eboot.bin --names names.txt   # label NIDs of names you know
 cargo run --release -p loader -- load OUT_DIR/eboot.bin   # lay out, relocate, list missing imports
+scripts/build-test-programs   # our own test programs -> target/test-programs/
 ```
 
 ## Docs
