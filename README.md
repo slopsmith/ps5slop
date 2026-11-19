@@ -11,6 +11,9 @@ You supply your own games, dumped from your own console. Nothing from Sony is pa
 ```sh
 cargo run --release -p pkg -- info GAME.pkg
 cargo run --release -p pkg -- extract GAME.pkg OUT_DIR   # fake-signed packages; --passcode if not all zeros
+cargo run --release -p loader -- info OUT_DIR/eboot.bin
+cargo run --release -p loader -- imports OUT_DIR/eboot.bin --names names.txt   # label NIDs of names you know
+cargo run --release -p loader -- load OUT_DIR/eboot.bin   # lay out, relocate, list missing imports
 ```
 
 ## Docs

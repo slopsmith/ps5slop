@@ -11,6 +11,7 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 | 2026-11-19 | FEX `Config.json.in`, `OpcodeDispatcher.h`, `unittests/InstructionCountCI` (summary) | TSO options, AVX on 128-bit hosts, instruction counts | Facts only ([cpu.md](cpu.md)). No code. |
 | 2026-11-19 | Prosperity `delta/cpu/fex_backend.cc` (summary) | How FEXCore is embedded | Facts only. No code. |
 | 2026-11-19 | shadPS4 `src/core/module.cpp` `Module::LoadSymbols` (read directly) | Whether exports carry names | Fact only: exports are `NID#LIB#MOD`, names come from aerolib ([loader.md](loader.md)). No code. |
+| 2026-11-19 | shadPS4 `src/core/loader/elf.h`, `elf.cpp`, `src/core/module.h`, `module.cpp`, `src/core/linker.cpp` (read directly) | SELF layout, dynamic tags and their packing, relocation types | Facts only ([loader.md](loader.md)). No code. |
 | 2026-11-19 | vic's `ps4-pkg-db` (`pkg.py`, `sfo.py`) | PKG header and SFO layout | Facts ([packages.md](packages.md)). vic's own code, so copying is his call. |
 | 2026-11-19 | LibOrbisPkg `PFS/PfsStructs.cs`, `Util/Crypto.cs`, `PKG/Pkg.cs` (LGPL-3.0, read directly) | PFS mode flags, passcode key derivation, PFS key schedule | Facts only ([packages.md](packages.md)). No code. |
 | 2026-11-19 | psdevwiki PKG files (vic's saved copy) | PKG entries, entry keys, PFS encryption | Facts ([packages.md](packages.md)) |

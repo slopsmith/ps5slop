@@ -1,6 +1,6 @@
 # Loader and linking
 
-What the loader has to read, and what is publicly known about it. Nothing here is implemented yet.
+What the loader has to read, and what is publicly known about it. `crates/loader` implements reading, listing imports and laying out an image with relocations applied; running code is milestone 2.
 
 Sources are open-source emulators (shadPS4, KytyPS5, Prosperity), read through a research summary on 2026-11-19. They are a "public" source only in the sense that they are published; how their authors learned these facts is not always known. We use them for format facts, not code (see [references.md](references.md)). psdevwiki blocks automated fetches and has not been checked yet.
 
@@ -19,6 +19,15 @@ Status: the folder layout comes from a public backup guide; unverified by us.
 
 The loader strips a (fake-signed) SELF wrapper to reach the ELF inside, or takes a plain ELF.
 
+SELF layout (from shadPS4's `elf.h` and `elf.cpp`, facts only):
+
+- A 0x20-byte header: magic, version, mode, endianness, attributes, category, program type, header and meta sizes, file size, and the segment count (u16 at `0x18`).
+- Then one 0x20-byte entry per SELF segment: flags (u64), file offset, file size, memory size. Flag bits: `0x1` ordered, `0x2` encrypted, `0x4` signed, `0x8` compressed, `0x800` blocked; bits 20-31 name the program header the segment holds.
+- Then the ELF header; program header offsets count from the ELF header, not from the start of the file.
+- A program header's bytes live in the blocked SELF segment whose program header covers that file range. Some headers have no segment of their own: in vic's `eboot.bin`, `PT_DYNAMIC` lies inside the file range of `PT_SCE_DYNLIBDATA`.
+
+We read only segments with neither the encrypted nor the compressed bit.
+
 ## ELF
 
 x86-64 ELF with Sony-specific types in the OS range:
@@ -29,6 +38,16 @@ x86-64 ELF with Sony-specific types in the OS range:
 
 KytyPS5, which targets PS5, uses the same values as shadPS4 (PS4). Finer PS4/PS5 differences (contents of `PROCPARAM`, any new tags) are unknown.
 
+### The dynamic section
+
+From shadPS4's `module.cpp`, `module.h`, `elf.h` and `linker.cpp` (facts only):
+
+- `PT_DYNAMIC` holds 16-byte (tag, value) pairs up to `DT_NULL`. The `DT_SCE_*` table tags are offsets into the `PT_SCE_DYNLIBDATA` segment's file bytes: `STRTAB`/`STRSZ` (`0x61000035`/`37`), `SYMTAB`/`SYMTABSZ` (`39`/`3F`), `RELA`/`RELASZ` (`2F`/`31`), `JMPREL`/`PLTRELSZ` (`29`/`2D`). Standard tags (`DT_INIT`, `DT_INIT_ARRAY`, ...) carry image addresses as usual.
+- `DT_SCE_NEEDED_MODULE` (`0F`) and `DT_SCE_MODULE_INFO` (`0D`) pack a module: string offset in bits 0-31, minor version 32-39, major version 40-47, id 48-63. `DT_SCE_IMPORT_LIB` (`15`) and `DT_SCE_EXPORT_LIB` (`13`) pack a library: string offset, version in bits 32-47, id 48-63.
+- Symbols and relocations use the standard ELF64 `Sym` and `Rela` layouts. Relocation types seen so far: `R_X86_64_64`, `GLOB_DAT`, `JUMP_SLOT`, `RELATIVE`, `DTPMOD64`.
+
+**Checked on 2026-11-19** against vic's OpenOrbis-built `ps4build/eboot.bin` (a fake-signed SELF) and the toolchain's `libc.prx`: both parse, the executable lists 14 modules and libraries, 133 symbols, 4,636 relocations and 128 jump slots, and loading it at `0x400000` applies every relocation with no unsupported type.
+
 ## Symbols and NIDs
 
 Imports do not name functions. Each imported symbol is a string `NID#LIB#MOD`:
@@ -36,7 +55,7 @@ Imports do not name functions. Each imported symbol is a string `NID#LIB#MOD`:
 - **NID**: a hash of the function's name. Take SHA-1 of the name followed by a fixed 16-byte suffix, read the first 8 bytes of the digest as a little-endian u64, and write it as 11 characters in the alphabet `A-Z a-z 0-9 + -`: ten 6-bit groups from the top, then the low 4 bits times 4. The suffix is in many public repositories and is a fact we may use.
 - **LIB** and **MOD**: small ids in the same alphabet, which index the library and module tables in the dynamic section.
 
-Status: algorithm read from shadPS4's `module.cpp`; we will check it with our own test binaries, whose names we choose.
+Status: algorithm read from shadPS4's `module.cpp`. **Checked on 2026-11-19:** the seven `sce*` function names in vic's own `ps4-pkg-store` source hash to NIDs that all appear among his `eboot.bin`'s imports, each in the right library. The values in our unit tests come from a separate Python implementation.
 
 **Rules:**
 
