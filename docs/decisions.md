@@ -212,3 +212,15 @@ In compute programs, `s_cbranch_execz`/`execnz`/`vccz`/`vccnz` use `simd_any` ov
 
 Reason: Minecraft's compute programs skip their work with `execz` before an `s_barrier`, and Metal needs barriers in control flow that is uniform across threads that reach them; per-lane branching would send threads of one SIMD group down different paths to the barrier. A SIMD group is the largest unit Metal lets a shader vote over, and matches a hardware wave branching as a whole within its 32-lane halves. Pixel programs are left alone because Balatro's pixel programs are verified with per-lane branching and fragments that discard make SIMD votes harder to reason about. Minecraft loads most texture and sampler descriptors from a table that a user SGPR pair points to, sometimes through two levels, so a fixed rule (user SGPRs only) translated none of them.
 
+
+## 2026-11-20: GPL-3.0 decoders only as black-box oracles
+
+To write our own Kraken decoder, we may run a GPL-3.0 decoder (ooz-wasm, pkg-to-anyps5 built from source without reading it) on a developer's machine as a black box and compare outputs. Its outputs (decompressed game files) stay outside the repo like any game data. We never read its source, never copy from it, never link or load it into ps5slop (statically or as a dynamic library), and never ask users to supply one. User-supplied Oodle libraries are out for the same reason.
+
+Reason: vic does not want GPL-3.0 code in this GPL-2.0-or-later project, and loading a library at run time still counts as linking. Running a program to see what it outputs is not using its code; this is how vic built a softmodem before, by having it talk to another implementation.
+
+## 2026-11-20: PS5 inner images are decoded block by block, scoped to what our packages use
+
+`crates/pkg` reads a PS5 package's Kraken-compressed `pfs_image.dat` in place: a read decodes only the 256 KiB blocks it touches, through the NAPS layout, and keeps the last 16 decoded blocks. The decoder implements only what Superliminal and Astro Bot use (stored and three-stream Huffman arrays, code descriptions `00` and `01`, LZ chunks with raw or delta literals); anything else fails as unsupported.
+
+Reason: vic asked for a decoder scoped to the packages we have, and running in place matches the earlier decision for PS4 packages (Astro Bot unpacks to 149 GB). The format and the source of each rule are in [packages.md](packages.md).

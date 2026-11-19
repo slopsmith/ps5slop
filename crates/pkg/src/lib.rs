@@ -6,7 +6,10 @@
 
 mod error;
 mod extract;
+mod inner;
 pub mod keys;
+mod kraken;
+pub mod naps;
 mod package;
 pub mod pfs;
 mod pfsc;

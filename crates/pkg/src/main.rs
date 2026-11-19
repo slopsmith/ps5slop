@@ -24,6 +24,8 @@ enum Command {
         #[arg(long)]
         passcode: Option<String>,
     },
+    /// Prints the block map of a PS5 package's inner image.
+    Naps { package: PathBuf },
     /// Extracts the app's files into a new folder.
     Extract {
         package: PathBuf,
@@ -83,6 +85,23 @@ fn run(cli: Cli) -> pkg::Result<()> {
                     app.inode(inode)?.size_compressed,
                     path.display()
                 );
+            }
+        }
+        Command::Naps { package } => {
+            let l = Package::open(&package)?.naps_layout(&DEFAULT_PASSCODE)?;
+            println!("header:         {:02x?}", l.header);
+            println!("compression:    {}", l.compression());
+            println!("files:          {}", l.file_count);
+            println!(
+                "logical blocks: {} ({:#x} bytes)",
+                l.logical_blocks,
+                l.mount_size()
+            );
+            println!("outer blocks:   {}", l.outer_blocks);
+            println!("u2c groups:     {}", l.u2c.len());
+            println!("records:        {}", l.records.len());
+            for (i, f) in l.files.iter().enumerate() {
+                println!("file {i:6}: {:#12x} kind {:#04x}", f.offset, f.kind);
             }
         }
         Command::Extract {

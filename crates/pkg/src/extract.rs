@@ -4,7 +4,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::error::invalid;
+use crate::inner::InnerImage;
 use crate::keys::Passcode;
+use crate::naps::Layout;
 use crate::package::Format;
 use crate::pfs::{Kind, Pfs, Superblock};
 use crate::pfsc::MAGIC as PFSC_MAGIC;
@@ -17,6 +19,8 @@ const PFS_FLAG_NEW_CRYPT: u64 = 0x2000_0000_0000_0000;
 
 /// The outer image's single file, a compressed PFS that holds the app's files.
 const INNER_IMAGE: &str = "pfs_image.dat";
+/// The PS5 outer image's map of `pfs_image.dat`'s blocks.
+const NAPS_LAYOUT: &str = "naps_pkg_layout.dat";
 
 const CHUNK: usize = 1 << 20;
 
@@ -67,14 +71,39 @@ impl Package {
         }
         if matches!(self.format(), Format::Ps5 { .. }) {
             let inode = outer.inode(entry.inode)?;
-            let head = outer.open_file_stored(entry.inode)?.read_vec(0, 4)?;
-            if inode.is_compressed() && head[..] != PFSC_MAGIC[..] {
-                return Err(Error::Unsupported(format!(
-                    "this PS5 package's {INNER_IMAGE} is compressed with a scheme ps5slop does not know yet (it is not PFSC)"
-                )));
+            let stored = outer.open_file_stored(entry.inode)?;
+            if inode.is_compressed() && stored.read_vec(0, 4)?[..] != PFSC_MAGIC[..] {
+                return self.data_first_pfs(&outer, stored);
             }
         }
         Pfs::open(outer.open_file(entry.inode)?, None, false)
+    }
+
+    /// A PS5 "data-first" inner image: files first, compressed in blocks the
+    /// NAPS layout maps, with the inner superblock in the last region.
+    fn data_first_pfs(&self, outer: &Pfs, stored: Arc<dyn ReadAt + Send + Sync>) -> Result<Pfs> {
+        let entry = outer.lookup(NAPS_LAYOUT)?;
+        let file = outer.open_file_stored(entry.inode)?;
+        let layout = Arc::new(Layout::parse(&file.read_vec(0, file.len() as usize)?)?);
+        let superblock = layout.files[layout.file_count as usize - 1].offset;
+        let image: Arc<dyn ReadAt + Send + Sync> =
+            Arc::new(InnerImage::new(layout.clone(), stored));
+        let sb = Superblock::read(&*image, superblock)?;
+        if sb.dinode_block_count == 0 || !sb.is_flat() {
+            return Err(Error::Unsupported(format!(
+                "PS5 inner PFS with mode {:#x} (only flat images are read)",
+                sb.mode
+            )));
+        }
+        Pfs::open_at(image, superblock, None, false)
+    }
+
+    /// The block map of a PS5 package's inner image.
+    pub fn naps_layout(&self, passcode: &Passcode) -> Result<Layout> {
+        let outer = self.outer_pfs(passcode)?;
+        let entry = outer.lookup(NAPS_LAYOUT)?;
+        let file = outer.open_file_stored(entry.inode)?;
+        Layout::parse(&file.read_vec(0, file.len() as usize)?)
     }
 
     /// Writes the app's files below `dest`, which must not hold any of them yet,

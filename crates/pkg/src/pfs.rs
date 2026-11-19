@@ -21,6 +21,9 @@ const SUPERBLOCK_READ: usize = 0x400;
 const MODE_SIGNED: u16 = 0x1;
 const MODE_64BIT: u16 = 0x2;
 const MODE_ENCRYPTED: u16 = 0x4;
+/// PS5 inner images: each inode holds its data's byte address (pkg-to-anyps5's wiki).
+const MODE_FLAT: u16 = 0x10;
+const FLAT_ADDRESS: usize = 0x60;
 
 const INODE_UNSIGNED_SIZE: usize = 0xa8;
 const INODE_SIGNED_SIZE: usize = 0x2c8;
@@ -84,6 +87,10 @@ impl Superblock {
     pub fn is_encrypted(&self) -> bool {
         self.mode & MODE_ENCRYPTED != 0 && self.seed != PLAIN_SEED
     }
+
+    pub fn is_flat(&self) -> bool {
+        self.mode & MODE_FLAT != 0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,6 +102,8 @@ pub struct Inode {
     /// holds the decompressed length, which is smaller than `size`.
     pub size_compressed: u64,
     pub blocks: u32,
+    /// Where the data starts in the image, in flat images.
+    pub address: u64,
     direct: [u32; DIRECT_BLOCKS],
     indirect: [u32; INDIRECT_BLOCKS],
 }
@@ -109,6 +118,7 @@ impl Inode {
             size: u64_le(b, 0x08),
             size_compressed: u64_le(b, 0x10),
             blocks: u32_le(b, 0x60),
+            address: u64_le(b, FLAT_ADDRESS),
             direct: core::array::from_fn(ptr),
             indirect: core::array::from_fn(|i| ptr(DIRECT_BLOCKS + i)),
         }
@@ -276,6 +286,22 @@ impl Pfs {
         Ok(())
     }
 
+    /// A flat image's file: one contiguous range of the image.
+    fn flat(&self, inode: &Inode) -> Result<Source> {
+        if inode
+            .address
+            .checked_add(inode.size)
+            .is_none_or(|end| end > self.source.len())
+        {
+            return Err(invalid("PFS file lies outside its image"));
+        }
+        Ok(Arc::new(Slice {
+            source: self.source.clone(),
+            base: inode.address,
+            len: inode.size,
+        }))
+    }
+
     /// The bytes an inode stores, as laid out on disk (still compressed for
     /// compressed files).
     fn stored(&self, inode: &Inode, len: u64) -> Result<BlockFile> {
@@ -294,12 +320,18 @@ impl Pfs {
     /// A file's bytes as stored, without decompressing them.
     pub fn open_file_stored(&self, number: u32) -> Result<Source> {
         let inode = self.inode(number)?;
+        if self.superblock.is_flat() {
+            return self.flat(inode);
+        }
         Ok(Arc::new(self.stored(inode, inode.size)?))
     }
 
     /// The contents of a file, decompressed if it is a PFSC file.
     pub fn open_file(&self, number: u32) -> Result<Source> {
         let inode = self.inode(number)?;
+        if self.superblock.is_flat() {
+            return self.flat(inode);
+        }
         let stored = self.stored(inode, inode.size)?;
         if inode.is_compressed() && inode.size_compressed != inode.size {
             Ok(Arc::new(PfscReader::new(stored)?))
@@ -311,11 +343,23 @@ impl Pfs {
     pub fn read_dir(&self, number: u32) -> Result<Vec<DirEntry>> {
         let inode = self.inode(number)?;
         let mut entries = Vec::new();
-        for block in self.block_list(inode)? {
-            let data = self.source.read_vec(
-                u64::from(block) * self.block_size(),
-                self.block_size() as usize,
-            )?;
+        let blocks: Vec<Vec<u8>> = if self.superblock.is_flat() {
+            let all = self.flat(inode)?.read_vec(0, inode.size as usize)?;
+            all.chunks(self.block_size() as usize)
+                .map(<[u8]>::to_vec)
+                .collect()
+        } else {
+            self.block_list(inode)?
+                .into_iter()
+                .map(|block| {
+                    self.source.read_vec(
+                        u64::from(block) * self.block_size(),
+                        self.block_size() as usize,
+                    )
+                })
+                .collect::<Result<_>>()?
+        };
+        for data in blocks {
             let mut at = 0;
             while at + DIRENT_HEADER <= data.len() {
                 let ino = u32_le(&data, at);
@@ -408,6 +452,29 @@ impl Pfs {
             }
         }
         Ok(())
+    }
+}
+
+/// A window into an image.
+struct Slice {
+    source: Source,
+    base: u64,
+    len: u64,
+}
+
+impl ReadAt for Slice {
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read_exact_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+        if offset
+            .checked_add(buf.len() as u64)
+            .is_none_or(|end| end > self.len)
+        {
+            return Err(invalid("read past the end of a PFS file"));
+        }
+        self.source.read_exact_at(self.base + offset, buf)
     }
 }
 
