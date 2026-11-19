@@ -6,11 +6,14 @@
 mod error;
 pub mod keys;
 mod package;
+pub mod pfs;
+mod pfsc;
 mod read;
 mod xts;
 
 pub use error::Error;
 pub use package::{Entry, Header, Package, entry_id};
+pub use pfsc::PfscReader;
 pub use read::{FileSlice, ReadAt};
 pub use xts::XtsReader;
 
