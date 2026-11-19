@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Hashes symbol names into NIDs (see docs/loader.md), to find which of a list
+of candidate names an unknown NID belongs to. Names come from the caller, for
+example function names grepped from public headers; no name list is stored.
+
+Usage:
+  scripts/nid NAME...                 print each name's NID
+  scripts/nid --find NID... < names   print the names (one per line on stdin)
+                                      whose NID is one of the given NIDs
+"""
+import hashlib
+import sys
+
+SUFFIX = bytes.fromhex("518d64a635ded8c1e6b039b1c3e55230")
+ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-"
+
+
+def nid(name: str) -> str:
+    v = int.from_bytes(hashlib.sha1(name.encode() + SUFFIX).digest()[:8], "little")
+    return "".join(ALPHABET[(v >> (58 - 6 * i)) & 0x3F] for i in range(10)) + ALPHABET[(v & 0xF) * 4]
+
+
+if len(sys.argv) > 1 and sys.argv[1] == "--find":
+    wanted = set(sys.argv[2:])
+    found = {}
+    for line in sys.stdin:
+        name = line.strip()
+        if name and nid(name) in wanted:
+            found[nid(name)] = name
+    for n in sys.argv[2:]:
+        print(n, found.get(n, "?"))
+else:
+    for name in sys.argv[1:]:
+        print(nid(name), name)
