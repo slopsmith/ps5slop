@@ -34,6 +34,11 @@ pub static FUNCTIONS: &[Function] = &[
     ),
     f("libSceUserService", "sceUserServiceGetUserName", user_name),
     f(
+        "libSceUserService",
+        "sceUserServiceGetInitialUser",
+        foreground_user,
+    ),
+    f(
         "libSceSystemService",
         "sceSystemServiceHideSplashScreen",
         ok,

@@ -69,6 +69,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("scePadGetHandle", get_handle),
     f("scePadClose", close),
     f("scePadReadState", read_state),
+    f("scePadRead", read),
     f("scePadSetVibration", with_handle),
     f("scePadSetLightBar", with_handle),
     f("scePadSetVibrationMode", with_handle),
@@ -156,6 +157,24 @@ fn read_state(env: &mut Env) -> Result<Outcome, CallError> {
     if !is_open(env) {
         return ret(ERROR_INVALID_HANDLE);
     }
+    write_sample(env)?;
+    ret(0)
+}
+
+/// `scePadRead(handle, data, count)`: the samples since the last call. We
+/// keep no history, so this is always one sample of the current state.
+fn read(env: &mut Env) -> Result<Outcome, CallError> {
+    if !is_open(env) {
+        return ret(ERROR_INVALID_HANDLE);
+    }
+    if env.arg(2) as i32 <= 0 {
+        return ret(ERROR_INVALID_ARG);
+    }
+    write_sample(env)?;
+    ret(1)
+}
+
+fn write_sample(env: &Env) -> Result<(), CallError> {
     let pad = &env.kernel.pad;
     let input = *lock(&pad.input);
     let count = {
@@ -166,7 +185,7 @@ fn read_state(env: &mut Env) -> Result<Outcome, CallError> {
     let timestamp = pad.start.elapsed().as_micros() as u64;
     env.mem
         .write(env.arg(1), &pad_data(input, timestamp, count))?;
-    ret(0)
+    Ok(())
 }
 
 #[cfg(test)]
