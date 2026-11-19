@@ -239,12 +239,12 @@ impl Kernel {
         self.me.upgrade().expect("the kernel outlives its threads")
     }
 
-    fn run_thread(&self, mut cpu: Cpu, mut mem: Memory, thread: Thread) {
+    fn run_thread(&self, mut cpu: Cpu, mem: Memory, thread: Thread) {
         loop {
             if self.has_exited() {
                 break;
             }
-            match x86::run(&mut cpu, &mut mem, SLICE) {
+            match x86::run(&mut cpu, &mem, SLICE) {
                 Exit::Continue | Exit::Limit => {}
                 Exit::Trap(addr) => {
                     let mut env = Env {

@@ -345,7 +345,7 @@ fn run_test(root: &Path, build: &Path, name: &str) -> Outcome {
     debug_assert_eq!(cpu.rflags & flags::FIXED, flags::FIXED);
     let mut steps = 0u64;
     loop {
-        match x86::step(&mut cpu, &mut mem) {
+        match x86::step(&mut cpu, &mem) {
             Exit::Continue => {}
             Exit::Fault {
                 rip,

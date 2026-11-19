@@ -57,6 +57,11 @@ pub static FUNCTIONS: &[Function] = &[
         name: crate::PROGRAM_EXIT,
         func: exit,
     },
+    Function {
+        library: crate::INTERNAL,
+        name: crate::CALLBACK_RETURN,
+        func: stray_callback_return,
+    },
 ];
 
 /// Guest writes larger than this are cut, like a short write.
@@ -142,4 +147,12 @@ fn error(env: &mut Env) -> Result<Outcome, CallError> {
 /// `ioctl(fd, request, ...)`: no descriptor supports any request yet.
 fn ioctl(env: &mut Env) -> Result<Outcome, CallError> {
     env.fail(errno::ENOTTY)
+}
+
+/// Reached only when guest code returns to the callback stub outside a
+/// callback, which a correct program never does.
+fn stray_callback_return(_: &mut Env) -> Result<Outcome, CallError> {
+    Err(CallError::Abort(
+        "return to the callback stub outside a callback",
+    ))
 }

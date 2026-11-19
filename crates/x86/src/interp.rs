@@ -51,7 +51,7 @@ type Res<T> = Result<T, CpuFault>;
 
 /// Runs until something other than [`Exit::Continue`] happens, or for at most
 /// `limit` instructions.
-pub fn run(cpu: &mut Cpu, mem: &mut Memory, limit: u64) -> Exit {
+pub fn run(cpu: &mut Cpu, mem: &Memory, limit: u64) -> Exit {
     for _ in 0..limit {
         match step(cpu, mem) {
             Exit::Continue => {}
@@ -61,7 +61,7 @@ pub fn run(cpu: &mut Cpu, mem: &mut Memory, limit: u64) -> Exit {
     Exit::Limit
 }
 
-pub fn step(cpu: &mut Cpu, mem: &mut Memory) -> Exit {
+pub fn step(cpu: &mut Cpu, mem: &Memory) -> Exit {
     let rip = cpu.rip;
     let insn = decode(|i| {
         let mut b = [0u8];
@@ -117,7 +117,7 @@ enum Loc {
 
 struct Ctx<'a> {
     cpu: &'a mut Cpu,
-    mem: &'a mut Memory,
+    mem: &'a Memory,
     insn: Insn,
     /// Address of the next instruction.
     next: u64,

@@ -33,6 +33,9 @@ pub const PROGRAM_EXIT: &str = "program_exit";
 /// Where host-provided variables live (readable and writable).
 pub const DATA_BASE: u64 = 0x00ff_8000_0000;
 
+/// The internal function a guest callback returns to.
+pub const CALLBACK_RETURN: &str = "callback_return";
+
 /// Bytes of trap region per function.
 const STUB_SIZE: u64 = 16;
 const MAX_STUBS: u64 = 0x10_0000;
@@ -63,6 +66,10 @@ pub enum CallError {
     },
     /// A guest pointer argument that faults.
     Memory(Fault),
+    /// A guest function called from a host function faulted.
+    GuestFault { fault: x86::CpuFault, rip: u64 },
+    /// The process exited while a host function was calling guest code.
+    Exited,
     /// The guest asked to stop because something went wrong (for example a
     /// failed stack check).
     Abort(&'static str),
@@ -87,6 +94,10 @@ impl std::fmt::Display for CallError {
                 write!(f, "unimplemented {library} function with NID {nid}")
             }
             CallError::Memory(e) => write!(f, "bad guest pointer: {e}"),
+            CallError::GuestFault { fault, rip } => {
+                write!(f, "guest callback faulted ({fault:?}) at {rip:#x}")
+            }
+            CallError::Exited => write!(f, "the process exited during a guest callback"),
             CallError::Abort(why) => write!(f, "guest aborted: {why}"),
         }
     }
@@ -120,6 +131,49 @@ impl Env<'_> {
     pub fn fail(&self, errno: i32) -> Result<Outcome, CallError> {
         self.set_errno(errno)?;
         Ok(Outcome::Return(-1i64 as u64))
+    }
+
+    /// Calls the guest function at `addr` with integer arguments `args` (at
+    /// most six) and returns its RAX. The guest runs on this thread, and the
+    /// caller's CPU state is restored afterwards.
+    pub fn call_guest(&mut self, addr: u64, args: &[u64]) -> Result<u64, CallError> {
+        const ORDER: [usize; 6] = [RDI, RSI, RDX, RCX, R8, R9];
+        let saved = self.cpu.clone();
+        let back = self.kernel.hle.internal(CALLBACK_RETURN);
+        // Skip the red zone, align, and push the return address as a call would.
+        let sp = ((saved.regs[RSP] - 128) & !15) - 8;
+        self.mem.write_u64(sp, back)?;
+        self.cpu.regs[RSP] = sp;
+        self.cpu.rip = addr;
+        for (i, &a) in args.iter().enumerate() {
+            self.cpu.regs[ORDER[i]] = a;
+        }
+        let result = loop {
+            if self.kernel.has_exited() {
+                break Err(CallError::Exited);
+            }
+            match x86::run(self.cpu, self.mem, 1 << 16) {
+                x86::Exit::Continue | x86::Exit::Limit => {}
+                x86::Exit::Trap(t) if t == back => break Ok(self.cpu.regs[RAX]),
+                x86::Exit::Trap(t) => match self.kernel.hle.call(t, self) {
+                    Ok(Outcome::Return(_) | Outcome::Resume) => {}
+                    Ok(Outcome::Exit(status)) => {
+                        self.kernel.exit(Ok(status));
+                        break Err(CallError::Exited);
+                    }
+                    Ok(Outcome::ThreadExit) => {
+                        break Err(CallError::Abort("a thread ended inside a callback"));
+                    }
+                    Err(e) => break Err(e),
+                },
+                x86::Exit::Fault { rip, kind } => {
+                    break Err(CallError::GuestFault { fault: kind, rip });
+                }
+                x86::Exit::Syscall => break Err(CallError::Abort("raw syscall inside a callback")),
+            }
+        };
+        *self.cpu = saved;
+        result
     }
 
     /// Integer argument `n` in the SysV AMD64 convention.
@@ -519,6 +573,27 @@ mod tests {
         assert_eq!(libkernel(&k, "pthread_getspecific", 1, &[key]), 0xaaaa);
         assert_eq!(libkernel(&k, "pthread_getspecific", 2, &[key]), 0xbbbb);
         assert_eq!(libkernel(&k, "pthread_getspecific", 3, &[key]), 0);
+    }
+
+    #[test]
+    fn host_functions_can_call_guest_functions() {
+        let (kernel, mut cpu, _) = guest(Hle::new());
+        let mem = kernel.memory();
+        mem.map(0x30_0000, PAGE_SIZE, memory::Prot::RX, "code")
+            .unwrap();
+        mem.write_host(0x30_0000, &[0x48, 0x8d, 0x04, 0x37, 0xc3])
+            .unwrap();
+        cpu.regs[RBX] = 0x1234;
+        let before = cpu.clone();
+        let thread = Thread { tcb: cpu.fs_base };
+        let mut env = Env {
+            cpu: &mut cpu,
+            mem: &mem,
+            kernel: &kernel,
+            thread,
+        };
+        assert_eq!(env.call_guest(0x30_0000, &[2, 3]).unwrap(), 5);
+        assert_eq!(cpu, before);
     }
 
     #[test]
