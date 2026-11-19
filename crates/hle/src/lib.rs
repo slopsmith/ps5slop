@@ -16,6 +16,7 @@ use x86::cpu::reg::*;
 mod dmem;
 mod equeue;
 pub mod errno;
+mod file;
 mod heap;
 mod kernel;
 mod libc;
@@ -246,6 +247,7 @@ impl Hle {
             .chain(dmem::FUNCTIONS)
             .chain(equeue::FUNCTIONS)
             .chain(posix::FUNCTIONS)
+            .chain(file::FUNCTIONS)
             .chain(libc::functions())
             .chain(services::FUNCTIONS)
             .chain(pad::FUNCTIONS)
@@ -400,6 +402,14 @@ mod tests {
     /// A kernel around `hle` with a stack and a data page, and a CPU whose
     /// stack holds the return address 0x40_1234.
     fn guest(hle: Hle) -> (std::sync::Arc<Kernel>, Cpu, Captured) {
+        guest_in(hle, None)
+    }
+
+    /// [`guest`], with `app0` as the title folder.
+    fn guest_in(
+        hle: Hle,
+        app0: Option<std::path::PathBuf>,
+    ) -> (std::sync::Arc<Kernel>, Cpu, Captured) {
         let mem = Memory::new(1 << 40).unwrap();
         mem.map(0x10_0000, PAGE_SIZE, Prot::RW, "stack").unwrap();
         mem.map(0x20_0000, PAGE_SIZE, Prot::RW, "data").unwrap();
@@ -414,7 +424,7 @@ mod tests {
             TlsTemplate::default(),
             Box::new(out.clone()),
             Box::new(std::io::sink()),
-            None,
+            app0,
         );
         cpu.fs_base = kernel.new_tls(&kernel.memory()).unwrap();
         (kernel, cpu, out)
@@ -623,6 +633,39 @@ mod tests {
         let mut b = [0u8; 4];
         k.memory().read(value, &mut b).unwrap();
         assert_eq!(u32::from_le_bytes(b), 2);
+    }
+
+    #[test]
+    fn files_in_app0_open_read_and_close_through_descriptors() {
+        let dir = std::env::temp_dir().join(format!("ps5slop-fd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("label.txt"), b"hello").unwrap();
+        let mut hle = Hle::new();
+        for name in ["open", "read", "close", "sceKernelOpen", "sceKernelMkdir"] {
+            hle.stub_by_name("libkernel", name);
+        }
+        let (k, cpu, _) = guest_in(hle, Some(dir.clone()));
+        let me = cpu.fs_base;
+        let mem = k.memory();
+        let (path, buf) = (0x20_0000, 0x20_0100);
+        mem.write(path, b"/app0/label.txt\0").unwrap();
+        let fd = libkernel(&k, "open", me, &[path, 0]);
+        assert_eq!(fd, 3);
+        assert_eq!(libkernel(&k, "read", me, &[fd, buf, 64]), 5);
+        assert_eq!(mem.read_cstr(buf, 5).unwrap(), b"hello");
+        assert_eq!(libkernel(&k, "read", me, &[fd, buf, 64]), 0);
+        assert_eq!(libkernel(&k, "close", me, &[fd]), 0);
+        assert_eq!(libkernel(&k, "close", me, &[fd]), u64::MAX);
+        assert_eq!(
+            libkernel(&k, "sceKernelOpen", me, &[path, 1, 0o666]),
+            0x8002_0000 + errno::EROFS as u64
+        );
+        mem.write(path, b"/data/x\0").unwrap();
+        assert_eq!(
+            libkernel(&k, "sceKernelMkdir", me, &[path, 0o777]),
+            0x8002_0000 + errno::ENOENT as u64
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

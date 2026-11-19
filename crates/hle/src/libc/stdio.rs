@@ -32,7 +32,6 @@ const FILE_SIZE: u64 = 0x100;
 /// The first descriptor number given to an opened file.
 const FIRST_FD: i32 = 3;
 const EOF: u64 = -1i32 as u32 as u64;
-const EROFS: i32 = 30;
 
 enum Target {
     Console(i32),
@@ -46,9 +45,11 @@ struct Stream {
     eof: bool,
 }
 
-/// The open streams, by FILE address.
+/// The open streams, by FILE address, and the files opened as bare
+/// descriptors (libkernel's `open`). Both share one descriptor space.
 pub(crate) struct Files {
     streams: Mutex<HashMap<u64, Stream>>,
+    descriptors: Mutex<HashMap<i32, File>>,
 }
 
 /// What a file descriptor from a stream refers to.
@@ -60,12 +61,41 @@ pub(crate) enum FdInfo {
 impl Files {
     pub(crate) fn fd_info(&self, fd: i32) -> Option<FdInfo> {
         let streams = lock(&self.streams);
+        if let Some(f) = lock(&self.descriptors).get(&fd) {
+            return f.metadata().ok().map(FdInfo::File);
+        }
         let s = streams.values().find(|s| s.fd == fd)?;
         match &s.target {
             Target::Console(_) => Some(FdInfo::Console),
             Target::Host(f) => f.metadata().ok().map(FdInfo::File),
         }
     }
+
+    /// Gives `file` the lowest free descriptor number.
+    pub(crate) fn open_fd(&self, file: File) -> i32 {
+        let streams = lock(&self.streams);
+        let mut descriptors = lock(&self.descriptors);
+        let fd = free_fd(&streams, &descriptors);
+        descriptors.insert(fd, file);
+        fd
+    }
+
+    /// Reads from descriptor `fd` into `buf`; `None` when `fd` is not an
+    /// open descriptor file.
+    pub(crate) fn read_fd(&self, fd: i32, buf: &mut [u8]) -> Option<std::io::Result<usize>> {
+        lock(&self.descriptors).get_mut(&fd).map(|f| f.read(buf))
+    }
+
+    /// Closes descriptor `fd`; false when it was not open.
+    pub(crate) fn close_fd(&self, fd: i32) -> bool {
+        lock(&self.descriptors).remove(&fd).is_some()
+    }
+}
+
+fn free_fd(streams: &HashMap<u64, Stream>, descriptors: &HashMap<i32, File>) -> i32 {
+    (FIRST_FD..)
+        .find(|fd| !descriptors.contains_key(fd) && streams.values().all(|s| s.fd != *fd))
+        .expect("a free fd")
 }
 
 impl Default for Files {
@@ -83,6 +113,7 @@ impl Default for Files {
         ]);
         Self {
             streams: Mutex::new(streams),
+            descriptors: Mutex::default(),
         }
     }
 }
@@ -109,7 +140,7 @@ fn fopen(env: &mut Env) -> Result<Outcome, CallError> {
     let path = cstr(env, env.arg(0))?;
     let mode = cstr(env, env.arg(1))?;
     if mode.first() != Some(&b'r') || mode.contains(&b'+') {
-        env.set_errno(EROFS)?;
+        env.set_errno(errno::EROFS)?;
         return ret(0);
     }
     let file = host_path(env.kernel.app0.as_deref(), &path)
@@ -122,10 +153,9 @@ fn fopen(env: &mut Env) -> Result<Outcome, CallError> {
         env.set_errno(errno::ENOMEM)?;
         return ret(0);
     };
-    let mut streams = lock(&env.kernel.libc.files.streams);
-    let fd = (FIRST_FD..)
-        .find(|fd| streams.values().all(|s| s.fd != *fd))
-        .expect("a free fd");
+    let files = &env.kernel.libc.files;
+    let mut streams = lock(&files.streams);
+    let fd = free_fd(&streams, &lock(&files.descriptors));
     streams.insert(
         at,
         Stream {

@@ -10,6 +10,7 @@ pub const ENOMEM: i32 = 12;
 pub const EBUSY: i32 = 16;
 pub const EINVAL: i32 = 22;
 pub const ENOTTY: i32 = 25;
+pub const EROFS: i32 = 30;
 pub const ERANGE: i32 = 34;
 pub const EAGAIN: i32 = 35;
 pub const ETIMEDOUT: i32 = 60;

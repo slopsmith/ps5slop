@@ -47,7 +47,6 @@ fn ret(v: u64) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(v))
 }
 
-const EROFS: i32 = 30;
 const S_IFCHR: u16 = 0o020000;
 const S_IFDIR: u16 = 0o040000;
 const S_IFREG: u16 = 0o100000;
@@ -115,8 +114,13 @@ fn fstat(env: &mut Env) -> Result<Outcome, CallError> {
 /// `mkdir(path, mode)`: `/app0` is read-only and nothing else exists yet.
 fn mkdir(env: &mut Env) -> Result<Outcome, CallError> {
     let path = super::libc::cstr(env, env.arg(0))?;
+    env.fail(mkdir_error(&path))
+}
+
+/// Why making the directory `path` fails.
+pub(crate) fn mkdir_error(path: &[u8]) -> i32 {
     let in_app0 = path == b"/app0" || path.starts_with(b"/app0/");
-    env.fail(if in_app0 { EROFS } else { errno::ENOENT })
+    if in_app0 { errno::EROFS } else { errno::ENOENT }
 }
 
 /// `gettimeofday(tv, tz)`, with `struct timeval { i64 sec; i64 usec; }`.
