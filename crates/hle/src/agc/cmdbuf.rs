@@ -89,6 +89,26 @@ pub(super) fn emit(env: &mut Env, buffer: u64, packet: &[u32]) -> Result<u64, Ca
     Ok(at)
 }
 
+/// The `n`th integer argument (0-based), reading the stack past the sixth.
+pub(super) fn arg_n(env: &Env, n: usize) -> Result<u64, CallError> {
+    if n < 6 {
+        return Ok(env.arg(n));
+    }
+    let rsp = env.cpu.regs[x86::cpu::reg::RSP];
+    Ok(env.mem.read_u64(rsp + 8 * (n as u64 - 5))?)
+}
+
+/// `count` dwords of guest memory at `at`.
+pub(super) fn read_dwords(env: &Env, at: u64, count: usize) -> Result<Vec<u32>, CallError> {
+    let mut b = vec![0u8; 4 * count];
+    env.mem.read(at, &mut b)?;
+    Ok(b.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| u32::from_le_bytes(*c))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
