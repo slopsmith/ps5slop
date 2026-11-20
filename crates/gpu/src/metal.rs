@@ -1740,7 +1740,17 @@ impl Metal {
         let users = (s[sh::COMPUTE_PGM_RSRC2] >> 1) & 0x1F;
         let user = &s[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + sh::COMPUTE_USER_DATA_COUNT];
         let program = self.typed_program(host, state, Stage::Compute, address, users, false, 0, user).ok_or("compute program")?;
-        self.note(|| format!("compute {address:#x} user {:x?}", &user[..users as usize]));
+        self.note(|| format!("compute {address:#x} groups {groups:?} user {:x?}", &user[..users as usize]));
+        if self.trace.is_some() && std::env::var_os("PS5SLOP_TRACE_USER_MEMORY").is_some() {
+            for pair in user[..users as usize].windows(2) {
+                let ptr = pair[0] as u64 | ((pair[1] & 0xFFFF) as u64) << 32;
+                let mut b = [0u8; 64];
+                if ptr >> 32 != 0 && host.read(ptr, &mut b) {
+                    let words: Vec<u32> = b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect();
+                    self.note(|| format!("      at {ptr:#x}: {words:08x?}"));
+                }
+            }
+        }
         let id = Arc::as_ptr(&program) as u64;
         let pipeline = match self.computes.get(&id) {
             Some(p) => p.clone(),
@@ -1810,6 +1820,16 @@ impl Metal {
         let pixel = self.typed_program(host, state, Stage::Pixel, ps_addr, ps_users, false, col_format, ps_data).ok_or("pixel program")?;
         self.note(|| format!("vertex user {:x?}", &vs_data[..vs_users as usize]));
         self.note(|| format!("pixel user {:x?}", &ps_data[..ps_users as usize]));
+        if self.trace.is_some() && std::env::var_os("PS5SLOP_TRACE_USER_MEMORY").is_some() {
+            for pair in vs_data[..vs_users as usize].windows(2) {
+                let ptr = pair[0] as u64 | ((pair[1] & 0xFFFF) as u64) << 32;
+                let mut b = [0u8; 64];
+                if pair[1] >> 16 == 0 && ptr >> 32 != 0 && host.read(ptr, &mut b) {
+                    let words: Vec<u32> = b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect();
+                    self.note(|| format!("      at {ptr:#x}: {words:08x?}"));
+                }
+            }
+        }
         self.note(|| {
             format!(
                 "{:?} scissor {:?} clip_cntl {:#x} vte_cntl {:#x}",

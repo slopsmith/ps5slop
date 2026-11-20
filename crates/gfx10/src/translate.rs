@@ -997,8 +997,28 @@ impl<'a> Tx<'a> {
         if name == "v_nop" || name == "v_illegal" || name == "v_pipeflush" {
             return Ok(());
         }
-        if name == "v_readfirstlane_b32" || name == "v_readlane_b32" {
+        // Lanes are not modelled: a register is one value per thread. A
+        // constant lane gets its own variable, which covers SGPR spills.
+        let lane = |src: u16| (128..=192).contains(&src).then(|| src - 128);
+        if name == "v_writelane_b32" {
             let s = self.usrc(pc, inst, v, 0)?;
+            let target = match lane(v.src[1]) {
+                Some(k) => format!("v{}_l{k}", v.vdst),
+                None => self.v(v.vdst as u16),
+            };
+            self.regs.insert(target.clone());
+            self.line(&format!("{target} = {s};"));
+            return Ok(());
+        }
+        if name == "v_readfirstlane_b32" || name == "v_readlane_b32" {
+            let spilled = (name == "v_readlane_b32" && v.src[0] >= 256)
+                .then(|| lane(v.src[1]).map(|k| format!("v{}_l{k}", v.src[0] - 256)))
+                .flatten()
+                .filter(|n| self.regs.contains(n));
+            let s = match spilled {
+                Some(n) => n,
+                None => self.usrc(pc, inst, v, 0)?,
+            };
             if let Some(d) = self.sdst(v.vdst as u16) {
                 self.line(&format!("{d} = {s};"));
             }
