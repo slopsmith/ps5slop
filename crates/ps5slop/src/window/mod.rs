@@ -1,6 +1,7 @@
 //! The window: winit for the window and keyboard, Metal for drawing. It
 //! runs on the main thread (AppKit requires it); the guest runs on its own.
 
+mod feedback;
 mod gamepad;
 mod layout;
 mod present;
@@ -99,6 +100,7 @@ pub fn run(booted: Booted) -> Result<i32, Error> {
         flips: 0,
         keys: PadInput::default(),
         sent: PadInput::default(),
+        feedback: feedback::Feedback::default(),
         rate_at: (Instant::now(), kernel.instructions()),
     };
     if let Err(e) = event_loop.run_app(&mut app) {
@@ -118,6 +120,7 @@ struct App {
     /// What the keyboard holds, and what the guest was last given.
     keys: PadInput,
     sent: PadInput,
+    feedback: feedback::Feedback,
     /// When the title was last refreshed, and the instruction counts then.
     rate_at: (Instant, (u64, u64)),
 }
@@ -182,9 +185,13 @@ impl App {
         self.rate_at = (Instant::now(), now);
     }
 
-    /// Gives the guest the keyboard and controller state, if it changed.
+    /// Gives the guest the keyboard and controller state, if it changed, and
+    /// the controller what the guest asked of it.
     fn update_pad(&mut self) {
-        let input = gamepad::merge(gamepad::read(), self.keys);
+        let controller = gamepad::current();
+        self.feedback
+            .apply(controller.as_ref(), self.kernel.pad_output());
+        let input = gamepad::merge(controller.and_then(|c| gamepad::read(&c)), self.keys);
         if input != self.sent {
             self.sent = input;
             self.kernel.set_pad_input(input);

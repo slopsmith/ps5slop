@@ -8,7 +8,7 @@ publish.workspace = true
 
 [features]
 default = ["window"]
-window = ["dep:winit", "dep:objc2", "dep:objc2-foundation", "dep:objc2-metal", "dep:objc2-quartz-core", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-game-controller"]
+window = ["dep:winit", "dep:objc2", "dep:objc2-foundation", "dep:objc2-metal", "dep:objc2-quartz-core", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-game-controller", "dep:objc2-core-haptics"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -22,9 +22,10 @@ x86 = { path = "../x86" }
 [target.'cfg(target_os = "macos")'.dependencies]
 winit = { version = "0.30", optional = true, default-features = false, features = ["rwh_06"] }
 objc2 = { version = "0.6", optional = true }
-objc2-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "NSString", "NSError"] }
+objc2-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "NSString", "NSError", "NSArray", "NSSet"] }
 objc2-metal = { version = "0.3", optional = true, default-features = false, features = ["std", "MTLDevice", "MTLResource", "MTLTexture", "MTLSampler", "MTLCommandQueue", "MTLCommandBuffer", "MTLCommandEncoder", "MTLRenderCommandEncoder", "MTLRenderPass", "MTLRenderPipeline", "MTLLibrary", "MTLTypes", "MTLPixelFormat", "MTLAllocation", "MTLDrawable"] }
 objc2-quartz-core = { version = "0.3", optional = true, default-features = false, features = ["std", "CALayer", "CAMetalLayer", "objc2-metal", "objc2-core-foundation", "objc2-core-graphics"] }
 objc2-core-foundation = { version = "0.3", optional = true, default-features = false, features = ["std", "CFCGTypes", "CFString"] }
 objc2-core-graphics = { version = "0.3", optional = true, default-features = false, features = ["std", "CGColorSpace"] }
-objc2-game-controller = { version = "0.3", optional = true, default-features = false, features = ["std", "GCController", "GCControllerElement", "GCControllerButtonInput", "GCControllerAxisInput", "GCControllerDirectionPad", "GCExtendedGamepad", "GCPhysicalInputProfile", "GCDualShockGamepad", "GCDualSenseGamepad", "GCDevice"] }
+objc2-game-controller = { version = "0.3", optional = true, default-features = false, features = ["std", "GCController", "GCControllerElement", "GCControllerButtonInput", "GCControllerAxisInput", "GCControllerDirectionPad", "GCExtendedGamepad", "GCPhysicalInputProfile", "GCDualShockGamepad", "GCDualSenseGamepad", "GCDevice", "GCDeviceHaptics", "GCDeviceLight", "GCColor", "GCDualSenseAdaptiveTrigger"] }
+objc2-core-haptics = { version = "0.3", optional = true, default-features = false, features = ["std", "CHHapticEngine", "CHHapticEvent", "CHHapticParameter", "CHHapticPattern", "CHHapticPatternPlayer", "block2"] }

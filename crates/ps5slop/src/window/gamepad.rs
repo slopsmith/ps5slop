@@ -30,13 +30,17 @@ pub fn init() {
     unsafe { GCController::setShouldMonitorBackgroundEvents(true) };
 }
 
-/// The state of the first connected controller with a full set of controls.
-pub fn read() -> Option<PadInput> {
+/// The first connected controller with a full set of controls. Asked on
+/// every poll, so controllers plugged in or removed are picked up.
+pub fn current() -> Option<Retained<GCController>> {
     let controllers = unsafe { GCController::controllers() };
-    let pad = controllers
+    controllers
         .iter()
-        .find_map(|c| unsafe { c.extendedGamepad() })?;
-    Some(unsafe { state(pad) })
+        .find(|c| unsafe { c.extendedGamepad() }.is_some())
+}
+
+pub fn read(c: &GCController) -> Option<PadInput> {
+    Some(unsafe { state(c.extendedGamepad()?) })
 }
 
 /// A stick axis from -1..1 (up positive) to the pad's 0..255 (down positive
