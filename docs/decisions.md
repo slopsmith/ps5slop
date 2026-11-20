@@ -349,3 +349,9 @@ Reason: Astro Bot's queues wait on labels each other sets, so running every subm
 `DMA_DATA` and the reads of indirect draw and dispatch arguments wait for all GPU work encoded so far, then act on the CPU ([gpu.md](gpu.md)).
 
 Reason: their sources (GDS counters, memory) are written by the compute work just before them, and a blit or indirect-buffer path in Metal would need the GDS and guest memory as Metal buffers in the same encoders. A wait costs about a millisecond and Astro Bot issues about ten such packets a frame; encoding them on the GPU is the thing to do if that shows up in a profile.
+
+## 2026-11-20: Games' own code may be disassembled locally
+
+Agents may disassemble or decompile a game's own code on vic's dumps to understand what it does and what it expects from the system, as long as nothing from it is committed ([legal.md](legal.md#analysing-user-supplied-binaries)). Sony's system code stays off limits.
+
+Reason (vic): Sony's code would shape the emulator itself, modelling what the real system does under the hood; a game's code only tells us how it uses the interface and what answers it needs, and is never part of the emulator. Prompted by GTA V's and Astro Bot's asserts, which registers and memory alone could not explain.

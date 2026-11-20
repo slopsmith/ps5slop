@@ -30,7 +30,7 @@ Clean room. We implement the Orbis and Prospero library and kernel interfaces fr
 
 Locally, on the user's own dumps, and with nothing but our conclusions entering the repo:
 
-- **Games:** fine to analyse, for example counting instruction classes to see what the CPU must support, or logging which imports a game uses.
+- **Games:** fine to analyse, for example counting instruction classes to see what the CPU must support, or logging which imports a game uses. Disassembling or decompiling a game's own code locally is also fine, to learn what the game does and what it expects of our implementation (for example which fields of a structure it checks before an assert). Nothing from it is committed: no game code, listings or constants, only our conclusions in prose (vic, 2026-11-20).
 - **System modules, to some extent:** reading their metadata (which libraries and NIDs a module exports, library and module names and versions, imports) is fine, and such symbol tables may be committed as part of the HLE OS code. Nothing else from a module is committed: no code, data tables, constants or structure layouts.
 - **Out of line:** decompiling or disassembling how a module works ourselves, and using the output of that. (Documentation others published is a different matter, see above.)
 
