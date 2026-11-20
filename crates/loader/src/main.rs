@@ -36,6 +36,9 @@ enum Command {
         #[arg(long, default_value = "0x400000", value_parser = parse_hex)]
         base: u64,
     },
+    /// Writes the file bytes of segment `index` to `out`, for local analysis
+    /// of a title's own code (see docs/legal.md).
+    Segment { file: PathBuf, index: usize, out: PathBuf },
 }
 
 fn main() -> ExitCode {
@@ -143,6 +146,10 @@ fn run(cli: Cli) -> loader::Result<()> {
                     }
                 }
             }
+        }
+        Command::Segment { file, index, out } => {
+            let elf = ElfFile::parse(std::fs::read(file)?)?;
+            std::fs::write(out, elf.segment_data(index)?)?;
         }
         Command::Load { file, base } => {
             let elf = ElfFile::parse(std::fs::read(file)?)?;
