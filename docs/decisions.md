@@ -381,3 +381,8 @@ Unity's PSN and SaveData plugins (`PSNCore.prx` and similar), FMOD and other mid
 
 Reason (vic): the middleware is not Sony's code and not part of the emulator, so it falls on the game side of the line drawn on 2026-11-20. Prompted by Superliminal, whose PSN plugin gave up silently on a failed `sce::Json` initialise.
 
+## 2026-11-21: Per-pass attachment copies instead of Metal frame captures
+
+GPU bugs are found with `gpusnap` (copies of every render pass's attachments during one frame), `gpuskip` and MSL overrides with `gpureload` ([debugging.md](debugging.md)), not with Metal's `.gputrace` captures.
+
+Reason: a capture records every buffer the frame uses, and our no-copy windows over guest memory are several GiB; one capture of Minecraft wrote 25 GB and grew the process to 13 GB within seconds. The copies are bounded (1 GiB), need no Xcode, and can be read from the command line.
