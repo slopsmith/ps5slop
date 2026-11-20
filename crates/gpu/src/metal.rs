@@ -68,10 +68,9 @@ fn dump_targets() -> bool {
 fn record(key: u64, texture: &Retained<Texture>, replace: bool) {
     if dump_targets()
         && let Ok(mut f) = frames().lock()
+        && (replace || !f.contains_key(&key))
     {
-        if replace || !f.contains_key(&key) {
-            f.insert(key, SharedTexture(texture.clone()));
-        }
+        f.insert(key, SharedTexture(texture.clone()));
     }
 }
 
@@ -256,6 +255,8 @@ struct Program {
     id: u64,
     function: Retained<Function>,
     translated: Translated,
+    /// The `user(locnN)` locations a pixel program reads flat.
+    flat: Vec<u32>,
 }
 
 /// What a program is translated for besides its code and registers.
@@ -278,6 +279,10 @@ struct PipelineKey {
     rect: bool,
 }
 
+/// An open render pass: its encoder, attachment addresses, and color
+/// textures and depth texture and slice (for `gpusnap`).
+type OpenPass = (Retained<RenderEncoder>, Vec<u64>, Vec<Retained<Texture>>, Option<(Retained<Texture>, usize)>);
+
 /// The Metal side of the GPU.
 pub struct Metal {
     device: Retained<Device>,
@@ -292,9 +297,7 @@ pub struct Metal {
     upload: Option<Retained<CommandBuffer>>,
     /// Where this backend is in the log of replaced guest pages.
     replaced_mark: u64,
-    /// The open render pass, its attachment addresses, and its color
-    /// textures and depth texture and slice (for `gpusnap`).
-    pass: Option<(Retained<RenderEncoder>, Vec<u64>, Vec<Retained<Texture>>, Option<(Retained<Texture>, usize)>)>,
+    pass: Option<OpenPass>,
     snap: Option<Snap>,
     depths: HashMap<u64, Retained<Texture>>,
     /// Depth-layout images a program wrote since their depth texture was
@@ -1372,6 +1375,7 @@ impl Metal {
                                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                             },
                             function,
+                            flat: flat_locations(&translated.msl),
                             translated,
                         })
                     })
@@ -1409,7 +1413,7 @@ impl Metal {
                 m
             }
         };
-        let flat: Vec<u32> = if rect { Vec::new() } else { flat_locations(&pixel.translated.msl) };
+        let flat: Vec<u32> = if rect { Vec::new() } else { pixel.flat.clone() };
         if missing.is_empty() && flat.is_empty() && !rect && !gl_clip {
             return Some(vertex.function.clone());
         }
@@ -2382,9 +2386,9 @@ impl Metal {
         self.trace_frames.is_some_and(|(a, b)| (a..=b).contains(&self.epoch))
     }
 
-    fn end_trace(&mut self, what: String, result: Result<(), &'static str>) {
+    fn end_trace(&mut self, what: impl FnOnce() -> String, result: Result<(), &'static str>) {
         if let Some(lines) = self.trace.take() {
-            eprintln!("ps5slop: trace: {what} -> {result:?}");
+            eprintln!("ps5slop: trace: {} -> {result:?}", what());
             for l in lines {
                 eprintln!("ps5slop: trace:     {l}");
             }
@@ -2439,7 +2443,7 @@ impl Backend for Metal {
     fn draw(&mut self, host: &dyn Host, state: &State, draw: Draw) {
         self.trace = self.tracing().then(Vec::new);
         let result = self.try_draw(host, state, draw);
-        self.end_trace(format!("draw {draw:?}"), result);
+        self.end_trace(|| format!("draw {draw:?}"), result);
         match result {
             Ok(()) => self.draws += 1,
             Err(why) => {
@@ -2452,7 +2456,7 @@ impl Backend for Metal {
     fn dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]) {
         self.trace = self.tracing().then(Vec::new);
         let result = self.try_dispatch(host, state, groups);
-        self.end_trace(format!("dispatch {groups:?}"), result);
+        self.end_trace(|| format!("dispatch {groups:?}"), result);
         match result {
             Ok(()) => self.dispatches += 1,
             Err(why) => {
