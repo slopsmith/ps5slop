@@ -19,7 +19,7 @@ A host function can also redirect the CPU instead of returning (`Outcome::Resume
 
 ## errno
 
-Each thread's errno lives in its thread control block, at the thread pointer plus `0x800` (our choice); `__error()` returns its address. POSIX-style functions that fail set it and return -1. The values are FreeBSD's (`hle::errno`), assumed rather than verified for Orbis. The pthread functions return error numbers directly, as POSIX says.
+Each thread's errno lives in its thread control block, at the thread pointer plus `0x800` (our choice); `__error()` returns its address. The values of thread-specific keys 0 to 127 live at the thread pointer plus `0x400` (our choice, so the JIT's native `pthread_getspecific` reads them without leaving the VM); higher keys stay in a host table. POSIX-style functions that fail set it and return -1. The values are FreeBSD's (`hle::errno`), assumed rather than verified for Orbis. The pthread functions return error numbers directly, as POSIX says.
 
 ## Implemented
 
@@ -33,7 +33,7 @@ Each thread's errno lives in its thread control block, at the thread pointer plu
 | libkernel | `pthread_mutex_*`, `pthread_mutexattr_{init,destroy,settype}` | Error-checking by default (FreeBSD's default), recursive and normal types | Unit tests and the `threads` test program |
 | libkernel | `pthread_cond_{init,destroy,wait,timedwait,signal,broadcast}` | `signal` wakes all waiters (allowed: POSIX permits spurious wake-ups); `timedwait` takes a CLOCK_REALTIME deadline | `threads` test program |
 | libkernel | `pthread_rwlock_{init,destroy,rdlock,wrlock,tryrdlock,trywrlock,unlock}`, `pthread_condattr_{init,destroy}` | Condition variable attributes are ignored | Untested by a program |
-| libkernel | `pthread_key_{create,delete}`, `pthread_{get,set}specific` | Destructors are not run | Unit test |
+| libkernel | `pthread_key_{create,delete}`, `pthread_{get,set}specific` | Destructors are not run. Keys below 128 keep their values in the thread control block (see errno above) | Unit test; JIT test of the native version |
 | libkernel | `pthread_once` | The routine runs as a guest call; other callers wait | `threads` test program |
 | libkernel | `pthread_create`, `join`, `detach`, `exit`, `self`, `equal` | `pthread_t` is the thread pointer; attributes are ignored and every thread gets a 1 MiB stack (the Orbis default is unknown) | `threads` test program, 30 runs out of 30 |
 | libkernel | `__stack_chk_fail`, `__stack_chk_guard` (variable) | Stops the process / a fixed non-zero canary in the HLE data region (`0xFF_8000_0000`) | `__stack_chk_guard` used by vic's homebrew |

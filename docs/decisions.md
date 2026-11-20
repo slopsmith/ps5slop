@@ -158,6 +158,24 @@ Reason: some PS5 imports have no public name to hash. The NID is what the title 
 
 Reason: Sony's libc reads through these as pointers (it faulted at the small counters we used before), as FreeBSD's pthread types are pointers.
 
+## 2026-11-20: Thread-specific values live in the thread control block
+
+Values of `pthread_key_t` keys 0 to 127 are kept at the thread pointer plus `0x400`, next to errno at `0x800`; the JIT runs `pthread_getspecific`, `scePthreadGetthreadid` and `pthread_self` as native code inside the VM.
+
+Reason: Minecraft called `scePthreadGetspecific` and `scePthreadGetthreadid` about 470 thousand times a second, and each call was a VM exit. Inside the VM the thread pointer is the FS base register, so the values must be in guest memory at a fixed offset from it. The offset is our choice; whether Sony's libc uses those bytes of the control block is unknown (assumed not, as for errno).
+
+## 2026-11-20: Guest mutexes hand off to waiters; conditions honour their clock
+
+An unlocked guest mutex with waiters goes to one of them; a thread that unlocks and relocks it at once waits its turn. `pthread_condattr_setclock` is honoured (CLOCK_MONOTONIC deadlines are on the same clock as `clock_gettime`).
+
+Reason: measured on Minecraft. Its main thread waited about 60 ms at a time for per-object mutexes that a worker released and took again before the woken waiter ran; and one thread ran `pthread_cond_timedwait` 37 thousand times a second because its monotonic deadlines were read as wall-clock times far in the past.
+
+## 2026-11-20: A user logs in when the title first asks
+
+`sceUserServiceGetEvent` reports user 1 logging in on its first call.
+
+Reason: Minecraft's sign-in looked user 1 up among the users it had seen log in, found none and stopped with an assertion ("PlatformIdentity_sony: invalid user id"). A console reports users already logged in this way when a title starts (assumed from the event's existence; not verified on hardware).
+
 ## 2026-11-20: Shaders go through our own `gfx10` crate, straight to MSL
 
 GFX10 machine code is decoded by a new crate, `gfx10`, checked against `llvm-mc --disassemble -mcpu=gfx1013`, and translated directly to MSL text with a straight register model: one Metal thread per lane, registers as locals, lane masks reduced to this lane's bit, branches as a `switch` in a loop, scalar and buffer loads from a binding of all guest memory. Details in [shaders.md](shaders.md).
