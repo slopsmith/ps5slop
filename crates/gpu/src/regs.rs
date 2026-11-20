@@ -8,6 +8,7 @@ use crate::tiling::TileMode;
 
 pub mod context {
     pub const DB_RENDER_CONTROL: usize = 0x000;
+    pub const DB_DEPTH_VIEW: usize = 0x002;
     pub const DB_DEPTH_SIZE_XY: usize = 0x007;
     pub const DB_STENCIL_CLEAR: usize = 0x00A;
     pub const DB_DEPTH_CLEAR: usize = 0x00B;
@@ -150,6 +151,10 @@ pub struct DepthTarget {
     /// From `DB_DEPTH_SIZE_XY`; zero when the title did not write it.
     pub width: u32,
     pub height: u32,
+    /// The array slice drawn to and the last slice of the view
+    /// (`DB_DEPTH_VIEW`).
+    pub slice: u32,
+    pub slice_max: u32,
 }
 
 impl DepthTarget {
@@ -168,6 +173,8 @@ impl DepthTarget {
             stencil: c[DB_STENCIL_INFO] & 1 != 0,
             width: w,
             height: h,
+            slice: (c[DB_DEPTH_VIEW] & 0x7FF) | ((c[DB_DEPTH_VIEW] >> 25 & 3) << 11),
+            slice_max: ((c[DB_DEPTH_VIEW] >> 13) & 0x7FF) | ((c[DB_DEPTH_VIEW] >> 27 & 3) << 11),
         })
     }
 }

@@ -43,6 +43,9 @@ unsafe impl Sync for SharedTexture {}
 /// Render targets by guest address, for presenting flipped buffers.
 static FRAMES: OnceLock<Mutex<HashMap<u64, SharedTexture>>> = OnceLock::new();
 
+/// Depth target array slices we keep at most (cascaded shadow maps use 4).
+const MAX_DEPTH_SLICES: usize = 16;
+
 fn frames() -> &'static Mutex<HashMap<u64, SharedTexture>> {
     FRAMES.get_or_init(Default::default)
 }
@@ -631,12 +634,32 @@ impl Metal {
     /// target at that address, or a copy of guest memory refreshed once per frame.
     fn image(&mut self, host: &dyn Host, image: Image, kind: TextureKind) -> Option<Retained<Texture>> {
         let (format, bpe) = image_format(image.format)?;
-        if kind == TextureKind::Tex2d
+        if matches!(kind, TextureKind::Tex2d | TextureKind::Tex2dArray)
             && let Some(d) = self.depths.get(&image.address)
             && d.width() as u32 == image.width
             && d.height() as u32 == image.height
         {
-            return Some(d.clone());
+            let array = kind == TextureKind::Tex2dArray;
+            let available = d.arrayLength().saturating_sub(image.base_array as usize);
+            let count = if array { (image.depth as usize).min(available) } else { 1 };
+            if count == 0 {
+                return None;
+            }
+            if d.textureType() == if array { MTLTextureType::Type2DArray } else { MTLTextureType::Type2D }
+                && image.base_array == 0
+                && count == d.arrayLength()
+            {
+                return Some(d.clone());
+            }
+            let ty = if array { MTLTextureType::Type2DArray } else { MTLTextureType::Type2D };
+            return unsafe {
+                d.newTextureViewWithPixelFormat_textureType_levels_slices(
+                    d.pixelFormat(),
+                    ty,
+                    objc2_foundation::NSRange::new(0, 1),
+                    objc2_foundation::NSRange::new(image.base_array as usize, count),
+                )
+            };
         }
         self.refresh_volume(host, image.address, false);
         if let Some(v) = self.volume(image, kind, format) {
@@ -1061,11 +1084,11 @@ impl Metal {
     fn pass(
         &mut self,
         targets: &[(u64, Retained<Texture>)],
-        depth: Option<(u64, Retained<Texture>, bool)>,
+        depth: Option<(u64, Retained<Texture>, bool, u32)>,
         clear: Option<(f32, u32)>,
     ) -> Option<Retained<RenderEncoder>> {
         let mut addresses: Vec<u64> = targets.iter().map(|t| t.0).collect();
-        addresses.push(depth.as_ref().map_or(0, |d| d.0));
+        addresses.push(depth.as_ref().map_or(0, |d| d.0 | (d.3 as u64) << 48));
         if let Some((enc, open)) = &self.pass
             && *open == addresses
             && clear.is_none()
@@ -1081,13 +1104,15 @@ impl Metal {
             att.setLoadAction(MTLLoadAction::Load);
             att.setStoreAction(MTLStoreAction::Store);
         }
-        if let Some((_, tex, stencil)) = &depth {
+        if let Some((_, tex, stencil, slice)) = &depth {
             let d = pass.depthAttachment();
             d.setTexture(Some(tex));
+            d.setSlice(*slice as usize);
             d.setStoreAction(MTLStoreAction::Store);
             let st = pass.stencilAttachment();
             if *stencil {
                 st.setTexture(Some(tex));
+                st.setSlice(*slice as usize);
                 st.setStoreAction(MTLStoreAction::Store);
             }
             match clear {
@@ -1118,26 +1143,52 @@ impl Metal {
             _ => MTLPixelFormat::Depth32Float,
         };
         let (w, h) = if d.width != 0 { (d.width, d.height) } else { (width, height) };
-        if let Some(t) = self.depths.get(&d.address)
+        if d.slice >= MAX_DEPTH_SLICES as u32 {
+            self.report(format!("depth target slice {} at {:#x} not supported", d.slice, d.address));
+            return None;
+        }
+        let slices = (d.slice.max(d.slice_max) as usize + 1).min(MAX_DEPTH_SLICES);
+        let old = self.depths.get(&d.address).cloned();
+        if let Some(t) = &old
             && t.pixelFormat() == format
             && t.width() == w as usize
             && t.height() == h as usize
+            && t.arrayLength() >= slices
         {
             return Some((t.clone(), format, false));
         }
         let desc = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(format, w as usize, h as usize, false)
         };
-        desc.setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
+        if slices > 1 {
+            desc.setTextureType(MTLTextureType::Type2DArray);
+            // SAFETY: a small positive count, below Metal's array limit.
+            unsafe { desc.setArrayLength(slices) };
+        }
+        desc.setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead | MTLTextureUsage::PixelFormatView);
         desc.setStorageMode(MTLStorageMode::Private);
         let t = self.device.newTextureWithDescriptor(&desc)?;
+        let kept = old.filter(|o| o.pixelFormat() == format && o.width() == w as usize && o.height() == h as usize);
+        if let Some(o) = &kept {
+            self.end_pass();
+            let command = self.command();
+            let blit = command.blitCommandEncoder()?;
+            for slice in 0..o.arrayLength() {
+                unsafe {
+                    blit.copyFromTexture_sourceSlice_sourceLevel_toTexture_destinationSlice_destinationLevel_sliceCount_levelCount(
+                        o, slice, 0, &t, slice, 0, 1, 1,
+                    );
+                }
+            }
+            blit.endEncoding();
+        }
         self.depths.insert(d.address, t.clone());
         if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some()
             && let Ok(mut f) = frames().lock()
         {
             f.insert(d.address | 4, SharedTexture(t.clone()));
         }
-        Some((t, format, true))
+        Some((t, format, kept.is_none()))
     }
 
     fn depth_state(&mut self, s: DepthState, bound: bool) -> Option<Retained<ProtocolObject<dyn MTLDepthStencilState>>> {
@@ -1586,7 +1637,7 @@ impl Metal {
                     let z = if clearing { f32::from_bits(c[context::DB_DEPTH_CLEAR]) } else { 1.0 };
                     clear = Some((z, c[context::DB_STENCIL_CLEAR] & 0xFF));
                 }
-                depth = Some((d.address, tex, d.stencil));
+                depth = Some((d.address, tex, d.stencil, d.slice));
             }
         }
         if targets.is_empty() && depth.is_none() {
@@ -1596,7 +1647,7 @@ impl Metal {
         let depth_bound = depth.is_some();
         let (w, h) = match (size, &depth) {
             (Some((w, h)), _) => (w as f64, h as f64),
-            (None, Some((_, t, _))) => (t.width() as f64, t.height() as f64),
+            (None, Some((_, t, _, _))) => (t.width() as f64, t.height() as f64),
             _ => return Err("no target size"),
         };
         let vs_bound = self.resolve(host, &vertex, vs_data).ok_or("resources")?;

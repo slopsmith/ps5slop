@@ -294,3 +294,24 @@ fn version_1_captures_still_load() {
     let again = gfx10::capture::Capture::from_bytes(&c.to_bytes()).unwrap();
     assert_eq!((again.threads, again.code), (c.threads, c.code));
 }
+
+#[test]
+fn sdwa_writes_to_a_word_keep_or_clear_the_rest() {
+    let code = [
+        0x7E00_0200, // v_mov_b32 v0, s0
+        0x7E02_0201, // v_mov_b32 v1, s1
+        0x7E02_02F9, // v_mov_b32_sdwa v1, v0 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE src0_sel:WORD_0
+        0x0004_1500,
+        0x7E04_02F9, // v_mov_b32_sdwa v2, v0 dst_sel:BYTE_1 dst_unused:UNUSED_PAD src0_sel:DWORD
+        0x0006_0100,
+        0xBF82_0000, // s_branch 1 (a branch makes the body a switch)
+        0xF800_180F, // exp mrt0 v0, v1, v2, v3 done vm
+        0x0302_0100,
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = pixel(&code, 2);
+    assert!(t.msl.contains("switch"), "{}", t.msl);
+    compile(&t.msl);
+    assert!(t.msl.contains("v1 = ((sdwa_old2 & ~(0xffffu << 16u)) | ((v1 & 0xffffu) << 16u));"), "{}", t.msl);
+    assert!(t.msl.contains("v2 = ((v2 & 0xffu) << 8u);"), "{}", t.msl);
+}

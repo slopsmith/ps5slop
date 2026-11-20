@@ -944,6 +944,39 @@ impl<'a> Tx<'a> {
         Ok(e)
     }
 
+    /// An SDWA instruction writing a byte or word of its destination: the
+    /// whole result, then merged into the old value per `dst_unused`.
+    fn sdwa_dst(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
+        let (shift, mask) = match v.sdwa.dst_sel {
+            sel @ 0..=3 => (8 * sel as u32, 0xffu32),
+            sel @ (4 | 5) => (16 * (sel as u32 - 4), 0xffff),
+            _ => return Err(err(pc, "bad SDWA destination select")),
+        };
+        let d = self.v(v.vdst as u16);
+        let old = format!("sdwa_old{pc}");
+        self.line("{");
+        self.line(&format!("uint {old} = {d};"));
+        let mut whole = *v;
+        whole.sdwa.dst_sel = 6;
+        self.valu(pc, inst, &whole)?;
+        let field = format!("(({d} & 0x{mask:x}u) << {shift}u)");
+        let merged = match v.sdwa.dst_unused {
+            0 => field,
+            1 => {
+                let top = shift + mask.count_ones();
+                if top == 32 {
+                    field
+                } else {
+                    format!("uint(int({field} << {}u) >> {}u)", 32 - top, 32 - top)
+                }
+            }
+            _ => format!("(({old} & ~(0x{mask:x}u << {shift}u)) | {field})"),
+        };
+        self.guard(&format!("{d} = {merged};"));
+        self.line("}");
+        Ok(())
+    }
+
     fn lane_bit(&mut self, pc: usize, v: &Valu, i: usize) -> Result<String, TranslateError> {
         let code = v.src[i];
         Ok(format!("({} & 1u)", self.src32(code, None, pc)?))
@@ -955,8 +988,8 @@ impl<'a> Tx<'a> {
         if matches!(v.enc, VEnc::Dpp16 | VEnc::Dpp8) {
             self.dpp_src0(pc, inst, v)?;
         }
-        if v.enc == VEnc::Sdwa && op.fmt != Fmt::Vopc && (v.sdwa.dst_sel != 6) {
-            return Err(err(pc, "unsupported SDWA destination select"));
+        if v.enc == VEnc::Sdwa && op.fmt != Fmt::Vopc && v.sdwa.dst_sel != 6 {
+            return self.sdwa_dst(pc, inst, v);
         }
         if op.fmt == Fmt::Vopc {
             return self.vopc(pc, inst, v);
