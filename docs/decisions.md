@@ -337,3 +337,15 @@ Reason: code for a feature no package uses cannot be checked against real data o
 GTA V's streamers map 64 KiB pages of direct memory with `sceKernelBatchMap`, read files into them and unmap them, which looks like it relies on two mappings of one direct range sharing bytes. Our maps still get fresh pages each ([hle-kernel.md](hle-kernel.md)).
 
 Reason: a throwaway build that shared pages by direct offset (`Memory::map_physical`) stopped GTA V at the same assert, so it is not shown to be needed yet, and sharing broke Minecraft before ([jit.md](jit.md)). Whether and how to model physical memory is vic's call; change `uukyvrwo` also reworks `dmem.rs`.
+
+## 2026-11-20: A GPU thread per queue, sharing one renderer
+
+Graphics and each compute owner get their own command processor thread; all of them encode into the one Metal renderer behind a mutex ([gpu.md](gpu.md)).
+
+Reason: Astro Bot's queues wait on labels each other sets, so running every submission in order on one thread let a wait block the work that would end it (24 timeouts of 5 s in 150 s, 3 flips). Separate renderers per queue would not share render targets, images or the GDS, which the queues pass between them. The mutex serialises encoding but not waiting.
+
+## 2026-11-20: DMA_DATA and indirect arguments run on the CPU after a GPU wait
+
+`DMA_DATA` and the reads of indirect draw and dispatch arguments wait for all GPU work encoded so far, then act on the CPU ([gpu.md](gpu.md)).
+
+Reason: their sources (GDS counters, memory) are written by the compute work just before them, and a blit or indirect-buffer path in Metal would need the GDS and guest memory as Metal buffers in the same encoders. A wait costs about a millisecond and Astro Bot issues about ten such packets a frame; encoding them on the GPU is the thing to do if that shows up in a profile.

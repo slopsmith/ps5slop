@@ -63,7 +63,8 @@ Status, 2026-11-19: ScreenTester5 shows its menu, and a pad press changes the pa
 
 - Init, register defaults (versions 8 and 10 to 13; 8 is Isaac's, ported from SharpEmu like the others), `CreateShader`, driver resource registration.
 - Command-buffer builders append PM4 at the descriptor's upward cursor (`cmdbuf.rs`), calling the title's buffer-full callback when needed. One family per file.
-- Submissions go to a GPU thread that runs them through `crates/gpu`'s command processor in order. It carries out what the CPU can observe (memory writes, end-of-pipe labels and their interrupts to the GPU event queues, waits, indirect buffers, flips), records register writes and counts draws and dispatches. Nothing is drawn yet; drawing will be Metal only, with no rendering on the CPU (vic, 2026-11-19).
+- Submissions go to a GPU thread per queue, each running its buffers through its own `crates/gpu` command processor in order: one for the graphics queue (`sceAgcDriverSubmitDcb`, `SubmitMultiDcbs`) and one per compute owner (the first argument of `sceAgcDriverSubmitAcb`, `SubmitMultiAcbs`). The processors share one Metal renderer (`gpu::SharedBackend`, a mutex around it: work is encoded in the order the calls come). Each carries out what the CPU can observe (memory writes, end-of-pipe labels and their interrupts to the GPU event queues, waits, indirect buffers, flips) and records register writes; draws and dispatches go to the renderer. Drawing is Metal only, with no rendering on the CPU (vic, 2026-11-19).
+- **Why a thread per queue (2026-11-20):** Astro Bot submits to two compute queues (owners 0x40 and 0x48) next to the graphics queue, and its queues wait on labels each other sets. With one thread in submission order, a graphics `WAIT_REG_MEM` on a label that a compute buffer queued behind it would set ran into the 5 s wait limit: 24 timeouts and 3 flips in 150 s. With a thread per queue: no timeouts and about 20 flips a second. A queue waiting on a label no longer holds up the others; the waits still poll memory.
 
 Register state reaches the processor mostly through register tables (`SET_CONTEXT_REG_INDIRECT` 0x9F, `SET_SH_REG_INDIRECT` 0x63, `SET_UCONFIG_REG_INDIRECT` 0x64: a guest address and a count of (offset, value) pairs, as SharpEmu-mac reads them). Balatro sets no context register any other way.
 
@@ -124,9 +125,20 @@ Status, 2026-11-20, Minecraft's UI text and player model, checked with screensho
 
 An earlier note here said these passes read 780x438 regions of larger targets: that was the hexadecimal debug print of 1920x1080 (0x780 by 0x438). Every target in the pipeline is 1920x1080 or a power-of-two fraction of it, and the depth image's swizzle mode is 0x18 (`SW_64KB_Z_X`), not 0x12.
 
-Swizzle modes: linear, `SW_64KB_S` (0x09) and the PS5's render-target mode 0x1B (the depth modes are not supported: depth is sampled from Metal depth textures instead, see above), whose equation SharpEmu-mac uses for textures and which equals the frame layout ScreenTester5 writes. A test checks one against the other, and a Metal test checks the GPU detiler against the CPU layout.
+Swizzle modes: linear, `SW_4KB_S` (0x05), `SW_64KB_S` (0x09) and the PS5's render-target mode 0x1B (the depth modes are not supported: depth is sampled from Metal depth textures instead, see above), whose equation SharpEmu-mac uses for textures and which equals the frame layout ScreenTester5 writes. A test checks one against the other, and a Metal test checks the GPU detiler against the CPU layout. `SW_4KB_S` is taken to be the first 4 KiB of a `SW_64KB_S` block (the standard swizzle is built up from 256-byte to 4 KiB to 64 KiB blocks, as AMD's address library lays it out; from memory, unverified), with 4 KiB blocks laid out row-major; a test checks that the two agree inside a 4 KiB block. Superliminal's textures in this mode (R8, BC3 and BC7 sRGB) look right on screen. An earlier note called mode 5 "linear"; it is not.
 
 What Balatro draws (2026-11-20): an NGG vertex program in the ES slot (`VGT_SHADER_STAGES_EN` 0x2002000) for every draw; clears as 3-vertex rectangle lists (primitive type 7) with a pixel shader writing a colour from user SGPRs; then its scene into a 1920x1080 BGRA8 canvas in mode 0x1B, which a final textured draw (T# in s0..s7, S# in s8..s11) puts on the display buffer.
+
+## GDS, DMA_DATA and indirect work (2026-11-20)
+
+Astro Bot builds GPU work on the GPU: compute programs count items with `ds_append` into the global data share (GDS), `DMA_DATA` packets copy those counters into memory and clear them, and `DISPATCH_INDIRECT` / `DRAW_INDEX_INDIRECT` read their arguments from that memory. Packet fields are Mesa's (`sid.h`, `PKT3_DMA_DATA`, `PKT3_SET_BASE`; MIT, from memory). What is done:
+
+- **GDS**: one 64 KiB shared Metal buffer, made on first use and bound at `buffer(27)` to programs that use it (`Translated::gds`). The command processor reaches it through `Backend::with_gds` (or its own 64 KiB when there is no renderer).
+- **`DMA_DATA`** (0x50): source the packet's data dword, memory or GDS; destination memory or GDS; byte count from the command dword, with the address-increment-disable bits. It runs on the CPU in command order, after the queue's pending releases and all GPU work encoded so far (one wait per packet: about ten a frame in Astro Bot), since the GPU work before it may write its source. Register-space addresses are ignored.
+- **`SET_BASE`** (0x11) index 1 sets the indirect argument base. **`DISPATCH_INDIRECT`** (0x16) reads `x, y, z` at base + offset, **`DRAW_INDEX_INDIRECT`** (0x25) reads `count, instances, first index, base vertex, first instance` and **`DRAW_INDIRECT`** (0x24) `count, instances, first vertex, first instance`, each after waiting for earlier GPU work. Base vertex, first vertex and first instance are ignored (not seen non-zero; not checked). The multi-draw forms are still only counted.
+- `PS5SLOP_GPU_OPCODES=1` adds a line with packet counts by opcode to the `PS5SLOP_GPU_STATS` report (NOP codes as `0x100 | code`), and a wait that times out now prints its address, value, function and reference (first 16). Those two found the problem above.
+
+Not modelled: GDS ordered append (`ds_ordered_count`), GWS, and GDS reads or writes from packets other than `DMA_DATA`.
 
 ## Renderer performance (2026-11-20)
 
