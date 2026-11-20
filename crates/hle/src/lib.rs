@@ -537,7 +537,6 @@ fn placeholders() -> impl Iterator<Item = &'static Function> {
         .chain(file::STUBS)
         .chain(gnm::STUBS)
         .chain(videoout::STUBS)
-        .chain(rtld::STUBS)
 }
 
 /// Every function we implement.
@@ -564,6 +563,7 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(pad::FUNCTIONS)
         .chain(videoout::FUNCTIONS)
         .chain(rtld::FUNCTIONS)
+        .chain(rtld::LIBC_EXT)
         .chain(net::FUNCTIONS)
         .chain(stubs::FUNCTIONS)
         .chain(savedata::FUNCTIONS)

@@ -42,6 +42,8 @@ pub struct Rtld {
     heap_api: Mutex<Option<u64>>,
     /// The executable's process parameters (`PT_SCE_PROCPARAM`), or 0.
     proc_param: Mutex<u64>,
+    /// Guest block behind `sceLibcHeapGetTraceInfo`'s pointers, or 0.
+    heap_trace: Mutex<u64>,
 }
 
 pub static FUNCTIONS: &[Function] = &[
@@ -60,9 +62,8 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelIsAddressSanitizerEnabled", no_sanitizer),
 ];
 
-/// Placeholders: they answer without doing the real work, and say so on
-/// stderr when called.
-pub static STUBS: &[Function] = &[Function {
+/// Functions of libSceLibcInternalExt that Sony's libc calls while it starts.
+pub static LIBC_EXT: &[Function] = &[Function {
     library: "libSceLibcInternalExt",
     name: "sceLibcHeapGetTraceInfo",
     func: heap_trace_info,
@@ -101,9 +102,29 @@ fn no_sanitizer(_: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(0))
 }
 
-/// `sceLibcHeapGetTraceInfo(info)`: heap tracing is off; reports success
-/// without writing (the structure's layout is unknown).
-fn heap_trace_info(_: &mut Env) -> Result<Outcome, CallError> {
+/// `sceLibcHeapGetTraceInfo(info)`: heap tracing is off. Fills in the
+/// layout shadPS4 documents: `u32` segment info at 0xc, then pointers to an
+/// atomic id mask (0x10) and a 64-entry state table (0x18), all zero. Sony's
+/// libc writes through both pointers, so they must point at real memory.
+fn heap_trace_info(env: &mut Env) -> Result<Outcome, CallError> {
+    const MASK_AND_TABLE: u64 = 8 + 64 * 8;
+    let info = env.arg(0);
+    let block = {
+        let mut slot = lock(&env.kernel.rtld.heap_trace);
+        if *slot == 0 {
+            let at = env
+                .kernel
+                .heap
+                .alloc(env.mem, MASK_AND_TABLE)
+                .ok_or(CallError::Abort("out of memory for the heap trace table"))?;
+            env.mem.write(at, &[0; MASK_AND_TABLE as usize])?;
+            *slot = at;
+        }
+        *slot
+    };
+    env.mem.write(info + 0xc, &0u32.to_le_bytes())?;
+    env.mem.write(info + 0x10, &block.to_le_bytes())?;
+    env.mem.write(info + 0x18, &(block + 8).to_le_bytes())?;
     Ok(Outcome::Return(0))
 }
 
