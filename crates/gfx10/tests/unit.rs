@@ -33,6 +33,7 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
     translate(&Request {
         stage: Stage::Pixel,
         code,
+        address: 0,
         user_sgprs,
         ngg: false,
         ps_input_ena: 2,
@@ -104,6 +105,7 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
     let t = translate(&Request {
         stage: Stage::Pixel,
         code: &code,
+        address: 0,
         user_sgprs: 0,
         ngg: false,
         ps_input_ena: 2,
@@ -124,6 +126,7 @@ fn compute(code: &[u32], user_sgprs: u32, rsrc2: u32) -> gfx10::Translated {
     translate(&Request {
         stage: Stage::Compute,
         code,
+        address: 0,
         user_sgprs,
         ngg: false,
         ps_input_ena: 0,
@@ -263,6 +266,7 @@ fn integer_colour_formats_export_integers() {
     let mut req = Request {
         stage: Stage::Pixel,
         code: &code,
+        address: 0,
         user_sgprs: 0,
         ngg: false,
         ps_input_ena: 2,
@@ -294,6 +298,7 @@ fn integer_texture_slots_read_and_write_integers() {
     let request = |uint_textures, sint_textures| Request {
         stage: Stage::Compute,
         code: &code,
+        address: 0,
         user_sgprs: 16,
         ngg: false,
         ps_input_ena: 0,
@@ -344,4 +349,90 @@ fn sdwa_writes_to_a_word_keep_or_clear_the_rest() {
     compile(&t.msl);
     assert!(t.msl.contains("v1 = ((sdwa_old2 & ~(0xffffu << 16u)) | ((v1 & 0xffffu) << 16u));"), "{}", t.msl);
     assert!(t.msl.contains("v2 = ((v2 & 0xffu) << 8u);"), "{}", t.msl);
+}
+
+#[test]
+fn gds_appends_count_through_the_bound_global_data_share() {
+    let code = [
+        0xD8FA_0008, 0x0100_0000, // ds_append v1 offset:8 gds
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 0, 0);
+    assert!(t.gds);
+    assert!(t.msl.contains("atomic_fetch_add_explicit(&gds["));
+    compile(&t.msl);
+}
+
+#[test]
+fn getpc_gives_the_address_of_the_next_instruction() {
+    let code = [
+        0xBE80_1F00, // s_getpc_b64 s[0:1]
+        0xBF81_0000, // s_endpgm
+    ];
+    let mut req = Request {
+        stage: Stage::Compute,
+        code: &code,
+        address: 0x5_0000_1000,
+        user_sgprs: 0,
+        ngg: false,
+        ps_input_ena: 0,
+        ps_input_addr: 0,
+        ps_input_cntl: &[],
+        col_format: 0,
+        compute_rsrc2: 0,
+        threads: [64, 1, 1],
+        uint_textures: 0,
+        sint_textures: 0,
+    };
+    let t = translate(&req).unwrap();
+    assert!(t.msl.contains("0x500001004ul"));
+    req.address = 0;
+    assert!(translate(&req).unwrap().msl.contains("0x4ul"));
+}
+
+#[test]
+fn sixty_four_bit_integer_ops_compile() {
+    let code = [
+        0xD576_0402, 0x040A_0300, // v_mad_u64_u32 v[2:3], s[4:5], v0, v1, v[2:3]
+        0x7DC8_0902, // v_cmp_gt_u64_e32 vcc, v[2:3], v[4:5]
+        0x9282_0504, // s_bfm_b64 s[2:3], s4, s5
+        0xBE82_1D04, // s_bitset1_b32 s2, s4
+        0xBF81_0000, // s_endpgm
+    ];
+    compile(&compute(&code, 6, 6 << 1).msl);
+}
+
+#[test]
+fn typed_buffer_stores_and_d16_image_stores_pack_their_data() {
+    let code = [
+        0xE014_2000, 0x8000_0200, // buffer_store_format_xy v[2:3], v0, s[0:3], 0 idxen
+        0xF020_0308, 0x8002_0102, // image_store v1, v[2:3], s[8:15] dmask:0x3 dim:SQ_RSRC_IMG_2D d16
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 16, 16 << 1);
+    assert!(t.msl.contains("buffer_store_format("));
+    assert!(t.msl.contains("as_type<half>(ushort((v1 >> 16u)))"));
+    compile(&t.msl);
+}
+
+#[test]
+fn depth_compare_samples_read_the_compare_function_from_the_sampler() {
+    let code = [
+        0xF0BC_0108, 0x0082_0102, // image_sample_c_lz v1, v[2:4], s[8:15], s[16:19] dmask:0x1
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 20, 20 << 1);
+    assert!(t.msl.contains("depth_compare((user[32] >> 12) & 7u"));
+    compile(&t.msl);
+}
+
+#[test]
+fn quad_permutations_shuffle_within_the_quad() {
+    let code = [
+        0x7E02_02FA, 0xFF00_B100, // v_mov_b32_dpp v1, v0 quad_perm:[1,0,3,2]
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 0, 0);
+    assert!(t.msl.contains("quad_shuffle(") && t.msl.contains("[[thread_index_in_quadgroup]]"));
+    compile(&t.msl);
 }

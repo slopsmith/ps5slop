@@ -192,6 +192,7 @@ impl Ags<'_> {
         crate::translate::Request {
             stage,
             code,
+            address: 0,
             user_sgprs: rsrc2 >> 1 & 0x1F,
             ngg: self.stage() == Stage::Geometry,
             ps_input_ena: reg(&cx, SPI_PS_INPUT_ENA),

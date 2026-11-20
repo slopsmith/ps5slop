@@ -26,6 +26,8 @@ pub struct Request<'a> {
     pub stage: Stage,
     /// Code from the program address on; the end is found by decoding.
     pub code: &'a [u32],
+    /// The program's guest address, for `s_getpc_b64` (0 when unknown).
+    pub address: u64,
     /// Number of user SGPRs (`USER_SGPR` of the stage's `SPI_SHADER_PGM_RSRC2`).
     pub user_sgprs: u32,
     /// Vertex stage: the program is a merged NGG one (user SGPRs from s8, vertex index
@@ -129,6 +131,8 @@ pub struct Translated {
     pub writes_memory: bool,
     /// Compute stage: bytes of threadgroup memory (LDS) the kernel declares.
     pub lds_bytes: u32,
+    /// The program uses the global data share, bound at `[[buffer(27)]]`.
+    pub gds: bool,
 }
 
 /// Why a program could not be translated.
@@ -158,6 +162,11 @@ pub mod binding {
     pub const MEM_BASE: u32 = 28;
     /// `device uchar* mem`: guest memory.
     pub const MEM: u32 = 29;
+    /// Where in `user` the renderer puts dword 0 of each sampler slot's S#,
+    /// after the 32 user SGPRs (for the depth compare function).
+    pub const SAMPLER_WORDS: u32 = 32;
+    /// `device atomic_uint* gds`: the 64 KiB global data share.
+    pub const GDS: u32 = 27;
 }
 
 fn err(pc: usize, message: impl Into<String>) -> TranslateError {
@@ -249,6 +258,9 @@ struct Tx<'a> {
     mem: bool,
     mem_write: bool,
     lds: bool,
+    gds: bool,
+    /// The entry point declares `qlane`, the thread's lane in its quad.
+    quad_lane: bool,
     ij_vgprs: BTreeMap<u16, Interp>,
     user_base: u16,
 }
@@ -302,6 +314,8 @@ impl<'a> Tx<'a> {
             mem: false,
             mem_write: false,
             lds: false,
+            gds: false,
+            quad_lane: false,
             ij_vgprs,
             user_base,
         }
@@ -524,7 +538,7 @@ impl<'a> Tx<'a> {
                 self.end_program();
             }
             "s_code_end" | "s_nop" | "s_waitcnt" | "s_inst_prefetch" | "s_clause" | "s_sendmsg"
-            | "s_waitcnt_depctr" | "s_setprio" | "s_sleep" | "s_icache_inv" => {}
+            | "s_waitcnt_depctr" | "s_setprio" | "s_sleep" | "s_icache_inv" | "s_trap" => {}
             "s_barrier" => {
                 if self.req.stage == Stage::Compute {
                     self.line("threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);");
@@ -601,6 +615,18 @@ impl<'a> Tx<'a> {
             self.line("}");
             return Ok(());
         }
+        if name == "s_bitset0_b32" || name == "s_bitset1_b32" {
+            let a = self.src32(s0, lit, pc)?;
+            let Some(d) = self.sdst(sdst) else { return Ok(()) };
+            let e = if name == "s_bitset1_b32" { format!("{d} | (1u << ({a} & 31u))") } else { format!("{d} & ~(1u << ({a} & 31u))") };
+            self.line(&format!("{d} = {e};"));
+            return Ok(());
+        }
+        if name == "s_getpc_b64" {
+            let next = self.req.address + 4 * (pc as u64 + 1);
+            self.set64(sdst, &format!("{next:#x}ul"));
+            return Ok(());
+        }
         if b64 {
             let a = self.src64(s0, lit, pc)?;
             let (e, scc) = match name {
@@ -654,6 +680,11 @@ impl<'a> Tx<'a> {
     ) -> Result<(), TranslateError> {
         self.regs.insert("scc".into());
         let wide = name.ends_with("_b64") || name.ends_with("_u64") || name.ends_with("_i64");
+        if name == "s_bfm_b64" {
+            let (a, b) = (self.src32(s0, lit, pc)?, self.src32(s1, lit, pc)?);
+            self.set64(sdst, &format!("(((1ul << ({a} & 63u)) - 1ul) << ({b} & 63u))"));
+            return Ok(());
+        }
         if wide {
             let a = self.src64(s0, lit, pc)?;
             let b = if matches!(
@@ -1035,6 +1066,9 @@ impl<'a> Tx<'a> {
         ) {
             return self.carry_op(pc, inst, v);
         }
+        if name == "v_mad_u64_u32" || name == "v_mad_i64_i32" {
+            return self.mad64(pc, inst, v);
+        }
         let f = |t: &mut Self, i: usize| t.fsrc(pc, inst, v, i);
         let u = |t: &mut Self, i: usize| t.usrc(pc, inst, v, i);
         let k = || format!("F(0x{:x}u)", inst.literal.unwrap_or(0));
@@ -1250,10 +1284,10 @@ impl<'a> Tx<'a> {
             ),
             "v_cvt_f16_f32" => format!("uint(as_type<ushort>(half({})))", f(self, 0)?),
             "v_cvt_pknorm_u16_f32" => {
-                format!("pack_unorm2x16(float2({}, {}))", f(self, 0)?, f(self, 1)?)
+                format!("pack_float_to_unorm2x16(float2({}, {}))", f(self, 0)?, f(self, 1)?)
             }
             "v_cvt_pknorm_i16_f32" => {
-                format!("pack_snorm2x16(float2({}, {}))", f(self, 0)?, f(self, 1)?)
+                format!("pack_float_to_snorm2x16(float2({}, {}))", f(self, 0)?, f(self, 1)?)
             }
             "v_cvt_pk_u16_u32" => format!(
                 "(min({}, 0xffffu)) | (min({}, 0xffffu) << 16)",
@@ -1287,12 +1321,22 @@ impl<'a> Tx<'a> {
             && (0..4).all(|i| (ctrl >> (2 * i)) & 3 == lane)
             && v.dpp.row_mask == 0xF
             && v.dpp.bank_mask == 0xF;
-        if !broadcast {
+        let permute = v.enc == VEnc::Dpp16
+            && ctrl <= 0xFF
+            && v.dpp.row_mask == 0xF
+            && v.dpp.bank_mask == 0xF
+            && self.req.stage != Stage::Vertex;
+        if !broadcast && !permute {
             return Err(err(pc, format!("unsupported DPP form of {}", inst.op.name)));
         }
         let a = self.src32(v.src[0], None, pc)?;
         self.regs.insert("dpp0".into());
-        self.line(&format!("dpp0 = quad_broadcast({a}, {lane}u);"));
+        if broadcast {
+            self.line(&format!("dpp0 = quad_broadcast({a}, {lane}u);"));
+        } else {
+            self.quad_lane = true;
+            self.line(&format!("dpp0 = quad_shuffle({a}, ushort(({ctrl:#x}u >> (2u * uint(qlane))) & 3u));"));
+        }
         Ok(())
     }
 
@@ -1330,6 +1374,50 @@ impl<'a> Tx<'a> {
             self.written(dst + 1);
             let (lo, hi) = (self.s(dst), self.s(dst + 1));
             write!(s, " {lo} = uint(k); {hi} = 0u;").unwrap();
+        }
+        s.push_str(" }");
+        self.line(&s);
+        Ok(())
+    }
+
+    /// A 64-bit vector-instruction source: a VGPR pair or a scalar source.
+    fn vsrc64(&mut self, pc: usize, inst: &Inst, code: u16) -> Result<String, TranslateError> {
+        Ok(match code {
+            n @ 256.. => {
+                let (lo, hi) = (self.v(n - 256), self.v(n - 255));
+                format!("(ulong({hi}) << 32 | ulong({lo}))")
+            }
+            n => self.src64(n, inst.literal, pc)?,
+        })
+    }
+
+    // `v_mad_u64_u32`/`v_mad_i64_i32`: a 64-bit product plus a 64-bit addend
+    // into a VGPR pair, with the carry (unsigned) or overflow (signed) out.
+    fn mad64(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
+        if v.clamp {
+            return Err(err(pc, "clamped 64-bit multiply-add"));
+        }
+        let a = self.usrc(pc, inst, v, 0)?;
+        let b = self.usrc(pc, inst, v, 1)?;
+        let c = self.vsrc64(pc, inst, v.src[2])?;
+        let signed = inst.op.name == "v_mad_i64_i32";
+        let (value, carry) = if signed {
+            (
+                format!("ulong(long(int({a})) * long(int({b})) + long({c}))"),
+                format!("(long(int({a})) * long(int({b}))) > 0 ? long(r) < long({c}) : long(r) > long({c})"),
+            )
+        } else {
+            (format!("ulong({a}) * ulong({b}) + {c}"), format!("r < {c}"))
+        };
+        let exec = self.s(126);
+        let (lo, hi) = (self.v(v.vdst as u16), self.v(v.vdst as u16 + 1));
+        let mut s = format!("{{ ulong r = {value}; bool on = ({exec} & 1u) != 0u; bool k = ({carry}) && on; if (on) {{ {lo} = uint(r); {hi} = uint(r >> 32); }}");
+        let dst = v.sdst.map_or(src::NULL, |s| s as u16);
+        if dst != src::NULL {
+            self.written(dst);
+            self.written(dst + 1);
+            let (slo, shi) = (self.s(dst), self.s(dst + 1));
+            write!(s, " {slo} = uint(k); {shi} = 0u;").unwrap();
         }
         s.push_str(" }");
         self.line(&s);
@@ -1379,6 +1467,21 @@ impl<'a> Tx<'a> {
                         "{a} {} {b}",
                         cmp_op(op)
                             .ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?
+                    ),
+                }
+            }
+            "i64" | "u64" => {
+                if v.enc == VEnc::Sdwa || matches!(v.enc, VEnc::Dpp16 | VEnc::Dpp8) {
+                    return Err(err(pc, format!("unsupported form of {name}")));
+                }
+                let (a, b) = (self.vsrc64(pc, inst, v.src[0])?, self.vsrc64(pc, inst, v.src[1])?);
+                let (a, b) = if ty == "i64" { (format!("long({a})"), format!("long({b})")) } else { (a, b) };
+                match op {
+                    "f" => "false".into(),
+                    "t" => "true".into(),
+                    _ => format!(
+                        "{a} {} {b}",
+                        cmp_op(op).ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?
                     ),
                 }
             }
@@ -1664,6 +1767,9 @@ impl<'a> Tx<'a> {
         gds: bool,
         regs: [u16; 4],
     ) -> Result<(), TranslateError> {
+        if matches!(name, "ds_append" | "ds_consume") {
+            return self.ds_counter(pc, name, offset0 as u32 | (offset1 as u32) << 8, gds, regs[3]);
+        }
         if gds || self.req.stage != Stage::Compute {
             return Err(err(pc, format!("unsupported LDS access {name}")));
         }
@@ -1765,6 +1871,27 @@ impl<'a> Tx<'a> {
             }
         }
         self.guard(&s);
+        Ok(())
+    }
+
+    // `ds_append`/`ds_consume`: a counter at M0's base plus `offset`. Lanes
+    // are threads here (`v_mbcnt` gives 0), so each thread counts itself and
+    // gets its own previous value; a wave on hardware adds its active lanes at once.
+    fn ds_counter(&mut self, pc: usize, name: &str, offset: u32, gds: bool, vdst: u16) -> Result<(), TranslateError> {
+        let m0 = self.s(124);
+        let d = self.v(vdst);
+        let op = if name == "ds_append" { "add" } else { "sub" };
+        let stmt = if gds {
+            self.gds = true;
+            format!("{{ uint a = (({m0} & 0xffffu) + {offset}u) & 0xfffcu; {d} = atomic_fetch_{op}_explicit(&gds[a >> 2], 1u, memory_order_relaxed); }}")
+        } else {
+            if self.req.stage != Stage::Compute {
+                return Err(err(pc, format!("unsupported LDS access {name}")));
+            }
+            self.lds = true;
+            format!("{{ {d} = lds_rmw_{op}(lds, ({m0} & 0xffffu) + {offset}u, 1u); }}")
+        };
+        self.guard(&stmt);
         Ok(())
     }
 
@@ -1912,7 +2039,7 @@ impl<'a> Tx<'a> {
     }
 
     fn mimg(&mut self, pc: usize, name: &str, m: &Mimg) -> Result<(), TranslateError> {
-        if m.d16 || m.a16 || m.tfe || m.lwe {
+        if m.a16 || m.tfe || m.lwe {
             return Err(err(pc, "unsupported image modifiers"));
         }
         let kind = match m.dim {
@@ -1954,19 +2081,43 @@ impl<'a> Tx<'a> {
             }
         };
         let addr: Vec<String> = addr_regs.iter().map(|&r| format!("F({})", self.v(r))).collect();
-        let (coords_at, level) = match variant {
-            "" => (0, None),
-            "_lz" => (0, Some("level(0.0f)".to_string())),
-            "_l" => (0, Some(format!("level({})", addr[addr.len() - 1]))),
-            "_b" => (1, Some(format!("bias({})", addr[0]))),
+        let raw: Vec<String> = addr_regs.iter().map(|&r| self.v(r)).collect();
+        // Address order: offset, bias, depth reference, coordinates, LOD.
+        let mut flags: Vec<&str> = variant.split('_').filter(|p| !p.is_empty()).collect();
+        let offset = flags.last() == Some(&"o");
+        if offset {
+            flags.pop();
+        }
+        let compare = flags.first() == Some(&"c");
+        if compare {
+            flags.remove(0);
+        }
+        let mut at = offset as usize;
+        let (level, bias) = match flags.as_slice() {
+            [] => (None, false),
+            ["lz"] => (Some("level(0.0f)".to_string()), false),
+            ["l"] => (Some(format!("level({})", addr[addr.len() - 1])), false),
+            ["b"] => (Some(format!("bias({})", addr[at])), true),
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
-        let c = &addr[coords_at..];
+        at += bias as usize;
+        let dref = compare.then(|| addr[at].clone());
+        at += compare as usize;
+        let c = &addr[at..];
+        let shift = |i: usize, size: &str| {
+            if offset {
+                format!(" + float(int(({} >> {}u) << 26) >> 26) / float(t{t}.get_{size}(0))", raw[0], 8 * i)
+            } else {
+                String::new()
+            }
+        };
+        let (dx, dy) = (shift(0, "width"), shift(1, "height"));
         let coord = match kind {
-            TextureKind::Tex2d => format!("float2({}, {})", c[0], c[1]),
-            TextureKind::Tex2dArray => format!("float2({}, {}), uint(rint({}))", c[0], c[1], c[2]),
-            TextureKind::Tex3d => format!("float3({}, {}, {})", c[0], c[1], c[2]),
-            TextureKind::Cube => format!("cube_dir(float3({}, {}, {}))", c[0], c[1], c[2]),
+            TextureKind::Tex2d => format!("float2({}{dx}, {}{dy})", c[0], c[1]),
+            TextureKind::Tex2dArray => format!("float2({}{dx}, {}{dy}), uint(rint({}))", c[0], c[1], c[2]),
+            TextureKind::Tex3d if !offset => format!("float3({}, {}, {})", c[0], c[1], c[2]),
+            TextureKind::Cube if !offset => format!("cube_dir(float3({}, {}, {}))", c[0], c[1], c[2]),
+            _ => return Err(err(pc, format!("unsupported form of {name}"))),
         };
         let level = match (level, self.req.stage) {
             (Some(l), _) => format!(", {l}"),
@@ -1975,6 +2126,17 @@ impl<'a> Tx<'a> {
         };
         let (elem, conv) = self.texel(t);
         let mut s = format!("{elem}4 r = t{t}.sample(smp{sm}, {coord}{level});");
+        if let Some(dref) = &dref {
+            if gather || elem != "float" {
+                return Err(err(pc, format!("unsupported form of {name}")));
+            }
+            write!(
+                s,
+                " r = float4(depth_compare((user[{}] >> 12) & 7u, {dref}, r.x) ? 1.0f : 0.0f);",
+                binding::SAMPLER_WORDS + sm as u32
+            )
+            .unwrap();
+        }
         if gather {
             if !matches!(kind, TextureKind::Tex2d | TextureKind::Tex2dArray) || !matches!(variant, "" | "_lz") || m.dmask.count_ones() != 1 {
                 return Err(err(pc, format!("unsupported form of {name}")));
@@ -1982,16 +2144,33 @@ impl<'a> Tx<'a> {
             let c = ["x", "y", "z", "w"][m.dmask.trailing_zeros() as usize];
             s = format!("{elem}4 r = t{t}.gather(smp{sm}, {coord}, int2(0), component::{c});");
         }
-        let mut d = m.vdata as u16;
-        for i in 0..4 {
-            if gather || m.dmask >> i & 1 != 0 {
-                let r = self.v(d);
-                write!(s, " {r} = {conv}(r[{i}]);").unwrap();
-                d += 1;
-            }
-        }
+        let comps: Vec<usize> = (0..4).filter(|&i| gather || m.dmask >> i & 1 != 0).collect();
+        self.write_results(&mut s, m, elem, conv, &comps);
         self.guard(&s);
         Ok(())
+    }
+
+    // Moves the components `comps` of `r` into the destination VGPRs; with
+    // `d16`, two 16-bit values per VGPR, low half first.
+    fn write_results(&mut self, s: &mut String, m: &Mimg, elem: &str, conv: &str, comps: &[usize]) {
+        let d = m.vdata as u16;
+        for (j, &i) in comps.iter().enumerate() {
+            if !m.d16 {
+                let r = self.v(d + j as u16);
+                write!(s, " {r} = {conv}(r[{i}]);").unwrap();
+                continue;
+            }
+            let r = self.v(d + j as u16 / 2);
+            let bits = match elem {
+                "float" => format!("uint(as_type<ushort>(half(r[{i}])))"),
+                _ => format!("(uint(r[{i}]) & 0xffffu)"),
+            };
+            if j % 2 == 0 {
+                write!(s, " {r} = {bits};").unwrap();
+            } else {
+                write!(s, " {r} |= {bits} << 16;").unwrap();
+            }
+        }
     }
 
     // `image_load`, `image_store` and their `_mip` forms: unfiltered texel access.
@@ -2019,19 +2198,24 @@ impl<'a> Tx<'a> {
             TextureKind::Tex2d => level(2),
             _ => level(3),
         };
-        let mut d = m.vdata as u16;
+        let d = m.vdata as u16;
         let (elem, conv) = self.texel(t);
         if store {
             let mut comps = Vec::new();
+            let mut j = 0u16;
             for i in 0..4 {
                 if m.dmask >> i & 1 != 0 {
-                    let v = self.v(d);
-                    comps.push(match elem {
-                        "float" => format!("F({v})"),
-                        "int" => format!("int({v})"),
-                        _ => v,
+                    let v = if m.d16 { self.v(d + j / 2) } else { self.v(d + j) };
+                    let half = format!("({v} >> {}u)", 16 * (j % 2));
+                    comps.push(match (elem, m.d16) {
+                        ("float", false) => format!("F({v})"),
+                        ("int", false) => format!("int({v})"),
+                        (_, false) => v,
+                        ("float", true) => format!("float(as_type<half>(ushort({half})))"),
+                        ("int", true) => format!("int(short({half}))"),
+                        (_, true) => format!("({half} & 0xffffu)"),
                     });
-                    d += 1;
+                    j += 1;
                 } else {
                     comps.push(if elem == "float" { "0.0f".into() } else { "0".into() });
                 }
@@ -2039,13 +2223,8 @@ impl<'a> Tx<'a> {
             self.guard(&format!("t{t}.write({elem}4({}), {coord}, {lvl});", comps.join(", ")));
         } else {
             let mut s = format!("{elem}4 r = t{t}.read({coord}, {lvl});");
-            for i in 0..4 {
-                if m.dmask >> i & 1 != 0 {
-                    let r = self.v(d);
-                    write!(s, " {r} = {conv}(r[{i}]);").unwrap();
-                    d += 1;
-                }
-            }
+            let comps: Vec<usize> = (0..4).filter(|&i| m.dmask >> i & 1 != 0).collect();
+            self.write_results(&mut s, m, elem, conv, &comps);
             self.guard(&s);
         }
         Ok(())
@@ -2113,6 +2292,7 @@ impl<'a> Tx<'a> {
             guest_memory: self.mem,
             writes_memory: self.mem_write,
             lds_bytes: if self.lds { self.lds_bytes() } else { 0 },
+            gds: self.gds,
         }
     }
 
@@ -2149,6 +2329,11 @@ impl<'a> Tx<'a> {
                 binding::MEM_BASE
             ));
         }
+        if self.gds {
+            params.push("device atomic_uint* gds".into());
+            args.push("gds".into());
+            entry_params.push(format!("device atomic_uint* gds [[buffer({})]]", binding::GDS));
+        }
         for (i, &(_, kind, _, access)) in self.textures.iter().enumerate() {
             let base = match kind {
                 TextureKind::Tex2d => "texture2d",
@@ -2170,6 +2355,9 @@ impl<'a> Tx<'a> {
             params.push(format!("sampler smp{i}"));
             args.push(format!("smp{i}"));
             entry_params.push(format!("sampler smp{i} [[sampler({i})]]"));
+        }
+        if self.quad_lane {
+            entry_params.push("ushort qlane [[thread_index_in_quadgroup]]".into());
         }
 
         let mut init = String::new();
@@ -2579,6 +2767,20 @@ static inline float3 cube_dir(float3 c) {
     case 3u: return float3(s, -1.0f, -t);
     case 4u: return float3(s, -t, 1.0f);
     default: return float3(-s, -t, -1.0f);
+    }
+}
+
+// SQ_TEX_DEPTH_COMPARE: the reference against the fetched value.
+static inline bool depth_compare(uint f, float ref, float v) {
+    switch (f) {
+    case 1u: return ref < v;
+    case 2u: return ref == v;
+    case 3u: return ref <= v;
+    case 4u: return ref > v;
+    case 5u: return ref != v;
+    case 6u: return ref >= v;
+    case 7u: return true;
+    default: return false;
     }
 }
 

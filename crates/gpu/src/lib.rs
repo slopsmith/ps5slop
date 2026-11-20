@@ -42,9 +42,49 @@ pub trait Backend: Send {
     /// As [`Backend::sync`], at a flip that puts the buffer at guest address
     /// `shown` on screen.
     fn frame_done(&mut self, shown: Option<u64>);
+    /// Runs `f` on the global data share (64 KiB) programs use, if the
+    /// backend keeps it; the caller has finished earlier GPU work first.
+    fn with_gds(&mut self, _f: &mut dyn FnMut(&mut [u8])) -> bool {
+        false
+    }
     /// A line of counters for logs.
     fn summary(&self) -> String {
         String::new()
+    }
+}
+
+/// One backend shared by the command processors of several queues; each
+/// call holds it for its duration, so work is encoded in the order calls come.
+#[derive(Clone)]
+pub struct SharedBackend(pub std::sync::Arc<std::sync::Mutex<Box<dyn Backend>>>);
+
+impl SharedBackend {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Box<dyn Backend>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+impl Backend for SharedBackend {
+    fn draw(&mut self, host: &dyn Host, state: &State, draw: Draw) {
+        self.lock().draw(host, state, draw)
+    }
+    fn dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]) {
+        self.lock().dispatch(host, state, groups)
+    }
+    fn sync(&mut self) {
+        self.lock().sync()
+    }
+    fn flush(&mut self) {
+        self.lock().flush()
+    }
+    fn frame_done(&mut self, shown: Option<u64>) {
+        self.lock().frame_done(shown)
+    }
+    fn with_gds(&mut self, f: &mut dyn FnMut(&mut [u8])) -> bool {
+        self.lock().with_gds(f)
+    }
+    fn summary(&self) -> String {
+        self.lock().summary()
     }
 }
 

@@ -5,12 +5,13 @@
 //! NGG flag, `SPI_PS_INPUT_ENA`, `SPI_PS_INPUT_ADDR`, `SPI_SHADER_COL_FORMAT`,
 //! `COMPUTE_PGM_RSRC2`, the three thread counts, the unsigned and signed
 //! integer texture masks, the number of `SPI_PS_INPUT_CNTL` values and those
-//! values, then the code. Version 1 files have no texture masks.
+//! values, the program address (two dwords), then the code. Version 1 files
+//! have no texture masks, version 2 files no address.
 
 use crate::translate::{Request, Stage, program};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"g10c");
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 /// A request with its own storage.
 #[derive(Clone, Debug)]
@@ -26,6 +27,7 @@ pub struct Capture {
     pub threads: [u32; 3],
     pub uint_textures: u32,
     pub sint_textures: u32,
+    pub address: u64,
     pub code: Vec<u32>,
 }
 
@@ -48,6 +50,7 @@ impl Capture {
             threads: req.threads,
             uint_textures: req.uint_textures,
             sint_textures: req.sint_textures,
+            address: req.address,
             code: req.code[..len.min(req.code.len())].to_vec(),
         }
     }
@@ -56,6 +59,7 @@ impl Capture {
         Request {
             stage: self.stage,
             code: &self.code,
+            address: self.address,
             user_sgprs: self.user_sgprs,
             ngg: self.ngg,
             ps_input_ena: self.ps_input_ena,
@@ -93,6 +97,7 @@ impl Capture {
             self.ps_input_cntl.len() as u32,
         ];
         w.extend_from_slice(&self.ps_input_cntl);
+        w.extend_from_slice(&[self.address as u32, (self.address >> 32) as u32]);
         w.extend_from_slice(&self.code);
         w.iter().flat_map(|x| x.to_le_bytes()).collect()
     }
@@ -116,6 +121,12 @@ impl Capture {
         let (masks, at) = if w[1] >= 2 { ([*w.get(12)?, *w.get(13)?], 14) } else { ([0, 0], 12) };
         let n = *w.get(at)? as usize;
         let cntl = w.get(at + 1..at + 1 + n)?.to_vec();
+        let mut code_at = at + 1 + n;
+        let mut address = 0;
+        if w[1] >= 3 {
+            address = *w.get(code_at)? as u64 | (*w.get(code_at + 1)? as u64) << 32;
+            code_at += 2;
+        }
         Some(Capture {
             stage,
             user_sgprs: w[3],
@@ -128,7 +139,8 @@ impl Capture {
             uint_textures: masks[0],
             sint_textures: masks[1],
             ps_input_cntl: cntl,
-            code: w[at + 1 + n..].to_vec(),
+            address,
+            code: w[code_at..].to_vec(),
         })
     }
 }

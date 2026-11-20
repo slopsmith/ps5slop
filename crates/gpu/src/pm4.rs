@@ -32,6 +32,12 @@ const IT_NUM_INSTANCES: u32 = 0x2F;
 const IT_SET_SH_REG_INDIRECT: u32 = 0x63;
 const IT_SET_UCONFIG_REG_INDIRECT: u32 = 0x64;
 const IT_SET_CONTEXT_REG_INDIRECT: u32 = 0x9F;
+const IT_SET_BASE: u32 = 0x11;
+const IT_DMA_DATA: u32 = 0x50;
+/// The global data share's size on GFX10.
+const GDS_BYTES: usize = 64 << 10;
+/// Largest DMA_DATA transfer carried out, a guard against garbage.
+const DMA_LIMIT: usize = 64 << 20;
 /// Bits of a register-table offset that select something other than the register.
 const TABLE_SELECTOR: u32 = 0x7000_0000;
 
@@ -90,7 +96,11 @@ pub struct Processor {
     pub stats: Stats,
     pub backend: Option<Box<dyn Backend>>,
     index_base: u64,
+    /// `SET_BASE` index 1: where indirect draw and dispatch arguments are.
+    indirect_base: u64,
     instances: u32,
+    /// The global data share when the backend does not keep one.
+    gds: Vec<u8>,
     last_flip: Option<Instant>,
     /// Releases and memory writes whose earlier GPU work is committed but
     /// not known to be done, in command order.
@@ -130,7 +140,9 @@ impl Default for Processor {
             stats: Stats::default(),
             backend: None,
             index_base: 0,
+            indirect_base: 0,
             instances: 1,
+            gds: vec![0; GDS_BYTES],
             pending: Vec::new(),
             last_flip: None,
         }
@@ -289,21 +301,111 @@ impl Processor {
                 let draw = Draw::Indexed { count: p[2], address, instances: self.instances };
                 self.draw(host, op, p, draw)
             }
-            IT_DRAW_INDIRECT | IT_DRAW_INDEX_INDIRECT | IT_DRAW_INDIRECT_MULTI | IT_DRAW_INDEX_INDIRECT_MULTI
-            | IT_DRAW_INDEX_MULTI_AUTO => self.stats.draws += 1,
-            IT_DISPATCH_DIRECT if p.len() >= 3 => {
-                self.stats.dispatches += 1;
-                if let Some(b) = self.backend.as_mut() {
-                    let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig };
-                    let t = crate::timing::start();
-                    b.dispatch(host, &state, [p[0], p[1], p[2]]);
-                    crate::timing::add(crate::timing::Part::Dispatch, t);
-                }
+            IT_SET_BASE if p.len() >= 3 && p[0] & 0xF == 1 => self.indirect_base = addr(p[1], p[2]),
+            IT_DMA_DATA if p.len() >= 6 => self.dma_data(host, p),
+            IT_DRAW_INDEX_INDIRECT if !p.is_empty() => {
+                let a = self.indirect_args(host, p[0], 5);
+                let size = if self.uconfig[0x243] & 3 == 1 { 4 } else { 2 };
+                let address = self.index_base + a[2] as u64 * size;
+                self.draw(host, op, p, Draw::Indexed { count: a[0], address, instances: a[1].max(1) })
             }
-            IT_DISPATCH_INDIRECT => self.stats.dispatches += 1,
+            IT_DRAW_INDIRECT if !p.is_empty() => {
+                let a = self.indirect_args(host, p[0], 4);
+                self.draw(host, op, p, Draw::Auto { count: a[0], instances: a[1].max(1) })
+            }
+            IT_DRAW_INDIRECT_MULTI | IT_DRAW_INDEX_INDIRECT_MULTI | IT_DRAW_INDEX_MULTI_AUTO => self.stats.draws += 1,
+            IT_DISPATCH_DIRECT if p.len() >= 3 => self.dispatch(host, [p[0], p[1], p[2]]),
+            IT_DISPATCH_INDIRECT if !p.is_empty() => {
+                let a = self.indirect_args(host, p[0], 3);
+                self.dispatch(host, [a[0], a[1], a[2]]);
+            }
             _ => {}
         }
         Ok(())
+    }
+
+    /// `n` argument dwords of an indirect draw or dispatch at `offset` past
+    /// the indirect base, read once earlier GPU work (which may write them) is done.
+    fn indirect_args(&mut self, host: &dyn Host, offset: u32, n: usize) -> Vec<u32> {
+        self.drain(host);
+        self.sync();
+        read_dwords(host, self.indirect_base + offset as u64, n).unwrap_or_else(|_| vec![0; n])
+    }
+
+    /// `DMA_DATA`: copies or fills between memory, the GDS and the packet's
+    /// own data dword. Done on the CPU in command order, after the GPU work
+    /// before it (which may write the source) has finished.
+    fn dma_data(&mut self, host: &dyn Host, p: &[u32]) {
+        let control = p[0];
+        let src_sel = (control >> 29) & 3;
+        let dst_sel = (control >> 20) & 3;
+        let command = p[5];
+        let bytes = (command & 0x3FF_FFFF) as usize;
+        let (src_register, dst_register) = (command >> 26 & 1 != 0, command >> 27 & 1 != 0);
+        let (src_fixed, dst_fixed) = (command >> 28 & 1 != 0, command >> 29 & 1 != 0);
+        if bytes == 0 || bytes > DMA_LIMIT || dst_sel == 2 || src_register || dst_register {
+            return;
+        }
+        self.drain(host);
+        self.sync();
+        let src = addr(p[1], p[2]);
+        let dst = addr(p[3], p[4]);
+        let mut data = vec![0u8; bytes];
+        match src_sel {
+            2 => {
+                for c in data.chunks_mut(4) {
+                    c.copy_from_slice(&p[1].to_le_bytes()[..c.len()]);
+                }
+            }
+            1 => {
+                let at = src as usize;
+                self.with_gds(&mut |gds| {
+                    for (i, b) in data.iter_mut().enumerate() {
+                        let a = if src_fixed { at + i % 4 } else { at + i };
+                        *b = gds.get(a).copied().unwrap_or(0);
+                    }
+                });
+            }
+            _ if src_fixed => {
+                let mut word = [0u8; 4];
+                host.read(src, &mut word);
+                for c in data.chunks_mut(4) {
+                    c.copy_from_slice(&word[..c.len()]);
+                }
+            }
+            _ => {
+                host.read(src, &mut data);
+            }
+        }
+        if dst_fixed {
+            let n = data.len().min(4);
+            data.drain(..data.len() - n);
+        }
+        if dst_sel == 1 {
+            self.with_gds(&mut |gds| {
+                let start = (dst as usize).min(gds.len());
+                let end = (start + data.len()).min(gds.len());
+                gds[start..end].copy_from_slice(&data[..end - start]);
+            });
+        } else {
+            host.write(dst, &data);
+        }
+    }
+
+    fn with_gds(&mut self, f: &mut dyn FnMut(&mut [u8])) {
+        if !self.backend.as_mut().is_some_and(|b| b.with_gds(f)) {
+            f(&mut self.gds);
+        }
+    }
+
+    fn dispatch(&mut self, host: &dyn Host, groups: [u32; 3]) {
+        self.stats.dispatches += 1;
+        if let Some(b) = self.backend.as_mut() {
+            let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig };
+            let t = crate::timing::start();
+            b.dispatch(host, &state, groups);
+            crate::timing::add(crate::timing::Part::Dispatch, t);
+        }
     }
 
     fn draw(&mut self, host: &dyn Host, op: u32, p: &[u32], draw: Draw) {
@@ -557,6 +659,12 @@ impl Processor {
             }
             if start.elapsed() > WAIT_LIMIT {
                 self.stats.timeouts += 1;
+                if self.stats.timeouts <= 16 {
+                    eprintln!(
+                        "ps5slop: GPU: wait timed out: {address:#x} & {mask:#x} = {value:#x}, function {}, reference {reference:#x}",
+                        control & 7
+                    );
+                }
                 return;
             }
             let t = crate::timing::start();
@@ -619,6 +727,52 @@ mod tests {
 
     fn word(host: &Fake, at: usize) -> u32 {
         u32::from_le_bytes(host.mem.borrow()[at..at + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn dma_data_fills_the_gds_and_copies_it_to_memory() {
+        let (host, _) = run(&[
+            // Data 0x2A into GDS bytes 8..12.
+            header(7, IT_DMA_DATA, 0),
+            2 << 29 | 1 << 20,
+            0x2A,
+            0,
+            8,
+            0,
+            4,
+            // GDS bytes 8..12 to memory at 0x900.
+            header(7, IT_DMA_DATA, 0),
+            1 << 29 | 3 << 20,
+            8,
+            0,
+            0x900,
+            0,
+            4,
+        ]);
+        assert_eq!(word(&host, 0x900), 0x2A);
+    }
+
+    #[test]
+    fn indirect_dispatches_read_their_group_counts_past_the_base() {
+        let host = Fake::default();
+        host.mem.replace(vec![0; 0x1000]);
+        host.write(0xA08, &[2, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0]);
+        let packets = [header(4, IT_SET_BASE, 0), 1, 0xA00, 0, header(3, IT_DISPATCH_INDIRECT, 0), 8, 0];
+        let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+        host.write(0x100, &bytes);
+        struct Groups(std::sync::Arc<std::sync::Mutex<Vec<[u32; 3]>>>);
+        impl Backend for Groups {
+            fn draw(&mut self, _: &dyn Host, _: &State, _: Draw) {}
+            fn dispatch(&mut self, _: &dyn Host, _: &State, groups: [u32; 3]) {
+                self.0.lock().unwrap().push(groups);
+            }
+            fn sync(&mut self) {}
+            fn frame_done(&mut self, _: Option<u64>) {}
+        }
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut p = Processor { backend: Some(Box::new(Groups(seen.clone()))), ..Processor::default() };
+        p.run(&host, 0x100, packets.len() as u32).unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec![[2, 3, 1]]);
     }
 
     #[test]

@@ -159,6 +159,9 @@ struct Target {
 
 struct Bound {
     memory: Option<(Retained<Buffer>, u64)>,
+    gds: Option<Retained<Buffer>>,
+    /// Dword 0 of each sampler slot's S#, by slot.
+    sampler_words: Vec<(usize, u32)>,
     textures: Vec<(usize, Retained<Texture>)>,
     samplers: Vec<(usize, Retained<ProtocolObject<dyn MTLSamplerState>>)>,
 }
@@ -220,6 +223,8 @@ pub struct Metal {
     /// Shared memory handed out front to back for data copied for the GPU,
     /// and how much of it is used; replaced when full.
     scratch: Option<(Retained<Buffer>, usize)>,
+    /// The global data share, made on first use.
+    gds: Option<Retained<Buffer>>,
     /// Pixel inputs each (vertex, pixel) program pair lacks, by program ids.
     missing_inputs: HashMap<(u64, u64), Vec<u32>>,
     generation: u64,
@@ -400,6 +405,7 @@ impl Metal {
             wrote_memory: false,
             missing_inputs: HashMap::new(),
             scratch: None,
+            gds: None,
             generation: 0,
             targets: HashMap::new(),
             images: HashMap::new(),
@@ -1113,6 +1119,7 @@ impl Metal {
             let request = shader::Request {
                 stage,
                 code: &code,
+                address,
                 user_sgprs,
                 ngg,
                 ps_input_ena: c[context::SPI_PS_INPUT_ENA],
@@ -1645,6 +1652,13 @@ impl Metal {
         Some((buffer.clone(), at))
     }
 
+    fn gds_buffer(&mut self) -> Option<Retained<Buffer>> {
+        if self.gds.is_none() {
+            self.gds = Some(self.device.newBufferWithLength_options(GDS_BYTES, MTLResourceOptions::StorageModeShared)?);
+        }
+        self.gds.clone()
+    }
+
     // Before the CPU reads guest memory: waits for encoded work that wrote it.
     fn settle(&mut self) {
         if self.wrote_memory {
@@ -1656,7 +1670,10 @@ impl Metal {
     /// The resources `program` binds, made ready before any encoder opens
     /// (uploads end the open pass).
     fn resolve(&mut self, host: &dyn Host, program: &Program, user: &[u32]) -> Option<Bound> {
-        let mut bound = Bound { memory: None, textures: Vec::new(), samplers: Vec::new() };
+        let mut bound = Bound { memory: None, gds: None, sampler_words: Vec::new(), textures: Vec::new(), samplers: Vec::new() };
+        if program.translated.gds {
+            bound.gds = Some(self.gds_buffer()?);
+        }
         if program.translated.guest_memory {
             let Some(m) = self.guest_window(host, user, program.address) else {
                 self.report(format!("no guest memory window for the program at {:#x}, user data {user:x?}", program.address));
@@ -1689,6 +1706,7 @@ impl Metal {
                 }
                 Resource::Sampler { slot, ref source } => {
                     let d = self.descriptor(host, user, source, 4)?;
+                    bound.sampler_words.push((slot as usize, d[0]));
                     bound.samplers.push((slot as usize, self.sampler(Sampler::read(&d))?));
                 }
             }
@@ -1697,10 +1715,22 @@ impl Metal {
     }
 
     fn apply(enc: Slot, bound: &Bound, user: &[u32]) {
-        enc.bytes(user.as_ptr().cast(), user.len() * 4, binding::USER as usize);
+        let at = binding::SAMPLER_WORDS as usize;
+        let mut data = [0u32; 2 * binding::SAMPLER_WORDS as usize];
+        let n = user.len().min(at);
+        data[..n].copy_from_slice(&user[..n]);
+        for &(slot, word) in &bound.sampler_words {
+            if let Some(d) = data.get_mut(at + slot) {
+                *d = word;
+            }
+        }
+        enc.bytes(data.as_ptr().cast(), data.len() * 4, binding::USER as usize);
         if let Some((buf, base)) = &bound.memory {
             enc.buffer(buf, 0, binding::MEM as usize);
             enc.bytes((base as *const u64).cast(), 8, binding::MEM_BASE as usize);
+        }
+        if let Some(gds) = &bound.gds {
+            enc.buffer(gds, 0, binding::GDS as usize);
         }
         for (slot, t) in &bound.textures {
             enc.texture(t, *slot);
@@ -2090,7 +2120,18 @@ impl Metal {
     }
 }
 
+/// The global data share's size on GFX10.
+const GDS_BYTES: usize = 64 << 10;
+
 impl Backend for Metal {
+    fn with_gds(&mut self, f: &mut dyn FnMut(&mut [u8])) -> bool {
+        let Some(buffer) = self.gds_buffer() else { return false };
+        // SAFETY: a shared buffer's contents stay mapped while `buffer` lives;
+        // the processor touches it only after the GPU work before is done.
+        f(unsafe { std::slice::from_raw_parts_mut(buffer.contents().as_ptr().cast(), GDS_BYTES) });
+        true
+    }
+
     fn draw(&mut self, host: &dyn Host, state: &State, draw: Draw) {
         self.trace = self.tracing().then(Vec::new);
         let result = self.try_draw(host, state, draw);
