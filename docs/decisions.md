@@ -320,3 +320,9 @@ Reason: Metal clamps depth to `[0, 1]`, and Isaac draws its layers at -1 to 1 an
 
 Isaac's four libSceNpCppWebApi calls have no public names, so they are bound by NID as placeholders that fail with `ENOSYS`, as earlier unnamed ones were. Loading the title's own `libSceNpCppWebApi.prx` instead was not tried: it is a Sony system module outside the allowlist ([loader.md](loader.md#modules)), and the shipped file has a segment we cannot read.
 
+## 2026-11-20: Controller output through GameController and Core Haptics
+
+Vibration, the light bar and DualSense trigger effects go through Apple's GameController framework: Core Haptics engines from `GCController.haptics` for the motors, `GCDeviceLight` and `GCDualSenseAdaptiveTrigger` for the rest ([input.md](input.md)). The HLE only records what the guest asked; the window's poll applies it. Motors use plain Core Haptics players, one new player per intensity change, because the advanced player and the intensity control do not work with `gamecontrollerd` on macOS 27 ([input.md](input.md#core-haptics-on-macos-what-works)).
+
+Reason: GameController already gives us input from the same controllers, needs no entitlement, and covers DualSense, DualShock 4 and Xbox pads over USB and Bluetooth. Writing HID output reports ourselves would mean per-controller report formats, CRCs for Bluetooth and fighting the system's own driver for the device. Keeping the HLE free of host calls lets headless runs and tests use the same code.
+
