@@ -77,6 +77,8 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 | 2026-11-20 | SharpProspero `docs/graphics-gpu.md` "Async memory paging (Ampr)" (GPL-3.0, prose only) | APR command names | Nothing: it names no commands |
 | 2026-11-20 | shadPS4 (from memory, not re-read) | `OrbisKernelBatchMapEntry` layout and operation numbers; `sceKernelBatchMap` as `BatchMap2` with `MAP_FIXED` | Facts only, PS4, unverified for the PS5; GTA V's entries fit ([hle-kernel.md](hle-kernel.md)) |
 | 2026-11-20 | A text search for `sceAcm` in our local copies of SharpEmu, SharpEmu-mac, SharpProspero, OpenOrbis, FEX, OpenAGC and prosper | Whether anyone implements libSceAcm | No hits; nothing read. The FSB5 codec numbers used to classify Minecraft's sound banks (2 PCM16, 15 Vorbis, 16 FMOD ADPCM) are from general knowledge of the format as vgmstream (ISC) describes it, not read this time and only used in [audio.md](audio.md) |
+| 2026-11-20 | shadPS4 (from memory, not re-read), PS4 `OrbisProcParam` | Which process-parameter fields point at the main thread's priority and stack size (offsets 0x28 and 0x30) | Facts only, unverified for the PS5; used to see that Minecraft, Balatro and Isaac leave the stack size unset ([decisions.md](decisions.md)) |
+| 2026-11-20 | ScreenTester5 `tooling/native/sce_module_writer.cpp` (GPL-3.0), opened by mistake before checking the license | Searching for process-parameter layouts | Nothing: the lines seen held only the program header type numbers [loader.md](loader.md) already lists |
 
 Add a row whenever someone reads another project's source for this repo.
 

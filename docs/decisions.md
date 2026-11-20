@@ -361,3 +361,10 @@ Reason (vic): Sony's code would shape the emulator itself, modelling what the re
 `sceAcmContextCreate` and the three other Acm functions Minecraft's FMOD imports return 0 and write nothing, where the context create used to fail with `ENOSYS` like other unknown services.
 
 Reason: FMOD treats a failed context create as fatal for all output, so Minecraft was silent. With success it plays its music and sounds through AudioOut2 (verified against the game's own track, [audio.md](audio.md)). Nothing is known about what Acm computes; if FMOD starts batches in game and needs their results, that will show as missing or wrong effects rather than silence.
+
+## 2026-11-20: The main thread gets an 8 MiB stack
+
+The main thread's stack grew from 1 MiB to 8 MiB ([memory.md](memory.md)). Minecraft's first-run "Get started" flow wrote about 1.3 MiB below the top while creating a world and faulted; with 8 MiB it creates the world and spawns the player (checked headless on 2026-11-20).
+
+Reason: the console's default main-thread stack size is unknown. The process parameters (`PT_SCE_PROCPARAM`) of Minecraft, Balatro and Isaac all leave the main-thread stack-size pointer null, so there is no per-title value to honour; 8 MiB is FreeBSD's default stack limit and costs only address space, since host pages are committed on first touch. Reading the field when a title does set it is left until one does.
+

@@ -27,7 +27,7 @@ pub const ADDRESS_SPACE: u64 = 1 << 40;
 /// Where executables load. PS4 titles expect 0x400000 (shadPS4); unverified for PS5.
 pub const IMAGE_BASE: u64 = 0x40_0000;
 pub const STACK_TOP: u64 = 0x7_0000_0000;
-pub const STACK_SIZE: u64 = 1 << 20;
+pub const STACK_SIZE: u64 = 8 << 20;
 /// The entry parameter block and its strings.
 pub const PROCESS_ARGS: u64 = 0x7_0000_0000;
 

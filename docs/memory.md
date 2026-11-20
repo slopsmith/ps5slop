@@ -42,7 +42,7 @@ Our choices, in `crates/ps5slop` and `crates/hle`, until real titles tell us oth
 | --- | --- |
 | `0 .. 1 TiB` | The guest address space: one host reservation (`Memory::new`), host address = base + guest address |
 | `0x40_0000 ..` | The executable, at the PS4 base shadPS4 uses (unverified for PS5) |
-| `0x6_FFF0_0000 .. 0x7_0000_0000` | The main thread's stack, 1 MiB |
+| `0x6_FF80_0000 .. 0x7_0000_0000` | The main thread's stack, 8 MiB |
 | `0x7_0000_0000` | The entry parameter block (argc, argv) |
 | `0x5_0000_0000 ..` | Stacks of threads made by `pthread_create`, 1 MiB each |
 | `0x7_0001_0000 ..` | Each thread's static TLS and thread control block (errno at the thread pointer + `0x800`) |
