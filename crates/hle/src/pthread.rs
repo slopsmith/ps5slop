@@ -108,6 +108,11 @@ pub(crate) fn new_handle(env: &Env) -> Result<u64, CallError> {
     Ok(at)
 }
 
+/// Gives back the guest memory of a handle whose object was destroyed.
+pub(crate) fn free_handle(env: &Env, id: u64) {
+    env.kernel.heap.free(id);
+}
+
 /// The guest memory behind each handle.
 const HANDLE_SIZE: u64 = 64;
 
@@ -228,7 +233,9 @@ fn condattr_setclock(env: &mut Env) -> Result<Outcome, CallError> {
 
 fn mutexattr_destroy(env: &mut Env) -> Result<Outcome, CallError> {
     let id = env.mem.read_u64(env.arg(0))?;
-    lock(&env.kernel.objects.mutex_attrs).remove(&id);
+    if lock(&env.kernel.objects.mutex_attrs).remove(&id).is_some() {
+        free_handle(env, id);
+    }
     env.mem.write_u64(env.arg(0), 0)?;
     ret(0)
 }
@@ -271,7 +278,9 @@ fn mutex_init(env: &mut Env) -> Result<Outcome, CallError> {
 
 fn mutex_destroy(env: &mut Env) -> Result<Outcome, CallError> {
     let id = env.mem.read_u64(env.arg(0))?;
-    lock(&env.kernel.objects.mutexes).remove(&id);
+    if lock(&env.kernel.objects.mutexes).remove(&id).is_some() {
+        free_handle(env, id);
+    }
     env.mem.write_u64(env.arg(0), 0)?;
     ret(0)
 }
@@ -384,7 +393,9 @@ fn cond_init(env: &mut Env) -> Result<Outcome, CallError> {
 
 fn cond_destroy(env: &mut Env) -> Result<Outcome, CallError> {
     let id = env.mem.read_u64(env.arg(0))?;
-    lock(&env.kernel.objects.conds).remove(&id);
+    if lock(&env.kernel.objects.conds).remove(&id).is_some() {
+        free_handle(env, id);
+    }
     env.mem.write_u64(env.arg(0), 0)?;
     ret(0)
 }
@@ -488,7 +499,9 @@ fn rwlock_init(env: &mut Env) -> Result<Outcome, CallError> {
 
 fn rwlock_destroy(env: &mut Env) -> Result<Outcome, CallError> {
     let id = env.mem.read_u64(env.arg(0))?;
-    lock(&env.kernel.objects.rwlocks).remove(&id);
+    if lock(&env.kernel.objects.rwlocks).remove(&id).is_some() {
+        free_handle(env, id);
+    }
     env.mem.write_u64(env.arg(0), 0)?;
     ret(0)
 }

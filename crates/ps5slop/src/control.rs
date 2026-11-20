@@ -12,6 +12,7 @@ use memory::Access;
 
 const HELP: &str = "\
 regions                     mapped regions with names
+memory                      memory use: direct memory, mappings by name, host heap, host process
 mem ADDR [LEN]              hex dump (LEN up to 0x10000, default 0x100)
 dump ADDR LEN PATH          write guest memory to a host file
 poke ADDR HEXBYTES          write bytes, ignoring guest protection
@@ -30,7 +31,8 @@ profile on|off              start a fresh profile window, or stop profiling
 profile [N]                 report the window so far (top N rows, default 20)
 gputrace N                  trace every draw of the next N frames on stderr (decimal)
 targets DIR                 write every render target and texture as PPM (needs PS5SLOP_DUMP_TARGETS)
-press BUTTONS [MS]          hold pad buttons (cross+up, ...) for MS ms (default 400, decimal)
+press BUTTONS [MS]          hold pad buttons (cross+up, ...) for MS ms (default 400, decimal);
+                            also l2, r2 and stick pushes lup, ldown, lleft, lright, rup, ...
 quit                        end the guest
 Numbers are hex; a 0x prefix is optional.";
 
@@ -106,6 +108,7 @@ fn run(kernel: &Kernel, line: &str) -> String {
             })
             .collect::<Vec<_>>()
             .join("\n"),
+        "memory" => hle::memory_report(kernel),
         "mem" => match (num(it.next()), it.next().map(|l| num(Some(l)))) {
             (Some(addr), None) => hexdump(&mem, addr, 0x100),
             (Some(addr), Some(Some(len))) => hexdump(&mem, addr, len.min(0x10000)),
@@ -242,10 +245,10 @@ fn run(kernel: &Kernel, line: &str) -> String {
             }
             None => "usage: targets DIR".into(),
         },
-        "press" => match it.next().map(crate::pad_buttons) {
-            Some(buttons) if buttons != 0 => {
+        "press" => match it.next().map(pad_input) {
+            Some(input) if input != hle::PadInput::default() => {
                 let ms = it.next().and_then(|m| m.parse().ok()).unwrap_or(400);
-                kernel.set_pad_input(hle::PadInput { buttons, ..Default::default() });
+                kernel.set_pad_input(input);
                 std::thread::sleep(std::time::Duration::from_millis(ms));
                 kernel.set_pad_input(hle::PadInput::default());
                 "ok".into()
@@ -275,6 +278,27 @@ fn run(kernel: &Kernel, line: &str) -> String {
         }
         _ => format!("unknown command {cmd}; try help"),
     }
+}
+
+/// Pad buttons plus the triggers and sticks pushed to their limits.
+fn pad_input(keys: &str) -> hle::PadInput {
+    let mut input = hle::PadInput { buttons: crate::pad_buttons(keys), ..Default::default() };
+    for k in keys.split('+') {
+        match k {
+            "l2" => (input.buttons, input.l2) = (input.buttons | 0x100, 255),
+            "r2" => (input.buttons, input.r2) = (input.buttons | 0x200, 255),
+            "lup" => input.left.1 = 0,
+            "ldown" => input.left.1 = 255,
+            "lleft" => input.left.0 = 0,
+            "lright" => input.left.0 = 255,
+            "rup" => input.right.1 = 0,
+            "rdown" => input.right.1 = 255,
+            "rleft" => input.right.0 = 0,
+            "rright" => input.right.0 = 255,
+            _ => {}
+        }
+    }
+    input
 }
 
 fn hexdump(mem: &memory::Memory, addr: u64, len: u64) -> String {

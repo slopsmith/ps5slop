@@ -1,0 +1,3 @@
+ok allocations differ
+ok virtual query reports offset and type
+ok only the queried block was released

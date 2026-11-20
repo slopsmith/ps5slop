@@ -12,4 +12,5 @@ jit = { path = "../jit" }
 loader = { path = "../loader" }
 memory = { path = "../memory" }
 x86 = { path = "../x86" }
+libc = "0.2"
 freetype-rs = { version = "0.38", features = ["bundled"] }

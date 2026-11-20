@@ -36,6 +36,21 @@ pub(crate) const fn sce_error(errno: i32) -> u64 {
 pub struct DirectMemory {
     /// Allocated ranges: start to length and memory type.
     allocated: Mutex<BTreeMap<u64, (u64, i32)>>,
+    /// Failed calls by kind, for [`report`].
+    failures: Mutex<BTreeMap<&'static str, u64>>,
+    /// Direct memory mappings: virtual start to end and the direct offset
+    /// minus the virtual address, so pieces of a split mapping keep it.
+    mapped: Mutex<BTreeMap<u64, (u64, u64)>>,
+}
+
+/// What direct memory looks like: bytes allocated, allocations, bytes free
+/// and the largest free block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirectStats {
+    pub allocated: u64,
+    pub allocations: usize,
+    pub free: u64,
+    pub largest_free: u64,
 }
 
 impl DirectMemory {
@@ -93,6 +108,69 @@ impl DirectMemory {
         at >= start + len
     }
 
+    pub fn stats(&self) -> DirectStats {
+        let allocated = lock(&self.allocated);
+        let (mut used, mut at, mut largest) = (0, 0, 0);
+        for (&a, &(l, _)) in allocated.iter() {
+            largest = largest.max(a.saturating_sub(at));
+            used += l;
+            at = at.max(a + l);
+        }
+        largest = largest.max(DIRECT_MEMORY_SIZE.saturating_sub(at));
+        DirectStats {
+            allocated: used,
+            allocations: allocated.len(),
+            free: DIRECT_MEMORY_SIZE.saturating_sub(used),
+            largest_free: largest,
+        }
+    }
+
+    /// Records that `[addr, addr + len)` now maps direct memory from `offset`.
+    fn note_map(&self, addr: u64, len: u64, offset: u64) {
+        let mut mapped = lock(&self.mapped);
+        cut(&mut mapped, addr, addr + len);
+        mapped.insert(addr, (addr + len, offset.wrapping_sub(addr)));
+    }
+
+    /// Forgets the direct memory behind `[addr, addr + len)`.
+    pub(crate) fn note_unmap(&self, addr: u64, len: u64) {
+        cut(&mut lock(&self.mapped), addr, addr.saturating_add(len));
+    }
+
+    /// Forgets and returns the virtual ranges that map any of the direct
+    /// memory `[start, start + len)`.
+    fn take_mappings_of(&self, start: u64, len: u64) -> Vec<(u64, u64)> {
+        let end = start.saturating_add(len);
+        let mut mapped = lock(&self.mapped);
+        let hits: Vec<(u64, u64)> = mapped
+            .iter()
+            .filter_map(|(&v, &(v_end, delta))| {
+                let (p, p_end) = (v.wrapping_add(delta), v_end.wrapping_add(delta));
+                let (from, to) = (p.max(start), p_end.min(end));
+                (from < to).then(|| (from.wrapping_sub(delta), to.wrapping_sub(delta)))
+            })
+            .collect();
+        for &(v, v_end) in &hits {
+            cut(&mut mapped, v, v_end);
+        }
+        hits
+    }
+
+    /// The direct memory offset mapped at `addr`.
+    fn offset_at(&self, addr: u64) -> Option<u64> {
+        let mapped = lock(&self.mapped);
+        let (_, &(end, delta)) = mapped.range(..=addr).next_back()?;
+        (addr < end).then(|| addr.wrapping_add(delta))
+    }
+
+    /// Counts a failed call and returns whether it is the first of its kind.
+    fn failed(&self, kind: &'static str) -> bool {
+        let mut failures = lock(&self.failures);
+        let n = failures.entry(kind).or_default();
+        *n += 1;
+        *n == 1
+    }
+
     /// The allocation holding `offset`, or with `next` the first one after
     /// it: start, end and memory type.
     fn query(&self, offset: u64, next: bool) -> Option<(u64, u64, i32)> {
@@ -108,6 +186,107 @@ impl DirectMemory {
         };
         found.map(|(&a, &(l, k))| (a, a + l, k))
     }
+}
+
+/// Removes `[start, end)` from a map of ranges, trimming ranges that stick out.
+fn cut(ranges: &mut BTreeMap<u64, (u64, u64)>, start: u64, end: u64) {
+    let hit: Vec<(u64, (u64, u64))> = ranges
+        .range(..end)
+        .filter(|&(_, &(e, _))| e > start)
+        .map(|(&s, &v)| (s, v))
+        .collect();
+    for (s, (e, delta)) in hit {
+        ranges.remove(&s);
+        if s < start {
+            ranges.insert(s, (start, delta));
+        }
+        if e > end {
+            ranges.insert(end, (e, delta));
+        }
+    }
+}
+
+/// Reports a failed memory call on stderr the first time its kind happens,
+/// with the state of direct memory and the address space.
+pub(crate) fn failure(env: &Env, kind: &'static str, detail: std::fmt::Arguments) {
+    if env.kernel.dmem.failed(kind) {
+        eprintln!("ps5slop: memory: {kind} ({detail}); later ones are only counted");
+        eprintln!("{}", report(env.kernel));
+    }
+}
+
+/// Memory use, for the control socket's `memory` command and failure
+/// reports: direct memory, the guest's mappings by name, the host heap and
+/// the host process.
+pub fn report(kernel: &crate::Kernel) -> String {
+    let mib = |b: u64| format!("{:.1} MiB", b as f64 / (1u64 << 20) as f64);
+    let d = kernel.dmem.stats();
+    let mut out = vec![format!(
+        "direct memory: {} allocated in {} allocations, {} free, largest free block {}",
+        mib(d.allocated),
+        d.allocations,
+        mib(d.free),
+        mib(d.largest_free)
+    )];
+    let mut names: BTreeMap<String, (usize, u64)> = BTreeMap::new();
+    let (mut count, mut total) = (0, 0);
+    let mut largest_gap = (0, 0);
+    let mut at = GPU_AREA.0;
+    for r in kernel.memory().regions().into_iter().filter(|r| !r.trap) {
+        let e = names.entry(r.name.clone()).or_default();
+        e.0 += 1;
+        e.1 += r.end - r.start;
+        count += 1;
+        total += r.end - r.start;
+        if r.end > GPU_AREA.0 && r.start < GPU_AREA.1 {
+            let gap = r.start.saturating_sub(at);
+            if gap > largest_gap.1 {
+                largest_gap = (at, gap);
+            }
+            at = at.max(r.end.min(GPU_AREA.1));
+        }
+    }
+    if GPU_AREA.1 - at > largest_gap.1 {
+        largest_gap = (at, GPU_AREA.1 - at);
+    }
+    out.push(format!("mapped: {count} regions, {}", mib(total)));
+    for (name, (n, bytes)) in &names {
+        out.push(format!("  {name}: {n} regions, {}", mib(*bytes)));
+    }
+    out.push(format!(
+        "GPU area {:#x}..{:#x}: largest free range {} at {:#x}",
+        GPU_AREA.0,
+        GPU_AREA.1,
+        mib(largest_gap.1),
+        largest_gap.0
+    ));
+    let (heap_size, heap_used, heap_blocks) = kernel.heap.stats();
+    out.push(format!(
+        "host heap: {} in {heap_blocks} blocks, {} mapped",
+        mib(heap_used),
+        mib(heap_size)
+    ));
+    if let Some((resident, footprint)) = host_memory() {
+        out.push(format!("host process: {} resident, {} footprint", mib(resident), mib(footprint)));
+    }
+    let failures = lock(&kernel.dmem.failures);
+    if !failures.is_empty() {
+        let list: Vec<String> = failures.iter().map(|(k, n)| format!("{k} {n}")).collect();
+        out.push(format!("failures: {}", list.join(", ")));
+    }
+    out.join("\n")
+}
+
+/// The host process's resident size and physical footprint.
+fn host_memory() -> Option<(u64, u64)> {
+    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v4>::zeroed();
+    // SAFETY: RUSAGE_INFO_V4 fills a `rusage_info_v4`.
+    let r = unsafe {
+        libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, info.as_mut_ptr().cast())
+    };
+    // SAFETY: zero-initialised and filled by the call on success.
+    let info = unsafe { info.assume_init() };
+    (r == 0).then_some((info.ri_resident_size, info.ri_phys_footprint))
 }
 
 pub static FUNCTIONS: &[Function] = &[
@@ -168,7 +347,14 @@ fn allocate_in(
             env.mem.write_u64(out, at)?;
             ret(0)
         }
-        None => ret(sce_error(errno::EAGAIN)),
+        None => {
+            failure(
+                env,
+                "direct memory allocation failed",
+                format_args!("{len:#x} bytes, alignment {align:#x}, in {start:#x}..{end:#x}"),
+            );
+            ret(sce_error(errno::EAGAIN))
+        }
     }
 }
 
@@ -193,7 +379,11 @@ fn allocate_main(env: &mut Env) -> Result<Outcome, CallError> {
 
 /// `sceKernelReleaseDirectMemory(start, len)`.
 fn release(env: &mut Env) -> Result<Outcome, CallError> {
-    env.kernel.dmem.release(env.arg(0), env.arg(1));
+    let (start, len) = (env.arg(0), env.arg(1));
+    if !env.kernel.dmem.covers(start, len) {
+        failure(env, "release of unallocated direct memory", format_args!("{len:#x} bytes at {start:#x}"));
+    }
+    release_and_unmap(env, start, len);
     ret(0)
 }
 
@@ -204,15 +394,25 @@ fn checked_release(env: &mut Env) -> Result<Outcome, CallError> {
     if !env.kernel.dmem.covers(start, len) {
         return ret(sce_error(errno::EACCES));
     }
-    env.kernel.dmem.release(start, len);
+    release_and_unmap(env, start, len);
     ret(0)
+}
+
+/// Frees direct memory and unmaps every mapping of it, as shadPS4 does on
+/// the PS4 (unverified for the PS5): Minecraft releases some blocks without
+/// unmapping them first.
+fn release_and_unmap(env: &Env, start: u64, len: u64) {
+    for (v, v_end) in env.kernel.dmem.take_mappings_of(start, len) {
+        let _ = env.mem.unmap_range(v, v_end - v);
+    }
+    env.kernel.dmem.release(start, len);
 }
 
 /// `sceKernelMapDirectMemory(*addr, len, prot, flags, direct_start, align)`;
 /// GPU access is granted as CPU access.
 fn map(env: &mut Env) -> Result<Outcome, CallError> {
-    let (addr_at, len, prot, flags, align) =
-        (env.arg(0), env.arg(1), env.arg(2), env.arg(3), env.arg(5));
+    let (addr_at, len, prot, flags, offset, align) =
+        (env.arg(0), env.arg(1), env.arg(2), env.arg(3), env.arg(4), env.arg(5));
     if !valid(len, align) {
         return ret(sce_error(errno::EINVAL));
     }
@@ -229,9 +429,17 @@ fn map(env: &mut Env) -> Result<Outcome, CallError> {
         env.mem
             .map_free(wanted.max(MAP_AREA), len, align, prot, "direct memory")
     };
-    let Ok(at) = mapped else {
-        return ret(sce_error(errno::ENOMEM));
+    let at = match mapped {
+        Ok(at) => at,
+        Err(e) => {
+            failure(env, "direct memory map failed", format_args!("{len:#x} bytes at {wanted:#x}, flags {flags:#x}, alignment {align:#x}: {e:?}"));
+            return ret(sce_error(errno::ENOMEM));
+        }
     };
+    if !env.kernel.dmem.covers(offset, len) {
+        failure(env, "map of unallocated direct memory", format_args!("{len:#x} bytes at {offset:#x} to {at:#x}"));
+    }
+    env.kernel.dmem.note_map(at, len, offset);
     env.mem.write_u64(addr_at, at)?;
     ret(0)
 }
@@ -255,9 +463,14 @@ fn map_flexible(env: &mut Env) -> Result<Outcome, CallError> {
         env.mem
             .map_free(wanted.max(MAP_AREA), len, PAGE_SIZE, prot, "mmap")
     };
-    let Ok(at) = mapped else {
-        return ret(sce_error(errno::ENOMEM));
+    let at = match mapped {
+        Ok(at) => at,
+        Err(e) => {
+            failure(env, "flexible memory map failed", format_args!("{len:#x} bytes at {wanted:#x}, flags {flags:#x}: {e:?}"));
+            return ret(sce_error(errno::ENOMEM));
+        }
     };
+    env.kernel.dmem.note_unmap(at, len);
     env.mem.write_u64(addr_at, at)?;
     ret(0)
 }
@@ -278,15 +491,22 @@ fn reserve(env: &mut Env) -> Result<Outcome, CallError> {
         env.mem
             .map_free(wanted.max(MAP_AREA), len, align, Prot::NONE, "reserved")
     };
-    let Ok(at) = reserved else {
-        return ret(sce_error(errno::ENOMEM));
+    let at = match reserved {
+        Ok(at) => at,
+        Err(e) => {
+            failure(env, "virtual range reservation failed", format_args!("{len:#x} bytes at {wanted:#x}, flags {flags:#x}, alignment {align:#x}: {e:?}"));
+            return ret(sce_error(errno::ENOMEM));
+        }
     };
+    env.kernel.dmem.note_unmap(at, len);
     env.mem.write_u64(addr_at, at)?;
     ret(0)
 }
 
 /// `sceKernelVirtualQuery(addr, flags, info, size)`: the mapping holding
-/// `addr` (flag 1: or the next one), as `OrbisKernelVirtualQueryInfo`.
+/// `addr` (flag 1: or the next one), as `OrbisVirtualQueryInfo` (shadPS4's
+/// layout): start, end, direct memory offset, protection, memory type, kind
+/// bits and name. Minecraft releases direct memory at the offset it reads here.
 fn virtual_query(env: &mut Env) -> Result<Outcome, CallError> {
     let (addr, flags, info, size) = (env.arg(0), env.arg(1), env.arg(2), env.arg(3) as usize);
     let found = env
@@ -302,18 +522,24 @@ fn virtual_query(env: &mut Env) -> Result<Outcome, CallError> {
     let prot = bit(memory::Access::Read, 1)
         | bit(memory::Access::Write, 2)
         | bit(memory::Access::Execute, 4);
-    let kinds = (r.name == "mmap") as u32
-        | ((r.name == "direct memory") as u32) << 1
-        | (r.name.contains("stack") as u32) << 2
-        | ((prot != 0) as u32) << 4;
+    let direct = r.name == "direct memory";
+    let kinds = (r.name == "mmap") as u8
+        | (direct as u8) << 1
+        | (r.name.contains("stack") as u8) << 2
+        | ((prot != 0) as u8) << 4;
+    let dmem = &env.kernel.dmem;
+    let offset = direct.then(|| dmem.offset_at(r.start)).flatten().unwrap_or(0);
+    let kind = direct.then(|| dmem.query(offset, false)).flatten().map_or(0, |q| q.2);
     let mut b = [0u8; 72];
     b[0..8].copy_from_slice(&r.start.to_le_bytes());
     b[8..16].copy_from_slice(&r.end.to_le_bytes());
+    b[16..24].copy_from_slice(&offset.to_le_bytes());
     b[24..28].copy_from_slice(&prot.to_le_bytes());
-    b[32..36].copy_from_slice(&kinds.to_le_bytes());
+    b[28..32].copy_from_slice(&kind.to_le_bytes());
+    b[32] = kinds;
     let name = r.name.as_bytes();
     let n = name.len().min(31);
-    b[36..36 + n].copy_from_slice(&name[..n]);
+    b[33..33 + n].copy_from_slice(&name[..n]);
     env.mem.write(info, &b[..size.min(72)])?;
     ret(0)
 }
@@ -372,6 +598,45 @@ mod tests {
         assert_eq!(d.query(0, false), None);
         assert_eq!(d.query(0, true), Some((0x1_0000, 0x1_4000, 3)));
         assert_eq!(d.query(0x1_4000, true), None);
+    }
+
+    #[test]
+    fn mappings_remember_their_offset_through_splits_and_remaps() {
+        let d = DirectMemory::default();
+        d.note_map(0x10_0000_0000, 0x4_0000, 0x200_0000);
+        assert_eq!(d.offset_at(0x10_0000_0000), Some(0x200_0000));
+        assert_eq!(d.offset_at(0x10_0001_0000), Some(0x201_0000));
+        d.note_map(0x10_0001_0000, 0x1_0000, 0x50_0000);
+        assert_eq!(d.offset_at(0x10_0001_0000), Some(0x50_0000));
+        assert_eq!(d.offset_at(0x10_0002_0000), Some(0x202_0000));
+        d.note_unmap(0x10_0000_0000, 0x1_0000);
+        assert_eq!(d.offset_at(0x10_0000_0000), None);
+        assert_eq!(d.offset_at(0x10_0004_0000), None);
+    }
+
+    #[test]
+    fn releasing_direct_memory_finds_every_mapping_of_it() {
+        let d = DirectMemory::default();
+        d.note_map(0x10_0000_0000, 0x4_0000, 0x10_0000);
+        d.note_map(0x10_1000_0000, 0x1_0000, 0x12_0000);
+        d.note_map(0x10_2000_0000, 0x1_0000, 0x80_0000);
+        let mut hits = d.take_mappings_of(0x12_0000, 0x4_0000);
+        hits.sort();
+        assert_eq!(hits, [(0x10_0002_0000, 0x10_0004_0000), (0x10_1000_0000, 0x10_1001_0000)]);
+        assert_eq!(d.offset_at(0x10_0001_0000), Some(0x11_0000));
+        assert_eq!(d.offset_at(0x10_0002_0000), None);
+        assert_eq!(d.offset_at(0x10_2000_0000), Some(0x80_0000));
+    }
+
+    #[test]
+    fn stats_count_allocated_bytes_and_the_largest_hole() {
+        let d = DirectMemory::default();
+        d.allocate(0, DIRECT_MEMORY_SIZE, 0x1_0000, 0x4000, 0).unwrap();
+        d.allocate(0x10_0000, DIRECT_MEMORY_SIZE, 0x1_0000, 0x4000, 0).unwrap();
+        let s = d.stats();
+        assert_eq!((s.allocated, s.allocations), (0x2_0000, 2));
+        assert_eq!(s.free, DIRECT_MEMORY_SIZE - 0x2_0000);
+        assert_eq!(s.largest_free, DIRECT_MEMORY_SIZE - 0x11_0000);
     }
 
     #[test]

@@ -1,0 +1,8 @@
+sceKernelAllocateMainDirectMemory libkernel
+sceKernelMapDirectMemory libkernel
+sceKernelReleaseDirectMemory libkernel
+sceKernelVirtualQuery libkernel
+sceKernelReserveVirtualRange libkernel
+write libkernel
+exit libkernel
+sceKernelDirectMemoryQuery libkernel

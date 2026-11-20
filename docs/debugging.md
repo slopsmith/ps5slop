@@ -9,6 +9,7 @@ The protocol is the one 86slopper uses: one command per line, and each answer en
 | Command | What it does |
 | --- | --- |
 | `regions` | Mapped regions with protection and name |
+| `memory` | Memory use: direct memory allocated, free and its largest free block; mapped regions by name with their totals; the largest free range in the GPU area; our host heap; the host process's resident size and physical footprint; how often each kind of memory failure happened |
 | `mem ADDR [LEN]` | Hex dump |
 | `dump ADDR LEN PATH` | Writes guest memory to a host file |
 | `poke ADDR HEXBYTES` | Writes bytes, ignoring guest protection |
@@ -22,7 +23,7 @@ The protocol is the one 86slopper uses: one command per line, and each answer en
 | `calls PATH [FILTER]` / `calls off` | Appends every host call whose description contains FILTER to a file: thread, name, first six arguments, result, caller |
 | `gputrace N` | Traces every draw and dispatch of the next N frames on stderr, as `PS5SLOP_GPU_TRACE` does (N decimal) |
 | `targets DIR` | Writes every render target, depth target and sampled texture as `ADDR.ppm` (the low hex digit says which: 1 texture, 2 colour target, 4 depth); needs `PS5SLOP_DUMP_TARGETS=1` |
-| `press BUTTONS [MS]` | Holds pad buttons (`cross`, `up+cross`, ...) for MS milliseconds (default 400: games read the pad once per frame, and our frames can be slow) |
+| `press BUTTONS [MS]` | Holds pad buttons (`cross`, `up+cross`, ...) for MS milliseconds (default 400: games read the pad once per frame, and our frames can be slow). `l2` and `r2` pull the triggers fully; `lup`, `ldown`, `lleft`, `lright` and `rup`, ... push a stick to its edge (`lup+rright` walks forward while turning) |
 | `profile on` / `profile off` / `profile [N]` | Starts a fresh profile window, stops profiling, or reports the window so far (top N rows): per guest thread the time in translated code, the interpreter, translating and host functions, the time in none of these (exits, locks, the engine), the CPU time used and the guest instructions per second of translated-code time; memory map changes; the hottest guest code by sample (module and offset); host functions by time and calls; the instructions and addresses the interpreter ran most; VM exits by cause (host call, interpreter, new block, lookup table collision, fault, kick), each with its hottest guest RIPs or host functions; translations and evicted cache segments. Samples at a VM entry point are counted as "kicked before entering": the sampler's kick was pending while the thread was outside the VM |
 | `shot PATH` | Writes the screen as PPM; with `press`, this drives menus step by step |
 | `quit` | Ends the guest |
@@ -44,6 +45,14 @@ The report also has a GPU thread line: time encoding draws and dispatches, waiti
 For where host time goes at a given moment, record a Time Profiler trace of the running process with the same signed copy: `xcrun xctrace record --template 'Time Profiler' --attach PID --time-limit 15s --output X.trace`. The trace opens in Instruments with a timeline per thread, and selecting a time range shows the call tree for it. On the command line, export the `time-profile` table and summarise it with `scripts/time-profile` (busiest threads, then one thread's functions by inclusive and self samples; its docstring has the export command). This found the GPU thread spending 90% of its time in one memory lookup in the world (see [gpu.md](gpu.md)). samply (`, samply record --save-only -- target/release/ps5slop run ...`) also works when it launches the process, but attaching needs `samply setup`.
 
 First use (2026-11-20, Minecraft loading a world, 60 s): each of the 7 world-streaming threads spent about 12 s in the interpreter and 4.5 s in translated code. The interpreter ran mostly `roundss`/`roundsd` (13M), `blendps`, `cmpps`/`cmpss`, `btr`, `pmulld` and `movlps`/`movhlps`, none of which the JIT translated then. After the fourth pass of [jit.md](jit.md) those threads spend under 0.1 s each in the interpreter in the same kind of window.
+
+## Memory failures
+
+The first time a memory call of one kind fails, stderr gets a `ps5slop: memory:` line with the request (size, address, flags) followed by the `memory` report. Kinds: direct memory allocation, direct memory map, flexible memory map, virtual range reservation and `mmap` failing, plus two that do not fail the call but point at a wrong offset somewhere: a release or a map of direct memory that is not allocated. Later ones of the same kind are only counted, in the report's `failures` line.
+
+## Example: Minecraft running out of direct memory (2026-11-20)
+
+vic's Minecraft stopped after some time in a world with a store to address 0 (`0xDEADC0DE`, the game's own fatal stop) on two threads at once. Headless, walking around with `press lup+rright` and friends, it reproduced in 13 minutes. The `memory` command showed direct memory filling at 1 to 2 GiB a minute until an allocation failed, just before the fault. A `calls PATH` log of the memory functions then showed the game's allocator freeing a block with `sceKernelVirtualQuery` on its mapping, a reservation over the mapping, and `sceKernelReleaseDirectMemory` at the offset the query reported, which we always reported as 0. So every free released whatever lay at offset 0 and the real block leaked. With the offset reported, direct memory grew from 1.6 GiB at spawn to 2.3 GiB after 10 minutes in the same kind of run. With releases also unmapping, a run in which a subagent walked across new terrain held direct memory at 2.5 to 2.6 GiB from minute 7 to minute 26 (mapped memory flat at 8.27 GiB, the host process's footprint 5 to 7 GB) and did not fault. See [hle-kernel.md](hle-kernel.md).
 
 ## Write watchpoints
 

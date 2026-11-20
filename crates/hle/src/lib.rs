@@ -48,6 +48,7 @@ mod thread;
 mod vfs;
 mod videoout;
 
+pub use dmem::report as memory_report;
 pub use pad::{PadInput, PadOutput, TriggerEffect};
 pub use process::{Kernel, Thread, ThreadError, ThreadInfo, TlsBlock, TlsTemplate, trace_calls};
 pub use rtld::ModuleInfo;

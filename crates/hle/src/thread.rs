@@ -157,7 +157,10 @@ fn attr_init(env: &mut Env) -> Result<Outcome, CallError> {
 fn attr_destroy(env: &mut Env) -> Result<Outcome, CallError> {
     let id = env.mem.read_u64(env.arg(0))?;
     match lock(&env.kernel.threads.attrs).remove(&id) {
-        Some(_) => ret(0),
+        Some(_) => {
+            crate::pthread::free_handle(env, id);
+            ret(0)
+        }
         None => ret(EINVAL),
     }
 }

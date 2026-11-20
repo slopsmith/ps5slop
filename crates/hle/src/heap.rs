@@ -78,6 +78,13 @@ impl Heap {
         Some(addr)
     }
 
+    /// Bytes mapped for the heap, bytes in use and blocks in use.
+    pub fn stats(&self) -> (u64, u64, usize) {
+        let s = lock(&self.state);
+        let mapped = s.end.saturating_sub(HEAP_BASE);
+        (mapped, s.used.values().sum(), s.used.len())
+    }
+
     /// The usable size of the allocation at `addr`, if it is one.
     pub fn size_of(&self, addr: u64) -> Option<u64> {
         lock(&self.state).used.get(&addr).copied()

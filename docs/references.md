@@ -67,6 +67,7 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 | 2026-11-20 | shadPS4 `src/core/libraries/pad/pad.h` at `264d6b7` (GPL-2.0-or-later, SPDX header); SharpEmu-mac `src/SharpEmu.Libs/Pad/PadExports.cs` at `5cb184e` (GPL-2.0-or-later, SPDX header) | `ScePadVibrationParam`, the light bar parameter, `ScePadTriggerEffectParam` (mask, command size, mode numbers and each mode's bytes) | Facts only ([input.md](input.md)); our decoding and the GameController mapping are our own code. SharpEmu-mac's own encoding into DualSense output reports was not used |
 | 2026-11-20 | OpenOrbis `include/orbis/libkernel.h`, `Rtc.h` (already fetched) | Prototypes of `sceKernelMapFlexibleMemory`, `sceKernelMapNamedFlexibleMemory`; names to hash for Isaac's unknown NIDs | Facts only |
 | 2026-11-20 | GitHub code search for one unknown NID (`Y295ygEccqk`) | Its name | Nothing: every hit was a NID-to-name list of unclear provenance (game ports, stub lists), which we do not use; none was opened |
+| 2026-11-20 | shadPS4 `src/core/libraries/kernel/memory.h` at `264d6b7` (GPL-2.0-or-later, SPDX header), read directly | The layout of `OrbisVirtualQueryInfo` (72 bytes: start, end, offset, protection, memory type, kind bits at 32, name at 33) | Fact only, in our own `sceKernelVirtualQuery` ([hle-kernel.md](hle-kernel.md)); PS4, unverified for the PS5. No code |
 
 Add a row whenever someone reads another project's source for this repo.
 

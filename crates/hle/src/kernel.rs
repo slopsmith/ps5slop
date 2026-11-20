@@ -128,15 +128,21 @@ fn mmap(env: &mut Env) -> Result<Outcome, CallError> {
         env.mem.map_free(addr.max(USER_AREA), len, PAGE_SIZE, prot, "mmap")
     };
     match mapped {
-        Ok(at) => Ok(Outcome::Return(at)),
-        Err(_) => Ok(Outcome::Return(MAP_FAILED)),
+        Ok(at) => {
+            env.kernel.dmem.note_unmap(at, len);
+            Ok(Outcome::Return(at))
+        }
+        Err(e) => {
+            crate::dmem::failure(env, "mmap failed", format_args!("{len:#x} bytes at {addr:#x}, flags {flags:#x}: {e:?}"));
+            Ok(Outcome::Return(MAP_FAILED))
+        }
     }
 }
 
-/// `munmap(addr, len)`: only whole mappings made by `mmap`.
 /// `munmap(addr, len)`: whatever is mapped in the range.
 fn munmap(env: &mut Env) -> Result<Outcome, CallError> {
     let len = env.arg(1).next_multiple_of(PAGE_SIZE);
+    env.kernel.dmem.note_unmap(env.arg(0), len);
     match env.mem.unmap_range(env.arg(0), len) {
         Ok(()) => Ok(Outcome::Return(0)),
         Err(_) => env.fail(errno::EINVAL),
@@ -145,6 +151,7 @@ fn munmap(env: &mut Env) -> Result<Outcome, CallError> {
 
 fn sce_munmap(env: &mut Env) -> Result<Outcome, CallError> {
     let len = env.arg(1).next_multiple_of(PAGE_SIZE);
+    env.kernel.dmem.note_unmap(env.arg(0), len);
     match env.mem.unmap_range(env.arg(0), len) {
         Ok(()) => Ok(Outcome::Return(0)),
         Err(_) => Ok(Outcome::Return(crate::dmem::sce_error(errno::EINVAL))),
