@@ -1425,7 +1425,11 @@ impl<'a> Tx<'a> {
         }
         let c = ['x', 'y', 'z', 'w'][chan as usize];
         let d = self.v(vdst);
-        self.guard(&format!("{d} = U(in.a{attr}.{c});"));
+        if mode == Interp::Flat {
+            self.guard(&format!("{d} = in.a{attr}.{c};"));
+        } else {
+            self.guard(&format!("{d} = U(in.a{attr}.{c});"));
+        }
         Ok(())
     }
 
@@ -2187,7 +2191,10 @@ impl<'a> Tx<'a> {
                         Interp::LinearSample => "sample_no_perspective",
                         Interp::Flat => "flat",
                     };
-                    out.push_str(&format!("    float4 a{a} [[user(locn{loc}), {q}]];\n"));
+                    // Flat inputs carry raw bits (often integers), which a float
+                    // varying may not keep; vertex variants export them as uint4.
+                    let ty = if mode == Interp::Flat { "uint4" } else { "float4" };
+                    out.push_str(&format!("    {ty} a{a} [[user(locn{loc}), {q}]];\n"));
                 }
                 out.push_str("};\n\nstruct PsOut {\n");
                 for i in 0..8 {

@@ -240,6 +240,7 @@ pub static STUBS: &[Function] = &[
     zero("libSceIme", "sceImeKeyboardOpen"),
     zero("libSceIme", "sceImeKeyboardClose"),
     zero("libSceIme", "sceImeUpdate"),
+    zero("libSceIme", "sceImeSetText"),
     zero("libSceAppContent", "sceAppContentInitialize"),
     zero("libSceSaveData_native", "sceSaveDataInitialize3"),
     zero("libSceSaveData_native", "sceSaveDataTerminate"),

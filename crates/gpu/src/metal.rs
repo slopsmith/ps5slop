@@ -29,7 +29,7 @@ type Function = ProtocolObject<dyn MTLFunction>;
 
 /// A vertex program, whether it draws rectangles or uses OpenGL clip space,
 /// and the attributes it must add.
-type VariantKey = (u64, bool, bool, Vec<u32>);
+type VariantKey = (u64, bool, bool, Vec<u32>, Vec<u32>);
 
 /// A Metal texture other threads may hold.
 #[derive(Clone)]
@@ -277,6 +277,42 @@ fn guest_sum(host: &dyn Host, base: u64, len: u64) -> Option<u64> {
         xor ^= w;
     }
     Some(sum ^ xor.rotate_left(32))
+}
+
+/// The `user(locnN)` locations a pixel program reads flat (declared `uint4`).
+fn flat_locations(msl: &str) -> Vec<u32> {
+    msl.lines()
+        .filter(|l| l.trim_start().starts_with("uint4 a") && l.ends_with("flat]];"))
+        .filter_map(|l| l.split("[[user(locn").nth(1)?.split(')').next()?.parse().ok())
+        .collect()
+}
+
+/// `msl` with vertex output `p{loc}` declared `uint4` and stored bit for bit.
+fn uint_output(msl: &str, loc: u32) -> String {
+    let decl = format!("    float4 p{loc} [[user(locn{loc})]];");
+    let store = format!("o.p{loc} = ");
+    let mut out = String::with_capacity(msl.len() + 64);
+    let mut rest = msl.replacen(&decl, &format!("    uint4 p{loc} [[user(locn{loc})]];"), 1);
+    while let Some(i) = rest.find(&store) {
+        let value = i + store.len();
+        let mut depth = 0i32;
+        let Some(end) = rest[value..].char_indices().find_map(|(k, c)| {
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                ';' if depth == 0 => return Some(value + k),
+                _ => {}
+            }
+            None
+        }) else {
+            break;
+        };
+        out.push_str(&rest[..value]);
+        out.push_str(&format!("as_type<uint4>({})", &rest[value..end]));
+        rest = rest[end..].to_string();
+    }
+    out.push_str(&rest);
+    out
 }
 
 /// Where a program's resources are bound: one stage of an encoder.
@@ -1119,15 +1155,22 @@ impl Metal {
                 m
             }
         };
-        if missing.is_empty() && !rect && !gl_clip {
+        let flat: Vec<u32> = if rect { Vec::new() } else { flat_locations(&pixel.translated.msl) };
+        if missing.is_empty() && flat.is_empty() && !rect && !gl_clip {
             return Some(vertex.function.clone());
         }
-        let key = (vertex.id, rect, gl_clip, missing.clone());
+        let key = (vertex.id, rect, gl_clip, missing.clone(), flat.clone());
         if let Some(f) = self.variants.get(&key) {
             return f.clone();
         }
-        let extra: String = missing.iter().map(|l| format!("    float4 x{l} [[user(locn{l})]];\n")).collect();
+        let extra: String = missing
+            .iter()
+            .map(|l| format!("    {} x{l} [[user(locn{l})]];\n", if flat.contains(l) { "uint4" } else { "float4" }))
+            .collect();
         let mut msl = vertex.translated.msl.replacen("    float4 pos [[position]];\n", &format!("    float4 pos [[position]];\n{extra}"), 1);
+        for l in &flat {
+            msl = uint_output(&msl, *l);
+        }
         if gl_clip {
             msl = gl_clip_space(&msl);
         }
@@ -1753,6 +1796,7 @@ impl Metal {
         let pixel = self.typed_program(host, state, Stage::Pixel, ps_addr, ps_users, false, col_format, ps_data).ok_or("pixel program")?;
         self.note(|| format!("vertex {vs_addr:#x} pixel {ps_addr:#x} col_format {:#x}", c[context::SPI_SHADER_COL_FORMAT]));
         self.note(|| format!("vertex user {:x?}", &vs_data[..vs_users as usize]));
+        self.note(|| format!("pixel user {:x?}", &ps_data[..ps_users as usize]));
         self.note(|| {
             format!(
                 "{:?} scissor {:?} clip_cntl {:#x} vte_cntl {:#x}",
