@@ -30,7 +30,7 @@ shot PATH                   write the screen as PPM
 profile on|off              start a fresh profile window, or stop profiling
 profile [N]                 report the window so far (top N rows, default 20)
 gputrace N                  trace every draw of the next N frames on stderr (decimal)
-targets DIR                 write every render target and texture as PPM (needs PS5SLOP_DUMP_TARGETS)
+targets DIR                 write every render target and texture as PPM (the first call starts recording)
 press BUTTONS [MS]          hold pad buttons (cross+up, ...) for MS ms (default 400, decimal);
                             also l2, r2 and stick pushes lup, ldown, lleft, lright, rup, ...
 quit                        end the guest
@@ -230,6 +230,11 @@ fn run(kernel: &Kernel, line: &str) -> String {
         },
         #[cfg(target_os = "macos")]
         "targets" => match it.next() {
+            Some(_) if !hle::gpu::metal::DUMP_TARGETS.swap(true, std::sync::atomic::Ordering::Relaxed)
+                && std::env::var_os("PS5SLOP_DUMP_TARGETS").is_none() =>
+            {
+                "recording targets from now on; run again after a frame".into()
+            }
             Some(dir) => {
                 let mut n = 0;
                 for (addr, t) in hle::gpu::metal::all_frames() {

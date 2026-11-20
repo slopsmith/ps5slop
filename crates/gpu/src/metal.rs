@@ -53,6 +53,26 @@ fn frames() -> &'static Mutex<HashMap<u64, SharedTexture>> {
 /// Frames still to trace, from the next one on (the control socket's `gputrace`).
 pub static TRACE_NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Records targets and textures for the control socket's `targets`, set
+/// at run time; `PS5SLOP_DUMP_TARGETS` sets it from the start.
+pub static DUMP_TARGETS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn dump_targets() -> bool {
+    static ENV: OnceLock<bool> = OnceLock::new();
+    DUMP_TARGETS.load(std::sync::atomic::Ordering::Relaxed) || *ENV.get_or_init(|| std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some())
+}
+
+/// Keeps `texture` under `key` for `targets`, replacing what is there when `replace`.
+fn record(key: u64, texture: &Retained<Texture>, replace: bool) {
+    if dump_targets()
+        && let Ok(mut f) = frames().lock()
+    {
+        if replace || !f.contains_key(&key) {
+            f.insert(key, SharedTexture(texture.clone()));
+        }
+    }
+}
+
 /// The texture the GPU rendered at guest address `address`, if any.
 pub fn frame(address: u64) -> Option<SharedTexture> {
     frames().lock().ok()?.get(&address).cloned()
@@ -759,6 +779,7 @@ impl Metal {
             && existing.texture.width() == t.width as usize
             && existing.texture.height() == t.height as usize
         {
+            record(t.address | 2, &existing.texture, false);
             return Some((existing.texture.clone(), format));
         }
         let texture = self.new_texture(format, t.width, t.height, true)?;
@@ -775,11 +796,7 @@ impl Metal {
                 pixel_format: format,
             },
         );
-        if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some()
-            && let Ok(mut f) = frames().lock()
-        {
-            f.insert(t.address | 2, SharedTexture(texture.clone()));
-        }
+        record(t.address | 2, &texture, true);
         Some((texture, format))
     }
 
@@ -849,6 +866,7 @@ impl Metal {
         if let Some((epoch, tex)) = self.images.get(&(image, kind))
             && *epoch == self.epoch
         {
+            record(image.address | 1, tex, false);
             return Some(tex.clone());
         }
         self.note(|| format!("      {:#x} detiled from guest memory", image.address));
@@ -879,11 +897,7 @@ impl Metal {
             }
         }
         self.images.insert((image, kind), (self.epoch, tex.clone()));
-        if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some()
-            && let Ok(mut f) = frames().lock()
-        {
-            f.entry(image.address | 1).or_insert_with(|| SharedTexture(tex.clone()));
-        }
+        record(image.address | 1, &tex, false);
         Some(tex)
     }
 
@@ -1334,6 +1348,7 @@ impl Metal {
             && t.height() == h as usize
             && t.arrayLength() >= slices
         {
+            record(d.address | 4, t, false);
             return Some((t.clone(), format, false));
         }
         let desc = unsafe {
@@ -1362,11 +1377,7 @@ impl Metal {
             blit.endEncoding();
         }
         self.depths.insert(d.address, t.clone());
-        if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some()
-            && let Ok(mut f) = frames().lock()
-        {
-            f.insert(d.address | 4, SharedTexture(t.clone()));
-        }
+        record(d.address | 4, &t, true);
         Some((t, format, kept.is_none()))
     }
 
@@ -1487,11 +1498,7 @@ impl Metal {
             self.detile_into(host, &texture, 0, at, layout);
         }
         self.targets.insert(image.address, Target { texture: texture.clone(), pixel_format: format });
-        if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some()
-            && let Ok(mut f) = frames().lock()
-        {
-            f.insert(image.address | 2, SharedTexture(texture.clone()));
-        }
+        record(image.address | 2, &texture, true);
         Some(texture)
     }
 
