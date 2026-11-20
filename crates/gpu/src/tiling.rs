@@ -9,6 +9,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TileMode {
     Linear,
+    /// `SW_4KB_S`: 4 KiB standard blocks, the first 4 KiB of a `SW_64KB_S` block.
+    Standard4K,
     /// `SW_64KB_S`: 64 KiB standard blocks.
     Standard64K,
     /// `SW_64KB_R_X` as the PS5 lays it out: render targets and display buffers.
@@ -19,6 +21,7 @@ impl TileMode {
     pub fn from_bits(mode: u32) -> Option<Self> {
         match mode {
             0 => Some(Self::Linear),
+            0x05 => Some(Self::Standard4K),
             0x09 => Some(Self::Standard64K),
             0x1B => Some(Self::RenderTarget),
             _ => None,
@@ -44,6 +47,14 @@ static STANDARD_64K: [&[Term]; 5] = [
     &[x(2, 0x00c), x(5, 0x080), x(6, 0x200), x(7, 0x800), x(8, 0x2000), x(9, 0x8000), y(4, 0x070), y(5, 0x100), y(6, 0x400), y(7, 0x1000), y(8, 0x4000)],
     &[x(3, 0x008), x(5, 0x0c0), x(6, 0x200), x(7, 0x800), x(8, 0x2000), x(9, 0x8000), y(4, 0x030), y(6, 0x100), y(7, 0x400), y(8, 0x1000), y(9, 0x4000)],
     &[x(6, 0x0c0), x(7, 0x200), x(8, 0x800), x(9, 0x2000), x(10, 0x8000), y(4, 0x030), y(6, 0x100), y(7, 0x400), y(8, 0x1000), y(9, 0x4000)],
+];
+
+static STANDARD_4K: [&[Term]; 5] = [
+    &[x(0, 0x0f), x(5, 0x200), x(6, 0x800), y(4, 0x1f0), y(5, 0x400)],
+    &[x(1, 0x00e), x(4, 0x080), x(5, 0x200), x(6, 0x800), y(4, 0x070), y(5, 0x100), y(6, 0x400)],
+    &[x(2, 0x00c), x(5, 0x080), x(6, 0x200), x(7, 0x800), y(4, 0x070), y(5, 0x100), y(6, 0x400)],
+    &[x(3, 0x008), x(5, 0x0c0), x(6, 0x200), x(7, 0x800), y(4, 0x030), y(6, 0x100), y(7, 0x400)],
+    &[x(6, 0x0c0), x(7, 0x200), x(8, 0x800), y(4, 0x030), y(6, 0x100), y(7, 0x400)],
 ];
 
 static RENDER_TARGET: [&[Term]; 5] = [
@@ -90,6 +101,10 @@ impl Layout {
     fn block(mode: TileMode, bpe: u32) -> (u32, u32) {
         match mode {
             TileMode::Linear => ((256 / bpe).max(1), 1),
+            TileMode::Standard4K => {
+                let (w, h) = BLOCK_64K[bpe.trailing_zeros() as usize];
+                (1 << (w - 2), 1 << (h - 2))
+            }
             _ => {
                 let (w, h) = BLOCK_64K[bpe.trailing_zeros() as usize];
                 (1 << w, 1 << h)
@@ -101,6 +116,7 @@ impl Layout {
         let i = self.bpe.trailing_zeros() as usize;
         match self.mode {
             TileMode::Linear => &[],
+            TileMode::Standard4K => STANDARD_4K[i],
             TileMode::Standard64K => STANDARD_64K[i],
             TileMode::RenderTarget => RENDER_TARGET[i],
         }
@@ -126,7 +142,7 @@ impl Layout {
                 self.width.div_ceil(1 << l) <= bw / 2 && self.height.div_ceil(1 << l) <= bh && levels - l <= tail_max
             })
             .unwrap_or(levels);
-        let mut offset = if first_tail < levels { 0x10000 } else { 0 };
+        let mut offset = if first_tail < levels { self.block_bytes() } else { 0 };
         for l in 1..first_tail {
             let pw = self.width.div_ceil(1 << l).max(1).next_multiple_of(bw) as u64;
             let ph = self.height.div_ceil(1 << l).max(1).next_multiple_of(bh) as u64;
@@ -147,7 +163,11 @@ impl Layout {
             let c = if axis == 0 { ex } else { ey };
             inner ^= c.wrapping_shl(shift as u32) & mask;
         }
-        block * 0x10000 + inner as u64
+        block * self.block_bytes() + inner as u64
+    }
+
+    pub fn block_bytes(&self) -> u64 {
+        if self.mode == TileMode::Standard4K { 0x1000 } else { 0x10000 }
     }
 
     /// MSL for `ulong surface_offset(uint x, uint y, uint pitch)`, the same
@@ -167,7 +187,7 @@ impl Layout {
             let c = if axis == 0 { "x" } else { "y" };
             s += &format!("    inner ^= ({c} << {shift}) & {mask:#x}u;\n");
         }
-        s += "    return block * 65536ul + inner;\n}\n";
+        s += &format!("    return block * {}ul + inner;\n}}\n", self.block_bytes());
         s
     }
 }
@@ -203,21 +223,37 @@ mod tests {
 
     #[test]
     fn every_block_offset_is_used_once() {
-        for mode in [TileMode::Standard64K, TileMode::RenderTarget] {
+        for mode in [TileMode::Standard4K, TileMode::Standard64K, TileMode::RenderTarget] {
             for bpe in [1, 2, 4, 8, 16] {
                 let l = Layout::new(mode, bpe, 256, 256).unwrap();
                 let (bw, bh) = Layout::block(mode, bpe);
-                let mut seen = vec![false; 0x10000 / bpe as usize];
+                let bytes = l.block_bytes();
+                let mut seen = vec![false; bytes as usize / bpe as usize];
                 for ey in 0..bh {
                     for ex in 0..bw {
                         let o = l.offset(ex, ey);
-                        assert!(o < 0x10000 && o.is_multiple_of(bpe as u64));
+                        assert!(o < bytes && o.is_multiple_of(bpe as u64));
                         let i = (o / bpe as u64) as usize;
                         assert!(!seen[i], "{mode:?} {bpe}: ({ex}, {ey}) collides");
                         seen[i] = true;
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn standard_4k_is_the_start_of_standard_64k() {
+        for bpe in [1, 2, 4, 8, 16] {
+            let small = Layout::new(TileMode::Standard4K, bpe, 1024, 1024).unwrap();
+            let big = Layout::new(TileMode::Standard64K, bpe, 1024, 1024).unwrap();
+            let (bw, bh) = Layout::block(TileMode::Standard4K, bpe);
+            for ey in 0..bh {
+                for ex in 0..bw {
+                    assert_eq!(small.offset(ex, ey), big.offset(ex, ey));
+                }
+            }
+            assert_eq!(small.offset(bw, 0), 0x1000);
         }
     }
 

@@ -860,7 +860,7 @@ impl Metal {
         };
         let base = image.address + layout.mip0_offset(image.last_level + 1);
         // A 2D image bound where a cube is read shows its one slice on every face.
-        let stride = if kind == TextureKind::Cube && image.kind != 11 { 0 } else { layout.size().next_multiple_of(64 << 10) };
+        let stride = if kind == TextureKind::Cube && image.kind != 11 { 0 } else { layout.size().next_multiple_of(layout.block_bytes()) };
         for slice in 0..slices {
             let at = base + slice as u64 * stride;
             let filled = if compressed {
@@ -1493,7 +1493,7 @@ impl Metal {
     fn fill_volume(&mut self, host: &dyn Host, texture: &Texture, image: Image, bpe: u32, slices: u32) -> Option<VolumeSource> {
         let layout = Layout::new(image.tile?, bpe, image.width, image.height)?;
         let base = image.address + layout.mip0_offset(image.last_level + 1);
-        let stride = layout.size().next_multiple_of(64 << 10);
+        let stride = layout.size().next_multiple_of(layout.block_bytes());
         for slice in 0..slices {
             self.detile_into(host, texture, slice as usize, base + slice as u64 * stride, layout);
         }
