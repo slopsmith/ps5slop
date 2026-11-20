@@ -1,0 +1,24 @@
+#!/bin/sh
+# Guesses names for unknown NIDs by joining a prefix and up to N words in
+# CamelCase and hashing each candidate on every core (see scripts/nid and
+# docs/debugging.md). No name list is stored: words come from the caller's
+# files and, by default, from splitting the sce* names crates/hle implements.
+#
+# Usage: scripts/nid-guess [options] NID...
+#   -p, --prefix P     a prefix such as sceKernel (repeatable; default: the
+#                      prefixes of our own names)
+#   -w, --words FILE   one word per line, used as given and capitalised
+#   -s, --split FILE   split every identifier in FILE into words
+#   -x, --suffix S     also try each candidate with suffix S
+#   -n, --max-words N  join up to N words (default 2)
+#   --no-own           don't take words or prefixes from crates/hle
+#   -j, --jobs N       threads (default: all cores)
+# Example: scripts/nid-guess -p sceSystemService -w words.txt -n 3 8Lo6Zv94aho
+set -e
+root=$(cd "$(dirname "$0")/.." && pwd)
+case " $* " in *" -h "* | *" --help "* | "  ") sed -n '2,16s/^# \{0,1\}//p' "$0"; exit 0 ;; esac
+cd "$root"
+if command -v cargo >/dev/null 2>&1; then
+	exec cargo run -q --release -p loader --example nid-guess -- "$@"
+fi
+exec nix develop . -c cargo run -q --release -p loader --example nid-guess -- "$@"

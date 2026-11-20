@@ -71,6 +71,10 @@ We observed only addresses and values here; we did not disassemble the game.
 
 `PS5SLOP_UNIMPLEMENTED_ZERO=1` makes every unimplemented import return 0 and log `UNIMPLEMENTED (returning 0) LIBRARY NID NAME(args) from CALLER` instead of stopping. Names come from `PS5SLOP_NAMES` when given. A title then runs on until something actually depends on a missing result, so one run shows the next dozen imports a title needs and in what order, where stopping shows one. It is for exploring only: a 0 that should have been an output, a handle or an error can send the guest down paths it never takes on a console, so each import it passes over still needs a real (or a declared placeholder) implementation. Astro Bot's first run got from libc's start-up to its GPU set-up this way.
 
+## Naming unknown NIDs
+
+A NID is a hash of the symbol name, so a name can be confirmed by hashing guesses. `scripts/nid NAME...` hashes names; `scripts/nid --find NID... < names` checks a list. `scripts/nid-guess` brute-forces: it joins a prefix (`-p sceKernel`, repeatable) with up to `-n` words in CamelCase and reports candidates whose hash matches. Words come from files (`-w` one per line, `-s` splits every identifier in a file into words) and, unless `--no-own` is given, from the sce* names `crates/hle` already implements; with no `-p` it tries every prefix those names use. It is a Rust example (`crates/loader/examples/nid-guess.rs`) run on every core: about 34 million candidates a second on 3 cores of an M-series Mac, so three words with one prefix take seconds and four words need a short custom list. Nothing it reads is stored; per [legal.md](legal.md) no NID-to-name list enters the repo. A name found this way is noted in the docs as hashed from a guess.
+
 ## Pitfalls
 
 - Debug binaries need the hypervisor entitlement. `cargo run` signs through `scripts/hv-run.sh`; a binary started directly after `cargo build` must be signed first (`codesign -s - -f --entitlements scripts/hypervisor.entitlements target/release/ps5slop`), or the JIT is unavailable and everything runs in the interpreter.
