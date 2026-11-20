@@ -170,9 +170,10 @@ fn dump_after(kernel: std::sync::Arc<hle::Kernel>, out: PathBuf, seconds: f64) {
             }
         }
         let series: u32 = std::env::var("PS5SLOP_DUMP_SERIES").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+        let every: u64 = std::env::var("PS5SLOP_DUMP_EVERY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(500);
         for i in 0..series {
             if i > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                std::thread::sleep(std::time::Duration::from_millis(every));
             }
             let path = if series > 1 { out.with_extension(format!("{i}.ppm")) } else { out.clone() };
             write_frame(&kernel, &path);

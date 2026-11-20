@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Tiles a frame series written by `--dump-frame` with PS5SLOP_DUMP_SERIES
+(name.0.ppm, name.1.ppm, ...) into one PNG, frames in order, left to right.
+
+usage: frame-atlas OUT.png FRAME.0.ppm [FRAME.1.ppm ...] [--cols N] [--scale N]
+"""
+import subprocess, sys, tempfile, os
+
+def read_ppm(path):
+    data = open(path, 'rb').read()
+    parts, i = [], 0
+    while len(parts) < 4:
+        while data[i:i+1].isspace():
+            i += 1
+        j = i
+        while not data[j:j+1].isspace():
+            j += 1
+        parts.append(data[i:j]); i = j
+    w, h = int(parts[1]), int(parts[2])
+    return w, h, data[i+1:]
+
+def main():
+    args = sys.argv[1:]
+    cols, scale = 6, 6
+    if '--cols' in args:
+        k = args.index('--cols'); cols = int(args[k+1]); del args[k:k+2]
+    if '--scale' in args:
+        k = args.index('--scale'); scale = int(args[k+1]); del args[k:k+2]
+    out, frames = args[0], args[1:]
+    frames.sort(key=lambda p: int(p.rsplit('.', 2)[-2]) if p.rsplit('.', 2)[-2].isdigit() else 0)
+    tiles = []
+    for f in frames:
+        try:
+            w, h, px = read_ppm(f)
+        except Exception:
+            continue
+        tw, th = w // scale, h // scale
+        tile = bytearray(tw * th * 3)
+        for y in range(th):
+            row = (y * scale) * w * 3
+            for x in range(tw):
+                s = row + x * scale * 3
+                tile[(y * tw + x) * 3:(y * tw + x) * 3 + 3] = px[s:s+3]
+        tiles.append((tw, th, tile))
+    if not tiles:
+        sys.exit('no frames')
+    tw, th = tiles[0][0], tiles[0][1]
+    rows = (len(tiles) + cols - 1) // cols
+    gap = 2
+    W, H = cols * (tw + gap), rows * (th + gap)
+    img = bytearray([40]) * (W * H * 3)
+    for n, (w, h, t) in enumerate(tiles):
+        ox, oy = (n % cols) * (tw + gap), (n // cols) * (th + gap)
+        for y in range(min(h, th)):
+            d = ((oy + y) * W + ox) * 3
+            img[d:d + tw * 3] = t[y * w * 3:y * w * 3 + tw * 3]
+    with tempfile.NamedTemporaryFile(suffix='.ppm', delete=False) as tmp:
+        tmp.write(b'P6\n%d %d\n255\n' % (W, H) + bytes(img))
+    subprocess.run(['sips', '-s', 'format', 'png', tmp.name, '--out', out], check=True, capture_output=True)
+    os.unlink(tmp.name)
+    print(f'{out}: {len(tiles)} frames, {cols} per row')
+
+main()
