@@ -59,6 +59,11 @@ pub enum Target {
     Image(Arc<dyn ImageFs>, String),
 }
 
+fn trace_files() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("PS5SLOP_TRACE_FILES").is_some())
+}
+
 fn exists(target: &Target) -> bool {
     match target {
         Target::Host(p, _) => p.exists(),
@@ -295,6 +300,23 @@ impl Vfs {
     /// Where guest path `path` leads; `None` outside every mount, or for
     /// paths that climb out with `..`.
     pub fn lookup(&self, path: &[u8]) -> Option<Target> {
+        let target = self.lookup_traced(path);
+        if trace_files() {
+            let found = target.as_ref().map(exists);
+            eprintln!(
+                "ps5slop: file: {} {}",
+                String::from_utf8_lossy(path),
+                match found {
+                    None => "outside every mount",
+                    Some(true) => "found",
+                    Some(false) => "missing",
+                }
+            );
+        }
+        target
+    }
+
+    fn lookup_traced(&self, path: &[u8]) -> Option<Target> {
         let target = self.lookup_mounted(path)?;
         let stand_in = std::str::from_utf8(path)
             .ok()

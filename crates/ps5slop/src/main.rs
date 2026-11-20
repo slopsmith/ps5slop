@@ -131,6 +131,9 @@ fn main() -> ExitCode {
     if let Some(t) = temp {
         vfs.mount("/temp0", t, true);
     }
+    if let Some(d) = std::env::var_os("PS5SLOP_DEVLOG") {
+        vfs.mount("/devlog", std::path::PathBuf::from(d), true);
+    }
     if let Some(s) = saves {
         vfs.set_saves(s);
     }
