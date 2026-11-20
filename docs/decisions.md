@@ -241,3 +241,10 @@ Reason: vic asked for a way to poke at the guest live, as 86slopper allows. Mine
 Changes the entry above for 2D arrays: an image programs write as a 2D array is loaded from guest memory when its Metal texture is made, and reloaded whenever a checksum of that memory changes (before every write to it, once a frame before reads, ranges up to 32 MiB). GPU writes still stay on the GPU. 3D images are still zero-filled.
 
 Reason: Minecraft's UI glyph atlas starts as CPU-written contents and then gets glyphs from a copy program through a 2D-array descriptor. Zero-filling lost the CPU part (blank letters on the Play screen). A recreated atlas is uploaded again by the CPU, which a texture made once never saw. The cost: a CPU write that only touches part of the range throws away what programs wrote elsewhere in it, and every write to such an image hashes its whole range on the CPU (1 MiB for the atlas; not measured).
+
+## 2026-11-20: The JIT evicts its coldest code cache segments instead of stopping
+
+The code cache is split into 8 MiB segments; when it is full, the coldest segment (by sampled use, then age) is evicted and reused once no vCPU can be in it ([jit.md](jit.md)).
+
+Reason: Minecraft filled the cache when creating a world, and from then on all new code ran in the interpreter. vic asked for eviction of the least used and oldest code, in chunks, rather than flushing the whole cache, which would stall every thread at once. Use is sampled by kicking vCPUs 100 times a second rather than counted per block, which would slow every block down.
+

@@ -2,6 +2,7 @@
 //! Hypervisor.framework VM, with guest memory mapped at its own addresses.
 //! See `docs/jit.md`.
 
+mod cache;
 mod engine;
 pub mod layout;
 mod tables;
@@ -83,6 +84,18 @@ fn has_native(addr: u64) -> bool {
         .unwrap_or_else(|e| e.into_inner())
         .contains(&addr)
 }
+
+/// Frees evicted code cache segments that are safe to reuse; cheap when
+/// none waits.
+pub fn reclaim_if_wanted() {
+    if SHARED.reclaim_wanted.load(Ordering::Relaxed)
+        && let Ok(mut m) = machine()
+    {
+        m.reclaim();
+    }
+}
+
+pub use cache::{evictions, start_sampler};
 
 /// Logs writes to `[start, end)` (see [`memory::watch`]): translated code
 /// faults on the pages at stage 2 and the interpreter runs the store.
@@ -175,6 +188,15 @@ struct Shared {
     /// Bumped when the tables change, so vCPUs flush their TLBs.
     epoch: AtomicU64,
     running: [AtomicBool; layout::MAX_VCPUS],
+    /// Set from just before a vCPU enters translated code until it leaves.
+    inside: [AtomicBool; layout::MAX_VCPUS],
+    /// Times each vCPU left the VM.
+    exits: [AtomicU64; layout::MAX_VCPUS],
+    /// The code address a vCPU still needs from its last exit (a cancelled
+    /// run it resumes, or a fault whose RIP it looks up), or 0.
+    old_pc: [AtomicU64; layout::MAX_VCPUS],
+    /// Whether an evicted code cache segment waits to be reused.
+    reclaim_wanted: AtomicBool,
 }
 
 static SHARED: Shared = Shared {
@@ -185,6 +207,10 @@ static SHARED: Shared = Shared {
     users: [const { AtomicU32::new(0) }; 2],
     epoch: AtomicU64::new(0),
     running: [const { AtomicBool::new(false) }; layout::MAX_VCPUS],
+    inside: [const { AtomicBool::new(false) }; layout::MAX_VCPUS],
+    exits: [const { AtomicU64::new(0) }; layout::MAX_VCPUS],
+    old_pc: [const { AtomicU64::new(0) }; layout::MAX_VCPUS],
+    reclaim_wanted: AtomicBool::new(false),
 };
 
 impl Shared {
@@ -247,6 +273,11 @@ pub struct Machine {
     regions: HashMap<u64, RegionInfo>,
     /// Write-watched ranges, page-aligned, kept read-only at stage 2.
     watched: Vec<(u64, u64)>,
+    /// Every patched code word and what it held before.
+    patched: HashMap<usize, u32>,
+    /// Patched sites by the code they branch to.
+    chained_to: BTreeMap<usize, Vec<usize>>,
+    segments: cache::Segments,
 }
 
 // SAFETY: the VM is process-wide and HVF's VM calls may come from any thread;
@@ -332,6 +363,9 @@ impl Machine {
             tier2: translate::Tier2::from_env(),
             regions: HashMap::new(),
             watched: Vec::new(),
+            patched: HashMap::new(),
+            chained_to: BTreeMap::new(),
+            segments: cache::Segments::new(),
         };
         for pool in 0..2 {
             let t = tables::Tables::new(m.runtime.as_mut_slice(), pool);
@@ -493,8 +527,9 @@ impl Machine {
         self.regions.clear();
         self.by_place.clear();
         self.chain_wanted.clear();
-        self.code_next = layout::CODE_CACHE;
+        self.reset_segments();
         self.cache_full = false;
+        self.pending_chains.clear();
         let rt = self.runtime.as_mut_slice();
         for e in 0..layout::LOOKUP_ENTRIES {
             let at = layout::LOOKUP + e * 16;
@@ -593,13 +628,19 @@ impl Machine {
     /// Translates the region at `rip` into the code cache, its exits going to
     /// `exit`; where it went and the RIPs of its instructions.
     fn emit_region(&mut self, mem: &Memory, rip: u64, exit: usize) -> Option<(usize, HashSet<u64>)> {
-        let place = self.code_next;
-        let (region, rips) = translate::region(mem, rip, place, exit)?;
-        let len = region.code.len() * 4;
-        if place + len > layout::CODE_CACHE_END {
-            self.cache_full = true;
-            return None;
+        let mut place = self.code_next;
+        let (mut region, mut rips) = translate::region(mem, rip, place, exit)?;
+        if !self.fits(place, region.code.len() * 4) {
+            if self.cache_full || !self.next_segment() {
+                return None;
+            }
+            place = self.code_next;
+            (region, rips) = translate::region(mem, rip, place, exit)?;
+            if !self.fits(place, region.code.len() * 4) {
+                return None;
+            }
         }
+        let len = region.code.len() * 4;
         self.runtime.write_words(place, &region.code);
         // SAFETY: the range was just written inside the runtime region.
         unsafe { sys_icache_invalidate(self.runtime.as_ptr().add(place).cast(), len) };
@@ -641,15 +682,25 @@ impl Machine {
         if self.cache_full {
             return None;
         }
-        let place = self.code_next;
+        let mut place = self.code_next;
         let count = self.tier2.count().filter(|_| exit == DISPATCH && !self.trace);
-        let block = translate::block(mem, rip, place, exit, count)?;
-        let len = block.code.len() * 4;
-        if place + len > layout::CODE_CACHE_END {
-            self.cache_full = true;
-            eprintln!("ps5slop: the JIT's code cache is full; interpreting new code from now on");
-            return None;
+        let mut block = translate::block(mem, rip, place, exit, count)?;
+        if !self.fits(place, block.code.len() * 4) {
+            if self.verify || self.trace {
+                self.cache_full = true;
+                eprintln!("ps5slop: the JIT's code cache is full; interpreting new code from now on");
+                return None;
+            }
+            if !self.next_segment() {
+                return None;
+            }
+            place = self.code_next;
+            block = translate::block(mem, rip, place, exit, count)?;
+            if !self.fits(place, block.code.len() * 4) {
+                return None;
+            }
         }
+        let len = block.code.len() * 4;
         self.runtime.write_words(place, &block.code);
         // SAFETY: the range was just written inside the runtime region.
         unsafe { sys_icache_invalidate(self.runtime.as_ptr().add(place).cast(), len) };
@@ -679,6 +730,11 @@ impl Machine {
     /// Turns the branch to the dispatcher at runtime offset `site` into a
     /// branch straight to the block at `to`.
     fn patch(&mut self, site: usize, to: usize) {
+        if !self.patched.contains_key(&site) {
+            let old = u32::from_le_bytes(self.runtime.as_slice()[site..site + 4].try_into().unwrap());
+            self.patched.insert(site, old);
+        }
+        self.chained_to.entry(to).or_default().push(site);
         let delta = (to as i64 - site as i64) / 4;
         self.runtime
             .write_words(site, &[0x1400_0000 | (delta as u32 & 0x03ff_ffff)]);

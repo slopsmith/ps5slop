@@ -325,6 +325,7 @@ impl Kernel {
         if !on {
             return;
         }
+        jit::start_sampler();
         let natives = [
             ("memset", jit::Native::Memset),
             ("memcpy", jit::Native::Memmove),

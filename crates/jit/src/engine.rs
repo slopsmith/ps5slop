@@ -423,6 +423,7 @@ impl Engine {
     /// Enters the VM once, with the tables brought up to date first.
     fn enter(&mut self, mem: &Memory, entry: Entry) -> Result<Exit, crate::Error> {
         let sc = Ordering::SeqCst;
+        crate::reclaim_if_wanted();
         self.shadow = None;
         SHARED.running[self.cpu.slot].store(true, sc);
         let (pool, flush) = loop {
@@ -443,6 +444,8 @@ impl Engine {
             std::thread::yield_now();
         };
         let root = SHARED.roots[pool].load(sc);
+        let slot = self.cpu.slot;
+        SHARED.inside[slot].store(true, sc);
         let exit = match entry {
             Entry::Dispatch(nzcv) => {
                 let at = if flush { ENTRY_FLUSH } else { DISPATCH };
@@ -450,8 +453,20 @@ impl Engine {
             }
             Entry::Resume { pc, cpsr } => self.cpu.enter(root, RESUME_FLUSH, Some((pc, cpsr)), 0),
         };
+        let held = match exit {
+            Ok(Exit::Canceled { pc, .. }) => {
+                crate::cache::sample(pc);
+                pc
+            }
+            Ok(Exit::Fault { elr, .. }) => elr,
+            Ok(Exit::Stage2 { pc }) => pc,
+            _ => 0,
+        };
+        SHARED.old_pc[slot].store(held, sc);
+        SHARED.exits[slot].fetch_add(1, sc);
+        SHARED.inside[slot].store(false, sc);
         SHARED.users[pool].fetch_sub(1, sc);
-        SHARED.running[self.cpu.slot].store(false, sc);
+        SHARED.running[slot].store(false, sc);
         let icount = self.cpu.reg(ICOUNT.0)?;
         TRANSLATED.fetch_add(icount.wrapping_sub(self.icount), Ordering::Relaxed);
         self.icount = icount;
@@ -519,6 +534,7 @@ impl Engine {
                 }
                 Exit::Fault { elr: pc, .. } | Exit::Stage2 { pc } if crate::in_native(pc) => {
                     count_exit(Count::Fault);
+                    SHARED.old_pc[self.cpu.slot].store(0, Ordering::SeqCst);
                     let rip = self.cpu.reg(RIP.0)?;
                     self.store(x)?;
                     x.rip = rip;
@@ -530,11 +546,13 @@ impl Engine {
                     let Some(rip) = machine()?.rip_at(pc) else {
                         panic!("the JIT faulted outside translated code at {pc:#x}");
                     };
+                    SHARED.old_pc[self.cpu.slot].store(0, Ordering::SeqCst);
                     rip
                 }
                 Exit::Canceled { pc, cpsr } => {
                     count_exit(Count::Cancel);
                     if stop() {
+                        SHARED.old_pc[self.cpu.slot].store(0, Ordering::SeqCst);
                         return Ok(x86::Exit::Limit);
                     }
                     entry = resume_after_cancel(previous, pc, cpsr);
