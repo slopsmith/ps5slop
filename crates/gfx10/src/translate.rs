@@ -1404,7 +1404,10 @@ impl<'a> Tx<'a> {
         if self.req.stage != Stage::Pixel {
             return Err(err(pc, "interpolation outside a pixel shader"));
         }
-        let mode = if name == "v_interp_mov_f32" {
+        // SPI_PS_INPUT_CNTL's FLAT_SHADE (bit 10) makes interpolation return the
+        // provoking vertex's value whatever the instruction.
+        let flat_shade = self.req.ps_input_cntl.get(attr as usize).is_some_and(|c| c & 0x400 != 0);
+        let mode = if name == "v_interp_mov_f32" || flat_shade {
             Interp::Flat
         } else {
             self.input_interp(vsrc)
