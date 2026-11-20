@@ -119,8 +119,6 @@ struct Program {
     address: u64,
     function: Retained<Function>,
     translated: Translated,
-    /// The rectangle-list form of a vertex program, made on first use.
-    rect: Mutex<Option<Option<Retained<Function>>>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -142,6 +140,7 @@ pub struct Metal {
     pass: Option<(Retained<RenderEncoder>, Vec<u64>)>,
     depths: HashMap<u64, Retained<Texture>>,
     shown: HashMap<u64, Retained<Texture>>,
+    swizzles: HashMap<(usize, [u8; 4]), Retained<Texture>>,
     depth_states: HashMap<(DepthState, bool), Retained<ProtocolObject<dyn MTLDepthStencilState>>>,
     windows: Vec<Window>,
     generation: u64,
@@ -151,6 +150,7 @@ pub struct Metal {
     detilers: HashMap<(TileMode, u32, bool), Retained<ComputePipeline>>,
     programs: HashMap<(u64, u64), Option<Arc<Program>>>,
     computes: HashMap<u64, Option<Retained<ComputePipeline>>>,
+    variants: HashMap<(u64, bool, Vec<u32>), Option<Retained<Function>>>,
     pipelines: HashMap<PipelineKey, Option<Retained<RenderPipeline>>>,
     samplers: HashMap<Sampler, Retained<ProtocolObject<dyn MTLSamplerState>>>,
     reports: u32,
@@ -158,6 +158,7 @@ pub struct Metal {
     pub draws: u64,
     pub dispatches: u64,
     pub skipped: u64,
+    reasons: HashMap<&'static str, u64>,
 }
 
 /// Where a program's resources are bound: one stage of an encoder.
@@ -226,6 +227,7 @@ impl Metal {
             pass: None,
             depths: HashMap::new(),
             shown: HashMap::new(),
+            swizzles: HashMap::new(),
             depth_states: HashMap::new(),
             windows: Vec::new(),
             generation: 0,
@@ -235,6 +237,7 @@ impl Metal {
             detilers: HashMap::new(),
             programs: HashMap::new(),
             computes: HashMap::new(),
+            variants: HashMap::new(),
             pipelines: HashMap::new(),
             samplers: HashMap::new(),
             reports: 0,
@@ -242,6 +245,7 @@ impl Metal {
             draws: 0,
             dispatches: 0,
             skipped: 0,
+            reasons: HashMap::new(),
         })
     }
 
@@ -531,6 +535,45 @@ impl Metal {
         Some(tex)
     }
 
+    /// `tex` with an image descriptor's channel selects (`DST_SEL_X..W`) applied.
+    fn swizzled(&mut self, tex: Retained<Texture>, sel: [u8; 4]) -> Option<Retained<Texture>> {
+        if sel == [4, 5, 6, 7] {
+            return Some(tex);
+        }
+        let key = (Retained::as_ptr(&tex) as usize, sel);
+        if let Some(v) = self.swizzles.get(&key) {
+            return Some(v.clone());
+        }
+        let channel = |s: u8| match s {
+            0 => MTLTextureSwizzle::Zero,
+            1 => MTLTextureSwizzle::One,
+            4 => MTLTextureSwizzle::Red,
+            5 => MTLTextureSwizzle::Green,
+            6 => MTLTextureSwizzle::Blue,
+            _ => MTLTextureSwizzle::Alpha,
+        };
+        let swizzle = MTLTextureSwizzleChannels {
+            red: channel(sel[0]),
+            green: channel(sel[1]),
+            blue: channel(sel[2]),
+            alpha: channel(sel[3]),
+        };
+        let view = unsafe {
+            tex.newTextureViewWithPixelFormat_textureType_levels_slices_swizzle(
+                tex.pixelFormat(),
+                tex.textureType(),
+                objc2_foundation::NSRange::new(0, tex.mipmapLevelCount()),
+                objc2_foundation::NSRange::new(0, tex.arrayLength()),
+                swizzle,
+            )
+        }?;
+        if self.swizzles.len() > 4096 {
+            self.swizzles.clear();
+        }
+        self.swizzles.insert(key, view.clone());
+        Some(view)
+    }
+
     /// A 1x1 transparent black texture, for unbound image descriptors.
     fn null_texture(&mut self) -> Option<Retained<Texture>> {
         if self.null.is_none() {
@@ -628,7 +671,6 @@ impl Metal {
                             address,
                             function,
                             translated,
-                            rect: Mutex::new(None),
                         })
                     })
                 }
@@ -644,16 +686,35 @@ impl Metal {
         program
     }
 
-    /// The vertex function drawing `program`'s rectangles: six vertices per
-    /// three guest ones, the fourth corner being v1 + v2 - v0.
-    fn rect_function(&mut self, program: &Program) -> Option<Retained<Function>> {
-        if let Some(f) = program.rect.lock().ok()?.as_ref() {
+    // Metal rejects pixel inputs the vertex function lacks; hardware reads
+    // zeros, so variants declare them.
+    fn vertex_function(&mut self, vertex: &Program, pixel: &Program, rect: bool) -> Option<Retained<Function>> {
+        let locations = |msl: &str| -> Vec<u32> {
+            let mut v: Vec<u32> = msl
+                .match_indices("[[user(locn")
+                .filter_map(|(i, m)| msl[i + m.len()..].split(|c: char| !c.is_ascii_digit()).next()?.parse().ok())
+                .collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+        let have = locations(&vertex.translated.msl);
+        let missing: Vec<u32> = locations(&pixel.translated.msl).into_iter().filter(|l| !have.contains(l)).collect();
+        if missing.is_empty() && !rect {
+            return Some(vertex.function.clone());
+        }
+        let key = (vertex.address, rect, missing.clone());
+        if let Some(f) = self.variants.get(&key) {
             return f.clone();
         }
-        let f = rect_source(&program.translated.msl).and_then(|msl| self.compile(&msl, "gen5_vs_rect"));
-        if let Ok(mut r) = program.rect.lock() {
-            *r = Some(f.clone());
-        }
+        let extra: String = missing.iter().map(|l| format!("    float4 x{l} [[user(locn{l})]];\n")).collect();
+        let msl = vertex.translated.msl.replacen("    float4 pos [[position]];\n", &format!("    float4 pos [[position]];\n{extra}"), 1);
+        let f = if rect {
+            rect_source(&msl).and_then(|m| self.compile(&m, "gen5_vs_rect"))
+        } else {
+            self.compile(&msl, &vertex.translated.entry)
+        };
+        self.variants.insert(key, f.clone());
         f
     }
 
@@ -847,7 +908,11 @@ impl Metal {
                     }
                     let d = self.descriptor(host, user, source, 8)?;
                     let image = Image::read(&d);
-                    let tex = if image.address == 0 { self.null_texture() } else { self.image(host, image) };
+                    let tex = if image.address == 0 || image.kind < 8 {
+                        self.null_texture()
+                    } else {
+                        self.image(host, image).and_then(|t| self.swizzled(t, image.swizzle))
+                    };
                     let Some(tex) = tex else {
                         self.report(format!("image {image:x?} for the program at {:#x} not supported", program.address));
                         return None;
@@ -959,11 +1024,7 @@ impl Metal {
         let vertex = self.program(host, state, Stage::Vertex, vs_addr, vs_users, ngg).ok_or("vertex program")?;
         let pixel = self.program(host, state, Stage::Pixel, ps_addr, ps_users, false).ok_or("pixel program")?;
         let rect = u[uconfig::VGT_PRIMITIVE_TYPE] == 7;
-        let vertex_function = if rect {
-            self.rect_function(&vertex).ok_or("rectangle-list vertex program")?
-        } else {
-            vertex.function.clone()
-        };
+        let vertex_function = self.vertex_function(&vertex, &pixel, rect).ok_or("vertex program variant")?;
 
         let mask = c[context::CB_TARGET_MASK];
         let mut targets = Vec::new();
@@ -1025,7 +1086,24 @@ impl Metal {
             Draw::Indexed { count, address, .. } if !rect => {
                 let wide = u[uconfig::VGT_INDEX_TYPE] & 3 == 1;
                 let size = if wide { 4 } else { 2 };
-                Some((self.window(host, address, count as u64 * size).ok_or("index buffer")?, wide))
+                let len = count as u64 * size;
+                let bound = if address % 4 == 0 {
+                    self.window(host, address, len).ok_or("index buffer")?
+                } else {
+                    // Metal needs index buffer offsets to be multiples of 4.
+                    let mut b = vec![0u8; len.max(4) as usize];
+                    host.read(address, &mut b[..len as usize]);
+                    let buf = unsafe {
+                        self.device.newBufferWithBytes_length_options(
+                            NonNull::new(b.as_mut_ptr()).ok_or("index buffer")?.cast(),
+                            b.len(),
+                            MTLResourceOptions::StorageModeShared,
+                        )
+                    }
+                    .ok_or("index buffer")?;
+                    (buf, 0)
+                };
+                Some((bound, wide))
             }
             _ => None,
         };
@@ -1115,9 +1193,7 @@ impl Backend for Metal {
             Ok(()) => self.draws += 1,
             Err(why) => {
                 self.skipped += 1;
-                if why != "vertex program" && why != "pixel program" {
-                    self.report(format!("draw skipped: {why}"));
-                }
+                *self.reasons.entry(why).or_default() += 1;
             }
         }
     }
@@ -1127,9 +1203,7 @@ impl Backend for Metal {
             Ok(()) => self.dispatches += 1,
             Err(why) => {
                 self.skipped += 1;
-                if why != "compute program" {
-                    self.report(format!("dispatch skipped: {why}"));
-                }
+                *self.reasons.entry(why).or_default() += 1;
             }
         }
     }
@@ -1139,7 +1213,9 @@ impl Backend for Metal {
     }
 
     fn summary(&self) -> String {
-        format!("{} drawn, {} dispatched, {} skipped", self.draws, self.dispatches, self.skipped)
+        let mut reasons: Vec<_> = self.reasons.iter().collect();
+        reasons.sort_by(|a, b| b.1.cmp(a.1));
+        format!("{} drawn, {} dispatched, {} skipped {reasons:?}", self.draws, self.dispatches, self.skipped)
     }
 
     fn frame_done(&mut self, shown: Option<u64>) {
@@ -1203,28 +1279,39 @@ fn write_mask(bits: u32, swap: u32) -> usize {
 /// The Metal format of a color target, for the layouts titles render to.
 fn color_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
     use MTLPixelFormat as P;
-    let srgb = f.number == 6;
-    Some(match (f.layout, f.number, f.swap & 1) {
-        (10, _, 0) if srgb => P::RGBA8Unorm_sRGB,
-        (10, _, 1) if srgb => P::BGRA8Unorm_sRGB,
-        (10, 0, 0) => P::RGBA8Unorm,
-        (10, 0, 1) => P::BGRA8Unorm,
-        (10, 4, _) => P::RGBA8Uint,
-        (12, 0, _) => P::RGB10A2Unorm,
-        (6, 7, _) => P::RG11B10Float,
-        (12, 7, _) | (13, 7, _) => P::RGB10A2Unorm,
-        (5, 7, _) => P::RG16Float,
-        (5, 0, _) => P::RG16Unorm,
-        (2, 7, _) => P::R16Float,
-        (2, 0, _) => P::R16Unorm,
-        (4, 7, _) => P::R32Float,
-        (4, 4, _) => P::R32Uint,
-        (1, 0, _) => P::R8Unorm,
-        (3, 0, _) => P::RG8Unorm,
-        (14, 7, _) => P::RGBA16Float,
-        (14, 0, _) => P::RGBA16Unorm,
-        (11, 7, _) => P::RG32Float,
-        (17, 7, _) => P::RGBA32Float,
+    let bgr = f.swap & 1 == 1;
+    Some(match (f.layout, f.number) {
+        (10, 6) if bgr => P::BGRA8Unorm_sRGB,
+        (10, 6) => P::RGBA8Unorm_sRGB,
+        (10, 0) if bgr => P::BGRA8Unorm,
+        (10, 0) => P::RGBA8Unorm,
+        (10, 1) => P::RGBA8Snorm,
+        (10, 4) => P::RGBA8Uint,
+        (10, 5) => P::RGBA8Sint,
+        (1, 0) => P::R8Unorm,
+        (1, 4) => P::R8Uint,
+        (2, 0) => P::R16Unorm,
+        (2, 4) => P::R16Uint,
+        (2, 7) => P::R16Float,
+        (3, 0) => P::RG8Unorm,
+        (3, 4) => P::RG8Uint,
+        (4, 4) => P::R32Uint,
+        (4, 5) => P::R32Sint,
+        (4, 7) => P::R32Float,
+        (5, 0) => P::RG16Unorm,
+        (5, 4) => P::RG16Uint,
+        (5, 7) => P::RG16Float,
+        (6 | 7, _) => P::RG11B10Float,
+        (8 | 9, 4) => P::RGB10A2Uint,
+        (8 | 9, _) => P::RGB10A2Unorm,
+        (11, 4) => P::RG32Uint,
+        (11, 7) => P::RG32Float,
+        (12, 0) => P::RGBA16Unorm,
+        (12, 4) => P::RGBA16Uint,
+        (12, 7) => P::RGBA16Float,
+        (14, 4) => P::RGBA32Uint,
+        (14, 7) => P::RGBA32Float,
+        (16, 0) => P::B5G6R5Unorm,
         _ => return None,
     })
 }

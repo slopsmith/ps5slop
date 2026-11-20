@@ -289,6 +289,15 @@ impl Processor {
             let n = std::env::var("PS5SLOP_GPU_DUMP").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
             LEFT.store(n, Relaxed);
         }
+        static SKIP: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+        if SKIP.load(Relaxed) == -1 {
+            let n = std::env::var("PS5SLOP_GPU_DUMP_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            SKIP.store(n, Relaxed);
+        }
+        if SKIP.load(Relaxed) > 0 {
+            SKIP.fetch_sub(1, Relaxed);
+            return;
+        }
         if LEFT.fetch_sub(1, Relaxed) <= 0 {
             return;
         }
@@ -405,24 +414,34 @@ impl Processor {
 
     /// An end-of-pipe release: data select 1 writes 32 bits, 2 writes 64,
     /// 3 and 4 a clock; interrupt selects 1 and 2 raise an interrupt.
+    // Selectors 5 and 6 write nothing and interrupt only while the label at
+    // `dest` is at or below `value` (SharpEmu-mac's `InterruptDecision`).
     fn release(&mut self, host: &dyn Host, data: u32, interrupt: u32, dest: u64, value: u64, context: u32) {
         self.sync();
-        match data {
-            1 => {
-                host.write(dest, &(value as u32).to_le_bytes());
+        let raise = match interrupt {
+            1 | 2 | 4 => true,
+            5 => dest != 0 && (read_u64(host, dest) as u32) <= value as u32,
+            6 => dest != 0 && read_u64(host, dest) <= value,
+            _ => false,
+        };
+        if interrupt <= 3 {
+            match data {
+                1 => {
+                    host.write(dest, &(value as u32).to_le_bytes());
+                }
+                2 => {
+                    host.write(dest, &value.to_le_bytes());
+                }
+                3 | 4 => {
+                    let clock = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_nanos() as u64);
+                    host.write(dest, &clock.to_le_bytes());
+                }
+                _ => {}
             }
-            2 => {
-                host.write(dest, &value.to_le_bytes());
-            }
-            3 | 4 => {
-                let clock = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_nanos() as u64);
-                host.write(dest, &clock.to_le_bytes());
-            }
-            _ => {}
         }
-        if matches!(interrupt, 1 | 2) {
+        if raise {
             self.stats.interrupts += 1;
             host.interrupt(context);
         }

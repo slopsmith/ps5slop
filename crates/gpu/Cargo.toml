@@ -11,7 +11,7 @@ gfx10 = { path = "../gfx10" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSError"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSError", "NSRange"] }
 objc2-metal = { version = "0.3", default-features = false, features = ["std", "block2", "MTLDevice", "MTLResource", "MTLBuffer", "MTLTexture", "MTLSampler", "MTLCommandQueue", "MTLCommandBuffer", "MTLCommandEncoder", "MTLRenderCommandEncoder", "MTLComputeCommandEncoder", "MTLBlitCommandEncoder", "MTLComputePipeline", "MTLRenderPass", "MTLRenderPipeline", "MTLLibrary", "MTLTypes", "MTLPixelFormat", "MTLAllocation", "MTLArgument", "MTLDepthStencil"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]

@@ -89,10 +89,10 @@ impl ColorFormat {
     pub fn bytes(self) -> Option<u32> {
         Some(match self.layout {
             1 => 1,
-            2 | 3 | 5 | 6 | 7 | 8 => 2,
-            4 | 9 | 10 | 11 | 12 | 13 => 4,
-            14..=16 => 8,
-            17 => 16,
+            2 | 3 | 16..=19 => 2,
+            4..=10 | 20..=22 => 4,
+            11 | 12 => 8,
+            14 => 16,
             _ => return None,
         })
     }

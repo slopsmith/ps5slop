@@ -113,6 +113,9 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>, stats: Arc<Mutex<gpu::Stats>>) {
                 }
             }
         });
+        // Unverified: the driver signals each submission's completion; Minecraft
+        // waits for it when its label poll loses the race.
+        gpu::Host::interrupt(&host, 0);
         *lock(&stats) = processor.stats.clone();
         if report && last_report.elapsed().as_secs() >= 1 {
             last_report = std::time::Instant::now();
