@@ -10,6 +10,10 @@ publish.workspace = true
 name = "ps5slop-asmtest"
 path = "src/main.rs"
 
+[[bin]]
+name = "ps5slop-fuzz"
+path = "src/fuzz.rs"
+
 [dependencies]
 memory = { path = "../memory" }
 x86 = { path = "../x86" }

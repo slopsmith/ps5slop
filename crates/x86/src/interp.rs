@@ -63,6 +63,9 @@ pub fn run(cpu: &mut Cpu, mem: &Memory, limit: u64) -> Exit {
 
 pub fn step(cpu: &mut Cpu, mem: &Memory) -> Exit {
     let rip = cpu.rip;
+    if memory::watch::active() {
+        memory::watch::set_site(rip);
+    }
     let insn = decode(|i| {
         let mut b = [0u8];
         mem.fetch(rip.wrapping_add(i as u64), &mut b).map(|_| b[0])
@@ -413,7 +416,7 @@ impl Ctx<'_> {
             }
             0x9f => {
                 let f = (self.cpu.rflags & (SF | ZF | AF | PF | CF)) | 2;
-                self.set(4, 1, f);
+                self.cpu.regs[RAX] = (self.cpu.regs[RAX] & !0xff00) | f << 8;
             }
             0xa4..=0xa7 | 0xaa..=0xaf => self.string()?,
             0xa8 | 0xa9 => {
@@ -588,7 +591,8 @@ impl Ctx<'_> {
                 }
                 let bits = size as u32 * 8;
                 let (hi, lo) = if size == 1 {
-                    (self.get(4, 1), self.get(0, 1))
+                    let ax = self.get(0, 2);
+                    (ax >> 8, ax & 0xff)
                 } else {
                     (self.get(RDX as u8, size), self.get(0, size))
                 };

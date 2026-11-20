@@ -106,3 +106,25 @@ Unchecked so far: tests whose expected values include MMX registers.
 **x87 (2026-11-19):** 1,780 pass, 0 wrong, 281 unimplemented, 226 skipped. Our x87 computes in double precision, as FEX's reduced-precision mode does, so the runner skips the `X87/` tests that have an `X87_F64` twin (FEX runs that one in this mode), plus `precision_test_*` and `FXAM_Simple`, which need 80-bit values. Adding x87 also let `vcmp*_full` run, which showed that VEX compare predicates 8-15 and 24-31 ignored their "unordered is true" bit; fixed.
 
 **Other tests:** unit tests whose encodings come from llvm-mc, and our test programs (`scripts/run-test-programs`).
+
+## Correctness oracle: Rosetta 2, by fuzzing
+
+`ps5slop-fuzz [STATES [SEED]]` (in `crates/asmtest`) makes one register-form encoding (ModRM mod = 3, no operand naming RSP) for every opcode of the VEX maps (both L, both W, all four `pp`), the legacy `0F`, `0F 38` and `0F 3A` maps (with and without `66`/`F3`/`F2` and REX.W) and the safe primary opcodes, with random registers. Our decoder gives each one's length. `crates/asmtest/fuzz/harness.c`, built with `clang -arch x86_64`, runs them natively under Rosetta 2 with STATES random register states each (all GPRs, YMM0-15, arithmetic flags), and the tool runs the same states through our interpreter and compares GPRs, YMM registers and the arithmetic flags. Results go to `target/fuzz/report.txt`. Control flow, stack, string, I/O, x87, system and timing instructions are left out, as is `maskmov` (it stores to `[rdi]`). Only the interpreter is checked; the JIT has `PS5SLOP_JIT_VERIFY` for that.
+
+Rosetta executes AVX2, FMA, F16C and BMI1/2 even though its CPUID hides them, so this covers the instructions FEX's suite reaches only partly. It is not hardware, though. Measured differences where the Intel SDM sides with us, not Rosetta (2026-11-20):
+
+- `vpsllvq`/`vpsrlvq` keep the value when a count has bit 63 set (the SDM: any count above 63 gives 0).
+- `cmpxchg` sets only OF, and zero-extends a 32-bit register destination when the compare fails (hardware leaves it untouched, as QEMU's 2022 fix describes).
+- Legacy SSE `cmpps`/`cmpsd` use the whole immediate as the predicate (the SDM: only bits 2:0 count for the legacy forms).
+- `vcvtps2ph` swaps round-down and round-up.
+- `movsxd` without REX.W sign-extends into 64 bits.
+
+The flags the SDM leaves undefined (after `imul`, shifts, `bsf`/`bsr`, `andn`, `ptest`'s AF/PF/SF/OF, ...) differ too and are not bugs. 16-bit `shld`/`shrd` with a count above 16 are undefined as well.
+
+**First run (2026-11-20, seeds 0x5eed1234abcd0001 and 12345, 8 and 16 states):** 18,376 encodings, of which about 2,200 run in both. Real bugs it found, all fixed:
+
+- VEX.256 shifts by an XMM count (`vpsrl`/`vpsra`/`vpsll` `w`/`d`/`q`) with the count register also the destination: the two 128-bit halves ran low first, so the upper half read an already shifted count. Halves now run upper first. This broke Minecraft's CPU texture tiling (see [debugging.md](debugging.md)).
+- `lahf` and 8-bit `div`/`idiv` with a REX prefix used SPL instead of AH.
+- Legacy `cmpps`/`cmppd`/`cmpss`/`cmpsd` used five predicate bits instead of three.
+
+About 1,900 encodings that Rosetta rejects with `#UD` (wrong VEX.L or W for the instruction, mostly) run in our interpreter; games do not execute those, so this is left alone.

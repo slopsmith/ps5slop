@@ -502,3 +502,44 @@ fn negated_fma_passes_nan_operands_through_unchanged() {
     steps(&mut cpu, &mem, 1);
     assert_eq!(cpu.xmm[2][0] as u32, 0xffc0_0000);
 }
+
+#[test]
+fn wide_shift_by_its_own_destination_uses_the_original_count_in_both_halves() {
+    let (mut cpu, mem) = machine("vpsrlq ymm3, ymm3, xmm3", &[0xc4, 0xe1, 0x65, 0xd3, 0xdb]);
+    cpu.xmm[3] = [1, 0x14, 0x259b_7a8c_b36e_502b, 0x8000_0000];
+    steps(&mut cpu, &mem, 1);
+    assert_eq!(cpu.xmm[3], [0, 0xa, 0x12cd_bd46_59b7_2815, 0x4000_0000]);
+}
+
+#[test]
+fn lahf_and_byte_division_use_ah_even_with_a_rex_prefix() {
+    let (mut cpu, mem) = machine("rex lahf; rex idiv sil", &[0x40, 0x9f, 0x48, 0xf6, 0xfe]);
+    cpu.rflags |= crate::cpu::flags::CF;
+    steps(&mut cpu, &mem, 1);
+    assert_eq!(cpu.regs[RAX] >> 8 & 0xff, 0x03);
+    cpu.regs[RAX] = 0xffff;
+    cpu.regs[RSI] = 0x15;
+    steps(&mut cpu, &mem, 1);
+    assert_eq!(cpu.regs[RAX], 0xff00);
+}
+
+#[test]
+fn legacy_compare_uses_only_three_predicate_bits() {
+    let (mut cpu, mem) = machine("cmpps xmm1, xmm14, 0xad", &[0x49, 0x0f, 0xc2, 0xce, 0xad]);
+    cpu.xmm[1] = [0x7fff_ffff, 0, 0, 0];
+    cpu.xmm[14] = [0, 0, 0, 0];
+    steps(&mut cpu, &mem, 1);
+    assert_eq!(cpu.xmm[1][0], u64::MAX);
+}
+
+#[test]
+fn horizontal_add_sums_neighbouring_lanes_of_each_source() {
+    let (mut cpu, mem) = machine("vhaddps xmm2, xmm1, xmm1", &[0xc5, 0xf3, 0x7c, 0xd1]);
+    let ps = |v: [f32; 4]| {
+        let b: Vec<u64> = v.iter().map(|x| x.to_bits() as u64).collect();
+        [b[0] | b[1] << 32, b[2] | b[3] << 32, 0, 0]
+    };
+    cpu.xmm[1] = ps([1.0, 2.0, 3.0, 4.0]);
+    steps(&mut cpu, &mem, 1);
+    assert_eq!(cpu.xmm[2], ps([3.0, 7.0, 3.0, 7.0]));
+}

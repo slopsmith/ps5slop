@@ -360,12 +360,14 @@ impl Ctx<'_> {
         Ok(true)
     }
 
-    /// Runs a 256-bit in-lane operation as two 128-bit ones.
+    /// Runs a 256-bit in-lane operation as two 128-bit ones, the upper half
+    /// first: some read the low half of a source (a shift count) in both.
     pub(super) fn by_halves(&mut self, op: fn(&mut Self) -> Res<bool>) -> Res<bool> {
         self.wide = true;
+        self.half = 1;
         let result = match op(self) {
             Ok(true) => {
-                self.half = 1;
+                self.half = 0;
                 op(self)
             }
             other => other,
@@ -578,6 +580,25 @@ impl Ctx<'_> {
                 };
                 self.xset(d, r);
             }
+            (Pfx::P66 | Pfx::F2, 0x7c | 0x7d) => {
+                let (a, b) = (self.src1(), self.src128(true)?);
+                let sub = op == 0x7d;
+                let r = if p == Pfx::F2 {
+                    let (la, lb) = (lanes::<4>(a), lanes::<4>(b));
+                    let pair = |l: [u64; 4], k: usize| {
+                        let (x, y) = (l[2 * k] as u32, l[2 * k + 1] as u32);
+                        (if sub { f32op(x, y, |x, y| x - y) } else { f32op(x, y, |x, y| x + y) }) as u64
+                    };
+                    join::<4>([pair(la, 0), pair(la, 1), pair(lb, 0), pair(lb, 1)])
+                } else {
+                    let (la, lb) = (lanes::<2>(a), lanes::<2>(b));
+                    let pair = |l: [u64; 2]| {
+                        if sub { f64op(l[0], l[1], |x, y| x - y) } else { f64op(l[0], l[1], |x, y| x + y) }
+                    };
+                    join::<2>([pair(la), pair(lb)])
+                };
+                self.xset(d, r);
+            }
             (_, 0x5a) => match p {
                 Pfx::None => {
                     let s = lanes::<4>(self.src_low(8)? as u128);
@@ -779,7 +800,7 @@ impl Ctx<'_> {
                 );
             }
             (_, 0xc2) => {
-                let pred = self.imm() as u8;
+                let pred = self.imm() as u8 & if self.insn.vex.is_some() { 0x1f } else { 7 };
                 let a = self.src1();
                 match p {
                     Pfx::None | Pfx::P66 => {
@@ -1179,7 +1200,7 @@ fn in_lane(op: u8, p: Pfx) -> bool {
         | 0xc2
         | 0xc6 => packed,
         0x12 | 0x16 => matches!(p, Pfx::F3 | Pfx::F2),
-        0xd0 => matches!(p, Pfx::P66 | Pfx::F2),
+        0xd0 | 0x7c | 0x7d => matches!(p, Pfx::P66 | Pfx::F2),
         0x5b => p != Pfx::F2,
         0x6f | 0x7f => matches!(p, Pfx::P66 | Pfx::F3),
         0x70 => p != Pfx::None,
