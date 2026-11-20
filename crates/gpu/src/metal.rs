@@ -295,6 +295,9 @@ pub struct Metal {
     pass: Option<(Retained<RenderEncoder>, Vec<u64>, Vec<Retained<Texture>>, Option<(Retained<Texture>, usize)>)>,
     snap: Option<Snap>,
     depths: HashMap<u64, Retained<Texture>>,
+    /// Depth-layout images a program wrote since their depth texture was
+    /// last used: the depth texture takes their contents first.
+    depth_stores: std::collections::HashSet<u64>,
     shown: HashMap<u64, Retained<Texture>>,
     swizzles: HashMap<(usize, [u8; 4]), Retained<Texture>>,
     depth_states: HashMap<(DepthState, bool), Retained<ProtocolObject<dyn MTLDepthStencilState>>>,
@@ -483,6 +486,7 @@ impl Metal {
             pass: None,
             snap: None,
             depths: HashMap::new(),
+            depth_stores: Default::default(),
             shown: HashMap::new(),
             swizzles: HashMap::new(),
             depth_states: HashMap::new(),
@@ -1479,8 +1483,44 @@ impl Metal {
         Some(enc)
     }
 
-    /// The depth texture at `d`'s address; new ones start cleared.
+    /// The depth texture at `d`'s address, holding what a program last
+    /// stored to that address as an image (Minecraft copies its scene depth
+    /// that way before drawing water); new ones start cleared.
     fn depth(&mut self, d: &DepthTarget, width: u32, height: u32) -> Option<(Retained<Texture>, MTLPixelFormat, bool)> {
+        let (t, format, fresh) = self.depth_texture(d, width, height)?;
+        if !self.depth_stores.remove(&d.address) {
+            return Some((t, format, fresh));
+        }
+        let stored = self
+            .volumes
+            .get(&d.address)
+            .cloned()
+            .or_else(|| self.targets.get(&d.address).map(|x| x.texture.clone()))
+            .filter(|s| s.pixelFormat() == MTLPixelFormat::R32Float && s.width() == t.width() && s.height() == t.height());
+        let Some(src) = stored.filter(|_| format != MTLPixelFormat::Depth16Unorm) else {
+            return Some((t, format, fresh));
+        };
+        let (w, h) = (t.width(), t.height());
+        let staging = self.device.newBufferWithLength_options(w * h * 4, MTLResourceOptions::StorageModePrivate)?;
+        self.end_pass();
+        let command = self.command();
+        let blit = command.blitCommandEncoder()?;
+        let options = if format == MTLPixelFormat::Depth32Float_Stencil8 { MTLBlitOption::DepthFromDepthStencil } else { MTLBlitOption::empty() };
+        unsafe {
+            blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage(
+                &src, 0, 0, MTLOrigin { x: 0, y: 0, z: 0 }, MTLSize { width: w, height: h, depth: 1 }, &staging, 0, w * 4, w * h * 4,
+            );
+            blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin_options(
+                &staging, 0, w * 4, w * h * 4, MTLSize { width: w, height: h, depth: 1 }, &t, d.slice as usize, 0, MTLOrigin { x: 0, y: 0, z: 0 }, options,
+            );
+        }
+        blit.endEncoding();
+        self.note(|| format!("      depth {:#x} filled from the image a program stored there", d.address));
+        Some((t, format, false))
+    }
+
+    /// The depth texture at `d`'s address; new ones start cleared.
+    fn depth_texture(&mut self, d: &DepthTarget, width: u32, height: u32) -> Option<(Retained<Texture>, MTLPixelFormat, bool)> {
         let format = match (d.format, d.stencil) {
             (_, true) => MTLPixelFormat::Depth32Float_Stencil8,
             (1, false) => MTLPixelFormat::Depth16Unorm,
@@ -1586,6 +1626,9 @@ impl Metal {
     /// render target, so later reads of that address see what was written.
     fn storage_image(&mut self, host: &dyn Host, image: Image, kind: TextureKind) -> Option<Retained<Texture>> {
         let (format, bpe) = image_format(image.format)?;
+        if is_depth_layout(image.raw_tile) {
+            self.depth_stores.insert(image.address);
+        }
         if is_compressed(format) {
             return None;
         }
@@ -2066,6 +2109,19 @@ impl Metal {
                 regs::scissor(c),
                 c[context::PA_CL_CLIP_CNTL],
                 c[context::PA_CL_VTE_CNTL]
+            )
+        });
+        self.note(|| {
+            format!(
+                "CB_COLOR_CONTROL {:#x} CB_TARGET_MASK {:#x} CB_SHADER_MASK {:#x} CB_BLEND0..3 {:x?} DB_DEPTH_CONTROL {:#x} DB_STENCIL_CONTROL {:#x} DB_STENCIL_REF_MASK {:#x} DB_RENDER_CONTROL {:#x}",
+                c[0x202],
+                c[context::CB_TARGET_MASK],
+                c[context::CB_TARGET_MASK + 1],
+                &c[context::CB_BLEND0_CONTROL..context::CB_BLEND0_CONTROL + 4],
+                c[context::DB_DEPTH_CONTROL],
+                c[context::DB_STENCIL_CONTROL],
+                c[context::DB_STENCIL_REF_MASK],
+                c[context::DB_RENDER_CONTROL]
             )
         });
         let rect = u[uconfig::VGT_PRIMITIVE_TYPE] == 7;
