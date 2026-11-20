@@ -3,7 +3,7 @@
 //! processor in submission order. Ported in shape from SharpEmu's
 //! `AgcExports.Submissions.cs`.
 
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 
 use super::{ERROR_INVALID_ARGUMENT, ret};
@@ -15,6 +15,9 @@ use crate::{CallError, Env, Function, Kernel, Outcome};
 pub(crate) const GRAPHICS_FILTER: i16 = -14;
 /// The event ident the graphics queue's end-of-pipe interrupts use.
 const GRAPHICS_EOP_EVENT: u64 = 0;
+/// Submissions waiting for the GPU before a submitter blocks, as a full ring
+/// would block it (our choice of depth, unverified).
+const MAX_QUEUED: usize = 1;
 /// SharpEmu's limit on one submission's size.
 const MAX_DWORDS: u32 = 0xF_FFFF;
 
@@ -26,7 +29,7 @@ struct Job {
 /// The GPU thread's queue, started by the first submission.
 #[derive(Default)]
 pub(super) struct Gpu {
-    jobs: Mutex<Option<Sender<Job>>>,
+    jobs: Mutex<Option<SyncSender<Job>>>,
     pub(super) stats: Arc<Mutex<gpu::Stats>>,
 }
 
@@ -138,7 +141,7 @@ fn enqueue(env: &Env, buffers: Vec<(u64, u32)>) {
     let gpu = &env.kernel.agc.gpu;
     let mut jobs = lock(&gpu.jobs);
     let sender = jobs.get_or_insert_with(|| {
-        let (tx, rx) = channel();
+        let (tx, rx) = sync_channel(MAX_QUEUED);
         let host = Host {
             kernel: env.kernel.this(),
             mem: env.kernel.memory(),
@@ -150,6 +153,8 @@ fn enqueue(env: &Env, buffers: Vec<(u64, u32)>) {
             .expect("the GPU thread starts");
         tx
     });
+    let sender = sender.clone();
+    drop(jobs);
     let _ = sender.send(Job { buffers });
 }
 
