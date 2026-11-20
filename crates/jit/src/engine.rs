@@ -89,6 +89,80 @@ struct Stats {
     opcodes: HashMap<(u8, u8, u8), u64>,
     rips: HashMap<u64, u64>,
     exits: [u64; 10],
+    causes: HashMap<(Cause, u64), u64>,
+}
+
+/// Why a guest thread left the VM, recorded with a guest RIP.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Cause {
+    /// A call into a host function, at its trap address.
+    HostCall,
+    /// A lookup miss that translated a new block.
+    NewBlock,
+    /// A lookup miss at a block already translated (a table collision).
+    Collision,
+    /// A lookup miss at a tier-2 region already compiled.
+    Region,
+    /// A lookup miss at code whose first instruction cannot be translated.
+    Untranslatable,
+    /// An instruction handed to the interpreter.
+    Interpreter,
+    /// A memory fault in translated code.
+    Fault,
+    /// A fault inside a native library function.
+    NativeFault,
+    /// A block counted down to recompiling as a tier-2 region.
+    TierUp,
+    /// Kicked out by another thread or the sampler (no RIP).
+    Canceled,
+}
+
+impl Cause {
+    pub fn name(self) -> &'static str {
+        match self {
+            Cause::HostCall => "host call",
+            Cause::NewBlock => "miss, new block",
+            Cause::Collision => "miss, table collision",
+            Cause::Region => "miss, tier-2 region",
+            Cause::Untranslatable => "miss, untranslatable",
+            Cause::Interpreter => "interpreter",
+            Cause::Fault => "fault",
+            Cause::NativeFault => "fault in native function",
+            Cause::TierUp => "tier-up",
+            Cause::Canceled => "kicked",
+        }
+    }
+}
+
+/// Exits by cause: (cause, total, hottest (RIP, count))), largest first.
+pub type Causes = Vec<(Cause, u64, Vec<(u64, u64)>)>;
+
+pub(crate) fn note_exit(cause: Cause, rip: u64) {
+    if let Some(s) = stats() {
+        *s.lock().unwrap_or_else(|e| e.into_inner()).causes.entry((cause, rip)).or_default() += 1;
+    }
+}
+
+/// What [`note_exit`] gathered, with the `top` hottest RIPs per cause.
+pub fn exit_causes(top: usize) -> Causes {
+    let Some(s) = stats() else { return Vec::new() };
+    let s = s.lock().unwrap_or_else(|e| e.into_inner());
+    let mut by: HashMap<Cause, (u64, Vec<(u64, u64)>)> = HashMap::new();
+    for (&(c, rip), &n) in &s.causes {
+        let e = by.entry(c).or_default();
+        e.0 += n;
+        e.1.push((rip, n));
+    }
+    let mut out: Causes = by
+        .into_iter()
+        .map(|(c, (total, mut rips))| {
+            rips.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+            rips.truncate(top);
+            (c, total, rips)
+        })
+        .collect();
+    out.sort_by_key(|&(_, total, _)| std::cmp::Reverse(total));
+    out
 }
 
 fn stats() -> Option<&'static Mutex<Stats>> {
@@ -524,6 +598,7 @@ impl Engine {
                             continue;
                         }
                         count_exit(Count::HostCall);
+                        note_exit(Cause::HostCall, rip);
                         self.store(x)?;
                         x.rip = rip;
                         return Ok(x86::Exit::Trap(rip));
@@ -551,24 +626,29 @@ impl Engine {
                 }
                 Exit::Hvc(HVC_TIERUP) => {
                     let rip = self.cpu.reg(RIP.0)?;
+                    note_exit(Cause::TierUp, rip);
                     machine()?.tier_up(mem, rip);
                     continue;
                 }
                 Exit::Hvc(HVC_HOST) => {
                     count_exit(Count::HostCall);
                     let rip = self.cpu.reg(RIP.0)?;
+                    note_exit(Cause::HostCall, rip);
                     self.store(x)?;
                     x.rip = rip;
                     return Ok(x86::Exit::Trap(rip));
                 }
                 Exit::Hvc(HVC_INTERP) => {
                     count_exit(Count::Interp);
-                    self.cpu.reg(RIP.0)?
+                    let rip = self.cpu.reg(RIP.0)?;
+                    note_exit(Cause::Interpreter, rip);
+                    rip
                 }
                 Exit::Fault { elr: pc, .. } | Exit::Stage2 { pc } if crate::in_native(pc) => {
                     count_exit(Count::Fault);
                     SHARED.old_pc[self.cpu.slot].store(0, Ordering::SeqCst);
                     let rip = self.cpu.reg(RIP.0)?;
+                    note_exit(Cause::NativeFault, rip);
                     self.store(x)?;
                     x.rip = rip;
                     return Ok(x86::Exit::Trap(rip));
@@ -579,11 +659,13 @@ impl Engine {
                     let Some(rip) = machine()?.rip_at(pc) else {
                         panic!("the JIT faulted outside translated code at {pc:#x}");
                     };
+                    note_exit(Cause::Fault, rip);
                     SHARED.old_pc[self.cpu.slot].store(0, Ordering::SeqCst);
                     rip
                 }
                 Exit::Canceled { pc, cpsr } => {
                     count_exit(Count::Cancel);
+                    note_exit(Cause::Canceled, 0);
                     if stop() {
                         SHARED.old_pc[self.cpu.slot].store(0, Ordering::SeqCst);
                         return Ok(x86::Exit::Limit);

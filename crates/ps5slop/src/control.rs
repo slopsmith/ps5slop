@@ -439,9 +439,26 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
     }
     let (ops, rips, exits) = jit::interpreted(top);
     out.push(format!(
-        "exits: misses {}, untranslated {}, host calls {}, faults {}, cancels {}",
-        exits[0], exits[1], exits[2], exits[3], exits[4]
+        "exits: misses {} ({} at translated blocks, {} at untranslatable code), untranslated {}, host calls {}, faults {}, cancels {}, slow entries {}",
+        exits[0], exits[5], exits[6], exits[1], exits[2], exits[3], exits[4], exits[8]
     ));
+    let causes = jit::exit_causes(top);
+    let total: u64 = causes.iter().map(|c| c.1).sum();
+    out.push(format!("VM exits by cause ({total}):"));
+    for (cause, n, rips) in &causes {
+        out.push(format!("  {:>10} {:>5.1}%  {}", n, *n as f64 * 100.0 / total.max(1) as f64, cause.name()));
+        if *cause == jit::Cause::Canceled {
+            continue;
+        }
+        for (rip, k) in rips {
+            let at = match cause {
+                jit::Cause::HostCall => kernel.hle.describe(*rip).map(|d| d.trim_start_matches("the stub of ").to_string()),
+                _ => None,
+            }
+            .unwrap_or_else(|| sym(kernel, *rip));
+            out.push(format!("      {k:>10}  {at}"));
+        }
+    }
     out.push("interpreted opcodes (map, opcode, /ext):".into());
     for ((map, op, ext), n) in ops {
         let ext = if ext == 0xff { String::new() } else { format!(" /{ext}") };

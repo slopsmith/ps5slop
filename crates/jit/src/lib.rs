@@ -17,7 +17,7 @@ use a64::{Asm, Reg, Shift, Size, Width};
 use hvf::{GuestMemory, Vcpu, VcpuKicker, Vm, reg, sysreg};
 use memory::Memory;
 
-pub use engine::{instructions, interpret, interpreted, kick_all, recent_blocks, report, run};
+pub use engine::{Cause, Causes, exit_causes, instructions, interpret, interpreted, kick_all, recent_blocks, report, run};
 pub use hvf::Error;
 
 /// `hvc` numbers the runtime's exception vectors use.
@@ -62,6 +62,7 @@ const TEST_CODE: usize = layout::CODE + 0x1000;
 /// What lies at runtime offset `off`, for the profiler.
 fn runtime_part(off: usize) -> &'static str {
     match off {
+        ENTRY_FLUSH | RESUME_FLUSH | DISPATCH => "kicked before entering",
         _ if off < ENTRY_FLUSH => "vectors",
         _ if off < RESUME_FLUSH => "entry",
         _ if off < DISPATCH => "resume",
@@ -575,11 +576,13 @@ impl Machine {
     /// false if it cannot be translated or the cache is full.
     fn translate(&mut self, mem: &Memory, rip: u64) -> bool {
         if let Some(place) = self.regions.get(&rip).map(|r| r.place) {
+            engine::note_exit(engine::Cause::Region, rip);
             self.enter(rip, place);
             return true;
         }
         if let Some(b) = self.blocks.get(&rip) {
             engine::count_exit(engine::Count::Reenter);
+            engine::note_exit(engine::Cause::Collision, rip);
             if self.ready(b) {
                 let place = b.place;
                 self.enter(rip, place);
@@ -589,11 +592,13 @@ impl Machine {
         let exit = if self.verify || self.trace { VERIFY_EXIT } else { DISPATCH };
         let Some((place, block)) = self.emit(mem, rip, exit) else {
             engine::count_exit(engine::Count::NoBlock);
+            engine::note_exit(engine::Cause::Untranslatable, rip);
             if !self.trace {
                 self.enter(rip, INTERP_EXIT);
             }
             return false;
         };
+        engine::note_exit(engine::Cause::NewBlock, rip);
         let insns = block.insns.len();
         self.blocks.insert(
             rip,
@@ -1163,4 +1168,3 @@ impl Cpu {
 
 #[cfg(test)]
 mod tests;
-#[cfg(test)] mod dump_tmp;
