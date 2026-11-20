@@ -736,6 +736,15 @@ impl Ctx<'_> {
         Ok(())
     }
 
+    /// The time stamp counter counts nanoseconds since the Unix epoch (1 GHz).
+    fn rdtsc(&mut self) {
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64);
+        self.cpu.regs[RAX] = t & 0xffff_ffff;
+        self.cpu.regs[RDX] = t >> 32;
+    }
+
     fn map0f(&mut self) -> Res<Exit> {
         if self.sse()? {
             return Ok(Exit::Continue);
@@ -746,12 +755,10 @@ impl Ctx<'_> {
             0x05 => return Ok(Exit::Syscall),
             0x0b => return Err(CpuFault::InvalidOpcode),
             0x0d | 0x18..=0x1f => {}
-            0x31 => {
-                let t = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_nanos() as u64);
-                self.cpu.regs[RAX] = t & 0xffff_ffff;
-                self.cpu.regs[RDX] = t >> 32;
+            0x31 => self.rdtsc(),
+            0x01 if i.modrm == Some(0xf9) => {
+                self.rdtsc();
+                self.cpu.regs[RCX] = 0;
             }
             0x40..=0x4f => {
                 let v = self.read(self.rm(), osz)?;
