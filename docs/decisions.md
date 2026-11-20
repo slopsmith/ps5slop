@@ -235,3 +235,9 @@ Reason: the format is only in the descriptor, which can differ between draws of 
 Every run serves a control socket (protocol taken from 86slopper) for reading and writing guest memory, listing threads and watching writes ([debugging.md](debugging.md)). Write watchpoints protect pages at stage 2 so translated stores fall back to the interpreter, which logs them with their RIP. `ps5slop-fuzz` compares single instructions between our interpreter and Rosetta 2 ([cpu.md](cpu.md)).
 
 Reason: vic asked for a way to poke at the guest live, as 86slopper allows. Minecraft's striped textures came from a CPU store with a wrong address; a watchpoint found the stores and a fuzzer found the instruction, without reading the game's code. Rosetta is the only x86-64 implementation on this Mac, and it runs AVX2 and BMI2; where it disagrees with the Intel SDM we follow the SDM and list the case.
+
+## 2026-11-20: GPU-written 2D arrays start from guest memory and reload after CPU writes
+
+Changes the entry above for 2D arrays: an image programs write as a 2D array is loaded from guest memory when its Metal texture is made, and reloaded whenever a checksum of that memory changes (before every write to it, once a frame before reads, ranges up to 32 MiB). GPU writes still stay on the GPU. 3D images are still zero-filled.
+
+Reason: Minecraft's UI glyph atlas starts as CPU-written contents and then gets glyphs from a copy program through a 2D-array descriptor. Zero-filling lost the CPU part (blank letters on the Play screen). A recreated atlas is uploaded again by the CPU, which a texture made once never saw. The cost: a CPU write that only touches part of the range throws away what programs wrote elsewhere in it, and every write to such an image hashes its whole range on the CPU (1 MiB for the atlas; not measured).

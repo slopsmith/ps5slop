@@ -201,6 +201,7 @@ pub struct Metal {
     images: HashMap<(Image, TextureKind), (u64, Retained<Texture>)>,
     /// 2D-array and 3D images programs write, by guest address.
     volumes: HashMap<u64, Retained<Texture>>,
+    volume_sources: HashMap<u64, VolumeSource>,
     /// Zero-filled stand-ins for depth-layout images no depth target backs.
     blank: HashMap<(Image, TextureKind), Retained<Texture>>,
     epoch: u64,
@@ -220,6 +221,35 @@ pub struct Metal {
     /// trace lines of the current draw.
     trace_frames: Option<(u64, u64)>,
     trace: Option<Vec<String>>,
+}
+
+/// The guest memory a 2D-array storage image was last loaded from.
+#[derive(Clone, Copy)]
+struct VolumeSource {
+    image: Image,
+    bpe: u32,
+    slices: u32,
+    base: u64,
+    len: u64,
+    sum: Option<u64>,
+    epoch: u64,
+}
+
+/// A checksum of guest memory `base..base + len`, if it is host-backed and
+/// at most 32 MiB.
+fn guest_sum(host: &dyn Host, base: u64, len: u64) -> Option<u64> {
+    let (start, end) = host.extent(base)?;
+    if base < start || base + len > end || len > 32 << 20 {
+        return None;
+    }
+    let p = host.host_pointer(base)? as *const u64;
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for i in 0..(len / 8) as usize {
+        // SAFETY: the range is mapped guest memory; the guest may write it concurrently.
+        let w = unsafe { p.add(i).read_unaligned() };
+        h = (h ^ w).wrapping_mul(0x0000_0100_0000_01b3).rotate_left(29);
+    }
+    Some(h)
 }
 
 /// Where a program's resources are bound: one stage of an encoder.
@@ -295,6 +325,7 @@ impl Metal {
             targets: HashMap::new(),
             images: HashMap::new(),
             volumes: HashMap::new(),
+            volume_sources: HashMap::new(),
             blank: HashMap::new(),
             epoch: 0,
             detilers: HashMap::new(),
@@ -607,6 +638,7 @@ impl Metal {
         {
             return Some(d.clone());
         }
+        self.refresh_volume(host, image.address, false);
         if let Some(v) = self.volume(image, kind, format) {
             return Some(v);
         }
@@ -1170,12 +1202,14 @@ impl Metal {
             TextureKind::Tex2d if !layered => {}
             TextureKind::Cube => return None,
             _ => {
+                self.refresh_volume(host, image.address, true);
                 if let Some(v) = self.volume(image, kind, format) {
                     return Some(v);
                 }
                 let slices = image.depth.max(image.base_array + 1);
                 let old = self.volumes.get(&image.address).cloned();
                 let texture = self.new_volume(format, image, if kind == TextureKind::Tex3d { kind } else { TextureKind::Tex2dArray }, slices)?;
+                let source = if kind == TextureKind::Tex3d { None } else { self.fill_volume(host, &texture, image, bpe, slices) };
                 if let Some(old) = old
                     && old.textureType() == MTLTextureType::Type2DArray
                     && texture.textureType() == MTLTextureType::Type2DArray
@@ -1194,6 +1228,10 @@ impl Metal {
                     blit.endEncoding();
                 }
                 self.volumes.insert(image.address, texture);
+                match source {
+                    Some(src) => self.volume_sources.insert(image.address, src),
+                    None => self.volume_sources.remove(&image.address),
+                };
                 return self.volume(image, kind, format);
             }
         }
@@ -1216,6 +1254,41 @@ impl Metal {
             f.insert(image.address | 2, SharedTexture(texture.clone()));
         }
         Some(texture)
+    }
+
+    /// Fills the slices of a 2D-array `texture` from the guest memory behind
+    /// `image`, returning what [`Metal::refresh_volume`] needs to notice later CPU writes there.
+    fn fill_volume(&mut self, host: &dyn Host, texture: &Texture, image: Image, bpe: u32, slices: u32) -> Option<VolumeSource> {
+        let layout = Layout::new(image.tile?, bpe, image.width, image.height)?;
+        let base = image.address + layout.mip0_offset(image.last_level + 1);
+        let stride = layout.size().next_multiple_of(64 << 10);
+        for slice in 0..slices {
+            self.detile_into(host, texture, slice as usize, base + slice as u64 * stride, layout);
+        }
+        let len = stride * slices as u64;
+        Some(VolumeSource { image, bpe, slices, base, len, sum: guest_sum(host, base, len), epoch: self.epoch })
+    }
+
+    /// Reloads the 2D-array image at `address` from guest memory if the CPU
+    /// wrote there since it was loaded (checked on every write, once a frame for reads).
+    fn refresh_volume(&mut self, host: &dyn Host, address: u64, write: bool) {
+        let Some(src) = self.volume_sources.get_mut(&address) else { return };
+        if !write && src.epoch == self.epoch {
+            return;
+        }
+        src.epoch = self.epoch;
+        let src = *src;
+        let sum = guest_sum(host, src.base, src.len);
+        if sum.is_none() || sum == src.sum {
+            return;
+        }
+        let Some(texture) = self.volumes.get(&address).cloned() else { return };
+        if texture.arrayLength() < src.slices as usize {
+            return;
+        }
+        if let Some(fresh) = self.fill_volume(host, &texture, src.image, src.bpe, src.slices) {
+            self.volume_sources.insert(address, fresh);
+        }
     }
 
     /// The 2D-array or 3D image programs wrote at `image`'s address, viewed as
