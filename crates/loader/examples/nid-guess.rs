@@ -25,7 +25,7 @@ struct Options {
     words: BTreeSet<String>,
     suffixes: Vec<String>,
     max_words: usize,
-    own: bool,
+    own: Option<bool>,
     jobs: usize,
     nids: Vec<(String, u64)>,
 }
@@ -114,7 +114,7 @@ fn own_prefixes(names: &BTreeSet<String>) -> BTreeSet<String> {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: nid-guess [-p PREFIX] [-w FILE] [-s FILE] [-x SUFFIX] [-n N] [--no-own] [-j N] NID...");
+    eprintln!("usage: nid-guess [-p PREFIX] [-w FILE] [-s FILE] [-x SUFFIX] [-n N] [--own|--no-own] [-j N] NID...");
     std::process::exit(2);
 }
 
@@ -124,7 +124,7 @@ fn parse() -> Options {
         words: BTreeSet::new(),
         suffixes: vec![String::new()],
         max_words: 2,
-        own: true,
+        own: None,
         jobs: std::thread::available_parallelism().map_or(4, |n| n.get()),
         nids: Vec::new(),
     };
@@ -152,7 +152,8 @@ fn parse() -> Options {
             "-x" | "--suffix" => o.suffixes.push(val()),
             "-n" | "--max-words" => o.max_words = val().parse().unwrap_or_else(|_| usage()),
             "-j" | "--jobs" => o.jobs = val().parse().unwrap_or_else(|_| usage()),
-            "--no-own" => o.own = false,
+            "--no-own" => o.own = Some(false),
+            "--own" => o.own = Some(true),
             "-h" | "--help" => usage(),
             nid => match decode(nid) {
                 Some(v) => o.nids.push((nid.to_string(), v)),
@@ -171,7 +172,8 @@ fn parse() -> Options {
 
 fn main() {
     let mut o = parse();
-    if o.own {
+    let given = !o.words.is_empty();
+    if o.own.unwrap_or(!given) {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let names = own_names(&root);
         for n in &names {
@@ -188,12 +190,14 @@ fn main() {
     let prefixes: Vec<&[u8]> = o.prefixes.iter().map(|p| p.as_bytes()).collect();
     let wanted: Vec<u64> = o.nids.iter().map(|n| n.1).collect();
     let per_prefix: u128 = (1..=o.max_words as u32).map(|k| (words.len() as u128).pow(k)).sum();
+    let total = per_prefix * prefixes.len() as u128 * o.suffixes.len() as u128;
+    let rate = 10_000_000 * o.jobs as u128;
     eprintln!(
-        "nid-guess: {} prefixes, {} words, {} candidates, {} threads",
+        "nid-guess: {} prefixes, {} words, {total} candidates, {} threads, roughly {} s at full speed",
         prefixes.len(),
         words.len(),
-        per_prefix * prefixes.len() as u128 * o.suffixes.len() as u128,
-        o.jobs
+        o.jobs,
+        total / rate
     );
 
     let tasks = prefixes.len() * words.len();
