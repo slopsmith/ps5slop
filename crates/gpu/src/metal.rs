@@ -1729,7 +1729,7 @@ impl Metal {
         let users = (s[sh::COMPUTE_PGM_RSRC2] >> 1) & 0x1F;
         let user = &s[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + sh::COMPUTE_USER_DATA_COUNT];
         let program = self.typed_program(host, state, Stage::Compute, address, users, false, 0, user).ok_or("compute program")?;
-        self.note(|| format!("compute {address:#x}"));
+        self.note(|| format!("compute {address:#x} user {:x?}", &user[..users as usize]));
         let id = Arc::as_ptr(&program) as u64;
         let pipeline = match self.computes.get(&id) {
             Some(p) => p.clone(),
