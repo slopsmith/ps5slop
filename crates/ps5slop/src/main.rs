@@ -126,6 +126,9 @@ fn main() -> ExitCode {
             if let Some(out) = dump_frame {
                 dump_after(booted.kernel.clone(), out, after);
             }
+            if let Ok(script) = std::env::var("PS5SLOP_INPUT") {
+                play_input(booted.kernel.clone(), script);
+            }
             run(booted, headless)
         });
     match status {
@@ -175,6 +178,43 @@ fn dump_after(kernel: std::sync::Arc<hle::Kernel>, out: PathBuf, seconds: f64) {
             write_frame(&kernel, &path);
         }
         kernel.exit(Ok(0));
+    });
+}
+
+// `PS5SLOP_INPUT` is `seconds:buttons` steps, comma-separated; buttons are
+// joined by `+`, and an empty list releases everything (see README).
+fn play_input(kernel: std::sync::Arc<hle::Kernel>, script: String) {
+    let start = std::time::Instant::now();
+    let steps: Vec<(f64, u32)> = script
+        .split(',')
+        .filter_map(|step| {
+            let (t, keys) = step.split_once(':')?;
+            let buttons = keys.split('+').filter(|k| !k.is_empty()).fold(0, |b, k| {
+                b | match k {
+                    "options" => 0x8,
+                    "up" => 0x10,
+                    "right" => 0x20,
+                    "down" => 0x40,
+                    "left" => 0x80,
+                    "l1" => 0x400,
+                    "r1" => 0x800,
+                    "triangle" => 0x1000,
+                    "circle" => 0x2000,
+                    "cross" => 0x4000,
+                    "square" => 0x8000,
+                    _ => 0,
+                }
+            });
+            Some((t.parse().ok()?, buttons))
+        })
+        .collect();
+    std::thread::spawn(move || {
+        for (at, buttons) in steps {
+            if let Some(wait) = std::time::Duration::from_secs_f64(at).checked_sub(start.elapsed()) {
+                std::thread::sleep(wait);
+            }
+            kernel.set_pad_input(hle::PadInput { buttons, ..Default::default() });
+        }
     });
 }
 

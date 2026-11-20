@@ -117,6 +117,8 @@ struct Bound {
 
 struct Program {
     address: u64,
+    /// Unique per translation, so caches tell apart programs loaded at one address.
+    id: u64,
     function: Retained<Function>,
     translated: Translated,
 }
@@ -349,6 +351,9 @@ impl Metal {
             Ok(lib) => lib.newFunctionWithName(&NSString::from_str(entry)),
             Err(e) => {
                 self.report(format!("MSL did not compile: {}", e.localizedDescription()));
+                if std::env::var_os("PS5SLOP_MSL_ERRORS").is_some() {
+                    eprintln!("{msl}");
+                }
                 None
             }
         }
@@ -713,6 +718,10 @@ impl Metal {
                 let s = &state.sh;
                 (s[sh::COMPUTE_PGM_RSRC2], &s[sh::COMPUTE_NUM_THREAD_X..sh::COMPUTE_NUM_THREAD_X + 3]).hash(&mut h);
             }
+            // Titles load other programs where freed ones were.
+            let mut head = [0u8; 256];
+            host.read(address, &mut head);
+            head.hash(&mut h);
             h.finish()
         };
         if let Some(p) = self.programs.get(&(address, key)) {
@@ -747,6 +756,10 @@ impl Metal {
                     self.compile(&translated.msl, &translated.entry).map(|function| {
                         Arc::new(Program {
                             address,
+                            id: {
+                                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            },
                             function,
                             translated,
                         })
@@ -781,7 +794,7 @@ impl Metal {
         if missing.is_empty() && !rect {
             return Some(vertex.function.clone());
         }
-        let key = (vertex.address, rect, missing.clone());
+        let key = (vertex.id, rect, missing.clone());
         if let Some(f) = self.variants.get(&key) {
             return f.clone();
         }
@@ -1142,8 +1155,8 @@ impl Metal {
         let mask = c[context::CB_TARGET_MASK];
         let mut targets = Vec::new();
         let mut key = PipelineKey {
-            vertex: vs_addr,
-            pixel: ps_addr,
+            vertex: vertex.id,
+            pixel: pixel.id,
             formats: [0; 8],
             blends: [(Blend::read(c, 0), 0); 8],
             depth: 0,
