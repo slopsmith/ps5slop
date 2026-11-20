@@ -496,6 +496,16 @@ fn rwlock_destroy(env: &mut Env) -> Result<Outcome, CallError> {
 /// Takes the lock for reading or writing; without `wait`, fails with
 /// EBUSY instead of waiting.
 fn rwlock_take(env: &mut Env, write: bool, wait: bool) -> Result<Outcome, CallError> {
+    rwlock_take_until(env, write, wait, None)
+}
+
+/// [`rwlock_take`], failing with ETIMEDOUT once `deadline` passes.
+fn rwlock_take_until(
+    env: &mut Env,
+    write: bool,
+    wait: bool,
+    deadline: Option<Instant>,
+) -> Result<Outcome, CallError> {
     let l = rwlock(env, env.arg(0))?;
     let me = env.thread.tcb;
     let mut s = lock(&l.state);
@@ -520,9 +530,15 @@ fn rwlock_take(env: &mut Env, write: bool, wait: bool) -> Result<Outcome, CallEr
         if crate::exception::interrupted(env) {
             return Ok(Outcome::Resume);
         }
+        let now = Instant::now();
+        let poll = match deadline {
+            Some(d) if d <= now => return ret(ETIMEDOUT),
+            Some(d) => POLL.min(d - now),
+            None => POLL,
+        };
         s = l
             .changed
-            .wait_timeout(s, POLL)
+            .wait_timeout(s, poll)
             .unwrap_or_else(|e| e.into_inner())
             .0;
     }
@@ -734,6 +750,20 @@ fn sce_cond_timedwait(env: &mut Env) -> Result<Outcome, CallError> {
     ))
 }
 
+/// `scePthreadRwlockTimedrdlock(rwlock, usec)` and `...Timedwrlock`.
+fn sce_rwlock_timed(env: &mut Env, write: bool) -> Result<Outcome, CallError> {
+    let deadline = Instant::now() + Duration::from_micros(env.arg(1) as u32 as u64);
+    sce(rwlock_take_until(env, write, true, Some(deadline)))
+}
+
+fn sce_rwlock_timedrdlock(env: &mut Env) -> Result<Outcome, CallError> {
+    sce_rwlock_timed(env, false)
+}
+
+fn sce_rwlock_timedwrlock(env: &mut Env) -> Result<Outcome, CallError> {
+    sce_rwlock_timed(env, true)
+}
+
 /// `scePthreadMutexTimedlock(mutex, usec)`.
 fn sce_mutex_timedlock(env: &mut Env) -> Result<Outcome, CallError> {
     let m = mutex(env, env.arg(0))?;
@@ -750,7 +780,8 @@ fn sce_mutex_timedlock(env: &mut Env) -> Result<Outcome, CallError> {
     }
 }
 
-/// `scePthreadCondattrInit`/`Destroy`: condition attributes are not kept.
+/// `scePthreadCondattrInit`/`Destroy` and the rwlock ones: these
+/// attributes are not kept.
 fn sce_ok(_: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
@@ -782,6 +813,10 @@ pub static SCE_FUNCTIONS: &[Function] = &[
     f("scePthreadRwlockTryrdlock", sce_rwlock_tryrdlock),
     f("scePthreadRwlockTrywrlock", sce_rwlock_trywrlock),
     f("scePthreadRwlockUnlock", sce_rwlock_unlock),
+    f("scePthreadRwlockTimedrdlock", sce_rwlock_timedrdlock),
+    f("scePthreadRwlockTimedwrlock", sce_rwlock_timedwrlock),
+    f("scePthreadRwlockattrInit", sce_ok),
+    f("scePthreadRwlockattrDestroy", sce_ok),
     f("scePthreadKeyCreate", sce_key_create),
     f("scePthreadKeyDelete", sce_key_delete),
     f("scePthreadSetspecific", sce_setspecific),

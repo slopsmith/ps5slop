@@ -25,6 +25,8 @@ cargo run --release -p ps5slop -- run target/test-programs/hello.elf
 cargo run --release -p ps5slop -- run games/TITLE   # an app folder; opens a window for VideoOut
 cargo run --release -p ps5slop -- run --headless GAME.pkg   # a package, read in place (--passcode for PS4 ones)
 cargo run --release -p pkg -- ls GAME.pkg   # list a package's app files
+cargo run --release -p pkg -- cat GAME.pkg data/x.xml   # one app file to stdout
+scripts/fetch-fonts   # open-source stand-ins for system fonts (needed by Astro Bot)
 cargo run --release -p ps5slop -- run --headless --dump-frame out.ppm --after 10 games/TITLE
 cargo run --release -p ps5slop -- run --interpreter games/TITLE   # no JIT; by default guest code is translated and runs in a Hypervisor.framework VM
 PS5SLOP_JIT_VERIFY=1 PS5SLOP_JIT_STATS=1 cargo run ...   # check the JIT against the interpreter / see what it leaves to the interpreter

@@ -297,3 +297,15 @@ The interpreter runs `cmpxchg16b` with ARM's `caspal` (LSE, present on every App
 
 Reason: translated code on other threads updates the same words with native atomics; a lock in the interpreter would not exclude them. Superliminal's runtime uses `cmpxchg16b` from its first instructions.
 
+
+## 2026-11-20: Open-source stand-ins for system fonts
+
+When a title asks under `/app0` for a font file it does not have and whose name is a known system font (SIE ShinGo, Futura, Heisei Maru Gothic, Mohr), the file system serves an OFL-licensed stand-in from a host fonts folder that `scripts/fetch-fonts` fills; system font sets get one too ([hle-kernel.md](hle-kernel.md#system-fonts)).
+
+Reason: Astro Bot loads every font its settings name, and the system ones are not in its package (a console supplies them, vic). We may not ship Sony's fonts; the stand-ins are free to fetch but are not committed, like other reference material. Serving them under the title's own path keeps the engine's code paths as on a console.
+
+## 2026-11-20: libSceFont on FreeType
+
+libSceFont measures and renders glyphs with FreeType (`freetype-rs`, bundled build), and shaping for the text layout calls is to come from HarfBuzz ([hle-kernel.md](hle-kernel.md#libscefont)).
+
+Reason: vic's call. Font loading, hinting and rasterising are large and well solved; both libraries are compatible with GPL-2.0-or-later (FreeType under its GPLv2 option, HarfBuzz under MIT). The bundled build needs no change to the Nix shell and no library at run time.

@@ -12,8 +12,9 @@ use memory::{PAGE_SIZE, Prot};
 use crate::pthread::lock;
 use crate::{CallError, Env, Function, Outcome, errno};
 
-/// How much direct memory a title gets (our choice; the PS5's is unknown).
-pub const DIRECT_MEMORY_SIZE: u64 = 12 << 30;
+/// How much direct memory a title gets: 12.5 GiB (our choice; the PS5's is
+/// unknown). Astro Bot's engine allocates about 12.1 GiB of it.
+pub const DIRECT_MEMORY_SIZE: u64 = 0x3_2000_0000;
 /// Where maps without a fixed address go: the start of the user area.
 const MAP_AREA: u64 = 0x10_0000_0000;
 /// Where direct memory and `mmap` without a fixed address land (both search

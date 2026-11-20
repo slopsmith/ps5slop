@@ -22,6 +22,8 @@ mod dmem;
 mod equeue;
 mod evf;
 mod exception;
+mod fiber;
+mod font;
 pub use gpu;
 pub mod errno;
 mod file;
@@ -440,11 +442,16 @@ impl Hle {
         let stub = index
             .and_then(|i| self.stubs.get(i))
             .ok_or(CallError::NotAStub(addr))?;
-        let f = stub.func.ok_or_else(|| CallError::Unimplemented {
-            nid: stub.nid.clone(),
-            name: self.name_of(&stub.nid).map(str::to_owned),
-            library: stub.library.clone(),
-        })?;
+        let Some(f) = stub.func else {
+            if unimplemented_return_zero() {
+                return self.return_zero_unimplemented(stub, env);
+            }
+            return Err(CallError::Unimplemented {
+                nid: stub.nid.clone(),
+                name: self.name_of(&stub.nid).map(str::to_owned),
+                library: stub.library.clone(),
+            });
+        };
         count_call(f);
         let args: [u64; 4] = std::array::from_fn(|n| env.arg(n));
         let out = (f.func)(env);
@@ -460,6 +467,32 @@ impl Hle {
         }
         Ok(out)
     }
+
+    fn return_zero_unimplemented(&self, stub: &Stub, env: &mut Env) -> Result<Outcome, CallError> {
+        let sp = env.cpu.regs[RSP];
+        let ret = env.mem.read_u64(sp)?;
+        eprintln!(
+            "UNIMPLEMENTED (returning 0) {} {} {}({:#x}, {:#x}, {:#x}, {:#x}) from {ret:#x}",
+            stub.library,
+            stub.nid,
+            self.name_of(&stub.nid).unwrap_or("?"),
+            env.arg(0),
+            env.arg(1),
+            env.arg(2),
+            env.arg(3),
+        );
+        env.cpu.rip = ret;
+        env.cpu.regs[RSP] = sp + 8;
+        env.cpu.regs[RAX] = 0;
+        Ok(Outcome::Return(0))
+    }
+}
+
+/// Whether `PS5SLOP_UNIMPLEMENTED_ZERO` is set: calls of unimplemented
+/// imports then return 0 instead of stopping the process.
+fn unimplemented_return_zero() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("PS5SLOP_UNIMPLEMENTED_ZERO").is_some())
 }
 
 /// Prints `STUB! library: name(args) -> result` for a placeholder's first
@@ -516,6 +549,8 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(thread::FUNCTIONS)
         .chain(sem::FUNCTIONS)
         .chain(evf::FUNCTIONS)
+        .chain(fiber::FUNCTIONS)
+        .chain(font::FUNCTIONS)
         .chain(ampr::FUNCTIONS)
         .chain(exception::FUNCTIONS)
         .chain(dmem::FUNCTIONS)

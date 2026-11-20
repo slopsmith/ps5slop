@@ -69,7 +69,17 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceAudioOut2ContextAdvance", advance),
     f("sceAudioOut2ContextPush", push),
     f("sceAudioOut2ContextGetQueueLevel", queue_level),
+    f("sceAudioOut2PortGetState", port_get_state),
+    f("sceAudioOut2GetSpeakerInfo", speaker_info),
 ];
+
+const PORT_STATE_SIZE: usize = 0x40;
+/// `SceAudioOut2PortState`'s output: connected to the primary output.
+const PORT_STATE_PRIMARY: u16 = 0x01;
+const SPEAKER_INFO_SIZE: usize = 0x50;
+const SPEAKER_ANGLES: usize = 0x10;
+/// Front left and front right.
+const STEREO_SPEAKERS: u32 = 0b11;
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
     Function {
@@ -220,6 +230,38 @@ fn port_create(env: &mut Env) -> Result<Outcome, CallError> {
         },
     );
     env.mem.write_u64(out, handle)?;
+    ret(0)
+}
+
+/// `sceAudioOut2PortGetState(port, *state)`: output, channels, volume.
+fn port_get_state(env: &mut Env) -> Result<Outcome, CallError> {
+    let out = env.arg(1);
+    if out == 0 {
+        return ret(ERROR_INVALID_POINTER);
+    }
+    let channels = lock(&env.kernel.audio.out2.ports)
+        .get(&env.arg(0))
+        .map_or(2, |p| p.channels);
+    let mut state = [0u8; PORT_STATE_SIZE];
+    state[..2].copy_from_slice(&PORT_STATE_PRIMARY.to_le_bytes());
+    state[2] = channels as u8;
+    state[4..6].copy_from_slice(&127i16.to_le_bytes());
+    env.mem.write(out, &state)?;
+    ret(0)
+}
+
+/// `sceAudioOut2GetSpeakerInfo(*info, flags)`: a stereo TV, speakers at
+/// -30 and 30 degrees.
+fn speaker_info(env: &mut Env) -> Result<Outcome, CallError> {
+    let out = env.arg(0);
+    if out == 0 {
+        return ret(ERROR_INVALID_POINTER);
+    }
+    let mut info = [0u8; SPEAKER_INFO_SIZE];
+    info[4..8].copy_from_slice(&STEREO_SPEAKERS.to_le_bytes());
+    info[SPEAKER_ANGLES..SPEAKER_ANGLES + 2].copy_from_slice(&(-30i16).to_le_bytes());
+    info[SPEAKER_ANGLES + 4..SPEAKER_ANGLES + 6].copy_from_slice(&30i16.to_le_bytes());
+    env.mem.write(out, &info)?;
     ret(0)
 }
 

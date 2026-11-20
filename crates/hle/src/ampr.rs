@@ -70,7 +70,29 @@ pub static FUNCTIONS: &[Function] = &[
     f("libSceAmpr", "sceAmprCommandBufferSetBuffer", set_buffer),
     f("libSceAmpr", "sceAmprCommandBufferReset", reset),
     f("libSceAmpr", "sceAmprAprCommandBufferReadFile", read_file),
+    f("libSceAmpr", "sceAmprCommandBufferDestructor", destruct),
+    f("libSceAmpr", "sceAmprAprCommandBufferDestructor", destruct),
+    f("libSceAmpr", "sceAmprCommandBufferClearBuffer", reset),
+    f("libSceAmpr", "sceAmprCommandBufferGetNumCommands", num_commands),
+    f("libSceAmpr", "sceAmprCommandBufferGetCurrentOffset", current_offset),
+    f("libSceAmpr", "sceAmprCommandBufferNop", accept),
+    f("libSceAmpr", "sceAmprCommandBufferSetMarker", accept),
+    f("libSceAmpr", "sceAmprCommandBufferPushMarker", accept),
+    f("libSceAmpr", "sceAmprCommandBufferPopMarker", accept),
+    f("libSceAmpr", "sceAmprMeasureCommandSizeNop", command_size),
+    f("libSceAmpr", "sceAmprMeasureCommandSizeReadFile", command_size),
+    f("libSceAmpr", "sceAmprMeasureCommandSizeReadFileGather", command_size),
+    f("libSceAmpr", "sceAmprMeasureCommandSizeReadFileScatter", command_size),
+    f("libSceAmpr", "sceAmprMeasureCommandSizeReadFileGatherScatter", command_size),
+    f("libSceAmpr", "sceAmprMeasureCommandSizeSetMarker", command_size),
+    f("libSceAmpr", "sceAmprMeasureCommandSizePushMarker", command_size),
+    f("libSceAmpr", "sceAmprMeasureCommandSizePopMarker", command_size),
 ];
+
+/// What `sceAmprMeasureCommandSize*` report for any command (our choice:
+/// commands live on the host, so the guest buffer only needs to look big
+/// enough).
+const COMMAND_SIZE: u64 = 64;
 
 const fn f(library: &'static str, name: &'static str, func: crate::HostFn) -> Function {
     Function {
@@ -146,6 +168,38 @@ fn construct(env: &mut Env) -> Result<Outcome, CallError> {
 /// the host, so the memory is not used.
 fn set_buffer(_: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
+}
+
+fn destruct(env: &mut Env) -> Result<Outcome, CallError> {
+    lock(&env.kernel.apr.buffers).remove(&env.arg(0));
+    ret(0)
+}
+
+/// `sceAmprCommandBufferGetNumCommands(buffer)`: the commands added since
+/// the buffer was made or cleared.
+fn num_commands(env: &mut Env) -> Result<Outcome, CallError> {
+    let n = lock(&env.kernel.apr.buffers)
+        .get(&env.arg(0))
+        .map_or(0, Vec::len);
+    Ok(Outcome::Return(n as u64))
+}
+
+/// `sceAmprCommandBufferGetCurrentOffset(buffer)`: as if each command
+/// took [`COMMAND_SIZE`] bytes.
+fn current_offset(env: &mut Env) -> Result<Outcome, CallError> {
+    let n = lock(&env.kernel.apr.buffers)
+        .get(&env.arg(0))
+        .map_or(0, Vec::len);
+    Ok(Outcome::Return(n as u64 * COMMAND_SIZE))
+}
+
+/// Markers and no-ops: nothing to run.
+fn accept(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
+fn command_size(_: &mut Env) -> Result<Outcome, CallError> {
+    Ok(Outcome::Return(COMMAND_SIZE))
 }
 
 fn reset(env: &mut Env) -> Result<Outcome, CallError> {

@@ -216,6 +216,10 @@ const SYSTEM_FONTS: &[(&str, &str)] = &[
     ("FuturaNowText-", "Jost[wght].ttf"),
 ];
 
+/// The stand-in for every system font set (`sceFontOpenFontSet`): Noto
+/// Sans JP covers Latin and Japanese.
+const FONT_SET_STAND_IN: &str = "NotoSansJP[wght].ttf";
+
 /// The stand-in for a system font file named `name`.
 fn system_font(name: &str) -> Option<&'static str> {
     SYSTEM_FONTS
@@ -275,6 +279,12 @@ impl Vfs {
     /// `fonts` when the title does not have the file itself.
     pub fn set_system_fonts(&mut self, fonts: PathBuf) {
         self.system_fonts = Some(fonts);
+    }
+
+    /// The host file that stands in for system font sets, if a fonts folder
+    /// is set.
+    pub(crate) fn font_set_file(&self) -> Option<PathBuf> {
+        Some(self.system_fonts.as_ref()?.join(FONT_SET_STAND_IN))
     }
 
     /// Keeps save data in host folder `saves`.

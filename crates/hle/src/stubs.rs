@@ -46,6 +46,14 @@ fn write_id<const N: usize>(env: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(0))
 }
 
+/// Writes a 32-bit zero (an empty count) to the pointer in argument `N`.
+fn write_zero_u32<const N: usize>(env: &mut Env) -> Result<Outcome, CallError> {
+    if env.arg(N) != 0 {
+        env.mem.write(env.arg(N), &0u32.to_le_bytes())?;
+    }
+    Ok(Outcome::Return(0))
+}
+
 fn unsupported(_: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(crate::dmem::sce_error(
         crate::errno::ENOSYS,
@@ -226,6 +234,71 @@ pub static STUBS: &[Function] = &[
         name: "sceNpWebApi2CreateRequest",
         func: unsupported,
     },
+    zero("libkernel", "sceKernelGetGPI"),
+    zero("libkernel", "#n1-v6FgU7MQ"),
+    zero(
+        "libSceSystemService",
+        "sceSystemServiceGetHdrToneMapLuminance",
+    ),
+    zero(
+        "libSceSystemService",
+        "sceSystemServiceGetNoticeScreenSkipFlag",
+    ),
+    zero("libScePad", "scePadGetTriggerEffectState"),
+    Function {
+        library: "libSceNpEntitlementAccess",
+        name: "sceNpEntitlementAccessGetAddcontEntitlementInfoList",
+        func: write_zero_u32::<3>,
+    },
+    zero(
+        "libSceUserServicePlatformPrivacyWs1",
+        "sceUserServiceGetPlatformPrivacyWs1",
+    ),
+    zero("libSceShare", "sceShareInitialize"),
+    zero("libSceShare", "sceShareRegisterContentEventCallback"),
+    zero("libSceContentExport", "sceContentExportInit2"),
+    zero("libSceNetCtl", "sceNetCtlInit"),
+    zero("libSceNetCtl", "sceNetCtlTerm"),
+    zero("libSceRudp", "sceRudpInit"),
+    zero("libSceRudp", "sceRudpSetEventHandler"),
+    zero("libSceRudp", "sceRudpEnableInternalIOThread"),
+    zero("libScePlayGo", "scePlayGoInitialize"),
+    out_id::<0>("libScePlayGo", "scePlayGoOpen"),
+    zero("libScePlayGo", "scePlayGoSetInstallSpeed"),
+    Function {
+        library: "libScePlayGo",
+        name: "scePlayGoGetChunkId",
+        func: write_zero_u32::<3>,
+    },
+    Function {
+        library: "libScePlayGo",
+        name: "scePlayGoGetToDoList",
+        func: write_zero_u32::<3>,
+    },
+    zero("libScePlayGo", "scePlayGoClose"),
+    zero("libScePlayGo", "scePlayGoTerminate"),
+    zero("libSceSaveData_native", "sceSaveDataSetupSaveDataMemory2"),
+    zero("libSceSaveData_native", "sceSaveDataGetSaveDataMemory2"),
+    zero("libSceSaveData_native", "sceSaveDataSetSaveDataMemory2"),
+    zero("libSceSaveData_native", "sceSaveDataSyncSaveDataMemory"),
+    zero(
+        "libSceJson2",
+        "_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE",
+    ),
+    zero("libSceJson2", "_ZN3sce4Json5ValueC1Ev"),
+    zero("libSceJson2", "_ZN3sce4Json5ValueD1Ev"),
+    zero("libSceJson2", "_ZN3sce4Json5Value3setEb"),
+    zero("libSceJson2", "_ZN3sce4Json5Value3setEl"),
+    zero("libSceJson2", "_ZN3sce4Json5Value3setEm"),
+    zero("libSceJson2", "_ZN3sce4Json5Value3setEd"),
+    zero("libSceJson2", "_ZN3sce4Json5Value3setENS0_9ValueTypeE"),
+    zero("libSceJson2", "_ZN3sce4Json6StringC1EPKc"),
+    zero("libSceJson2", "_ZN3sce4Json6StringD1Ev"),
+    zero("libSceJson2", "#6l3Bv2gysNc"),
+    zero("libSceJson2", "#00oCq0RwSAY"),
+    zero("libSceNpCppWebApi", "#oTirsxQpqj0"),
+    zero("libSceAgc", "#dolOmWH+huQ"),
+    zero("libSceAgc", "#fd5Bp5tGTgo"),
     zero("libSceCommonDialog", "sceCommonDialogInitialize"),
     zero("libSceWebBrowserDialog", "sceWebBrowserDialogInitialize"),
     zero("libSceWebBrowserDialog", "sceWebBrowserDialogTerminate"),

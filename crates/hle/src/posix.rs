@@ -28,6 +28,8 @@ pub static FUNCTIONS: &[Function] = &[
         "sceKernelGetProcessTimeCounterFrequency",
         process_time_frequency,
     ),
+    f("sceKernelReadTsc", read_tsc),
+    f("sceKernelGetTscFrequency", process_time_frequency),
     f("sceKernelGettimeofday", gettimeofday),
     f("sceKernelNanosleep", sce_nanosleep),
     f("_nanosleep", nanosleep),
@@ -426,6 +428,15 @@ const COUNTER_FREQUENCY: u64 = 1_000_000_000;
 
 fn process_time_counter(env: &mut Env) -> Result<Outcome, CallError> {
     ret(env.kernel.started.elapsed().as_nanos() as u64)
+}
+
+/// `sceKernelReadTsc()`: what `rdtsc` reads, nanoseconds since the Unix
+/// epoch, so its frequency is [`COUNTER_FREQUENCY`] too.
+fn read_tsc(_: &mut Env) -> Result<Outcome, CallError> {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    ret(t)
 }
 
 fn process_time_frequency(_: &mut Env) -> Result<Outcome, CallError> {

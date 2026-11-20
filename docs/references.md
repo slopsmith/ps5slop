@@ -55,6 +55,10 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 | 2026-11-20 | pkg-to-anyps5 at `2e9b122` (GPL-3.0), built from source in a scratch folder outside the repo and run as a black-box oracle on our two packages; its source was never opened | Known plaintext (its extracted files and listings) to check our PS5 inner-image reader against | Nothing: no code, and its outputs stayed outside the repo (see [decisions.md](decisions.md)) |
 | 2026-11-20 | Web search results only (vitasdk `libime.h` documentation, psdevwiki PS4 "Libraries" page, ps4sdk module list) | What `libSceIme`'s two function families are for: `sceIme*` the on-screen keyboard panel, `sceImeKeyboard*` physical keyboards | The libSceIme row in [hle-kernel.md](hle-kernel.md); no code read or taken |
 | 2026-11-20 | Mesa `src/amd/registers/gfx10.json` (MIT), main branch | `USER_SGPR_MSB` is bit 27 of the GFX10 `SPI_SHADER_PGM_RSRC2_*` registers | `user_count` in `gpu/src/metal.rs` ([shaders.md](shaders.md)) |
+| 2026-11-20 | shadPS4 `src/core/libraries/font/font.h`, `font_error.h`, `fontft.h` at `264d6b7` (GPL-2.0-or-later, SPDX headers) | libSceFont prototypes, error codes, public structure layouts | Facts only, in our own code (`crates/hle/src/font.rs`): the prototypes we implement, error codes, and the layouts of the glyph metrics, render surface, render output and horizontal layout. Its internal (opaque) structures and its `.cpp` files were not used |
+| 2026-11-20 | SharpEmu-mac `src/SharpEmu.Libs/Audio/AudioOut2Exports.cs` at `5cb184e` (GPL-2.0-or-later), `sceAudioOut2PortGetState` and `GetSpeakerInfo` | Their prototypes and output layouts | Layouts and values ([hle-kernel.md](hle-kernel.md)) |
+| 2026-11-20 | google/fonts at `f391eb5` (OFL-1.1): Jost, Noto Sans JP, M PLUS Rounded 1c | Stand-ins for system fonts | Fetched by `scripts/fetch-fonts` into a host folder, never committed |
+| 2026-11-20 | `freetype-rs` 0.38 (MIT) with bundled FreeType (FTL or GPLv2; we take GPLv2) | Font loading and rasterising for libSceFont | A dependency of `crates/hle` |
 
 Add a row whenever someone reads another project's source for this repo.
 

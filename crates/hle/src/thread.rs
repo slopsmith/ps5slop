@@ -1,7 +1,8 @@
 //! Creating, joining and ending guest threads. Each guest thread runs on its
 //! own host thread (see `docs/decisions.md`); `pthread_t` is the thread
-//! pointer. Of the thread attributes, only the stack size and detach state
-//! are used; attributes read back from a thread report its real stack.
+//! pointer. Of the thread attributes, only the stack (size, or a stack the
+//! caller supplies) and detach state are used; attributes read back from a
+//! thread report its real stack.
 
 use std::collections::HashMap;
 
@@ -35,8 +36,11 @@ const STACK_MIN: u64 = 2048;
 #[derive(Clone, Copy)]
 struct Attr {
     stack: u64,
-    /// The stack's lowest address, for attributes read from a thread; else 0.
+    /// The stack's lowest address, for attributes read from a thread or set
+    /// with `pthread_attr_setstack`; else 0.
     stack_addr: u64,
+    /// The caller supplied the stack at `stack_addr`, so threads run on it.
+    given: bool,
     detached: bool,
 }
 
@@ -45,6 +49,7 @@ impl Default for Attr {
         Self {
             stack: THREAD_STACK,
             stack_addr: 0,
+            given: false,
             detached: false,
         }
     }
@@ -85,6 +90,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("pthread_attr_destroy", attr_destroy),
     f("pthread_attr_setdetachstate", attr_setdetachstate),
     f("pthread_attr_setstacksize", attr_setstacksize),
+    f("pthread_attr_setstack", attr_setstack),
     f("pthread_attr_getstacksize", attr_getstacksize),
     f("pthread_attr_getstackaddr", attr_getstackaddr),
     f("pthread_attr_getstack", attr_getstack),
@@ -180,6 +186,18 @@ fn attr_setstacksize(env: &mut Env) -> Result<Outcome, CallError> {
     })
 }
 
+/// `pthread_attr_setstack(attr, addr, size)`: threads made with these
+/// attributes run on the caller's stack.
+fn attr_setstack(env: &mut Env) -> Result<Outcome, CallError> {
+    let (addr, size) = (env.arg(1), env.arg(2));
+    update_attr(env, |a| {
+        a.stack_addr = addr;
+        a.stack = size;
+        a.given = true;
+        size >= STACK_MIN
+    })
+}
+
 /// `pthread_create(thread, attr, start, arg)`.
 fn create(env: &mut Env) -> Result<Outcome, CallError> {
     let (out, start, arg) = (env.arg(0), env.arg(2), env.arg(3));
@@ -187,15 +205,17 @@ fn create(env: &mut Env) -> Result<Outcome, CallError> {
         return ret(EINVAL);
     };
     let kernel = env.kernel;
-    let (Ok(tcb), Ok(top)) = (
-        kernel.new_tls(env.mem),
-        kernel.new_stack(env.mem, attr.stack),
-    ) else {
+    let (top, size) = if attr.given {
+        (Ok(attr.stack_addr + attr.stack), attr.stack)
+    } else {
+        let size = attr.stack.next_multiple_of(memory::PAGE_SIZE);
+        (kernel.new_stack(env.mem, attr.stack), size)
+    };
+    let (Ok(tcb), Ok(top)) = (kernel.new_tls(env.mem), top) else {
         return ret(crate::errno::EAGAIN);
     };
-    let size = attr.stack.next_multiple_of(memory::PAGE_SIZE);
     kernel.set_thread_stack(tcb, top - size, size);
-    let sp = top - 8;
+    let sp = (top & !15) - 8;
     env.mem.write_u64(sp, kernel.hle.internal(THREAD_RETURN))?;
     let mut cpu = Cpu {
         rip: start,
@@ -306,6 +326,7 @@ sce_wrappers! {
     sce_attr_destroy => attr_destroy,
     sce_attr_setdetachstate => attr_setdetachstate,
     sce_attr_setstacksize => attr_setstacksize,
+    sce_attr_setstack => attr_setstack,
     sce_attr_getstacksize => attr_getstacksize,
     sce_attr_getstackaddr => attr_getstackaddr,
     sce_attr_getstack => attr_getstack,
@@ -441,6 +462,7 @@ pub static SCE_FUNCTIONS: &[Function] = &[
     f("scePthreadAttrGetstackaddr", sce_attr_getstackaddr),
     f("scePthreadAttrGetstack", sce_attr_getstack),
     f("scePthreadAttrSetstacksize", sce_attr_setstacksize),
+    f("scePthreadAttrSetstack", sce_attr_setstack),
     f("scePthreadAttrSetaffinity", sce_ok),
     f("scePthreadAttrGetaffinity", sce_attr_getaffinity),
     f("scePthreadAttrSetschedpolicy", sce_ok),
