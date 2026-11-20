@@ -37,6 +37,7 @@ pub mod context {
     pub const SPI_PS_INPUT_ADDR: usize = 0x1B4;
     pub const SPI_SHADER_COL_FORMAT: usize = 0x1C5;
     pub const CB_BLEND0_CONTROL: usize = 0x1E0;
+    pub const PA_CL_CLIP_CNTL: usize = 0x204;
     pub const PA_SU_SC_MODE_CNTL: usize = 0x205;
     pub const PA_CL_VTE_CNTL: usize = 0x206;
     pub const VGT_SHADER_STAGES_EN: usize = 0x2D5;

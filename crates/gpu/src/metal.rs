@@ -27,6 +27,10 @@ type RenderPipeline = ProtocolObject<dyn MTLRenderPipelineState>;
 type ComputePipeline = ProtocolObject<dyn MTLComputePipelineState>;
 type Function = ProtocolObject<dyn MTLFunction>;
 
+/// A vertex program, whether it draws rectangles or uses OpenGL clip space,
+/// and the attributes it must add.
+type VariantKey = (u64, bool, bool, Vec<u32>);
+
 /// A Metal texture other threads may hold.
 #[derive(Clone)]
 pub struct SharedTexture(pub Retained<Texture>);
@@ -152,7 +156,7 @@ pub struct Metal {
     detilers: HashMap<(TileMode, u32, bool), Retained<ComputePipeline>>,
     programs: HashMap<(u64, u64), Option<Arc<Program>>>,
     computes: HashMap<u64, Option<Retained<ComputePipeline>>>,
-    variants: HashMap<(u64, bool, Vec<u32>), Option<Retained<Function>>>,
+    variants: HashMap<VariantKey, Option<Retained<Function>>>,
     pipelines: HashMap<PipelineKey, Option<Retained<RenderPipeline>>>,
     samplers: HashMap<Sampler, Retained<ProtocolObject<dyn MTLSamplerState>>>,
     reports: u32,
@@ -779,7 +783,7 @@ impl Metal {
 
     // Metal rejects pixel inputs the vertex function lacks; hardware reads
     // zeros, so variants declare them.
-    fn vertex_function(&mut self, vertex: &Program, pixel: &Program, rect: bool) -> Option<Retained<Function>> {
+    fn vertex_function(&mut self, vertex: &Program, pixel: &Program, rect: bool, gl_clip: bool) -> Option<Retained<Function>> {
         let locations = |msl: &str| -> Vec<u32> {
             let mut v: Vec<u32> = msl
                 .match_indices("[[user(locn")
@@ -791,15 +795,18 @@ impl Metal {
         };
         let have = locations(&vertex.translated.msl);
         let missing: Vec<u32> = locations(&pixel.translated.msl).into_iter().filter(|l| !have.contains(l)).collect();
-        if missing.is_empty() && !rect {
+        if missing.is_empty() && !rect && !gl_clip {
             return Some(vertex.function.clone());
         }
-        let key = (vertex.id, rect, missing.clone());
+        let key = (vertex.id, rect, gl_clip, missing.clone());
         if let Some(f) = self.variants.get(&key) {
             return f.clone();
         }
         let extra: String = missing.iter().map(|l| format!("    float4 x{l} [[user(locn{l})]];\n")).collect();
-        let msl = vertex.translated.msl.replacen("    float4 pos [[position]];\n", &format!("    float4 pos [[position]];\n{extra}"), 1);
+        let mut msl = vertex.translated.msl.replacen("    float4 pos [[position]];\n", &format!("    float4 pos [[position]];\n{extra}"), 1);
+        if gl_clip {
+            msl = gl_clip_space(&msl);
+        }
         let f = if rect {
             rect_source(&msl).and_then(|m| self.compile(&m, "gen5_vs_rect"))
         } else {
@@ -1150,7 +1157,8 @@ impl Metal {
         let vertex = self.program(host, state, Stage::Vertex, vs_addr, vs_users, ngg).ok_or("vertex program")?;
         let pixel = self.program(host, state, Stage::Pixel, ps_addr, ps_users, false).ok_or("pixel program")?;
         let rect = u[uconfig::VGT_PRIMITIVE_TYPE] == 7;
-        let vertex_function = self.vertex_function(&vertex, &pixel, rect).ok_or("vertex program variant")?;
+        let gl_clip = c[context::PA_CL_CLIP_CNTL] & (1 << 19) == 0;
+        let vertex_function = self.vertex_function(&vertex, &pixel, rect, gl_clip).ok_or("vertex program variant")?;
 
         let mask = c[context::CB_TARGET_MASK];
         let mut targets = Vec::new();
@@ -1218,7 +1226,11 @@ impl Metal {
                 } else {
                     // Metal needs index buffer offsets to be multiples of 4.
                     let mut b = vec![0u8; len.max(4) as usize];
-                    host.read(address, &mut b[..len as usize]);
+                    let (_, hi) = host.extent(address).ok_or("index buffer")?;
+                    let src = host.host_pointer(address).ok_or("index buffer")?;
+                    let n = (len as usize).min((hi - address) as usize);
+                    // SAFETY: `n` bytes from `address` lie in host-backed guest memory.
+                    unsafe { std::ptr::copy_nonoverlapping(src, b.as_mut_ptr(), n) };
                     let buf = unsafe {
                         self.device.newBufferWithBytes_length_options(
                             NonNull::new(b.as_mut_ptr()).ok_or("index buffer")?.cast(),
@@ -1241,13 +1253,18 @@ impl Metal {
             enc.setStencilReferenceValue(depth_state.ref_mask & 0xFF);
         }
         let vp = Viewport::read(c);
+        let (znear, zfar) = if gl_clip {
+            (vp.z_offset - vp.z_scale, vp.z_offset + vp.z_scale)
+        } else {
+            (vp.z_offset, vp.z_offset + vp.z_scale)
+        };
         enc.setViewport(MTLViewport {
             originX: (vp.x_offset - vp.x_scale) as f64,
             originY: (vp.y_offset - vp.y_scale.abs()) as f64,
             width: (2.0 * vp.x_scale) as f64,
             height: (2.0 * vp.y_scale.abs()) as f64,
-            znear: (vp.z_offset) as f64,
-            zfar: (vp.z_offset + vp.z_scale) as f64,
+            znear: znear as f64,
+            zfar: zfar as f64,
         });
         let (x0, y0, x1, y1) = regs::scissor(c);
         let (x1, y1) = ((x1 as f64).min(w) as usize, (y1 as f64).min(h) as usize);
@@ -1393,6 +1410,22 @@ fn rect_source(msl: &str) -> Option<String> {
     Some(format!(
         "{msl}\nvertex VsOut gen5_vs_rect(uint rv [[vertex_id]], uint iid [[instance_id]], {params}) {{\n    uint base = rv / 6 * 3;\n    uint k = (0x231210u >> ((rv % 6) * 4)) & 0xFu;\n    if (k < 3) return gen5_vs_body(base + k, iid{args});\n    VsOut a = gen5_vs_body(base, iid{args});\n    VsOut b = gen5_vs_body(base + 1, iid{args});\n    VsOut c = gen5_vs_body(base + 2, iid{args});\n    VsOut o = a;\n{combine}    return o;\n}}\n"
     ))
+}
+
+// OpenGL-style clip space puts z in [-w, w]; Metal clips z below 0.
+fn gl_clip_space(msl: &str) -> String {
+    let mut out = String::with_capacity(msl.len() + 128);
+    let mut rest = msl;
+    while let Some(i) = rest.find("o.pos = float4(") {
+        let Some(end) = rest[i..].find(");").map(|e| i + e) else { break };
+        out.push_str(&rest[..i]);
+        out.push_str("o.pos = gl_z(");
+        out.push_str(&rest[i + "o.pos = ".len()..end + 1]);
+        out.push_str(");");
+        rest = &rest[end + 2..];
+    }
+    out.push_str(rest);
+    out.replacen("struct VsOut {", "static inline float4 gl_z(float4 p) { p.z = (p.z + p.w) * 0.5; return p; }\n\nstruct VsOut {", 1)
 }
 
 fn write_mask(bits: u32, swap: u32) -> usize {

@@ -283,14 +283,14 @@ impl Processor {
     }
 
     fn dump_draw(&self, op: u32, p: &[u32]) {
-        static LEFT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+        static LEFT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(i64::MIN);
         use std::sync::atomic::Ordering::Relaxed;
-        if LEFT.load(Relaxed) == -1 {
+        if LEFT.load(Relaxed) == i64::MIN {
             let n = std::env::var("PS5SLOP_GPU_DUMP").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
             LEFT.store(n, Relaxed);
         }
-        static SKIP: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
-        if SKIP.load(Relaxed) == -1 {
+        static SKIP: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(i64::MIN);
+        if SKIP.load(Relaxed) == i64::MIN {
             let n = std::env::var("PS5SLOP_GPU_DUMP_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
             SKIP.store(n, Relaxed);
         }
