@@ -114,6 +114,7 @@ fn ok(_: &mut Env) -> Result<Outcome, CallError> {
 /// 12 uses 10's and 13 uses 11's, as SharpEmu does.
 fn defaults_for(version: u32) -> Option<(&'static CompactDefaults, &'static CompactDefaults)> {
     match version {
+        8 => Some((&defaults::PUBLIC_V8, &defaults::INTERNAL_V8)),
         10 | 12 => Some((&defaults::PUBLIC_V10, &defaults::INTERNAL_V10)),
         11 | 13 => Some((&defaults::PUBLIC_V11, &defaults::INTERNAL_V11)),
         _ => None,
