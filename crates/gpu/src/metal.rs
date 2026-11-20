@@ -137,6 +137,9 @@ fn read_converted(t: &Texture) -> Option<(u32, u32, Vec<u8>)> {
     Some((w as u32, h as u32, px))
 }
 
+/// Frames an image read from guest memory stays cached without being used.
+const IMAGE_LIFETIME: u64 = 300;
+
 /// Guest memory is wrapped in windows of about this size.
 const WINDOW: u64 = 64 << 20;
 const PAGE: u64 = 0x4000;
@@ -448,6 +451,9 @@ impl Metal {
         }
         let start = (addr & !(WINDOW - 1)).max(lo) & !(PAGE - 1);
         let stop = end.next_multiple_of(WINDOW).min(hi).next_multiple_of(PAGE).min(hi);
+        if stop - start > 512 << 20 {
+            self.report(format!("guest memory window of {} MiB at {start:#x} for {len:#x} bytes at {addr:#x}", (stop - start) >> 20));
+        }
         let ptr = NonNull::new(host.host_pointer(start)?)?;
         // SAFETY: the range is host memory that stays mapped while the address
         // space lives; windows are dropped when its mappings change.
@@ -459,7 +465,14 @@ impl Metal {
                 None,
             )
         }?;
+        let (inside, kept) = std::mem::take(&mut self.windows)
+            .into_iter()
+            .partition::<Vec<_>, _>(|w| start <= w.start && w.end <= stop);
+        self.windows = kept;
         if let Some(r) = &self.resident {
+            for w in &inside {
+                r.removeAllocation(ProtocolObject::from_ref(&*w.buffer));
+            }
             r.addAllocation(ProtocolObject::from_ref(&*buffer));
             r.commit();
         }
@@ -1906,7 +1919,24 @@ impl Backend for Metal {
     fn summary(&self) -> String {
         let mut reasons: Vec<_> = self.reasons.iter().collect();
         reasons.sort_by(|a, b| b.1.cmp(a.1));
-        format!("{} drawn, {} dispatched, {} skipped {reasons:?}", self.draws, self.dispatches, self.skipped)
+        let mib = |t: &Retained<Texture>| MTLAllocation::allocatedSize(&**t) as u64;
+        let image_bytes: u64 = self.images.values().map(|(_, t)| mib(t)).sum();
+        let target_bytes: u64 = self.targets.values().map(|t| mib(&t.texture)).sum();
+        format!(
+            "{} drawn, {} dispatched, {} skipped {reasons:?}; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines",
+            self.draws,
+            self.dispatches,
+            self.skipped,
+            self.images.len(),
+            image_bytes >> 20,
+            self.targets.len(),
+            target_bytes >> 20,
+            self.depths.len(),
+            self.volumes.len(),
+            self.swizzles.len(),
+            self.windows.len(),
+            self.pipelines.len()
+        )
     }
 
     fn frame_done(&mut self, shown: Option<u64>) {
@@ -1940,6 +1970,9 @@ impl Backend for Metal {
             eprintln!("ps5slop: trace: frame {} done, showing {shown:x?}", self.epoch);
         }
         self.epoch += 1;
+        self.swizzles.clear();
+        let epoch = self.epoch;
+        self.images.retain(|_, (used, _)| epoch - *used < IMAGE_LIFETIME);
         let n = TRACE_NEXT.swap(0, std::sync::atomic::Ordering::Relaxed);
         if n > 0 {
             self.trace_frames = Some((self.epoch, self.epoch + n - 1));

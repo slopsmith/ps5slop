@@ -248,3 +248,9 @@ The code cache is split into 8 MiB segments; when it is full, the coldest segmen
 
 Reason: Minecraft filled the cache when creating a world, and from then on all new code ran in the interpreter. vic asked for eviction of the least used and oldest code, in chunks, rather than flushing the whole cache, which would stall every thread at once. Use is sampled by kicking vCPUs 100 times a second rather than counted per block, which would slow every block down.
 
+
+## 2026-11-20: Small new mappings are zeroed in place
+
+A new guest mapping under 64 MiB over host pages that already exist is zeroed in place instead of getting fresh pages, and unmaps under 64 MiB leave the host pages alone ([memory.md](memory.md)).
+
+Reason: every page replacement invalidates whatever maps those pages elsewhere. Minecraft maps and unmaps small pieces of direct memory many times a second during world loading, and each time the GPU windows over that memory (up to 2 GB, for shaders that read through pointers) had to be made again. Metal ran out of memory ("Insufficient Memory") during world loading. Zeroing costs a write per byte, so large mappings keep the page replacement.

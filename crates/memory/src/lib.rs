@@ -145,6 +145,10 @@ fn make_physical(size: u64) -> i32 {
     }
 }
 
+// Smaller new mappings keep their host pages, so GPU buffers and stage 2
+// mappings of them stay valid.
+const ZERO_IN_PLACE: u64 = 64 << 20;
+
 /// Past this many unread fresh ranges, everything counts as fresh.
 const FRESH_LIMIT: usize = 4096;
 
@@ -164,6 +168,8 @@ struct Shared {
     /// [`Memory::replaced_since`]).
     replaced: Mutex<std::collections::VecDeque<(u64, u64, u64)>>,
     replaced_next: AtomicU64,
+    /// Ranges with readable and writable host pages, merged, by start.
+    backed: Mutex<BTreeMap<u64, u64>>,
     /// Shared memory standing in for physical memory (see
     /// [`Memory::map_physical`]): its descriptor, or -1 if it could not be made.
     physical: std::sync::OnceLock<i32>,
@@ -260,6 +266,7 @@ impl Memory {
                 fresh: Mutex::new(Vec::new()),
                 replaced: Mutex::new(std::collections::VecDeque::new()),
                 replaced_next: AtomicU64::new(0),
+                backed: Mutex::new(BTreeMap::new()),
                 physical: std::sync::OnceLock::new(),
             }),
             last: Cell::new(None),
@@ -322,6 +329,26 @@ impl Memory {
     // Mapped host pages never become inaccessible again: a thread racing
     // with an unmap reads zeros instead of crashing the host.
     fn host_fresh(&self, addr: u64, len: u64) -> Result<(), MapError> {
+        let backed = self.shared.backed.lock().unwrap_or_else(|e| e.into_inner());
+        let covered = backed
+            .range(..=addr)
+            .next_back()
+            .is_some_and(|(_, &end)| end >= addr + len);
+        drop(backed);
+        if len < ZERO_IN_PLACE && covered {
+            // SAFETY: the range lies inside our reservation and has readable and
+            // writable host pages.
+            unsafe { std::ptr::write_bytes(self.host(addr), 0, len as usize) };
+            fence(Ordering::SeqCst);
+            return Ok(());
+        }
+        self.host_replace(addr, len, None)
+    }
+
+    fn release(&self, addr: u64, len: u64) -> Result<(), MapError> {
+        if len < ZERO_IN_PLACE {
+            return Ok(());
+        }
         self.host_replace(addr, len, None)
     }
 
@@ -346,6 +373,21 @@ impl Memory {
         if p == libc::MAP_FAILED {
             return Err(MapError::Host(io::Error::last_os_error()));
         }
+        let mut backed = self.shared.backed.lock().unwrap_or_else(|e| e.into_inner());
+        let (mut start, mut end) = (addr, addr + len);
+        let touching: Vec<(u64, u64)> = backed
+            .range(..=end)
+            .rev()
+            .take_while(|&(_, &e)| e >= start)
+            .map(|(&s, &e)| (s, e))
+            .collect();
+        for (s, e) in touching {
+            backed.remove(&s);
+            start = start.min(s);
+            end = end.max(e);
+        }
+        backed.insert(start, end);
+        drop(backed);
         let mut fresh = self.shared.fresh.lock().unwrap_or_else(|e| e.into_inner());
         if fresh.len() >= FRESH_LIMIT {
             fresh.clear();
@@ -482,7 +524,7 @@ impl Memory {
         self.check_range(addr, len)?;
         let mut regions = self.regions_write();
         carve(&mut regions, addr, addr + len)?;
-        self.host_fresh(addr, len)?;
+        self.release(addr, len)?;
         drop(regions);
         self.changed();
         Ok(())
@@ -516,7 +558,7 @@ impl Memory {
     pub fn unmap(&self, addr: u64) -> Result<(), MapError> {
         let mut regions = self.regions_write();
         let r = regions.remove(&addr).ok_or(MapError::OutOfRange)?;
-        self.host_fresh(addr, r.end - addr)?;
+        self.release(addr, r.end - addr)?;
         drop(regions);
         self.changed();
         Ok(())
@@ -1046,6 +1088,18 @@ mod tests {
         assert_eq!(ranges, Some(vec![(0x40_0000, 0x40_0000 + PAGE_SIZE)]));
         assert_eq!(m.replaced_since(next), (next, Some(vec![])));
         assert_eq!(m.replaced_since(0).1.map(|r| r.len()), Some(1));
+    }
+
+    #[test]
+    fn mapping_again_zeroes_the_same_pages() {
+        let m = Memory::new(4 * GIB).unwrap();
+        m.map(0x40_0000, 4 * PAGE_SIZE, Prot::RW, "a").unwrap();
+        m.write_u64(0x40_0000 + PAGE_SIZE, 7).unwrap();
+        m.unmap(0x40_0000).unwrap();
+        let (mark, _) = m.replaced_since(u64::MAX);
+        m.map(0x40_0000 + PAGE_SIZE, PAGE_SIZE, Prot::RW, "b").unwrap();
+        assert_eq!(m.read_u64(0x40_0000 + PAGE_SIZE).unwrap(), 0);
+        assert_eq!(m.replaced_since(mark).1, Some(vec![]));
     }
 
     #[test]
