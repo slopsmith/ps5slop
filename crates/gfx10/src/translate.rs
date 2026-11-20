@@ -2218,10 +2218,25 @@ impl<'a> Tx<'a> {
                 if self.regs.contains("m0") {
                     init.push_str("    m0 = 0u;\n");
                 }
+                let mut body = self.body.clone();
+                let mut tail = String::from("    if (!exported) discard_fragment();\n    return o;\n");
+                // Debugging aid: the first flat input's raw value in colour output 1.
+                if std::env::var_os("PS5SLOP_PROBE_FLAT").is_some()
+                    && self.mrts & 2 != 0
+                    && self.req.col_format >> 4 & 0xF != 7
+                    && self.req.col_format >> 4 & 0xF != 8
+                    && let Some((&a, _)) = self.attrs.iter().find(|(_, m)| **m == Interp::Flat)
+                {
+                    let probe = format!(
+                        "{{ o.c1 = float4(float(in.a{a}.x & 0xffu) / 255.0, float((in.a{a}.x >> 8) & 0xffu) / 255.0, float((in.a{a}.x >> 16) & 0xffu) / 255.0, 1.0); return o; }}"
+                    );
+                    body = body.replace("return o;", &probe);
+                    tail = tail.replace("return o;", &probe);
+                }
                 out.push_str(&format!(
-                    "fragment PsOut gen5_ps(PsIn in [[stage_in]], {}) {{\n    PsOut o = {{}};\n    bool exported = false;\n{init}{}    if (!exported) discard_fragment();\n    return o;\n}}\n",
+                    "fragment PsOut gen5_ps(PsIn in [[stage_in]], {}) {{\n    PsOut o = {{}};\n    bool exported = false;\n{init}{}{tail}}}\n",
                     entry_params.join(", "),
-                    self.body
+                    body
                 ));
             }
             Stage::Compute => {
