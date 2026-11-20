@@ -30,6 +30,7 @@ Status: milestones 1 and 2 are done; our own test programs run under the interpr
 - [audio.md](audio.md): AudioOut, NGS2 and the host's output device.
 - [test-targets.md](test-targets.md): test programs, commercial targets and the oracles we have without a PS5.
 - [debugging.md](debugging.md): the control socket and write watchpoints.
+- [savestates.md](savestates.md): the plan for save states (not started).
 - [references.md](references.md): prior art, licenses, and what we read.
 - [legal.md](legal.md): the hard rules.
 - [decisions.md](decisions.md): what has been decided, when and why.
