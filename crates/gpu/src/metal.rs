@@ -1022,7 +1022,9 @@ impl Metal {
             TextureKind::Tex2d => 1,
             TextureKind::Cube => 6,
             TextureKind::Tex2dArray => image.depth as usize,
-            TextureKind::Tex3d if image.kind != 10 => return self.flat_volume(host, image, format),
+            TextureKind::Tex3d if image.kind != 10 || one_texel_volume(image) => {
+                return self.flat_volume(host, image, format);
+            }
             TextureKind::Tex3d => return None,
         };
         if let Some(t) = self.targets.get(&image.address)
@@ -2662,6 +2664,11 @@ fn color_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
         (16, 0) => P::B5G6R5Unorm,
         _ => return None,
     })
+}
+
+/// A 3D image of one texel, whose layout cannot differ from a 2D one.
+fn one_texel_volume(image: Image) -> bool {
+    image.width == 1 && image.height == 1 && image.depth == 1
 }
 
 // Metal allows views of the same bytes per pixel; packed float formats
