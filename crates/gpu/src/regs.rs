@@ -9,6 +9,7 @@ use crate::tiling::TileMode;
 pub mod context {
     pub const DB_RENDER_CONTROL: usize = 0x000;
     pub const DB_DEPTH_VIEW: usize = 0x002;
+    pub const DB_HTILE_DATA_BASE: usize = 0x005;
     pub const DB_DEPTH_SIZE_XY: usize = 0x007;
     pub const DB_STENCIL_CLEAR: usize = 0x00A;
     pub const DB_DEPTH_CLEAR: usize = 0x00B;
@@ -17,6 +18,7 @@ pub mod context {
     pub const DB_Z_WRITE_BASE: usize = 0x014;
     pub const DB_STENCIL_WRITE_BASE: usize = 0x015;
     pub const DB_Z_WRITE_BASE_HI: usize = 0x01C;
+    pub const DB_HTILE_DATA_BASE_HI: usize = 0x01E;
     pub const DB_STENCIL_CONTROL: usize = 0x10B;
     pub const DB_STENCIL_REF_MASK: usize = 0x10C;
     pub const DB_STENCIL_REF_MASK_BF: usize = 0x10D;

@@ -344,6 +344,9 @@ pub struct Metal {
     /// The frames `PS5SLOP_GPU_TRACE` names (`n` or `first-last`), and the
     /// trace lines of the current draw.
     trace_frames: Option<(u64, u64)>,
+    /// The context and uconfig registers at the last traced draw, for
+    /// `PS5SLOP_TRACE_REGS`.
+    traced_regs: Vec<u32>,
     trace: Option<Vec<String>>,
 }
 
@@ -520,6 +523,7 @@ impl Metal {
             dispatches: 0,
             skipped: 0,
             reasons: HashMap::new(),
+            traced_regs: Vec::new(),
             trace_frames: std::env::var("PS5SLOP_GPU_TRACE").ok().and_then(|v| match v.split_once('-') {
                 Some((a, b)) => Some((a.parse().ok()?, b.parse().ok()?)),
                 None => v.parse().ok().map(|n| (n, n)),
@@ -983,6 +987,25 @@ impl Metal {
     /// target at that address, or a copy of guest memory refreshed once per frame.
     fn image(&mut self, host: &dyn Host, image: Image, kind: TextureKind) -> Option<Retained<Texture>> {
         let (format, bpe) = image_format(image.format)?;
+        if kind == TextureKind::Cube
+            && let Some(d) = self.depths.get(&image.address).cloned()
+            && d.width() as u32 == image.width
+            && d.height() as u32 == image.height
+        {
+            let base = image.base_array as usize;
+            if d.textureType() != MTLTextureType::Type2DArray || d.arrayLength() < base + 6 {
+                return None;
+            }
+            self.note(|| format!("      {:#x} a cube of a layered depth target", image.address));
+            return unsafe {
+                d.newTextureViewWithPixelFormat_textureType_levels_slices(
+                    d.pixelFormat(),
+                    MTLTextureType::TypeCube,
+                    objc2_foundation::NSRange::new(0, 1),
+                    objc2_foundation::NSRange::new(base, 6),
+                )
+            };
+        }
         if matches!(kind, TextureKind::Tex2d | TextureKind::Tex2dArray)
             && let Some(d) = self.depths.get(&image.address)
             && d.width() as u32 == image.width
@@ -1581,6 +1604,35 @@ impl Metal {
         blit.endEncoding();
         self.note(|| format!("      depth {:#x} filled from the image a program stored there", d.address));
         Some((t, format, false))
+    }
+
+    /// Whether `d`'s slice was fast-cleared through its HTILE since we last
+    /// looked: titles clear depth by filling HTILE with a compute program,
+    /// and a tile whose ZMask (bits 0 to 3) is 0 holds the clear value
+    /// (Mesa's radv writes HTILE this way). Only the slice's first HTILE
+    /// dword is checked, and it is then marked expanded (ZMask 0xF), as
+    /// drawing would leave it. HTILE slices are taken to be 4 bytes per
+    /// 8x8 tile rounded up to 64 KiB (seen for 1024x1024 cube faces).
+    fn htile_cleared(&mut self, host: &dyn Host, c: &[u32], d: &DepthTarget) -> bool {
+        const TILE_SURFACE_ENABLE: u32 = 1 << 29;
+        if c[context::DB_Z_INFO] & TILE_SURFACE_ENABLE == 0 {
+            return false;
+        }
+        let base = ((c[context::DB_HTILE_DATA_BASE] as u64) | ((c[context::DB_HTILE_DATA_BASE_HI] as u64 & 0xFF) << 32)) << 8;
+        if base == 0 {
+            return false;
+        }
+        let (w, h) = if d.width != 0 { (d.width, d.height) } else { (1, 1) };
+        let slice_bytes = (w.div_ceil(8) as u64 * h.div_ceil(8) as u64 * 4).next_multiple_of(64 << 10);
+        let at = base + d.slice as u64 * slice_bytes;
+        self.settle();
+        let mut word = [0u8; 4];
+        if !host.read(at, &mut word) || u32::from_le_bytes(word) & 0xF != 0 {
+            return false;
+        }
+        host.write(at, &(u32::from_le_bytes(word) | 0xF).to_le_bytes());
+        self.note(|| format!("      depth {:#x} slice {} fast-cleared through HTILE at {at:#x}", d.address, d.slice));
+        true
     }
 
     /// The depth texture at `d`'s address; new ones start cleared.
@@ -2246,7 +2298,7 @@ impl Metal {
             if let Some((tex, format, fresh)) = self.depth(&d, dw, dh) {
                 key.depth = format.0;
                 key.stencil = d.stencil;
-                let clearing = c[context::DB_RENDER_CONTROL] & 3 != 0;
+                let clearing = c[context::DB_RENDER_CONTROL] & 3 != 0 || self.htile_cleared(host, c, &d);
                 if clearing || fresh {
                     let z = if clearing {
                         let (zs, zo) = regs::depth_range(c, gl_clip);
@@ -2397,6 +2449,25 @@ impl Metal {
         }
     }
 
+    /// Notes every context (0xA000 + n) and uconfig (0xC000 + n) register
+    /// that changed since the last traced draw.
+    fn note_changed_registers(&mut self, state: &State) {
+        let now: Vec<u32> = state.context.iter().chain(state.uconfig).copied().collect();
+        let old = std::mem::replace(&mut self.traced_regs, now);
+        let split = state.context.len();
+        let changed: Vec<String> = self
+            .traced_regs
+            .iter()
+            .enumerate()
+            .filter(|&(k, v)| old.get(k) != Some(v))
+            .map(|(k, v)| {
+                let reg = if k < split { 0xA000 + k } else { 0xC000 + k - split };
+                format!("{reg:x}={v:x}")
+            })
+            .collect();
+        self.note(|| format!("changed {}", changed.join(" ")));
+    }
+
     fn tracing(&self) -> bool {
         self.trace_frames.is_some_and(|(a, b)| (a..=b).contains(&self.epoch))
     }
@@ -2457,6 +2528,9 @@ impl Backend for Metal {
 
     fn draw(&mut self, host: &dyn Host, state: &State, draw: Draw) {
         self.trace = self.tracing().then(Vec::new);
+        if self.trace.is_some() && std::env::var_os("PS5SLOP_TRACE_REGS").is_some() {
+            self.note_changed_registers(state);
+        }
         let result = self.try_draw(host, state, draw);
         self.end_trace(|| format!("draw {draw:?}"), result);
         match result {
