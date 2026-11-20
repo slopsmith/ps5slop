@@ -386,3 +386,10 @@ Reason (vic): the middleware is not Sony's code and not part of the emulator, so
 GPU bugs are found with `gpusnap` (copies of every render pass's attachments during one frame), `gpuskip` and MSL overrides with `gpureload` ([debugging.md](debugging.md)), not with Metal's `.gputrace` captures.
 
 Reason: a capture records every buffer the frame uses, and our no-copy windows over guest memory are several GiB; one capture of Minecraft wrote 25 GB and grew the process to 13 GB within seconds. The copies are bounded (1 GiB), need no Xcode, and can be read from the command line.
+
+## 2026-11-21: Protection queries report the bits the guest gave
+
+`sceKernelQueryMemoryProtection` reports the protection bits a page was mapped or protected with, including bits we do not map (such as `0x40` and `0x80`), instead of bits derived from our CPU mapping ([hle-kernel.md](hle-kernel.md)).
+
+Reason: GTA V checks bit `0x80` before an APR read to choose between reading straight into its buffer and a bounce buffer, and its bounce path loses the first of two reads on one request; with derived bits every read bounced and its streamer asserted. Reporting what the guest gave is also what a title can expect from a console, whatever the bits mean. Found by disassembling the game's code locally, as vic allowed on 2026-11-20.
+

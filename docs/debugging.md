@@ -93,6 +93,8 @@ A title's own code may be disassembled locally to learn what it expects of us; S
 
 `PS5SLOP_UNIMPLEMENTED_ZERO=1` makes every unimplemented import return 0 and log `UNIMPLEMENTED (returning 0) LIBRARY NID NAME(args) from CALLER` instead of stopping. Names come from `PS5SLOP_NAMES` when given. A title then runs on until something actually depends on a missing result, so one run shows the next dozen imports a title needs and in what order, where stopping shows one. It is for exploring only: a 0 that should have been an output, a handle or an error can send the guest down paths it never takes on a console, so each import it passes over still needs a real (or a declared placeholder) implementation. Astro Bot's first run got from libc's start-up to its GPU set-up this way. With `PS5SLOP_UNIMPLEMENTED_ZERO=dump`, each such line is followed by the first 32 bytes behind every argument register (of six) that points at readable memory, which shows strings, output slots preset by the caller and structures without a second run.
 
+`PS5SLOP_TRACE_APR=1` prints every APR read as it runs: the file, offset, length, bytes read and destination. With the package's own bytes (`ps5slop-pkg cat`) it shows whether a read was whole and where it went; that is how GTA V's reads were ruled out as the cause of its streamer assert.
+
 `PS5SLOP_HOLD_ON_FAULT=1` keeps a thread that faulted from ending the process: it prints the fault and its registers and waits, so the control socket can still read memory (`mem`, `regions`, `threads`) at the moment of the fault. Other threads keep running. `quit` ends it. Hold only as long as the inspection takes: a held guest keeps all its memory.
 
 ## Files a title asks for
