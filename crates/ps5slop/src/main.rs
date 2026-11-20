@@ -213,20 +213,19 @@ fn dump_after(kernel: std::sync::Arc<hle::Kernel>, out: PathBuf, seconds: f64) {
 // joined by `+`, and an empty list releases everything (see README).
 fn play_input(kernel: std::sync::Arc<hle::Kernel>, script: String) {
     let start = std::time::Instant::now();
-    let steps: Vec<(f64, u32)> = script
+    let steps: Vec<(f64, hle::PadInput)> = script
         .split(',')
         .filter_map(|step| {
             let (t, keys) = step.split_once(':')?;
-            let buttons = ps5slop::pad_buttons(keys);
-            Some((t.parse().ok()?, buttons))
+            Some((t.parse().ok()?, ps5slop::pad_input(keys)))
         })
         .collect();
     std::thread::spawn(move || {
-        for (at, buttons) in steps {
+        for (at, input) in steps {
             if let Some(wait) = std::time::Duration::from_secs_f64(at).checked_sub(start.elapsed()) {
                 std::thread::sleep(wait);
             }
-            kernel.set_pad_input(hle::PadInput { buttons, ..Default::default() });
+            kernel.set_pad_input(input);
         }
     });
 }

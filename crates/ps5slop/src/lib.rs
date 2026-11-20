@@ -319,16 +319,40 @@ pub fn write_frame(kernel: &Kernel, out: &std::path::Path) -> Result<(), String>
     std::fs::write(out, ppm).map_err(|e| format!("cannot write {}: {e}", out.display()))
 }
 
-/// Pad buttons named in `keys`, joined by `+` (`cross+up`); unknown names
-/// count for nothing.
-pub fn pad_buttons(keys: &str) -> u32 {
-    keys.split('+').filter(|k| !k.is_empty()).fold(0, |b, k| {
-        b | match k {
+/// Pad input named in `keys`, joined by `+` (`cross+up`): buttons, `l2` and
+/// `r2` pulled fully, and sticks pushed fully as `ls-left` or `lleft`,
+/// `rs-right` or `rright` and so on. Unknown names count for nothing.
+pub fn pad_input(keys: &str) -> hle::PadInput {
+    keys.split('+').filter(|k| !k.is_empty()).fold(hle::PadInput::default(), |mut p, k| {
+        let stick = |s: &mut (u8, u8), dir: &str| match dir {
+            "left" => s.0 = 0,
+            "right" => s.0 = 255,
+            "up" => s.1 = 0,
+            "down" => s.1 = 255,
+            _ => {}
+        };
+        let short = |side: char| {
+            k.strip_prefix(side)
+                .filter(|d| matches!(*d, "up" | "down" | "left" | "right"))
+        };
+        if let Some(dir) = k.strip_prefix("ls-").or_else(|| short('l')) {
+            stick(&mut p.left, dir);
+        } else if let Some(dir) = k.strip_prefix("rs-").or_else(|| short('r')) {
+            stick(&mut p.right, dir);
+        }
+        match k {
+            "l2" => p.l2 = 255,
+            "r2" => p.r2 = 255,
+            _ => {}
+        }
+        p.buttons |= match k {
             "options" => 0x8,
             "up" => 0x10,
             "right" => 0x20,
             "down" => 0x40,
             "left" => 0x80,
+            "l2" => 0x100,
+            "r2" => 0x200,
             "l1" => 0x400,
             "r1" => 0x800,
             "triangle" => 0x1000,
@@ -336,6 +360,7 @@ pub fn pad_buttons(keys: &str) -> u32 {
             "cross" => 0x4000,
             "square" => 0x8000,
             _ => 0,
-        }
+        };
+        p
     })
 }

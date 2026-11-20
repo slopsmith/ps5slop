@@ -245,7 +245,7 @@ fn run(kernel: &Kernel, line: &str) -> String {
             }
             None => "usage: targets DIR".into(),
         },
-        "press" => match it.next().map(pad_input) {
+        "press" => match it.next().map(crate::pad_input) {
             Some(input) if input != hle::PadInput::default() => {
                 let ms = it.next().and_then(|m| m.parse().ok()).unwrap_or(400);
                 kernel.set_pad_input(input);
@@ -281,26 +281,6 @@ fn run(kernel: &Kernel, line: &str) -> String {
 }
 
 /// Pad buttons plus the triggers and sticks pushed to their limits.
-fn pad_input(keys: &str) -> hle::PadInput {
-    let mut input = hle::PadInput { buttons: crate::pad_buttons(keys), ..Default::default() };
-    for k in keys.split('+') {
-        match k {
-            "l2" => (input.buttons, input.l2) = (input.buttons | 0x100, 255),
-            "r2" => (input.buttons, input.r2) = (input.buttons | 0x200, 255),
-            "lup" => input.left.1 = 0,
-            "ldown" => input.left.1 = 255,
-            "lleft" => input.left.0 = 0,
-            "lright" => input.left.0 = 255,
-            "rup" => input.right.1 = 0,
-            "rdown" => input.right.1 = 255,
-            "rleft" => input.right.0 = 0,
-            "rright" => input.right.0 = 255,
-            _ => {}
-        }
-    }
-    input
-}
-
 fn hexdump(mem: &memory::Memory, addr: u64, len: u64) -> String {
     let mut lines = Vec::new();
     for row in (0..len).step_by(16) {
