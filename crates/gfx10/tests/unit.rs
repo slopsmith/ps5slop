@@ -436,3 +436,9 @@ fn quad_permutations_shuffle_within_the_quad() {
     assert!(t.msl.contains("quad_shuffle(") && t.msl.contains("[[thread_index_in_quadgroup]]"));
     compile(&t.msl);
 }
+
+#[test]
+fn sampler_adjust_samples_decode_as_their_base_form() {
+    assert_eq!(text(&[0xF080_0109, 0x00C0_0904]), text(&[0xF080_0108, 0x00C0_0904]));
+    assert_eq!(text(&[0xF0A0_0109, 0x00C0_0904]), text(&[0xF0A0_0108, 0x00C0_0904]));
+}

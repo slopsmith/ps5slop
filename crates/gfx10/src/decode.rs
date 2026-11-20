@@ -369,7 +369,7 @@ pub fn decode(words: &[u32]) -> Result<Inst, DecodeError> {
                     a16: bit(w1, 30),
                     d16: bit(w1, 31),
                 };
-                let code = bits(w, 18, 7) | bits(w, 0, 1) << 7;
+                let code = sample_adjust_base(bits(w, 18, 7) | bits(w, 0, 1) << 7);
                 (op(Fmt::Mimg, code)?, Kind::Mimg(m), 2 + nsa)
             }
             0x3E => {
@@ -433,6 +433,17 @@ pub fn decode(words: &[u32]) -> Result<Inst, DecodeError> {
         literal,
         words: len,
     })
+}
+
+/// The PS5's sampler-adjust image sample forms (`0xA0` to `0xBE`, not in
+/// public RDNA2 docs) as their base sample instruction, `0x80` lower: same
+/// operands, only reserved sampler bits differ (SharpEmu-mac's description).
+fn sample_adjust_base(code: u32) -> u32 {
+    match code {
+        0xa0 | 0xa1 | 0xa5 | 0xa6 | 0xa8 | 0xa9 | 0xad | 0xae | 0xb0 | 0xb1 | 0xb5 | 0xb6 | 0xb8 | 0xb9 | 0xbd
+        | 0xbe => code - 0x80,
+        _ => code,
+    }
 }
 
 fn empty_valu(enc: VEnc) -> Valu {
