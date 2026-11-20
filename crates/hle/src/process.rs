@@ -227,6 +227,19 @@ pub fn trace_calls(file: Option<std::fs::File>, filter: String) {
     *log = file.map(|f| (std::io::BufWriter::new(f), filter));
 }
 
+/// `@LO-HI` (hex) matches calls made from that address range, anything
+/// else a substring of the function's description.
+fn call_matches(filter: &str, name: &str, caller: u64) -> bool {
+    let Some(range) = filter.strip_prefix('@') else {
+        return name.contains(filter);
+    };
+    let hex = |s: &str| u64::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok();
+    match range.split_once('-').map(|(lo, hi)| (hex(lo), hex(hi))) {
+        Some((Some(lo), Some(hi))) => (lo..hi).contains(&caller),
+        _ => false,
+    }
+}
+
 /// The last host function a thread called, for [`Kernel::threads`].
 #[derive(Default)]
 struct Whereabouts {
@@ -543,7 +556,7 @@ impl Kernel {
                         let name = self.hle.describe(addr).unwrap_or_else(|| format!("{addr:#x}"));
                         let mut log = CALL_LOG.lock().unwrap_or_else(|e| e.into_inner());
                         if let Some((w, filter)) = log.as_mut()
-                            && name.contains(filter.as_str())
+                            && call_matches(filter, &name, caller)
                         {
                             let _ = writeln!(
                                 w,
