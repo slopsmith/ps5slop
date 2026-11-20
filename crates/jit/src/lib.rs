@@ -121,6 +121,19 @@ pub fn set_native(addr: u64, native: Native) {
 /// copy with ordinary exits replaces it.
 const VERIFY_RUNS: u32 = 4;
 
+/// How far verify mode runs the interpreter to check one run of translated
+/// code: a block's instruction count, or while it stays in a region.
+pub(crate) enum Steps {
+    Insns(usize),
+    Region(std::sync::Arc<HashSet<u64>>),
+}
+
+struct RegionInfo {
+    place: usize,
+    rips: std::sync::Arc<HashSet<u64>>,
+    verified: u32,
+}
+
 struct BlockInfo {
     place: usize,
     insns: usize,
@@ -207,6 +220,11 @@ pub struct Machine {
     chain_wanted: HashMap<u64, Vec<usize>>,
     /// Trap addresses served by native library functions in the VM.
     natives: Vec<(u64, usize)>,
+    /// Exits of the region `emit_region` made last, to chain.
+    pending_chains: Vec<(u32, u64)>,
+    tier2: translate::Tier2,
+    /// Tier-2 regions by entry RIP.
+    regions: HashMap<u64, RegionInfo>,
 }
 
 // SAFETY: the VM is process-wide and HVF's VM calls may come from any thread;
@@ -288,6 +306,9 @@ impl Machine {
             cache_full: false,
             chain_wanted: HashMap::new(),
             natives: Vec::new(),
+            pending_chains: Vec::new(),
+            tier2: translate::Tier2::from_env(),
+            regions: HashMap::new(),
         };
         for pool in 0..2 {
             let t = tables::Tables::new(m.runtime.as_mut_slice(), pool);
@@ -434,6 +455,7 @@ impl Machine {
     /// differ at the same addresses. Native functions stay.
     fn forget_code(&mut self) {
         self.blocks.clear();
+        self.regions.clear();
         self.by_place.clear();
         self.chain_wanted.clear();
         self.code_next = layout::CODE_CACHE;
@@ -463,6 +485,10 @@ impl Machine {
     /// Translates the block at `rip` and enters it in the lookup table;
     /// false if it cannot be translated or the cache is full.
     fn translate(&mut self, mem: &Memory, rip: u64) -> bool {
+        if let Some(place) = self.regions.get(&rip).map(|r| r.place) {
+            self.enter(rip, place);
+            return true;
+        }
         if let Some(b) = self.blocks.get(&rip) {
             engine::count_exit(engine::Count::Reenter);
             if self.ready(b) {
@@ -495,6 +521,67 @@ impl Machine {
         true
     }
 
+    /// Sets when blocks are compiled again as tier-2 regions (for tests;
+    /// otherwise from `PS5SLOP_JIT_TIER2`). Applies to blocks translated after.
+    pub fn set_tier2(&mut self, t: translate::Tier2) {
+        self.tier2 = t;
+    }
+
+    /// Compiles the region at `rip`, whose tier-1 block counted down to zero,
+    /// and makes the block branch to it; if there is no region worth having,
+    /// the block stops counting.
+    fn tier_up(&mut self, mem: &Memory, rip: u64) {
+        let Some(block_place) = self.blocks.get(&rip).map(|b| b.place) else {
+            return;
+        };
+        let skip = block_place + translate::PROLOGUE_WORDS * 4;
+        if self.regions.contains_key(&rip) || self.cache_full || self.trace {
+            self.patch(block_place, skip);
+            return;
+        }
+        let exit = if self.verify { VERIFY_EXIT } else { DISPATCH };
+        let Some((place, rips)) = self.emit_region(mem, rip, exit) else {
+            self.patch(block_place, skip);
+            return;
+        };
+        engine::count_exit(engine::Count::Region);
+        let verified = if self.verify { 0 } else { VERIFY_RUNS };
+        let rips = std::sync::Arc::new(rips);
+        self.regions.insert(rip, RegionInfo { place, rips, verified });
+        if self.verify {
+            self.enter(rip, place);
+        } else {
+            self.install_region(rip, block_place, place);
+        }
+    }
+
+    /// Translates the region at `rip` into the code cache, its exits going to
+    /// `exit`; where it went and the RIPs of its instructions.
+    fn emit_region(&mut self, mem: &Memory, rip: u64, exit: usize) -> Option<(usize, HashSet<u64>)> {
+        let place = self.code_next;
+        let (region, rips) = translate::region(mem, rip, place, exit)?;
+        let len = region.code.len() * 4;
+        if place + len > layout::CODE_CACHE_END {
+            self.cache_full = true;
+            return None;
+        }
+        self.runtime.write_words(place, &region.code);
+        // SAFETY: the range was just written inside the runtime region.
+        unsafe { sys_icache_invalidate(self.runtime.as_ptr().add(place).cast(), len) };
+        self.code_next = (place + len).next_multiple_of(16);
+        self.by_place.insert(place, region.insns);
+        self.pending_chains = region.chains;
+        Some((place, rips.into_iter().collect()))
+    }
+
+    /// Makes the region at `place` what the lookup table, chains and the
+    /// tier-1 block at `block_place` lead to.
+    fn install_region(&mut self, rip: u64, block_place: usize, place: usize) {
+        self.patch(block_place, place);
+        let chains = std::mem::take(&mut self.pending_chains);
+        self.link(rip, place, chains);
+    }
+
     /// Puts the native function for trap address `rip` back in the lookup
     /// table after a collision took its slot; false if it has none.
     fn reenter_native(&mut self, rip: u64) -> bool {
@@ -520,7 +607,8 @@ impl Machine {
             return None;
         }
         let place = self.code_next;
-        let block = translate::block(mem, rip, place, exit)?;
+        let count = self.tier2.count().filter(|_| exit == DISPATCH && !self.trace);
+        let block = translate::block(mem, rip, place, exit, count)?;
         let len = block.code.len() * 4;
         if place + len > layout::CODE_CACHE_END {
             self.cache_full = true;
@@ -581,16 +669,37 @@ impl Machine {
         tag.store(rip, Ordering::Release);
     }
 
-    /// In verify mode, the block at `rip`: its virtual address, how many guest
-    /// instructions it holds, and whether it still has to be checked.
-    fn verifying(&self, rip: u64) -> Option<(u64, usize, bool)> {
-        let b = self.blocks.get(&rip).filter(|_| self.verify)?;
-        Some((layout::va(b.place), b.insns, b.verified < VERIFY_RUNS))
+    /// In verify mode, the block or region at `rip`: its virtual address, how
+    /// far to check it, and whether it still has to be checked.
+    fn verifying(&self, rip: u64) -> Option<(u64, Steps, bool)> {
+        if !self.verify {
+            return None;
+        }
+        if let Some(r) = self.regions.get(&rip) {
+            let steps = Steps::Region(r.rips.clone());
+            return Some((layout::va(r.place), steps, r.verified < VERIFY_RUNS));
+        }
+        let b = self.blocks.get(&rip)?;
+        Some((layout::va(b.place), Steps::Insns(b.insns), b.verified < VERIFY_RUNS))
     }
 
-    /// Counts one checked run of the block at `rip`. After the last, the
-    /// block is translated again with ordinary exits, entered and chained.
+    /// Counts one checked run of the block or region at `rip`. After the
+    /// last, it is translated again with ordinary exits, entered and chained.
     fn verified(&mut self, rip: u64, mem: &Memory) {
+        if let Some(r) = self.regions.get_mut(&rip) {
+            r.verified += 1;
+            if r.verified != VERIFY_RUNS {
+                return;
+            }
+            let block_place = self.blocks.get(&rip).map(|b| b.place);
+            if let (Some((place, _)), Some(block_place)) = (self.emit_region(mem, rip, DISPATCH), block_place) {
+                if let Some(r) = self.regions.get_mut(&rip) {
+                    r.place = place;
+                }
+                self.install_region(rip, block_place, place);
+            }
+            return;
+        }
         let Some(b) = self.blocks.get_mut(&rip) else { return };
         b.verified += 1;
         if b.verified != VERIFY_RUNS {
@@ -943,3 +1052,4 @@ impl Cpu {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)] mod dump_tmp;

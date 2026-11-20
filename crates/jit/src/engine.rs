@@ -10,12 +10,16 @@ use memory::{FaultKind, Memory};
 use x86::Cpu as X86;
 use x86::cpu::flags;
 
-use crate::translate::{AF_AUX, FS_BASE, HVC_HOST, HVC_INTERP, HVC_MISS, ICOUNT, PF_RESULT, RIP};
+use crate::translate::{
+    AF_AUX, FS_BASE, HVC_HOST, HVC_INTERP, HVC_MISS, HVC_TIERUP, ICOUNT, PF_RESULT, RIP,
+};
 use crate::{CPSR_EL1H, Cpu, DISPATCH, ENTRY_FLUSH, Exit, RESUME_FLUSH, SHARED, machine};
 
 /// Instructions the interpreter may run in a row before trying translated
 /// code again.
 const INTERP_RUN: usize = 64;
+/// Interpreter steps verify mode records for one run of a region.
+const VERIFY_REGION_STEPS: usize = 4096;
 /// What the interpreter runs per call when no vCPU is available.
 const FALLBACK_SLICE: u64 = 1 << 16;
 
@@ -74,6 +78,8 @@ pub(crate) enum Count {
     Rebuild,
     /// VM entries that had to take the machine's lock.
     SlowEntry,
+    /// Tier-2 regions compiled.
+    Region,
 }
 
 /// Statistics mode (`PS5SLOP_JIT_STATS`): what the interpreter runs, by
@@ -82,7 +88,7 @@ pub(crate) enum Count {
 struct Stats {
     opcodes: HashMap<(u8, u8, u8), u64>,
     rips: HashMap<u64, u64>,
-    exits: [u64; 9],
+    exits: [u64; 10],
 }
 
 fn stats() -> Option<&'static Mutex<Stats>> {
@@ -134,6 +140,7 @@ pub fn report(mem: &Memory) {
         "misses at untranslatable code",
         "table rebuilds",
         "locked entries",
+        "tier-2 regions",
     ];
     let exits: Vec<String> = names
         .iter()
@@ -481,8 +488,8 @@ impl Engine {
                         let verifying = m.verifying(rip);
                         drop(m);
                         match verifying {
-                            Some((va, insns, true)) => {
-                                entry = self.verify(x, mem, rip, va, insns)?
+                            Some((va, steps, true)) => {
+                                entry = self.verify(x, mem, rip, va, steps)?
                             }
                             Some((va, _, false)) => {
                                 let cpsr = CPSR_EL1H | (self.cpsr()? & NZCV);
@@ -493,6 +500,11 @@ impl Engine {
                         continue;
                     }
                     rip
+                }
+                Exit::Hvc(HVC_TIERUP) => {
+                    let rip = self.cpu.reg(RIP.0)?;
+                    machine()?.tier_up(mem, rip);
+                    continue;
                 }
                 Exit::Hvc(HVC_HOST) => {
                     count_exit(Count::HostCall);
@@ -568,16 +580,41 @@ impl Engine {
         mem: &Memory,
         rip: u64,
         va: u64,
-        insns: usize,
+        steps: crate::Steps,
     ) -> Result<Entry, crate::Error> {
         let nzcv = self.cpsr()? & NZCV;
         self.store(x)?;
         x.rip = rip;
-        let mut want = x.clone();
-        mem.start_journal();
-        let comparable = (0..insns).all(|_| x86::step(&mut want, mem) == x86::Exit::Continue);
-        let writes = mem.take_journal();
-        for w in writes.iter().rev() {
+        let mut states = vec![x.clone()];
+        let mut writes: Vec<Vec<memory::Write>> = Vec::new();
+        match &steps {
+            crate::Steps::Insns(n) => {
+                let mut want = x.clone();
+                mem.start_journal();
+                let complete = (0..*n).all(|_| x86::step(&mut want, mem) == x86::Exit::Continue);
+                writes.push(mem.take_journal());
+                if complete {
+                    states.resize(*n, x.clone());
+                    states.push(want);
+                    writes.resize_with(*n, Vec::new);
+                }
+            }
+            crate::Steps::Region(rips) => loop {
+                let at = states.last().expect("the start state").clone();
+                if !rips.contains(&at.rip) || writes.len() >= VERIFY_REGION_STEPS {
+                    break;
+                }
+                let mut next = at;
+                mem.start_journal();
+                let exit = x86::step(&mut next, mem);
+                writes.push(mem.take_journal());
+                if exit != x86::Exit::Continue {
+                    break;
+                }
+                states.push(next);
+            },
+        }
+        for w in writes.iter().flatten().rev() {
             mem.write_host(w.addr, &w.old)
                 .expect("the interpreter just wrote there");
         }
@@ -585,31 +622,30 @@ impl Engine {
             pc: va,
             cpsr: CPSR_EL1H | nzcv,
         };
+        let before = self.cpu.reg(ICOUNT.0)?;
         let exit = loop {
             match self.enter(mem, entry)? {
                 Exit::Canceled { pc, cpsr } => entry = resume_after_cancel(entry, pc, cpsr),
                 other => break other,
             }
         };
+        let ran = self.cpu.reg(ICOUNT.0)?.wrapping_sub(before) as usize;
         machine()?.verified(rip, mem);
-        if !comparable {
+        let known = match steps {
+            crate::Steps::Insns(n) => ran == n,
+            crate::Steps::Region(_) => true,
+        };
+        let Some(want) = states.get(ran).cloned().filter(|_| known) else {
             return Ok(Entry::Dispatch(self.cpsr()? & NZCV));
-        }
+        };
+        let writes: Vec<memory::Write> = writes.into_iter().take(ran).flatten().collect();
+        let insns = ran;
         let mut got = x.clone();
         self.store(&mut got)?;
         let mut diffs = Vec::new();
-        let mut finished_here = false;
         match exit {
             Exit::Hvc(HVC_MISS | HVC_INTERP) => got.rip = self.cpu.reg(RIP.0)?,
-            other => diffs.push(format!("the translated block stopped with {other:x?}")),
-        }
-        if exit == Exit::Hvc(HVC_INTERP) && got.rip != want.rip {
-            finished_here = true;
-            for _ in 0..insns {
-                if got.rip == want.rip || x86::step(&mut got, mem) != x86::Exit::Continue {
-                    break;
-                }
-            }
+            other => diffs.push(format!("the translated code stopped with {other:x?}")),
         }
         for i in 0..16 {
             if got.regs[i] != want.regs[i] {
@@ -661,10 +697,6 @@ impl Engine {
             }
         }
         if diffs.is_empty() {
-            if finished_here {
-                *x = got;
-                return Ok(Entry::Dispatch(self.load(x)?));
-            }
             return Ok(Entry::Dispatch(self.cpsr()? & NZCV));
         }
         eprintln!("ps5slop: JIT verify: the block at {rip:#x} ({insns} instructions) differs:");

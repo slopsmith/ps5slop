@@ -6,6 +6,7 @@ use x86::cpu::flags;
 use x86::cpu::reg::*;
 
 use super::*;
+use crate::translate::Tier2;
 
 const RW: u64 = 0x40_0000;
 const RO: u64 = 0x50_0000;
@@ -150,6 +151,7 @@ fn page(mem: &Memory) -> Vec<u8> {
 
 /// Every instruction form the translator handles, plus two it leaves to the
 /// interpreter (ADC, three-operand IMUL); ends with `call rbp`.
+pub const MIXED_FOR_DUMP: &[u8] = MIXED;
 const MIXED: &[u8] = &[
     0xb9, 0x64, 0x00, 0x00, 0x00, 0x31, 0xc0, 0x48, 0x8d, 0x1d, 0x00, 0x02, 0x00, 0x00, 0x01, 0xc8,
     0x89, 0x04, 0x8b, 0xff, 0xc9, 0x75, 0xf7, 0x48, 0xba, 0xf0, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34,
@@ -171,20 +173,26 @@ fn same_as_interpreter(code: &[u8], data: &[u8]) {
     assert_eq!(x86::run(&mut want, &mem, 100_000), x86::Exit::Trap(TRAP));
     let expected_page = page(&mem);
 
-    let (mem, mut got) = program(code);
-    mem.write_host(CODE + 0x400, data).unwrap();
-    assert_eq!(run(&mut got, &mem, &|| false), x86::Exit::Trap(TRAP));
-    assert_eq!(got.regs, want.regs);
-    assert_eq!(got.rip, want.rip);
-    assert_eq!(got.rflags & flags::ARITH, want.rflags & flags::ARITH);
-    assert_eq!(
-        (got.fsw, got.fcw, got.ftag, got.st),
-        (want.fsw, want.fcw, want.ftag, want.st)
-    );
-    assert_eq!(got.xmm, want.xmm);
-    let got_page = page(&mem);
-    for (k, (g, w)) in got_page.iter().zip(&expected_page).enumerate() {
-        assert_eq!(g, w, "memory differs at {:#x}", CODE + k as u64);
+    for tier2 in [Tier2::Off, Tier2::Hot(1)] {
+        machine().unwrap().set_tier2(tier2);
+        let (mem, mut got) = program(code);
+        mem.write_host(CODE + 0x400, data).unwrap();
+        let exit = run(&mut got, &mem, &|| false);
+        machine().unwrap().set_tier2(Tier2::Off);
+        assert_eq!(exit, x86::Exit::Trap(TRAP), "{tier2:?}");
+        assert_eq!(got.regs, want.regs, "{tier2:?}");
+        assert_eq!(got.rip, want.rip, "{tier2:?}");
+        assert_eq!(got.rflags & flags::ARITH, want.rflags & flags::ARITH, "{tier2:?}");
+        assert_eq!(
+            (got.fsw, got.fcw, got.ftag, got.st),
+            (want.fsw, want.fcw, want.ftag, want.st),
+            "{tier2:?}"
+        );
+        assert_eq!(got.xmm, want.xmm, "{tier2:?}");
+        let got_page = page(&mem);
+        for (k, (g, w)) in got_page.iter().zip(&expected_page).enumerate() {
+            assert_eq!(g, w, "{tier2:?}: memory differs at {:#x}", CODE + k as u64);
+        }
     }
 }
 
@@ -703,4 +711,26 @@ fn packed_fma_lanes_and_widening_match_the_interpreter() {
     data[0x68..0x70].copy_from_slice(&f64::NAN.to_le_bytes());
     data[0x70..0x78].copy_from_slice(&2.0f64.to_le_bytes());
     same_as_interpreter(LANES_AND_FMA, &data);
+}
+
+/// A loop over a linked list with compares, CMOVBE and address arithmetic.
+const LIST_WALK: &[u8] = &[
+    0xbb, 0x00, 0x04, 0x40, 0x00, 0x48, 0x8d, 0x43, 0x40, 0x48, 0xba, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x80, 0x31, 0xc9, 0x31, 0xf6, 0x48, 0x8b, 0x78, 0x20, 0x4c, 0x8b, 0x40, 0x28, 0x4d,
+    0x89, 0xc1, 0x49, 0x29, 0xf9, 0x4c, 0x29, 0xc7, 0x4c, 0x8b, 0x40, 0x08, 0x4c, 0x39, 0xca, 0x48,
+    0x0f, 0x46, 0xf9, 0x48, 0x01, 0xfe, 0x49, 0x8d, 0x40, 0xf8, 0x4d, 0x85, 0xc0, 0x75, 0xd8, 0xb8,
+    0x07, 0x00, 0x00, 0x00, 0xff, 0xd5,
+];
+
+#[test]
+fn list_walk_matches_the_interpreter() {
+    let mut data = vec![0u8; 0x200];
+    let nodes: [(u64, u64, u64); 3] = [(0x400400 + 0x88, 5, 4), (0x400400 + 0xc8, 9, 10), (0, 3, 3)];
+    for (k, (next, a, b)) in nodes.iter().enumerate() {
+        let at = 0x40 + 0x40 * k;
+        data[at + 8..at + 16].copy_from_slice(&next.to_le_bytes());
+        data[at + 32..at + 40].copy_from_slice(&a.to_le_bytes());
+        data[at + 40..at + 48].copy_from_slice(&b.to_le_bytes());
+    }
+    same_as_interpreter(LIST_WALK, &data);
 }

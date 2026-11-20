@@ -5,8 +5,10 @@ use a64::{Asm, Cond, Label, Logic, Reg, Shift, Size, V, Width, r};
 use memory::Memory;
 use x86::decode::{Insn, Map, Mem, Rep, Seg, decode};
 
+mod tier2;
 mod vector;
 mod x87;
+pub use tier2::{Tier2, region};
 pub use vector::CTX;
 
 const DF_OFFSET: i32 = crate::layout::DF_OFFSET as i32;
@@ -16,6 +18,10 @@ pub const HVC_MISS: u16 = 1;
 pub const HVC_INTERP: u16 = 2;
 /// A native library function hands its call to the host function.
 pub const HVC_HOST: u16 = 3;
+/// A block's run count reached zero: compile its region (tier 2).
+pub const HVC_TIERUP: u16 = 4;
+/// Words of the counting prologue at the start of a block that counts.
+pub const PROLOGUE_WORDS: usize = 5;
 
 /// The guest RIP to continue at, for the dispatcher and exits.
 pub const RIP: Reg = Reg(16);
@@ -289,7 +295,13 @@ fn scan(mem: &Memory, rip: u64) -> Vec<(Insn, u64, FlagUse)> {
 /// Translates the block at `rip` for runtime offset `place`, with the
 /// dispatcher at `dispatch`; `None` if its first instruction cannot be
 /// translated.
-pub fn block(mem: &Memory, rip: u64, place: usize, dispatch: usize) -> Option<Block> {
+pub fn block(
+    mem: &Memory,
+    rip: u64,
+    place: usize,
+    dispatch: usize,
+    count: Option<u32>,
+) -> Option<Block> {
     let insns = scan(mem, rip);
     if insns.is_empty() {
         return None;
@@ -310,6 +322,16 @@ pub fn block(mem: &Memory, rip: u64, place: usize, dispatch: usize) -> Option<Bl
         cur: (rip, 0),
         x87_mode: false,
     };
+    let counter = count.map(|n| {
+        let (word, up) = (t.a.label(), t.a.label());
+        let (at, left) = (Reg(17), Reg(18));
+        t.a.adr(at, word);
+        t.a.ldr(Width::W, left, at, 0);
+        t.a.sub_imm(Size::W, left, left, 1);
+        t.a.str(Width::W, left, at, 0);
+        t.a.cbz(Size::W, left, up);
+        (word, up, n)
+    });
     t.a.add_imm(Size::X, ICOUNT, ICOUNT, insns.len() as u32);
     let mut ended = false;
     for (k, (insn, at, _)) in insns.iter().enumerate() {
@@ -339,6 +361,13 @@ pub fn block(mem: &Memory, rip: u64, place: usize, dispatch: usize) -> Option<Bl
         }
         t.a.sub_imm(Size::X, ICOUNT, ICOUNT, left);
         t.exit_to(at, Some(HVC_INTERP));
+    }
+    if let Some((word, up, n)) = counter {
+        t.a.bind(up);
+        t.a.mov_imm(Size::X, RIP, rip);
+        t.a.hvc(HVC_TIERUP);
+        t.a.bind(word);
+        t.a.emit(n);
     }
     Some(Block {
         code: t.a.finish(),
