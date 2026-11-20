@@ -266,3 +266,22 @@ Reason: Minecraft changes its memory map about 450 times a second while loading,
 `WRITE_DATA` to memory is queued with the deferred releases and applied, in order, after the GPU has finished the work before it ([gpu.md](gpu.md)).
 
 Reason: Minecraft's UI uses these writes as labels telling its CPU that earlier GPU work is done. Written when parsed, they ran ahead of draws still queued in Metal, and the game reused vertex data those draws had not read yet. Waiting for the GPU before each write fixed it too but cost 37% of menu frames.
+
+## 2026-11-20: Game modules anywhere in the title load at start; plugins start when asked
+
+Every `.prx` outside `sce_module` and `sce_sys`, up to three folders deep, is loaded and linked before the entry point. Modules the executable needs start then; the rest start the first time the title calls `sceKernelLoadStartModule` for them, with the arguments it passes ([loader.md](loader.md#modules)).
+
+Reason: Superliminal keeps its modules in `Media/Modules` and `Media/Plugins`, imports from two of them and loads Unity's plugins by path later. Linking everything at start keeps the loader in one place (no run-time ELF loading in the HLE crate); deferring the start keeps plugins' start code in the order and with the arguments the title expects. PSNCore refuses to start without them.
+
+## 2026-11-20: Exceptions run on the target thread; blocked host calls restart
+
+`sceKernelRaiseException` queues the exception and kicks the vCPUs; the target runs the handler between guest instructions, and a target blocked in a host function returns from it (condition waits and sleeps) or restarts the call afterwards (everything else) ([hle-kernel.md](hle-kernel.md#exceptions-libkernel_unity)).
+
+Reason: Unity's garbage collector stops threads this way and waits for each to acknowledge, so a thread sitting in `pthread_cond_wait` that never ran the handler deadlocked the collector. Restarting a call by leaving the CPU at its stub needs no change to each wait's internals beyond giving up, and matches `SA_RESTART`. Running handlers inside each wait would have had to drop and retake every lock those waits hold.
+
+## 2026-11-20: `lock cmpxchg16b` uses the host's 128-bit compare-and-swap
+
+The interpreter runs `cmpxchg16b` with ARM's `caspal` (LSE, present on every Apple Silicon Mac), not with a lock ([cpu.md](cpu.md)).
+
+Reason: translated code on other threads updates the same words with native atomics; a lock in the interpreter would not exclude them. Superliminal's runtime uses `cmpxchg16b` from its first instructions.
+

@@ -110,6 +110,9 @@ fn take(env: &mut Env, deadline: Option<Instant>) -> Result<Outcome, CallError> 
         if env.kernel.has_exited() {
             return ok();
         }
+        if crate::exception::interrupted(env) {
+            return Ok(Outcome::Resume);
+        }
         let wait = match deadline {
             Some(d) => match d.checked_duration_since(Instant::now()) {
                 Some(left) => left.min(POLL),
@@ -245,6 +248,15 @@ fn sce_wait(env: &mut Env) -> Result<Outcome, CallError> {
         }
         if env.kernel.has_exited() {
             break Ok(());
+        }
+        if crate::exception::interrupted(env) {
+            st.waiters -= 1;
+            drop(st);
+            if let Some(d) = deadline {
+                let left = d.saturating_duration_since(Instant::now()).as_micros() as u32;
+                env.mem.write(timeout, &left.to_le_bytes())?;
+            }
+            return Ok(Outcome::Resume);
         }
         let wait = match deadline {
             Some(d) => match d.checked_duration_since(Instant::now()) {

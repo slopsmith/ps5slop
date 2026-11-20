@@ -29,6 +29,8 @@ The protocol is the one 86slopper uses: one command per line, and each answer en
 
 Thread names come from `scePthreadCreate`, `scePthreadRename` and `pthread_set_name_np`. Host threads are named `guest 0xTCB`.
 
+A guest fault also prints the return addresses along the frame-pointer chain (module and offset), so the code that called into a failing routine shows without reading any code. The `calls` log is flushed when the guest exits, so its last lines are the calls just before the end.
+
 ## Profiling
 
 `profile on` starts a window; `profile` reports it (see the table above). Times come from the engine: around each VM entry, each interpreter run and each translation, and around each host call in the process. Samples come from the code cache sampler, which kicks running vCPUs 100 times a second (see [jit.md](jit.md)); while profiling, each sample's PC is mapped back to a guest RIP. Off, it costs one relaxed load per VM exit and per host call. It reports addresses and module offsets only, never code bytes: the hot code may be Sony's own modules, which we do not disassemble ([legal.md](legal.md)).

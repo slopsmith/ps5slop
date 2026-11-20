@@ -115,6 +115,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("pthread_mutexattr_init", mutexattr_init),
     f("pthread_mutexattr_destroy", mutexattr_destroy),
     f("pthread_mutexattr_settype", mutexattr_settype),
+    f("pthread_mutexattr_setprotocol", mutexattr_setprotocol),
     f("pthread_mutex_init", mutex_init),
     f("pthread_mutex_destroy", mutex_destroy),
     f("pthread_mutex_lock", mutex_lock),
@@ -244,6 +245,13 @@ fn mutexattr_settype(env: &mut Env) -> Result<Outcome, CallError> {
     }
 }
 
+/// `pthread_mutexattr_setprotocol(attr, protocol)`: priority inheritance
+/// and ceilings are accepted and ignored, as host threads keep their own
+/// priority.
+fn mutexattr_setprotocol(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
 fn mutex_init(env: &mut Env) -> Result<Outcome, CallError> {
     let attr = env.arg(1);
     let kind = if attr == 0 {
@@ -268,8 +276,12 @@ fn mutex_destroy(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// Locks `m` for `me`, blocking unless `try_only`; returns the error number.
-fn acquire(env: &Env, m: &HostMutex, me: u64, try_only: bool) -> i32 {
+/// Returned by [`acquire`] when a pending exception interrupted the wait.
+const RESTART: i32 = -1;
+
+/// Locks `m` for `me`, blocking unless `try_only`; returns the error number,
+/// or [`RESTART`] if `restartable` and an exception is pending.
+fn acquire(env: &Env, m: &HostMutex, me: u64, try_only: bool, restartable: bool) -> i32 {
     let mut s = lock(&m.state);
     let mut waiting = false;
     loop {
@@ -295,11 +307,12 @@ fn acquire(env: &Env, m: &HostMutex, me: u64, try_only: bool) -> i32 {
             }
             _ if try_only => return EBUSY,
             _ => {
-                if env.kernel.has_exited() {
+                let restart = restartable && crate::exception::interrupted(env);
+                if env.kernel.has_exited() || restart {
                     if waiting {
                         s.waiters -= 1;
                     }
-                    return 0;
+                    return if restart { RESTART } else { 0 };
                 }
                 if !waiting {
                     waiting = true;
@@ -330,12 +343,15 @@ fn release(m: &HostMutex, me: u64) -> i32 {
 
 fn mutex_lock(env: &mut Env) -> Result<Outcome, CallError> {
     let m = mutex(env, env.arg(0))?;
-    ret(acquire(env, &m, env.thread.tcb, false))
+    match acquire(env, &m, env.thread.tcb, false, true) {
+        RESTART => Ok(Outcome::Resume),
+        r => ret(r),
+    }
 }
 
 fn mutex_trylock(env: &mut Env) -> Result<Outcome, CallError> {
     let m = mutex(env, env.arg(0))?;
-    ret(acquire(env, &m, env.thread.tcb, true))
+    ret(acquire(env, &m, env.thread.tcb, true, false))
 }
 
 fn mutex_unlock(env: &mut Env) -> Result<Outcome, CallError> {
@@ -392,7 +408,10 @@ fn wait(env: &mut Env, deadline: Option<Instant>) -> Result<Outcome, CallError> 
         held
     };
     let mut timed_out = false;
-    while *generation == start && !env.kernel.has_exited() {
+    while *generation == start
+        && !env.kernel.has_exited()
+        && !crate::exception::interrupted(env)
+    {
         let wait = match deadline {
             Some(d) => match d.checked_duration_since(Instant::now()) {
                 Some(left) => left.min(POLL),
@@ -410,7 +429,7 @@ fn wait(env: &mut Env, deadline: Option<Instant>) -> Result<Outcome, CallError> 
             .0;
     }
     drop(generation);
-    acquire(env, &m, me, false);
+    acquire(env, &m, me, false, false);
     lock(&m.state).count = held;
     ret(if timed_out { ETIMEDOUT } else { 0 })
 }
@@ -497,6 +516,9 @@ fn rwlock_take(env: &mut Env, write: bool, wait: bool) -> Result<Outcome, CallEr
         }
         if env.kernel.has_exited() {
             return ret(0);
+        }
+        if crate::exception::interrupted(env) {
+            return Ok(Outcome::Resume);
         }
         s = l
             .changed
@@ -623,6 +645,9 @@ fn once(env: &mut Env) -> Result<Outcome, CallError> {
                 if env.kernel.has_exited() {
                     return ret(0);
                 }
+                if crate::exception::interrupted(env) {
+                    return Ok(Outcome::Resume);
+                }
             }
         }
     }
@@ -714,7 +739,10 @@ fn sce_mutex_timedlock(env: &mut Env) -> Result<Outcome, CallError> {
     let m = mutex(env, env.arg(0))?;
     let deadline = Instant::now() + Duration::from_micros(env.arg(1) as u32 as u64);
     loop {
-        let r = acquire(env, &m, env.thread.tcb, true);
+        let r = acquire(env, &m, env.thread.tcb, true, false);
+        if r == EBUSY && crate::exception::interrupted(env) {
+            return Ok(Outcome::Resume);
+        }
         if r != EBUSY || Instant::now() >= deadline || env.kernel.has_exited() {
             return sce(ret(if r == EBUSY { ETIMEDOUT } else { r }));
         }
@@ -731,6 +759,7 @@ pub static SCE_FUNCTIONS: &[Function] = &[
     f("scePthreadMutexattrInit", sce_mutexattr_init),
     f("scePthreadMutexattrDestroy", sce_mutexattr_destroy),
     f("scePthreadMutexattrSettype", sce_mutexattr_settype),
+    f("scePthreadMutexattrSetprotocol", sce_ok),
     f("scePthreadMutexInit", sce_mutex_init),
     f("scePthreadMutexDestroy", sce_mutex_destroy),
     f("scePthreadMutexLock", sce_mutex_lock),

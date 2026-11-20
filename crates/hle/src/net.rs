@@ -43,7 +43,15 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceNetEtherNtostr", ether_ntostr),
     f("sceNetInetPton", inet_pton),
     f("sceNetInetNtop", inet_ntop),
+    f("sceNetSocket", socket),
+    f("sceNetErrnoLoc", errno_loc),
 ];
+
+/// libSceNet's errors: `0x80410100` plus the errno (shadPS4, PS4;
+/// unverified for the PS5).
+const fn net_error(errno: i32) -> u64 {
+    (0x8041_0100u32 + errno as u32) as u64
+}
 
 /// A locally administered address (our choice).
 const MAC: [u8; 6] = [0x02, 0x50, 0x53, 0x35, 0x00, 0x01];
@@ -54,6 +62,17 @@ const fn f(name: &'static str, func: crate::HostFn) -> Function {
         name,
         func,
     }
+}
+
+/// `sceNetSocket(name, family, type, protocol)`: the network is down.
+fn socket(env: &mut Env) -> Result<Outcome, CallError> {
+    env.set_errno(crate::errno::ENETDOWN)?;
+    Ok(Outcome::Return(net_error(crate::errno::ENETDOWN)))
+}
+
+/// `sceNetErrnoLoc()`: the calling thread's errno, shared with libkernel's.
+fn errno_loc(env: &mut Env) -> Result<Outcome, CallError> {
+    Ok(Outcome::Return(env.thread.errno_addr()))
 }
 
 fn ok(_: &mut Env) -> Result<Outcome, CallError> {

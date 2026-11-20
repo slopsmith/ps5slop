@@ -84,6 +84,11 @@ pub static STUBS: &[Function] = &[
     f("scePadSetAngularVelocityDeadbandState", with_handle),
     f("scePadResetOrientation", with_handle),
     f("scePadSetVibrationMode", with_handle),
+    f("scePadSetTriggerEffect", with_handle),
+    f(
+        "scePadDeviceClassGetExtendedInformation",
+        device_class_information,
+    ),
 ];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
@@ -143,6 +148,17 @@ fn with_handle(env: &mut Env) -> Result<Outcome, CallError> {
     } else {
         ERROR_INVALID_HANDLE
     })
+}
+
+/// `scePadDeviceClassGetExtendedInformation(handle, info)`: a standard
+/// controller, device class 0 then 4 reserved bytes (shadPS4's PS4 layout,
+/// unverified; the class data after them is left alone).
+fn device_class_information(env: &mut Env) -> Result<Outcome, CallError> {
+    if !is_open(env) {
+        return ret(ERROR_INVALID_HANDLE);
+    }
+    env.mem.write(env.arg(1), &[0u8; 8])?;
+    ret(0)
 }
 
 fn pad_data(input: PadInput, timestamp: u64, count: u8) -> [u8; PAD_DATA_SIZE] {

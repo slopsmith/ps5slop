@@ -65,6 +65,38 @@ pub static STUBS: &[Function] = &[
         "sceSystemServiceReceiveEvent",
         no_system_event,
     ),
+    f("libSceUserService", "sceUserServiceGetAgeLevel", setting_zero),
+    f(
+        "libSceUserService",
+        "sceUserServiceGetAccessibilityVibration",
+        setting_zero,
+    ),
+    f(
+        "libSceUserService",
+        "sceUserServiceGetAccessibilityChatTranscription",
+        setting_zero,
+    ),
+    f(
+        "libSceUserService",
+        "sceUserServiceGetAccessibilityZoomEnabled",
+        setting_zero,
+    ),
+    f(
+        "libSceUserService",
+        "sceUserServiceGetAccessibilityZoomFollowFocus",
+        setting_zero,
+    ),
+    f(
+        "libSceUserService",
+        "sceUserServiceGetAccessibilityTriggerEffect",
+        setting_zero,
+    ),
+    f(
+        "libSceUserService",
+        "sceUserServiceGetAccessibilityPressAndHoldDelay",
+        setting_zero,
+    ),
+    f("libSceUserService", "sceUserServiceGetGamePresets", ok),
 ];
 
 const fn f(library: &'static str, name: &'static str, func: crate::HostFn) -> Function {
@@ -80,6 +112,15 @@ fn ret(v: u64) -> Result<Outcome, CallError> {
 }
 
 fn ok(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
+/// A per-user setting getter `(user_id, *value)`: writes 0 as a 32-bit
+/// value (the types and the meaning of 0 are guesses).
+fn setting_zero(env: &mut Env) -> Result<Outcome, CallError> {
+    if env.arg(1) != 0 {
+        env.mem.write(env.arg(1), &0i32.to_le_bytes())?;
+    }
     ret(0)
 }
 

@@ -21,9 +21,20 @@ pub static FUNCTIONS: &[Function] = &[
         name: "sceSysmoduleUnloadModule",
         func: load_module,
     },
+    Function {
+        library: "libSceSysmodule",
+        name: "sceSysmoduleIsLoaded",
+        func: load_module,
+    },
+    Function {
+        library: "libSceSysmodule",
+        name: "sceSysmoduleGetModuleInfoForUnwind",
+        func: crate::rtld::module_info_for_unwind,
+    },
 ];
 
-/// `sceSysmoduleLoadModule(id)` and its `Internal` variant: returns 0 (success).
+/// `sceSysmoduleLoadModule(id)`, its `Internal` variant, `Unload` and
+/// `IsLoaded`: returns 0 (success, or loaded).
 fn load_module(_: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(0))
 }

@@ -6,6 +6,7 @@
 
 #[cfg(target_os = "macos")]
 mod coreaudio;
+mod out2;
 mod wav;
 
 use std::collections::{HashMap, VecDeque};
@@ -30,6 +31,8 @@ const UNITY_VOLUME: f32 = 32768.0;
 const QUEUED_FRAMES: usize = 2048;
 /// Longest a writer waits for the device before dropping what it queued.
 const DEVICE_STALL: Duration = Duration::from_millis(250);
+
+pub use out2::FUNCTIONS as OUT2_FUNCTIONS;
 
 pub static FUNCTIONS: &[Function] = &[
     f("sceAudioOutInit", ok),
@@ -93,18 +96,18 @@ impl Port {
 }
 
 /// Folds mono or 8-channel (front, centre, LFE, sides, backs) frames down
-/// to stereo.
+/// to stereo; other layouts keep their first two channels.
 fn to_stereo(samples: &[f32], channels: usize) -> Vec<f32> {
     const HALF: f32 = std::f32::consts::FRAC_1_SQRT_2;
     let mut out = Vec::with_capacity(samples.len() / channels * 2);
     for s in samples.chunks_exact(channels) {
         let (l, r) = match channels {
             1 => (s[0], s[0]),
-            2 => (s[0], s[1]),
-            _ => (
+            8 => (
                 s[0] + HALF * (s[2] + s[4] + s[6]),
                 s[1] + HALF * (s[2] + s[5] + s[7]),
             ),
+            _ => (s[0], s[1]),
         };
         out.extend([l, r]);
     }
@@ -149,6 +152,7 @@ pub struct Audio {
     mixer: Arc<Mixer>,
     device: Mutex<Device>,
     wav: Option<PathBuf>,
+    out2: out2::Out2,
 }
 
 impl Default for Audio {
@@ -163,6 +167,7 @@ impl Default for Audio {
             mixer: Default::default(),
             device: Mutex::new(device),
             wav: std::env::var_os("PS5SLOP_AUDIO_WAV").map(PathBuf::from),
+            out2: Default::default(),
         }
     }
 }
@@ -197,6 +202,29 @@ impl Audio {
         #[cfg(not(target_os = "macos"))]
         {
             *d = Device::Off;
+        }
+    }
+
+    /// A new queue in the host mixer, numbered like AudioOut's ports.
+    fn new_queue(&self) -> u64 {
+        let id = {
+            let mut next = lock(&self.next);
+            *next += 1;
+            *next
+        };
+        lock(&self.mixer.queues).insert(id, VecDeque::new());
+        id
+    }
+
+    /// The WAVE dump for queue `id`, if dumps were asked for.
+    fn open_wav(&self, id: u64) -> Option<wav::Wav> {
+        let p = self.wav_path(id)?;
+        match wav::Wav::create(&p, 2, RATE) {
+            Ok(w) => Some(w),
+            Err(e) => {
+                eprintln!("ps5slop: cannot write {}: {e}", p.display());
+                None
+            }
         }
     }
 
@@ -420,6 +448,11 @@ impl crate::Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn other_layouts_keep_their_first_two_channels() {
+        assert_eq!(to_stereo(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6], 6), [0.1, 0.2]);
+    }
 
     #[test]
     fn surround_folds_down_to_stereo() {

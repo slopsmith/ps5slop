@@ -14,10 +14,14 @@ use x86::Cpu;
 use x86::cpu::reg::*;
 
 mod agc;
+mod ajm;
+mod ampr;
 mod audio;
 mod dialog;
 mod dmem;
 mod equeue;
+mod evf;
+mod exception;
 pub use gpu;
 pub mod errno;
 mod file;
@@ -178,6 +182,11 @@ impl Env<'_> {
         let result = loop {
             if self.kernel.has_exited() {
                 break Err(CallError::Exited);
+            }
+            if crate::exception::interrupted(self)
+                && let Err(e) = crate::exception::deliver(self)
+            {
+                break Err(e);
             }
             match self.kernel.execute(self.cpu, self.mem) {
                 x86::Exit::Continue | x86::Exit::Limit => {}
@@ -460,6 +469,7 @@ fn report_stub(
 fn placeholders() -> impl Iterator<Item = &'static Function> {
     stubs::STUBS
         .iter()
+        .chain(ajm::STUBS)
         .chain(ngs2::STUBS)
         .chain(agc::stubs())
         .chain(savedata::STUBS)
@@ -479,6 +489,9 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(pthread::FUNCTIONS)
         .chain(thread::FUNCTIONS)
         .chain(sem::FUNCTIONS)
+        .chain(evf::FUNCTIONS)
+        .chain(ampr::FUNCTIONS)
+        .chain(exception::FUNCTIONS)
         .chain(dmem::FUNCTIONS)
         .chain(equeue::FUNCTIONS)
         .chain(posix::FUNCTIONS)
@@ -493,6 +506,7 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(savedata::FUNCTIONS)
         .chain(ngs2::FUNCTIONS)
         .chain(audio::FUNCTIONS)
+        .chain(audio::OUT2_FUNCTIONS)
         .chain(dialog::FUNCTIONS)
         .chain(agc::functions())
         .chain(placeholders())

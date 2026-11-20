@@ -38,6 +38,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("_exit", crate::kernel::exit),
     f("_sigprocmask", pthread_sigmask),
     f("sceKernelConvertUtcToLocaltime", utc_to_localtime),
+    f("sceKernelConvertLocaltimeToUtc", localtime_to_utc),
     f("sceKernelDebugRaiseException", raise_exception),
     f("sceKernelDebugRaiseExceptionOnReleaseMode", raise_exception),
     f("sysconf", sysconf),
@@ -51,6 +52,8 @@ pub static FUNCTIONS: &[Function] = &[
     f("pthread_setcanceltype", pthread_setcanceltype),
     f("pthread_getschedparam", pthread_getschedparam),
     f("pthread_setschedparam", pthread_setschedparam),
+    f("scePthreadGetschedparam", pthread_getschedparam),
+    f("scePthreadSetschedparam", pthread_setschedparam),
     f("sched_get_priority_min", sched_get_priority_min),
     f("sched_get_priority_max", sched_get_priority_max),
     f("dlopen", dlopen),
@@ -196,11 +199,12 @@ fn nanosleep(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// Sleeps for `time`, waking early only when the process exits.
+/// Sleeps for `time`, waking early when the process exits or an exception
+/// is pending.
 fn sleep(env: &Env, time: Duration) {
     let end = Instant::now() + time;
     while let Some(left) = end.checked_duration_since(Instant::now()) {
-        if env.kernel.has_exited() {
+        if env.kernel.has_exited() || crate::exception::interrupted(env) {
             break;
         }
         std::thread::sleep(left.min(POLL));
@@ -486,6 +490,23 @@ fn utc_to_localtime(env: &mut Env) -> Result<Outcome, CallError> {
     }
     if env.arg(3) != 0 {
         env.mem.write_u64(env.arg(3), 0)?;
+    }
+    ret(0)
+}
+
+/// `sceKernelConvertLocaltimeToUtc(local, dst, &utc, &timezone, &dst_sec)`
+/// (shadPS4's PS4 prototype): in UTC the time stays as it is, with a zero
+/// `struct timezone` and no daylight saving.
+fn localtime_to_utc(env: &mut Env) -> Result<Outcome, CallError> {
+    let (local, utc, tz, dst) = (env.arg(0), env.arg(2), env.arg(3), env.arg(4));
+    if utc != 0 {
+        env.mem.write_u64(utc, local)?;
+    }
+    if tz != 0 {
+        env.mem.write(tz, &[0; 16])?;
+    }
+    if dst != 0 {
+        env.mem.write(dst, &0i32.to_le_bytes())?;
     }
     ret(0)
 }

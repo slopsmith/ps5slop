@@ -163,6 +163,9 @@ fn wait(env: &mut Env) -> Result<Outcome, CallError> {
         if !events.is_empty() || env.kernel.has_exited() {
             break events;
         }
+        if crate::exception::interrupted(env) {
+            return Ok(Outcome::Resume);
+        }
         let wait = match deadline {
             Some(d) => match d.checked_duration_since(Instant::now()) {
                 Some(left) => left.min(POLL),

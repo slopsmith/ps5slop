@@ -83,6 +83,27 @@ impl From<MapError> for ThreadError {
     }
 }
 
+/// The return addresses along the frame-pointer chain from `rbp`, each
+/// with its region and offset, until the chain leaves mapped memory.
+fn return_addresses(mem: &Memory, mut rbp: u64) -> Vec<String> {
+    let regions = mem.regions();
+    let mut out = Vec::new();
+    while out.len() < 16 && rbp != 0 {
+        let (Ok(next), Ok(ret)) = (mem.read_u64(rbp), mem.read_u64(rbp + 8)) else {
+            break;
+        };
+        out.push(match regions.iter().find(|r| (r.start..r.end).contains(&ret)) {
+            Some(r) => format!("{ret:#x} ({}+{:#x})", r.name, ret - r.start),
+            None => format!("{ret:#x}"),
+        });
+        if next <= rbp {
+            break;
+        }
+        rbp = next;
+    }
+    out
+}
+
 fn dump(cpu: &Cpu) -> String {
     const NAMES: [&str; 16] = [
         "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12",
@@ -163,6 +184,9 @@ pub struct Kernel {
     live: AtomicU64,
     pub(crate) heap: crate::heap::Heap,
     pub(crate) sems: crate::sem::Semaphores,
+    pub(crate) evfs: crate::evf::EventFlags,
+    pub(crate) apr: crate::ampr::Apr,
+    pub(crate) exceptions: crate::exception::Exceptions,
     pub(crate) dmem: crate::dmem::DirectMemory,
     pub(crate) equeues: crate::equeue::Queues,
     pub(crate) pad: crate::pad::Pad,
@@ -245,6 +269,9 @@ impl Kernel {
             live: AtomicU64::new(0),
             heap: Default::default(),
             sems: Default::default(),
+            evfs: Default::default(),
+            apr: Default::default(),
+            exceptions: Default::default(),
             dmem: Default::default(),
             equeues: Default::default(),
             pad: Default::default(),
@@ -310,6 +337,9 @@ impl Kernel {
             *slot = Some(result);
         }
         self.exited.store(true, Ordering::Release);
+        if let Some((w, _)) = CALL_LOG.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            let _ = w.flush();
+        }
         self.exit_signal.notify_all();
         if self.jit.load(Ordering::Relaxed) {
             jit::kick_all();
@@ -366,7 +396,8 @@ impl Kernel {
     /// or the process exits.
     pub(crate) fn execute(&self, cpu: &mut Cpu, mem: &Memory) -> Exit {
         if self.jit.load(Ordering::Relaxed) {
-            jit::run(cpu, mem, &|| self.has_exited())
+            let tcb = cpu.fs_base;
+            jit::run(cpu, mem, &|| self.has_exited() || self.exception_pending(tcb))
         } else {
             jit::interpret(cpu, mem, SLICE)
         }
@@ -466,6 +497,20 @@ impl Kernel {
             if self.has_exited() {
                 break;
             }
+            if self.exception_pending(thread.tcb) {
+                let mut env = Env {
+                    cpu: &mut cpu,
+                    mem: &mem,
+                    kernel: self,
+                    thread,
+                };
+                if let Err(error) = crate::exception::deliver(&mut env) {
+                    let caller = cpu.rip;
+                    let cpu = Box::new(cpu.clone());
+                    self.exit(Err(ThreadError::Call { error, caller, cpu }));
+                }
+                continue;
+            }
             match self.execute(&mut cpu, &mem) {
                 Exit::Continue | Exit::Limit => {}
                 Exit::Trap(addr) => {
@@ -540,6 +585,10 @@ impl Kernel {
                         for line in mem.changes_near(f.addr, 1 << 20) {
                             eprintln!("  {line}");
                         }
+                    }
+                    let frames = return_addresses(&mem, cpu.regs[RBP]);
+                    if !frames.is_empty() {
+                        eprintln!("ps5slop: return addresses by frame pointer: {}", frames.join(" "));
                     }
                     let recent = jit::recent_blocks();
                     if std::env::var_os("PS5SLOP_JIT_TRACE").is_some() && !recent.is_empty() {

@@ -200,11 +200,16 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceVideoOutWaitVblank", wait_vblank),
     f("sceVideoOutAddFlipEvent", add_flip_event),
     f("sceVideoOutDeleteFlipEvent", delete_flip_event),
+    f("sceVideoOutIsFlipPending", flip_pending),
 ];
 
 /// Placeholders: they answer without doing the real work, and say so on
 /// stderr when called.
-pub static STUBS: &[Function] = &[f("sceVideoOutGetOutputStatus", output_status)];
+pub static STUBS: &[Function] = &[
+    f("sceVideoOutGetOutputStatus", output_status),
+    f("sceVideoOutConfigureOutput", with_handle),
+    f("sceVideoOutUnregisterBuffers", with_handle),
+];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
     Function {
@@ -253,6 +258,12 @@ fn with_handle(env: &mut Env) -> Result<Outcome, CallError> {
     } else {
         ERROR_INVALID_HANDLE
     })
+}
+
+/// `sceVideoOutIsFlipPending(handle)`: flips take effect at once, so none
+/// is ever pending.
+fn flip_pending(env: &mut Env) -> Result<Outcome, CallError> {
+    with_handle(env)
 }
 
 /// `sceVideoOutSetBufferAttribute2(attr, format, tiling, width, height,
@@ -367,7 +378,7 @@ fn wait_vblank(env: &mut Env) -> Result<Outcome, CallError> {
     let n = start.elapsed().as_nanos() / VBLANK.as_nanos() + 1;
     let next = start + VBLANK * n as u32;
     while let Some(left) = next.checked_duration_since(Instant::now()) {
-        if env.kernel.has_exited() {
+        if env.kernel.has_exited() || crate::exception::interrupted(env) {
             break;
         }
         std::thread::sleep(left.min(POLL));

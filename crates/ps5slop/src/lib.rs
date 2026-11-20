@@ -144,7 +144,14 @@ impl Process {
             module_infos.push(modules::info(u, &image));
             images.push(image);
         }
-        let inits = initialisers(&units, &images);
+        let (inits, at_start) = initialisers(&units, &images);
+        for (k, info) in module_infos.iter_mut().enumerate() {
+            info.needs = units[k].dynamic.needed_modules.iter().map(|m| m.name.clone()).collect();
+            info.exports = units[k].exports().into_iter().map(|((_, nid), a)| (nid, a)).collect();
+            if k > 0 && !at_start[k] {
+                info.inits = unit_inits(&units[k], &images[k]);
+            }
+        }
         mem.map(STACK_TOP - STACK_SIZE, STACK_SIZE, Prot::RW, "main stack")?;
         let teardown = hle.internal(hle::LOADER_TEARDOWN);
         hle.map(&mem)?;
@@ -206,6 +213,7 @@ impl Process {
         } = self;
         let kernel = Kernel::new(hle, mem, tls, stdout, stderr, vfs);
         cpu.fs_base = kernel.new_tls(&kernel.memory())?;
+        kernel.set_thread_stack(cpu.fs_base, STACK_TOP - STACK_SIZE, STACK_SIZE);
         if let Some(p) = proc_param {
             kernel.set_proc_param(p);
         }
@@ -250,9 +258,10 @@ fn setup_args(mem: &Memory, args: &[&str]) -> Result<u64, Error> {
     Ok(PROCESS_ARGS)
 }
 
-/// The modules' initialisers, dependencies first: a module's entry point
-/// (`module_start`) if it has one, else its `DT_INIT` and init array.
-fn initialisers(units: &[Unit], images: &[Image]) -> Vec<u64> {
+/// The initialisers of the modules the executable needs (directly or
+/// through other modules), dependencies first; and, for each unit, whether
+/// it starts with the executable.
+fn initialisers(units: &[Unit], images: &[Image]) -> (Vec<u64>, Vec<bool>) {
     fn visit(k: usize, units: &[Unit], seen: &mut Vec<bool>, order: &mut Vec<usize>) {
         if seen[k] {
             return;
@@ -266,26 +275,30 @@ fn initialisers(units: &[Unit], images: &[Image]) -> Vec<u64> {
         order.push(k);
     }
     let (mut seen, mut order) = (vec![false; units.len()], Vec::new());
-    seen[0] = true;
-    for k in 1..units.len() {
-        visit(k, units, &mut seen, &mut order);
+    visit(0, units, &mut seen, &mut order);
+    let mut out = Vec::new();
+    for k in order.into_iter().filter(|&k| k != 0) {
+        out.extend(unit_inits(&units[k], &images[k]));
+    }
+    (out, seen)
+}
+
+/// A unit's initialisers: its entry point (`module_start`) if it has one,
+/// else its `DT_INIT` and init array.
+fn unit_inits(u: &Unit, image: &Image) -> Vec<u64> {
+    if u.elf.header().entry != 0 {
+        return vec![image.entry];
     }
     let mut out = Vec::new();
-    for (u, image) in order.into_iter().map(|k| (&units[k], &images[k])) {
-        if u.elf.header().entry != 0 {
-            out.push(image.entry);
-            continue;
-        }
-        if let Some(init) = u.dynamic.init {
-            out.push(u.base + init);
-        }
-        if let Some((addr, size)) = u.dynamic.init_array {
-            for k in 0..size / 8 {
-                let at = (addr + 8 * k) as usize;
-                let f = u64::from_le_bytes(image.bytes[at..at + 8].try_into().expect("8 bytes"));
-                if f != 0 && f != u64::MAX {
-                    out.push(f);
-                }
+    if let Some(init) = u.dynamic.init {
+        out.push(u.base + init);
+    }
+    if let Some((addr, size)) = u.dynamic.init_array {
+        for k in 0..size / 8 {
+            let at = (addr + 8 * k) as usize;
+            let f = u64::from_le_bytes(image.bytes[at..at + 8].try_into().expect("8 bytes"));
+            if f != 0 && f != u64::MAX {
+                out.push(f);
             }
         }
     }

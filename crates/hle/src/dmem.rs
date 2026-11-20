@@ -33,16 +33,16 @@ pub(crate) const fn sce_error(errno: i32) -> u64 {
 
 #[derive(Default)]
 pub struct DirectMemory {
-    /// Allocated ranges: start to length.
-    allocated: Mutex<BTreeMap<u64, u64>>,
+    /// Allocated ranges: start to length and memory type.
+    allocated: Mutex<BTreeMap<u64, (u64, i32)>>,
 }
 
 impl DirectMemory {
     /// First fit for `len` bytes at `align` inside `start..end`.
-    fn allocate(&self, start: u64, end: u64, len: u64, align: u64) -> Option<u64> {
+    fn allocate(&self, start: u64, end: u64, len: u64, align: u64, kind: i32) -> Option<u64> {
         let mut allocated = lock(&self.allocated);
         let mut at = start.next_multiple_of(align);
-        for (&a, &l) in allocated.range(..) {
+        for (&a, &(l, _)) in allocated.range(..) {
             if at + len <= a {
                 break;
             }
@@ -51,7 +51,7 @@ impl DirectMemory {
         if at + len > end.min(DIRECT_MEMORY_SIZE) {
             return None;
         }
-        allocated.insert(at, len);
+        allocated.insert(at, (len, kind));
         Some(at)
     }
 
@@ -60,20 +60,52 @@ impl DirectMemory {
     fn release(&self, start: u64, len: u64) {
         let end = start + len;
         let mut allocated = lock(&self.allocated);
-        let hit: Vec<(u64, u64)> = allocated
+        let hit: Vec<(u64, u64, i32)> = allocated
             .range(..end)
-            .map(|(&a, &l)| (a, l))
-            .filter(|&(a, l)| a + l > start)
+            .map(|(&a, &(l, k))| (a, l, k))
+            .filter(|&(a, l, _)| a + l > start)
             .collect();
-        for (a, l) in hit {
+        for (a, l, k) in hit {
             allocated.remove(&a);
             if a < start {
-                allocated.insert(a, start - a);
+                allocated.insert(a, (start - a, k));
             }
             if a + l > end {
-                allocated.insert(end, a + l - end);
+                allocated.insert(end, (a + l - end, k));
             }
         }
+    }
+
+    /// Whether every byte of `[start, start + len)` is allocated.
+    fn covers(&self, start: u64, len: u64) -> bool {
+        let allocated = lock(&self.allocated);
+        let mut at = start;
+        for (&a, &(l, _)) in allocated.range(..start + len) {
+            if a + l <= at {
+                continue;
+            }
+            if a > at {
+                return false;
+            }
+            at = a + l;
+        }
+        at >= start + len
+    }
+
+    /// The allocation holding `offset`, or with `next` the first one after
+    /// it: start, end and memory type.
+    fn query(&self, offset: u64, next: bool) -> Option<(u64, u64, i32)> {
+        let allocated = lock(&self.allocated);
+        let holding = allocated
+            .range(..=offset)
+            .next_back()
+            .filter(|&(&a, &(l, _))| a + l > offset);
+        let found = match holding {
+            Some(h) => Some(h),
+            None if next => allocated.range(offset..).next(),
+            None => None,
+        };
+        found.map(|(&a, &(l, k))| (a, a + l, k))
     }
 }
 
@@ -82,10 +114,13 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelAllocateDirectMemory", allocate),
     f("sceKernelAllocateMainDirectMemory", allocate_main),
     f("sceKernelReleaseDirectMemory", release),
+    f("sceKernelCheckedReleaseDirectMemory", checked_release),
     f("sceKernelMapDirectMemory", map),
     f("sceKernelMapNamedDirectMemory", map),
     f("sceKernelReserveVirtualRange", reserve),
     f("sceKernelVirtualQuery", virtual_query),
+    f("sceKernelSetVirtualRangeName", set_range_name),
+    f("sceKernelDirectMemoryQuery", query),
 ];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
@@ -114,6 +149,7 @@ fn allocate_in(
     end: u64,
     len: u64,
     align: u64,
+    kind: i32,
     out: u64,
 ) -> Result<Outcome, CallError> {
     if !valid(len, align) || start >= end {
@@ -122,7 +158,7 @@ fn allocate_in(
     match env
         .kernel
         .dmem
-        .allocate(start, end, len, align.max(PAGE_SIZE))
+        .allocate(start, end, len, align.max(PAGE_SIZE), kind)
     {
         Some(at) => {
             env.mem.write_u64(out, at)?;
@@ -134,20 +170,37 @@ fn allocate_in(
 
 /// `sceKernelAllocateDirectMemory(search_start, search_end, len, align, type, *start)`.
 fn allocate(env: &mut Env) -> Result<Outcome, CallError> {
-    let (start, end, len, align, out) =
-        (env.arg(0), env.arg(1), env.arg(2), env.arg(3), env.arg(5));
-    allocate_in(env, start, end, len, align, out)
+    let (start, end, len, align, kind, out) = (
+        env.arg(0),
+        env.arg(1),
+        env.arg(2),
+        env.arg(3),
+        env.arg(4) as i32,
+        env.arg(5),
+    );
+    allocate_in(env, start, end, len, align, kind, out)
 }
 
 /// `sceKernelAllocateMainDirectMemory(len, align, type, *start)`.
 fn allocate_main(env: &mut Env) -> Result<Outcome, CallError> {
-    let (len, align, out) = (env.arg(0), env.arg(1), env.arg(3));
-    allocate_in(env, 0, DIRECT_MEMORY_SIZE, len, align, out)
+    let (len, align, kind, out) = (env.arg(0), env.arg(1), env.arg(2) as i32, env.arg(3));
+    allocate_in(env, 0, DIRECT_MEMORY_SIZE, len, align, kind, out)
 }
 
 /// `sceKernelReleaseDirectMemory(start, len)`.
 fn release(env: &mut Env) -> Result<Outcome, CallError> {
     env.kernel.dmem.release(env.arg(0), env.arg(1));
+    ret(0)
+}
+
+/// `sceKernelCheckedReleaseDirectMemory(start, len)`: fails with `EACCES`
+/// (a guess) unless the whole range is allocated.
+fn checked_release(env: &mut Env) -> Result<Outcome, CallError> {
+    let (start, len) = (env.arg(0), env.arg(1));
+    if !env.kernel.dmem.covers(start, len) {
+        return ret(sce_error(errno::EACCES));
+    }
+    env.kernel.dmem.release(start, len);
     ret(0)
 }
 
@@ -229,6 +282,28 @@ fn virtual_query(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
+/// `sceKernelSetVirtualRangeName(addr, len, name)`: a debugging label;
+/// accepted and dropped.
+fn set_range_name(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
+/// `sceKernelDirectMemoryQuery(offset, flags, info, size)`: the allocation
+/// holding `offset` (flag 1: or the next one) as `{ start, end, type }`
+/// (shadPS4's PS4 layout, 24 bytes; unverified for the PS5).
+fn query(env: &mut Env) -> Result<Outcome, CallError> {
+    let (offset, flags, info, size) = (env.arg(0), env.arg(1), env.arg(2), env.arg(3) as usize);
+    let Some((start, end, kind)) = env.kernel.dmem.query(offset, flags & 1 != 0) else {
+        return ret(sce_error(errno::EACCES));
+    };
+    let mut b = [0u8; 24];
+    b[0..8].copy_from_slice(&start.to_le_bytes());
+    b[8..16].copy_from_slice(&end.to_le_bytes());
+    b[16..20].copy_from_slice(&kind.to_le_bytes());
+    env.mem.write(info, &b[..size.min(24)])?;
+    ret(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,20 +311,39 @@ mod tests {
     #[test]
     fn allocations_respect_range_alignment_and_release() {
         let d = DirectMemory::default();
-        let a = d.allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x4000).unwrap();
-        let b = d.allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x10000).unwrap();
+        let a = d.allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x4000, 0).unwrap();
+        let b = d.allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x10000, 0).unwrap();
         assert_eq!((a, b), (0, 0x10000));
-        assert_eq!(d.allocate(0, 0x8000, 0x8000, 0x4000), None);
+        assert_eq!(d.allocate(0, 0x8000, 0x8000, 0x4000, 0), None);
         d.release(a, 0x4000);
-        assert_eq!(d.allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x4000), Some(0));
+        assert_eq!(d.allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x4000, 0), Some(0));
     }
 
     #[test]
     fn releasing_part_of_an_allocation_frees_only_that_part() {
         let d = DirectMemory::default();
-        assert_eq!(d.allocate(0, 1 << 30, 0x200_0000, 0x1_0000), Some(0));
+        assert_eq!(d.allocate(0, 1 << 30, 0x200_0000, 0x1_0000, 0), Some(0));
         d.release(0x4d_0000, 0x3_0000);
-        assert_eq!(d.allocate(0, 1 << 30, 0x1_0000, 0x1_0000), Some(0x4d_0000));
-        assert_eq!(d.allocate(0, 1 << 30, 0x3_0000, 0x1_0000), Some(0x200_0000));
+        assert_eq!(d.allocate(0, 1 << 30, 0x1_0000, 0x1_0000, 0), Some(0x4d_0000));
+        assert_eq!(d.allocate(0, 1 << 30, 0x3_0000, 0x1_0000, 0), Some(0x200_0000));
+    }
+
+    #[test]
+    fn query_finds_the_holding_or_next_allocation_with_its_type() {
+        let d = DirectMemory::default();
+        d.allocate(0x1_0000, 1 << 30, 0x4000, 0x4000, 3).unwrap();
+        assert_eq!(d.query(0x1_2000, false), Some((0x1_0000, 0x1_4000, 3)));
+        assert_eq!(d.query(0, false), None);
+        assert_eq!(d.query(0, true), Some((0x1_0000, 0x1_4000, 3)));
+        assert_eq!(d.query(0x1_4000, true), None);
+    }
+
+    #[test]
+    fn covers_needs_every_byte_allocated_across_neighbours() {
+        let d = DirectMemory::default();
+        d.allocate(0, 1 << 30, 0x4000, 0x4000, 0).unwrap();
+        d.allocate(0, 1 << 30, 0x4000, 0x4000, 0).unwrap();
+        assert!(d.covers(0x2000, 0x4000));
+        assert!(!d.covers(0x6000, 0x4000));
     }
 }

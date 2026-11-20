@@ -19,6 +19,14 @@ pub struct ModuleInfo {
     /// `.eh_frame_hdr`, and `.eh_frame` with its size, if the module has them.
     pub eh_frame_hdr: u64,
     pub eh_frame: (u64, u64),
+    /// The modules it needs, by name.
+    pub needs: Vec<String>,
+    /// Initialisers still to run when the title starts it with
+    /// `sceKernelLoadStartModule`: its entry point or `DT_INIT`, then its
+    /// init array. Empty once started.
+    pub inits: Vec<u64>,
+    /// What it exports, by NID (any library), with addresses.
+    pub exports: Vec<(String, u64)>,
 }
 
 /// What modules registered with the loader.
@@ -43,6 +51,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelGetProcParam", get_proc_param),
     f("sceKernelGetModuleInfoForUnwind", module_info_for_unwind),
     f("sceKernelLoadStartModule", load_start_module),
+    f("sceKernelDlsym", dlsym),
     f("_sceKernelRtldSetApplicationHeapAPI", set_heap_api),
     f("sceKernelGetSanitizerMallocReplace", no_sanitizer),
     f("sceKernelGetSanitizerMallocReplaceExternal", no_sanitizer),
@@ -102,9 +111,10 @@ fn get_proc_param(env: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(*lock(&env.kernel.rtld.proc_param)))
 }
 
-/// `sceKernelGetModuleInfoForUnwind(addr, flags, info)`: the unwind tables
-/// of the module holding `addr`, in shadPS4's 0x130-byte layout (PS4).
-fn module_info_for_unwind(env: &mut Env) -> Result<Outcome, CallError> {
+/// `sceKernelGetModuleInfoForUnwind(addr, flags, info)`, also
+/// `sceSysmoduleGetModuleInfoForUnwind`: the unwind tables of the module
+/// holding `addr`, in shadPS4's 0x130-byte layout (PS4).
+pub(crate) fn module_info_for_unwind(env: &mut Env) -> Result<Outcome, CallError> {
     let (addr, info) = (env.arg(0), env.arg(2));
     let found = lock(&env.kernel.rtld.modules)
         .iter()
@@ -136,7 +146,10 @@ fn module_info_for_unwind(env: &mut Env) -> Result<Outcome, CallError> {
 }
 
 /// `sceKernelLoadStartModule(path, args, argp, flags, opt, result)`: the
-/// handle of the loaded module with that file name (modules load at start).
+/// handle of the loaded module with that file name. Modules are loaded and
+/// linked at start; one the executable does not need is started here, after
+/// the modules it needs. Its first initialiser gets `(args, argp, 0)`, as
+/// Superliminal's plugins expect, and its result goes to `result`.
 fn load_start_module(env: &mut Env) -> Result<Outcome, CallError> {
     let path = crate::libc::cstr(env, env.arg(0))?;
     let file = path
@@ -152,10 +165,60 @@ fn load_start_module(env: &mut Env) -> Result<Outcome, CallError> {
             crate::errno::ENOENT,
         )));
     };
-    if env.arg(5) != 0 {
-        env.mem.write(env.arg(5), &0u32.to_le_bytes())?;
+    let (args, argp, result) = (env.arg(1), env.arg(2), env.arg(5));
+    let status = start_module(env, handle, args, argp)?;
+    if result != 0 {
+        env.mem.write(result, &(status as u32).to_le_bytes())?;
     }
     Ok(Outcome::Return(handle as u64))
+}
+
+/// Runs module `handle`'s initialisers if it has not started, after those
+/// of the modules it needs, and returns what its first initialiser returned.
+fn start_module(env: &mut Env, handle: usize, args: u64, argp: u64) -> Result<u64, CallError> {
+    let (needs, inits) = {
+        let mut modules = lock(&env.kernel.rtld.modules);
+        let m = &mut modules[handle];
+        (m.needs.clone(), std::mem::take(&mut m.inits))
+    };
+    if inits.is_empty() {
+        return Ok(0);
+    }
+    for need in needs {
+        let found = lock(&env.kernel.rtld.modules)
+            .iter()
+            .position(|m| m.name == need);
+        if let Some(k) = found {
+            start_module(env, k, 0, 0)?;
+        }
+    }
+    let mut status = 0;
+    for (k, init) in inits.into_iter().enumerate() {
+        let r = env.call_guest(init, &[args, argp, 0])?;
+        if k == 0 {
+            status = r;
+        }
+    }
+    Ok(status)
+}
+
+/// `sceKernelDlsym(handle, name, *addr)`: the address of the symbol `name`
+/// exported by module `handle`, found by its NID.
+fn dlsym(env: &mut Env) -> Result<Outcome, CallError> {
+    let (handle, out) = (env.arg(0) as usize, env.arg(2));
+    let name = crate::libc::cstr(env, env.arg(1))?;
+    let nid = loader::nid::nid(&String::from_utf8_lossy(&name));
+    let found = lock(&env.kernel.rtld.modules).get(handle).and_then(|m| {
+        m.exports
+            .iter()
+            .find(|(n, _)| *n == nid)
+            .map(|&(_, addr)| addr)
+    });
+    let Some(addr) = found else {
+        return Ok(Outcome::Return(crate::dmem::sce_error(crate::errno::ESRCH)));
+    };
+    env.mem.write_u64(out, addr)?;
+    Ok(Outcome::Return(0))
 }
 
 impl crate::Kernel {

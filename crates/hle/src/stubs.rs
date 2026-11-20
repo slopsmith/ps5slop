@@ -100,6 +100,26 @@ pub static FUNCTIONS: &[Function] = &[
 /// stderr when called.
 pub static STUBS: &[Function] = &[
     Function {
+        library: "libkernel",
+        name: "#crb5j7mkk1c",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceIme",
+        name: "sceImeKeyboardGetResourceId",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpCppWebApi",
+        name: "#Y295ygEccqk",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpCppWebApi",
+        name: "#UYPxv8MIzGo",
+        func: unsupported,
+    },
+    Function {
         library: "libSceTextToSpeech2",
         name: "#08JSg9p6bgQ",
         func: unsupported,
@@ -322,7 +342,6 @@ pub static STUBS: &[Function] = &[
     zero("libSceNpManager", "sceNpCheckCallback"),
     out_id::<2>("libSceNetCtl", "sceNetCtlRegisterCallback"),
     zero("libSceNetCtl", "sceNetCtlCheckCallback"),
-    zero("libSceAudioOut2", "sceAudioOut2Initialize"),
     zero("libSceCoredump", "sceCoredumpRegisterCoredumpHandler"),
     zero("libSceCoredump", "sceCoredumpUnregisterCoredumpHandler"),
     zero("libSceTextToSpeech2", "sceTextToSpeech2Initialize"),
@@ -337,6 +356,26 @@ pub static STUBS: &[Function] = &[
     ),
     out_id::<1>("libSceAjm", "sceAjmInitialize"),
     zero("libSceAjm", "sceAjmModuleRegister"),
+    zero("libSceNpCppWebApi", "#8x++mBOUeso"),
+    zero("libSceNpCppWebApi", "#52AlYvq+dmk"),
+    zero("libSceJson2", "_ZN3sce4Json11InitializerC1Ev"),
+    zero("libSceJson2", "_ZN3sce4Json14InitParameter2C1Ev"),
+    zero(
+        "libSceJson2",
+        "_ZN3sce4Json14InitParameter212setAllocatorEPNS0_12MemAllocatorEPv",
+    ),
+    zero(
+        "libSceJson2",
+        "_ZN3sce4Json14InitParameter217setFileBufferSizeEm",
+    ),
+    zero("libSceJson2", "_ZN3sce4Json11InitializerD1Ev"),
+    zero("libSceJson2", "_ZN3sce4Json12MemAllocatorC2Ev"),
+    zero("libSceJson2", "_ZN3sce4Json12MemAllocatorD2Ev"),
+    Function {
+        library: "libSceJson2",
+        name: "_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E",
+        func: unsupported,
+    },
     out_id::<3>("libSceAjm", "sceAjmInstanceCreate"),
     Function {
         library: "libSceNpManager",

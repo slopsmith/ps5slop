@@ -1,7 +1,7 @@
 //! Creating, joining and ending guest threads. Each guest thread runs on its
 //! own host thread (see `docs/decisions.md`); `pthread_t` is the thread
 //! pointer. Of the thread attributes, only the stack size and detach state
-//! are used.
+//! are used; attributes read back from a thread report its real stack.
 
 use std::collections::HashMap;
 
@@ -35,6 +35,8 @@ const STACK_MIN: u64 = 2048;
 #[derive(Clone, Copy)]
 struct Attr {
     stack: u64,
+    /// The stack's lowest address, for attributes read from a thread; else 0.
+    stack_addr: u64,
     detached: bool,
 }
 
@@ -42,6 +44,7 @@ impl Default for Attr {
     fn default() -> Self {
         Self {
             stack: THREAD_STACK,
+            stack_addr: 0,
             detached: false,
         }
     }
@@ -53,6 +56,23 @@ impl Default for Attr {
 pub struct Threads {
     records: Mutex<HashMap<u64, Arc<Record>>>,
     attrs: Mutex<HashMap<u64, Attr>>,
+    /// Each thread's stack: lowest address and size.
+    stacks: Mutex<HashMap<u64, (u64, u64)>>,
+}
+
+impl crate::Kernel {
+    /// Records the stack of the thread with thread pointer `tcb`.
+    pub fn set_thread_stack(&self, tcb: u64, low: u64, size: u64) {
+        lock(&self.threads.stacks).insert(tcb, (low, size));
+    }
+
+    /// The bounds of the thread stack holding `addr`, if one does.
+    pub(crate) fn stack_holding(&self, addr: u64) -> Option<(u64, u64)> {
+        lock(&self.threads.stacks)
+            .values()
+            .map(|&(low, size)| (low, low + size))
+            .find(|&(low, high)| (low..high).contains(&addr))
+    }
 }
 
 pub static FUNCTIONS: &[Function] = &[
@@ -65,6 +85,11 @@ pub static FUNCTIONS: &[Function] = &[
     f("pthread_attr_destroy", attr_destroy),
     f("pthread_attr_setdetachstate", attr_setdetachstate),
     f("pthread_attr_setstacksize", attr_setstacksize),
+    f("pthread_attr_getstacksize", attr_getstacksize),
+    f("pthread_attr_getstackaddr", attr_getstackaddr),
+    f("pthread_attr_getstack", attr_getstack),
+    f("pthread_attr_get_np", attr_get),
+    f("sceKernelIsStack", is_stack),
     Function {
         library: INTERNAL,
         name: THREAD_RETURN,
@@ -168,6 +193,8 @@ fn create(env: &mut Env) -> Result<Outcome, CallError> {
     ) else {
         return ret(crate::errno::EAGAIN);
     };
+    let size = attr.stack.next_multiple_of(memory::PAGE_SIZE);
+    kernel.set_thread_stack(tcb, top - size, size);
     let sp = top - 8;
     env.mem.write_u64(sp, kernel.hle.internal(THREAD_RETURN))?;
     let mut cpu = Cpu {
@@ -232,6 +259,9 @@ fn join(env: &mut Env) -> Result<Outcome, CallError> {
         if env.kernel.has_exited() {
             return ret(0);
         }
+        if crate::exception::interrupted(env) {
+            return Ok(Outcome::Resume);
+        }
         result = r
             .finished
             .wait_timeout(result, POLL)
@@ -276,11 +306,72 @@ sce_wrappers! {
     sce_attr_destroy => attr_destroy,
     sce_attr_setdetachstate => attr_setdetachstate,
     sce_attr_setstacksize => attr_setstacksize,
+    sce_attr_getstacksize => attr_getstacksize,
+    sce_attr_getstackaddr => attr_getstackaddr,
+    sce_attr_getstack => attr_getstack,
+    sce_attr_get => attr_get,
 }
 
 /// Accepted and ignored: affinity, priorities, scheduling policy and
 /// inheritance, and names (host threads keep their own).
 fn sce_ok(_: &mut Env) -> Result<Outcome, CallError> {
+    ret(0)
+}
+
+/// `pthread_attr_getstacksize(attr, size)`.
+fn attr_getstacksize(env: &mut Env) -> Result<Outcome, CallError> {
+    let Some(a) = attr(env, env.arg(0))? else {
+        return ret(EINVAL);
+    };
+    env.mem.write_u64(env.arg(1), a.stack)?;
+    ret(0)
+}
+
+/// `pthread_attr_getstackaddr(attr, addr)`: the stack's lowest address.
+fn attr_getstackaddr(env: &mut Env) -> Result<Outcome, CallError> {
+    let Some(a) = attr(env, env.arg(0))? else {
+        return ret(EINVAL);
+    };
+    env.mem.write_u64(env.arg(1), a.stack_addr)?;
+    ret(0)
+}
+
+/// `pthread_attr_getstack(attr, addr, size)`.
+fn attr_getstack(env: &mut Env) -> Result<Outcome, CallError> {
+    let Some(a) = attr(env, env.arg(0))? else {
+        return ret(EINVAL);
+    };
+    env.mem.write_u64(env.arg(1), a.stack_addr)?;
+    env.mem.write_u64(env.arg(2), a.stack)?;
+    ret(0)
+}
+
+/// `pthread_attr_get_np(thread, attr)` and `scePthreadAttrGet`: the
+/// thread's attributes, with its stack, in a fresh attribute object.
+fn attr_get(env: &mut Env) -> Result<Outcome, CallError> {
+    let (thread, out) = (env.arg(0), env.arg(1));
+    let mut a = Attr::default();
+    if let Some(&(low, size)) = lock(&env.kernel.threads.stacks).get(&thread) {
+        (a.stack_addr, a.stack) = (low, size);
+    }
+    if let Some(r) = lock(&env.kernel.threads.records).get(&thread) {
+        a.detached = *lock(&r.detached);
+    }
+    let id = crate::pthread::new_handle(env)?;
+    lock(&env.kernel.threads.attrs).insert(id, a);
+    env.mem.write_u64(out, id)?;
+    ret(0)
+}
+
+/// `sceKernelIsStack(addr, *start, *end)`: the bounds of the thread stack
+/// holding `addr`, or zeros (what Orbis does for other memory is a guess).
+fn is_stack(env: &mut Env) -> Result<Outcome, CallError> {
+    let (low, high) = env.kernel.stack_holding(env.arg(0)).unwrap_or((0, 0));
+    for (at, v) in [(env.arg(1), low), (env.arg(2), high)] {
+        if at != 0 {
+            env.mem.write_u64(at, v)?;
+        }
+    }
     ret(0)
 }
 
@@ -294,14 +385,7 @@ fn sce_attr_getdetachstate(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// `scePthreadAttrGetstacksize(attr, size)`.
-fn sce_attr_getstacksize(env: &mut Env) -> Result<Outcome, CallError> {
-    let Some(a) = attr(env, env.arg(0))? else {
-        return crate::pthread::sce(ret(EINVAL));
-    };
-    env.mem.write_u64(env.arg(1), a.stack)?;
-    ret(0)
-}
+
 
 /// `scePthreadAttrGetschedparam(attr, param)`: the default priority.
 fn sce_attr_getschedparam(env: &mut Env) -> Result<Outcome, CallError> {
@@ -315,14 +399,6 @@ fn sce_attr_getaffinity(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// `scePthreadAttrGet(thread, attr)`: fresh default attributes.
-fn sce_attr_get(env: &mut Env) -> Result<Outcome, CallError> {
-    let threads = &env.kernel.threads;
-    let id = crate::pthread::new_handle(env)?;
-    lock(&threads.attrs).insert(id, Attr::default());
-    env.mem.write_u64(env.arg(1), id)?;
-    ret(0)
-}
 
 /// `scePthreadGetname(thread, name)`: names are not kept.
 fn sce_getname(env: &mut Env) -> Result<Outcome, CallError> {
@@ -360,6 +436,8 @@ pub static SCE_FUNCTIONS: &[Function] = &[
     f("scePthreadAttrSetdetachstate", sce_attr_setdetachstate),
     f("scePthreadAttrGetdetachstate", sce_attr_getdetachstate),
     f("scePthreadAttrGetstacksize", sce_attr_getstacksize),
+    f("scePthreadAttrGetstackaddr", sce_attr_getstackaddr),
+    f("scePthreadAttrGetstack", sce_attr_getstack),
     f("scePthreadAttrSetstacksize", sce_attr_setstacksize),
     f("scePthreadAttrSetaffinity", sce_ok),
     f("scePthreadAttrGetaffinity", sce_attr_getaffinity),

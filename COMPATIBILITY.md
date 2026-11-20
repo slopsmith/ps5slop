@@ -25,4 +25,4 @@ What each title does under ps5slop, from our own runs on an Apple Silicon Mac.
 | PPSA21402 | Balatro | ⭐ Perfect | 01.015.000: plays normally with sound. |
 | PPSA17221 | Minecraft | 🟡 Ingame | v26.10: menus work, a world loads in about 25 s and renders at 10 to 16 fps, but block textures have wrong colours and some menu letters go missing. |
 | PPSA21564 | Astro Bot | ⚫ Nothing | v1.019 (.pkg): stops at unimplemented libkernel NID `4oXYe9Xmk0Q`. |
-| PPSA06084 | Superliminal | ⚫ Nothing | 01.010 (.pkg): stops at unimplemented `sceKernelSetVirtualRangeName`. |
+| PPSA06084 | Superliminal | ⚫ Nothing | 01.010 (.pkg): loads and runs its frame loop, screen stays black (unsupported image formats, an MSL error). |
