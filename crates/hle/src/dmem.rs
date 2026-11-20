@@ -303,6 +303,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelReserveVirtualRange", reserve),
     f("sceKernelVirtualQuery", virtual_query),
     f("sceKernelSetVirtualRangeName", set_range_name),
+    f("sceKernelClearVirtualRangeName", set_range_name),
     f("sceKernelDirectMemoryQuery", query),
     f("sceKernelQueryMemoryProtection", query_protection),
     f("sceKernelBatchMap", batch_map),
@@ -647,7 +648,9 @@ fn virtual_query(env: &mut Env) -> Result<Outcome, CallError> {
 }
 
 /// `sceKernelSetVirtualRangeName(addr, len, name)`: a debugging label;
-/// accepted and dropped.
+/// accepted and dropped. `sceKernelClearVirtualRangeName(addr, len)` (name
+/// confirmed by hash; Astro Bot asserts on its result when it frees a
+/// thread stack) succeeds the same way.
 fn set_range_name(_: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
