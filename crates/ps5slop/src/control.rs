@@ -36,6 +36,7 @@ gpuskip [ADDR...]           skip draws and dispatches using these programs (none
 targets DIR                 write every render target and texture as PPM (the first call starts recording)
 press BUTTONS [MS]          hold pad buttons (cross+up, ...) for MS ms (default 400, decimal);
                             also l2, r2 and stick pushes lup, ldown, lleft, lright, rup, ...
+rates                       guest MIPS (JIT, interpreter) since the last `rates`, as the window title shows
 quit                        end the guest
 Numbers are hex; a 0x prefix is optional.";
 
@@ -301,6 +302,24 @@ fn run(kernel: &Kernel, line: &str) -> String {
                 None => "profiling is off (profile on)".into(),
             },
         },
+        "rates" => {
+            let now = (std::time::Instant::now(), kernel.instructions());
+            let mut last = RATES.lock().unwrap_or_else(|e| e.into_inner());
+            let out = match *last {
+                Some((at, (interp, jit))) => {
+                    let secs = now.0.duration_since(at).as_secs_f64();
+                    let mips = |a: u64, b: u64| (b - a) as f64 / secs / 1e6;
+                    format!(
+                        "{secs:.1} s: JIT {:.1} MIPS, interpreter {:.2} MIPS",
+                        mips(jit, now.1.1),
+                        mips(interp, now.1.0)
+                    )
+                }
+                None => "started; ask again for the rates since now".into(),
+            };
+            *last = Some(now);
+            out
+        }
         "quit" => {
             kernel.exit(Ok(0));
             "ok".into()
@@ -416,6 +435,8 @@ fn hits(kernel: &Kernel, last: usize, (lo, hi): (u64, u64)) -> String {
     }
     out.join("\n")
 }
+
+static RATES: std::sync::Mutex<Option<(std::time::Instant, (u64, u64))>> = std::sync::Mutex::new(None);
 
 static PROFILE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
