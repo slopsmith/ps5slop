@@ -6,7 +6,7 @@ pub const IPA_BITS: u32 = 40;
 /// The runtime region: physical address (in the hole `docs/memory.md`
 /// reserves), size and virtual address (TTBR1).
 pub const RUNTIME_IPA: u64 = 0xfe_0000_0000;
-pub const RUNTIME_SIZE: usize = 256 << 20;
+pub const RUNTIME_SIZE: usize = 1 << 30;
 pub const RUNTIME_VA: u64 = 0xffff_ff80_0000_0000;
 
 pub const VECTORS: usize = 0;
@@ -41,8 +41,9 @@ pub const LOOKUP: usize = RUNTIME_SIZE - LOOKUP_ENTRIES * 16;
 pub const LOOKUP_BITS: u32 = 22;
 pub const LOOKUP_ENTRIES: usize = 1 << LOOKUP_BITS;
 pub const CODE_CACHE: usize = 0x120_0000;
-/// Blocks branch to the dispatcher (at `CODE`) with B, which reaches 128 MiB.
-pub const CODE_CACHE_END: usize = 0x800_0000;
+/// Blocks branch with B, which reaches 128 MiB, so each segment of the
+/// cache starts with its own copy of the dispatcher (see `cache.rs`).
+pub const CODE_CACHE_END: usize = LOOKUP;
 
 pub const fn va(offset: usize) -> u64 {
     RUNTIME_VA + offset as u64
@@ -56,4 +57,3 @@ const _: () = assert!(STACKS + MAX_VCPUS * STACK_SIZE <= CONTEXTS);
 const _: () = assert!(FPSR_KEPT + 8 <= CONTEXT_SIZE);
 const _: () = assert!(CONTEXTS + MAX_VCPUS * CONTEXT_SIZE <= TABLES[0].0);
 const _: () = assert!(TABLES[1].1 <= CODE_CACHE && CODE_CACHE_END <= LOOKUP);
-const _: () = assert!(CODE_CACHE_END - CODE <= 1 << 27);

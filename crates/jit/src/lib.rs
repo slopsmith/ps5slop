@@ -475,6 +475,7 @@ impl Machine {
         let rt = runtime.as_mut_slice();
         tables::map_runtime(rt);
         write_runtime(rt);
+        cache::write_stubs(rt, &dispatcher(), &verify_exit());
         for e in 0..layout::LOOKUP_ENTRIES {
             let at = layout::LOOKUP + e * 16;
             rt[at..at + 8].copy_from_slice(&EMPTY.to_le_bytes());
@@ -497,7 +498,7 @@ impl Machine {
             pool_next: [0; 2],
             fresh: Vec::new(),
             vcpus: [None; layout::MAX_VCPUS],
-            code_next: layout::CODE_CACHE,
+            code_next: cache::code_start(0),
             blocks: HashMap::new(),
             verify: std::env::var_os("PS5SLOP_JIT_VERIFY").is_some(),
             trace: std::env::var_os("PS5SLOP_JIT_TRACE").is_some(),
@@ -776,13 +777,13 @@ impl Machine {
     /// `exit`; where it went and the RIPs of its instructions.
     fn emit_region(&mut self, mem: &Memory, rip: u64, exit: usize) -> Option<(usize, HashSet<u64>)> {
         let mut place = self.code_next;
-        let (mut region, mut rips) = translate::region(mem, rip, place, exit)?;
+        let (mut region, mut rips) = translate::region(mem, rip, place, cache::local_exit(place, exit))?;
         if !self.fits(place, region.code.len() * 4) {
             if self.cache_full || !self.next_segment() {
                 return None;
             }
             place = self.code_next;
-            (region, rips) = translate::region(mem, rip, place, exit)?;
+            (region, rips) = translate::region(mem, rip, place, cache::local_exit(place, exit))?;
             if !self.fits(place, region.code.len() * 4) {
                 return None;
             }
@@ -800,7 +801,9 @@ impl Machine {
     /// Makes the region at `place` what the lookup table, chains and the
     /// tier-1 block at `block_place` lead to.
     fn install_region(&mut self, rip: u64, block_place: usize, place: usize) {
-        self.patch(block_place, place);
+        if !self.patch(block_place, place) {
+            self.patch(block_place, block_place + translate::PROLOGUE_WORDS * 4);
+        }
         let chains = std::mem::take(&mut self.pending_chains);
         self.link(rip, place, chains);
     }
@@ -831,7 +834,7 @@ impl Machine {
         }
         let mut place = self.code_next;
         let count = self.tier2.count().filter(|_| exit == DISPATCH && !self.trace);
-        let mut block = translate::block(mem, rip, place, exit, count)?;
+        let mut block = translate::block(mem, rip, place, cache::local_exit(place, exit), count)?;
         if !self.fits(place, block.code.len() * 4) {
             if self.verify || self.trace {
                 self.cache_full = true;
@@ -842,7 +845,7 @@ impl Machine {
                 return None;
             }
             place = self.code_next;
-            block = translate::block(mem, rip, place, exit, count)?;
+            block = translate::block(mem, rip, place, cache::local_exit(place, exit), count)?;
             if !self.fits(place, block.code.len() * 4) {
                 return None;
             }
@@ -877,18 +880,22 @@ impl Machine {
     }
 
     /// Turns the branch to the dispatcher at runtime offset `site` into a
-    /// branch straight to the block at `to`.
-    fn patch(&mut self, site: usize, to: usize) {
+    /// branch straight to the block at `to`; false if B cannot reach it.
+    fn patch(&mut self, site: usize, to: usize) -> bool {
+        let delta = (to as i64 - site as i64) / 4;
+        if !(-(1 << 25)..1 << 25).contains(&delta) {
+            return false;
+        }
         if !self.patched.contains_key(&site) {
             let old = u32::from_le_bytes(self.runtime.as_slice()[site..site + 4].try_into().unwrap());
             self.patched.insert(site, old);
         }
         self.chained_to.entry(to).or_default().push(site);
-        let delta = (to as i64 - site as i64) / 4;
         self.runtime
             .write_words(site, &[0x1400_0000 | (delta as u32 & 0x03ff_ffff)]);
         // SAFETY: one word inside the runtime region.
         unsafe { sys_icache_invalidate(self.runtime.as_ptr().add(site).cast(), 4) };
+        true
     }
 
     /// Points `rip`'s lookup slot at `place`. The tag is cleared first and
@@ -1005,31 +1012,10 @@ fn write_runtime(rt: &mut [u8]) {
     a.eret();
     put(rt, RESUME_FLUSH, a.finish());
 
-    let (rip, slot, tag) = (translate::RIP, Reg(17), Reg(18));
-    let mut a = Asm::new();
-    let miss = a.label();
-    a.mov_imm(Size::X, slot, HASH_MUL);
-    a.mul(Size::X, slot, rip, slot);
-    a.lsr_imm(Size::X, slot, slot, 64 - layout::LOOKUP_BITS);
-    a.add_shift(Size::X, slot, translate::LOOKUP, slot, Shift::Lsl, 4);
-    // The tag is read again after the code: `enter` may replace the slot in
-    // between, and loads stay in order (TSO), so two matching reads are safe.
-    a.ldr(Width::X, tag, slot, 0);
-    a.eor(Size::X, tag, tag, rip);
-    a.cbnz(Size::X, tag, miss);
-    a.ldr(Width::X, tag, slot, 8);
-    a.ldr(Width::X, slot, slot, 0);
-    a.eor(Size::X, slot, slot, rip);
-    a.cbnz(Size::X, slot, miss);
-    a.br(tag);
-    a.bind(miss);
-    a.hvc(translate::HVC_MISS);
-    let code = a.finish();
+    let code = dispatcher();
     assert!(DISPATCH + code.len() * 4 <= VERIFY_EXIT);
     put(rt, DISPATCH, code);
-    let mut a = Asm::new();
-    a.hvc(translate::HVC_MISS);
-    put(rt, VERIFY_EXIT, a.finish());
+    put(rt, VERIFY_EXIT, verify_exit());
     let mut a = Asm::new();
     a.hvc(translate::HVC_INTERP);
     put(rt, INTERP_EXIT, a.finish());
@@ -1050,6 +1036,37 @@ fn write_runtime(rt: &mut [u8]) {
     let code = a.finish();
     assert!(NATIVE_SELF + code.len() * 4 <= NATIVE_END);
     put(rt, NATIVE_SELF, code);
+}
+
+/// Looks the guest RIP in x16 up in the lookup table and jumps to its code,
+/// or leaves the VM as a lookup miss. Position-independent.
+fn dispatcher() -> Vec<u32> {
+    let (rip, slot, tag) = (translate::RIP, Reg(17), Reg(18));
+    let mut a = Asm::new();
+    let miss = a.label();
+    a.mov_imm(Size::X, slot, HASH_MUL);
+    a.mul(Size::X, slot, rip, slot);
+    a.lsr_imm(Size::X, slot, slot, 64 - layout::LOOKUP_BITS);
+    a.add_shift(Size::X, slot, translate::LOOKUP, slot, Shift::Lsl, 4);
+    // The tag is read again after the code: `enter` may replace the slot in
+    // between, and loads stay in order (TSO), so two matching reads are safe.
+    a.ldr(Width::X, tag, slot, 0);
+    a.eor(Size::X, tag, tag, rip);
+    a.cbnz(Size::X, tag, miss);
+    a.ldr(Width::X, tag, slot, 8);
+    a.ldr(Width::X, slot, slot, 0);
+    a.eor(Size::X, slot, slot, rip);
+    a.cbnz(Size::X, slot, miss);
+    a.br(tag);
+    a.bind(miss);
+    a.hvc(translate::HVC_MISS);
+    a.finish()
+}
+
+fn verify_exit() -> Vec<u32> {
+    let mut a = Asm::new();
+    a.hvc(translate::HVC_MISS);
+    a.finish()
 }
 
 /// `pthread_getspecific(edi)` from the thread's control block; keys from

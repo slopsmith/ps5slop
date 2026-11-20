@@ -10,6 +10,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::{EMPTY, HASH_MUL, Machine, SHARED, layout, sys_icache_invalidate};
 
 pub(crate) const SEGMENT: usize = 8 << 20;
+/// Each segment starts with a copy of the dispatcher, and at `LOCAL_VERIFY`
+/// a copy of the verify-mode exit, for its blocks to branch to; code follows.
+const LOCAL_VERIFY: usize = 0x60;
+const STUBS: usize = 0x80;
+const _: () = assert!(SEGMENT <= 1 << 27);
 const SEGMENTS: usize = (layout::CODE_CACHE_END - layout::CODE_CACHE).div_ceil(SEGMENT);
 const SAMPLE_PERIOD: std::time::Duration = std::time::Duration::from_millis(10);
 
@@ -59,6 +64,30 @@ impl Segments {
 
 fn start(s: usize) -> usize {
     layout::CODE_CACHE + s * SEGMENT
+}
+
+/// Where code in the segment holding `place` exits to instead of `exit`
+/// (`DISPATCH` or `VERIFY_EXIT`).
+pub(crate) fn local_exit(place: usize, exit: usize) -> usize {
+    let s = start((place - layout::CODE_CACHE) / SEGMENT);
+    if exit == crate::DISPATCH { s } else { s + LOCAL_VERIFY }
+}
+
+/// Writes every segment's stubs: `dispatcher` and `verify_exit` copies.
+pub(crate) fn write_stubs(rt: &mut [u8], dispatcher: &[u32], verify_exit: &[u32]) {
+    assert!(dispatcher.len() * 4 <= LOCAL_VERIFY && LOCAL_VERIFY + verify_exit.len() * 4 <= STUBS);
+    for s in 0..SEGMENTS {
+        for (at, code) in [(start(s), dispatcher), (start(s) + LOCAL_VERIFY, verify_exit)] {
+            for (i, w) in code.iter().enumerate() {
+                rt[at + i * 4..at + i * 4 + 4].copy_from_slice(&w.to_le_bytes());
+            }
+        }
+    }
+}
+
+/// Where code starts in segment `s`.
+pub(crate) fn code_start(s: usize) -> usize {
+    start(s) + STUBS
 }
 
 fn end(s: usize) -> usize {
@@ -121,7 +150,7 @@ impl Machine {
         };
         seg.state[next] = State::Filling;
         seg.current = next;
-        self.code_next = start(next);
+        self.code_next = code_start(next);
         let seg = &self.segments;
         if !seg.state[..seg.limit].contains(&State::Free) && !seg.state.contains(&State::Draining) {
             self.evict_coldest();
@@ -249,7 +278,7 @@ impl Machine {
     /// Starts over with every segment free.
     pub(crate) fn reset_segments(&mut self) {
         self.segments = Segments::new();
-        self.code_next = start(0);
+        self.code_next = code_start(0);
         self.patched.clear();
         self.chained_to.clear();
         for s in &SAMPLES {
