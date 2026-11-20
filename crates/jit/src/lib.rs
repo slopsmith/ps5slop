@@ -356,26 +356,89 @@ unsafe impl Send for Machine {}
 
 static MACHINE: OnceLock<Result<Mutex<Machine>, Error>> = OnceLock::new();
 
-/// The process's machine, created on first use.
-/// The machine if its lock is free; `Ok(None)` if another thread holds it.
-fn try_machine() -> Result<Option<MutexGuard<'static, Machine>>, Error> {
-    let m = MACHINE.get_or_init(|| Machine::new().map(Mutex::new));
-    match m {
-        Ok(m) => match m.try_lock() {
-            Ok(g) => Ok(Some(g)),
-            Err(std::sync::TryLockError::Poisoned(e)) => Ok(Some(e.into_inner())),
-            Err(std::sync::TryLockError::WouldBlock) => Ok(None),
-        },
-        Err(e) => Err(*e),
+/// What is only in `old` and what is only in `new`, both sorted.
+fn sorted_diff<T: Ord + Copy>(old: &[T], new: &[T]) -> (Vec<T>, Vec<T>) {
+    let (mut gone, mut added) = (Vec::new(), Vec::new());
+    let (mut i, mut j) = (0, 0);
+    while i < old.len() || j < new.len() {
+        match (old.get(i), new.get(j)) {
+            (Some(a), Some(b)) if a == b => {
+                i += 1;
+                j += 1;
+            }
+            (Some(a), Some(b)) if a < b => {
+                gone.push(*a);
+                i += 1;
+            }
+            (Some(a), None) => {
+                gone.push(*a);
+                i += 1;
+            }
+            (_, Some(b)) => {
+                added.push(*b);
+                j += 1;
+            }
+            (None, None) => unreachable!(),
+        }
+    }
+    (gone, added)
+}
+
+/// The machine's lock, held; while profiling, it counts where it was taken
+/// and for how long.
+pub struct MachineGuard {
+    guard: MutexGuard<'static, Machine>,
+    site: &'static std::panic::Location<'static>,
+    since: Option<std::time::Instant>,
+}
+
+impl std::ops::Deref for MachineGuard {
+    type Target = Machine;
+    fn deref(&self) -> &Machine {
+        &self.guard
     }
 }
 
-pub fn machine() -> Result<MutexGuard<'static, Machine>, Error> {
-    let m = MACHINE.get_or_init(|| Machine::new().map(Mutex::new));
-    match m {
-        Ok(m) => Ok(m.lock().unwrap_or_else(|e| e.into_inner())),
-        Err(e) => Err(*e),
+impl std::ops::DerefMut for MachineGuard {
+    fn deref_mut(&mut self) -> &mut Machine {
+        &mut self.guard
     }
+}
+
+impl Drop for MachineGuard {
+    fn drop(&mut self) {
+        profile::lock_held(self.site, self.since);
+    }
+}
+
+/// The machine if its lock is free; `Ok(None)` if another thread holds it.
+#[track_caller]
+fn try_machine() -> Result<Option<MachineGuard>, Error> {
+    let site = std::panic::Location::caller();
+    let m = MACHINE.get_or_init(|| Machine::new().map(Mutex::new));
+    let guard = match m {
+        Ok(m) => match m.try_lock() {
+            Ok(g) => g,
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
+        },
+        Err(e) => return Err(*e),
+    };
+    Ok(Some(MachineGuard { guard, site, since: profile::start() }))
+}
+
+/// The process's machine, created on first use.
+#[track_caller]
+pub fn machine() -> Result<MachineGuard, Error> {
+    let site = std::panic::Location::caller();
+    let m = MACHINE.get_or_init(|| Machine::new().map(Mutex::new));
+    let asked = profile::start();
+    let guard = match m {
+        Ok(m) => m.lock().unwrap_or_else(|e| e.into_inner()),
+        Err(e) => return Err(*e),
+    };
+    profile::lock_waited(site, asked);
+    Ok(MachineGuard { guard, site, since: profile::start() })
 }
 
 /// What made a vCPU leave the VM.
@@ -535,13 +598,11 @@ impl Machine {
         for (start, end) in old {
             self.vm.unmap(start, (end - start) as usize)?;
         }
-        self.mapped = kept;
-        let wanted_set: HashSet<&(u64, u64)> = wanted.iter().collect();
-        let mapped_set: HashSet<&(u64, u64)> = self.mapped.iter().collect();
-        for &(start, end) in self.mapped.iter().filter(|m| !wanted_set.contains(m)) {
+        let (gone, added) = sorted_diff(&kept, &wanted);
+        for (start, end) in gone {
             self.vm.unmap(start, (end - start) as usize)?;
         }
-        for &(start, end) in wanted.iter().filter(|w| !mapped_set.contains(w)) {
+        for (start, end) in added {
             // SAFETY: the region is mapped host memory inside `mem`'s
             // reservation, and is unmapped here before it goes away.
             unsafe {
@@ -569,17 +630,12 @@ impl Machine {
     /// Whether a writable address in the active tables stays mapped read-only
     /// in `regions`; only then must vCPUs flush (see `docs/jit.md`).
     fn reduces_access(&self, regions: &[memory::RegionSpan], access: &[(u64, u64, bool)]) -> bool {
-        let new: HashSet<&(u64, u64, bool)> = access.iter().collect();
-        let removed: Vec<_> = self.mirrored.iter().filter(|m| !new.contains(m)).collect();
-        if removed.is_empty() {
-            return false;
-        }
-        regions.iter().any(|r| {
-            let read = r.prot.allows(memory::Access::Read);
-            let write = r.prot.allows(memory::Access::Write);
-            removed
-                .iter()
-                .any(|&&(s, e, w)| s < r.end && r.start < e && read && w && !write)
+        let (removed, _) = sorted_diff(&self.mirrored, access);
+        removed.iter().filter(|&&(_, _, w)| w).any(|&(s, e, _)| {
+            let first = regions.partition_point(|r| r.end <= s);
+            regions[first..].iter().take_while(|r| r.start < e).any(|r| {
+                r.prot.allows(memory::Access::Read) && !r.prot.allows(memory::Access::Write)
+            })
         })
     }
 
@@ -588,13 +644,12 @@ impl Machine {
     fn update_mappings(&mut self, access: &[(u64, u64, bool)]) -> bool {
         let pool = SHARED.active.load(Ordering::SeqCst);
         let root = SHARED.roots[pool].load(Ordering::SeqCst);
-        let new: HashSet<(u64, u64, bool)> = access.iter().copied().collect();
-        let old: HashSet<(u64, u64, bool)> = self.mirrored.iter().copied().collect();
+        let (old, new) = sorted_diff(&self.mirrored, access);
         let mut t = tables::Tables::resume(self.runtime.as_mut_slice(), pool, root, self.pool_next[pool]);
-        for &(start, end, _) in old.difference(&new) {
+        for (start, end, _) in old {
             t.unmap(start, end);
         }
-        for &(start, end, write) in new.difference(&old) {
+        for (start, end, write) in new {
             if !t.map(start, end, write) {
                 return false;
             }

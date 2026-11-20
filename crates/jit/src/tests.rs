@@ -1087,3 +1087,11 @@ fn wide_conversions_and_long_narrow_shifts_match_the_interpreter() {
     data[0x50..0x58].copy_from_slice(&3e9f64.to_le_bytes());
     same_as_interpreter(WIDE_CONVERSIONS, &data);
 }
+
+#[test]
+fn sorted_diff_lists_what_each_side_has_alone() {
+    let (gone, added) = crate::sorted_diff(&[1, 3, 5, 7], &[2, 3, 7, 8, 9]);
+    assert_eq!(gone, [1, 5]);
+    assert_eq!(added, [2, 8, 9]);
+    assert_eq!(crate::sorted_diff::<u8>(&[], &[]), (vec![], vec![]));
+}

@@ -419,6 +419,10 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
             ms(t[5])
         ));
     }
+    out.push("JIT lock by site (times, ms waited, ms held):".into());
+    for (site, n, w, h) in r.lock_sites.iter().take(top) {
+        out.push(format!("  {n:>9} {:>9.0} {:>9.0}  {site}", ms(*w), ms(*h)));
+    }
     let gpu: Vec<String> = hle::gpu::timing::NAMES
         .iter()
         .zip(hle::gpu::timing::totals())

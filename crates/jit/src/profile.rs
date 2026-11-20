@@ -150,6 +150,9 @@ pub struct Report {
     pub emitted: u64,
     /// Blocks in the code cache at the report.
     pub live_blocks: u64,
+    /// The JIT's lock by where it was taken (`file:line`): times, nanoseconds
+    /// waited and nanoseconds held, longest held first.
+    pub lock_sites: Vec<(String, u64, u64, u64)>,
     pub evictions: u64,
 }
 
@@ -168,6 +171,7 @@ pub fn on() -> bool {
 /// Starts a fresh profile window, or stops profiling.
 pub fn set(enable: bool) {
     crate::engine::reset_stats();
+    LOCK_SITES.lock().unwrap_or_else(|e| e.into_inner()).clear();
     WINDOW.fetch_add(1, Ordering::SeqCst);
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     *s = enable.then(|| State {
@@ -205,6 +209,41 @@ pub fn add_host(addr: u64, since: Option<Instant>) {
         e.0 += 1;
         e.1 += ns;
     });
+}
+
+type Site = &'static std::panic::Location<'static>;
+
+/// The machine's lock by where it was taken: times taken, nanoseconds
+/// waited for it and nanoseconds held.
+static LOCK_SITES: Mutex<Vec<(Site, u64, u64, u64)>> = Mutex::new(Vec::new());
+
+fn lock_site(site: Site, f: impl FnOnce(&mut (Site, u64, u64, u64))) {
+    let mut sites = LOCK_SITES.lock().unwrap_or_else(|e| e.into_inner());
+    let i = match sites.iter().position(|s| std::ptr::eq(s.0, site)) {
+        Some(i) => i,
+        None => {
+            sites.push((site, 0, 0, 0));
+            sites.len() - 1
+        }
+    };
+    f(&mut sites[i]);
+}
+
+pub(crate) fn lock_waited(site: Site, since: Option<Instant>) {
+    if let Some(t) = since {
+        let ns = t.elapsed().as_nanos() as u64;
+        lock_site(site, |s| s.2 += ns);
+    }
+}
+
+pub(crate) fn lock_held(site: Site, since: Option<Instant>) {
+    if let Some(t) = since {
+        let ns = t.elapsed().as_nanos() as u64;
+        lock_site(site, |s| {
+            s.1 += 1;
+            s.3 += ns;
+        });
+    }
 }
 
 /// Records a sample of a vCPU stopped at runtime address `pc`.
@@ -271,6 +310,16 @@ pub fn report() -> Option<Report> {
         retranslations: RETRANSLATIONS.load(Ordering::Relaxed) - s.retranslations_at_start,
         emitted: EMITTED.load(Ordering::Relaxed) - s.emitted_at_start,
         live_blocks: LIVE_BLOCKS.load(Ordering::Relaxed),
+        lock_sites: {
+            let mut v: Vec<_> = LOCK_SITES
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .map(|&(s, n, w, h)| (format!("{}:{}", s.file(), s.line()), n, w, h))
+                .collect();
+            v.sort_by_key(|s| std::cmp::Reverse(s.3));
+            v
+        },
         evictions: crate::cache::evictions() - s.evictions_at_start,
     })
 }
