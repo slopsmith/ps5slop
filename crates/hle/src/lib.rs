@@ -48,7 +48,7 @@ mod thread;
 mod vfs;
 mod videoout;
 
-pub use pad::PadInput;
+pub use pad::{PadInput, PadOutput, TriggerEffect};
 pub use process::{Kernel, Thread, ThreadError, ThreadInfo, TlsBlock, TlsTemplate, trace_calls};
 pub use rtld::ModuleInfo;
 pub use vfs::{ImageFile, ImageFs, ImageStat, Target, Vfs};
