@@ -1097,6 +1097,7 @@ impl<'a> Tx<'a> {
             "v_cvt_f32_i32" => format!("float(int({}))", u(self, 0)?),
             "v_cvt_f32_u32" => format!("float({})", u(self, 0)?),
             "v_cvt_f32_ubyte0" => format!("float({} & 0xffu)", u(self, 0)?),
+            "v_cvt_off_f32_i4" => format!("float(int({} << 28) >> 28) / 16.0f", u(self, 0)?),
             "v_cvt_f32_ubyte1" => format!("float(({} >> 8) & 0xffu)", u(self, 0)?),
             "v_cvt_f32_ubyte2" => format!("float(({} >> 16) & 0xffu)", u(self, 0)?),
             "v_cvt_f32_ubyte3" => format!("float({} >> 24)", u(self, 0)?),
