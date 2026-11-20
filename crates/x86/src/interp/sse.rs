@@ -761,6 +761,10 @@ impl Ctx<'_> {
                 let v = self.src128(p == Pfx::P66)?;
                 self.xset(d, v);
             }
+            (Pfx::F2, 0xf0) => {
+                let v = self.src128(false)?;
+                self.xset(d, v);
+            }
             (Pfx::P66 | Pfx::F3 | Pfx::F2, 0x70) => {
                 let s = self.src128(true)?;
                 let imm = self.imm() as u8;
@@ -1318,6 +1322,7 @@ fn in_lane(op: u8, p: Pfx) -> bool {
         0xd0 | 0x7c | 0x7d => matches!(p, Pfx::P66 | Pfx::F2),
         0x5b => p != Pfx::F2,
         0x6f | 0x7f => matches!(p, Pfx::P66 | Pfx::F3),
+        0xf0 => p == Pfx::F2,
         0x70 => p != Pfx::None,
         0x60..=0x6d
         | 0x71..=0x76

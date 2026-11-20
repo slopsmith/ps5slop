@@ -649,3 +649,20 @@ fn cmpxchg16b_increments_from_several_threads_are_atomic() {
     let total = threads * per_thread;
     assert_eq!((mem.read_u64(DATA).unwrap(), mem.read_u64(DATA + 8).unwrap()), (total, total));
 }
+
+#[test]
+fn lddqu_loads_from_unaligned_addresses() {
+    let (mut cpu, mem) = machine(
+        "lddqu xmm1, [rsi]; vlddqu xmm2, [rsi]; vlddqu ymm3, [rsi]",
+        &[0xf2, 0x0f, 0xf0, 0x0e, 0xc5, 0xfb, 0xf0, 0x16, 0xc5, 0xff, 0xf0, 0x1e],
+    );
+    let bytes: Vec<u8> = (1..=32).collect();
+    mem.write(DATA + 1, &bytes).unwrap();
+    cpu.regs[RSI] = DATA + 1;
+    cpu.xmm[2] = [9; 4];
+    steps(&mut cpu, &mem, 3);
+    let q = |i: usize| u64::from_le_bytes(bytes[8 * i..8 * i + 8].try_into().unwrap());
+    assert_eq!(cpu.xmm[1][..2], [q(0), q(1)]);
+    assert_eq!(cpu.xmm[2], [q(0), q(1), 0, 0]);
+    assert_eq!(cpu.xmm[3], [q(0), q(1), q(2), q(3)]);
+}
