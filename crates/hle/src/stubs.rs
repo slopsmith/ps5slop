@@ -521,6 +521,9 @@ pub static STUBS: &[Function] = &[
     zero("libSceJson2", "_ZN3sce4Json11Initializer9terminateEv"),
     zero("libSceSystemService", "#8Lo6Zv94aho"),
     zero("libSceSystemService", "#Q3utJvma4Mo"),
+    zero("libSceContentSearch", "sceContentSearchInit"),
+    zero("libSceContentDelete", "sceContentDeleteInitialize"),
+    zero("libSceVideoRecordingP", "sceVideoRecordingSetInfo"),
     zero("libSceNpTrophy2", "sceNpTrophy2DestroyContext"),
     zero(
         "libSceNpEntitlementAccess",
