@@ -442,3 +442,38 @@ fn sampler_adjust_samples_decode_as_their_base_form() {
     assert_eq!(text(&[0xF080_0109, 0x00C0_0904]), text(&[0xF080_0108, 0x00C0_0904]));
     assert_eq!(text(&[0xF0A0_0109, 0x00C0_0904]), text(&[0xF0A0_0108, 0x00C0_0904]));
 }
+
+#[test]
+fn samplers_from_indexed_buffer_loads_and_constants_resolve() {
+    let code = [
+        0x8F6A_8402, // s_lshl_b32 vcc_lo, s2, 4
+        0xF428_0202, 0xD400_0000, // s_buffer_load_dwordx4 s[8:11], s[4:7], vcc_lo
+        0xBE8E_04FF, 0x0650_0000, // s_mov_b64 s[14:15], 0x6500000
+        0xB00C_0092, // s_movk_i32 s12, 0x92
+        0x920D_8C8C, // s_bfm_b32 s13, 12, 12
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xF080_0F08, 0x0044_0000, // image_sample v[0:3], v[0:1], s[16:23], s[8:11] dmask:0xf dim:2D
+        0xF080_0F08, 0x0064_0400, // image_sample v[4:7], v[0:1], s[16:23], s[12:15] dmask:0xf dim:2D
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 24, 24 << 1);
+    let buffer = Source::Buffer { buffer: Box::new(Source::UserSgpr(4)), offset: 0, index: Some((2, 4)) };
+    assert!(t.resources.contains(&Resource::Sampler { slot: 0, source: buffer }));
+    let constant = Source::Constant(vec![0x92, 0xFF_F000, 0x650_0000, 0]);
+    assert!(t.resources.contains(&Resource::Sampler { slot: 1, source: constant }));
+    compile(&t.msl);
+}
+
+#[test]
+fn flat_and_global_loads_read_guest_memory() {
+    let code = [
+        0xDC20_0000, 0x007D_0001, // flat_load_ubyte v0, v[1:2]
+        0xDC30_8010, 0x0300_0004, // global_load_dword v3, v4, s[0:1] offset:16
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 2, 2 << 1);
+    assert!(t.guest_memory);
+    assert!(t.msl.contains("flat_load_ubyte(mem, long((ulong(v1) | (ulong(v2) << 32))"));
+    assert!(t.msl.contains("flat_load_raw(mem, long(((ulong(s0) | (ulong(s1) << 32)) + ulong(v4)) + ulong(long(16))"));
+    compile(&t.msl);
+}

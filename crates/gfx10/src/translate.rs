@@ -61,6 +61,14 @@ pub enum Source {
     /// The dwords sit `offset` bytes past a 64-bit pointer, which is the first
     /// two dwords at `pointer`.
     Memory { pointer: Box<Source>, offset: u32 },
+    /// The dwords sit `offset` bytes, plus `user SGPR << shift` when
+    /// `index` is given, into the buffer the V# at `buffer` describes.
+    Buffer { buffer: Box<Source>, offset: u32, index: Option<(u8, u8)> },
+    /// Not descriptor dwords: a user SGPR shifted left, kept to resolve
+    /// buffer load offsets.
+    Scaled { sgpr: u8, shift: u8 },
+    /// Dwords the program builds from constants.
+    Constant(Vec<u32>),
 }
 
 impl Source {
@@ -72,6 +80,13 @@ impl Source {
                 pointer: pointer.clone(),
                 offset: offset.wrapping_add(bytes),
             },
+            Source::Buffer { buffer, offset, index } => Source::Buffer {
+                buffer: buffer.clone(),
+                offset: offset.wrapping_add(bytes),
+                index: *index,
+            },
+            Source::Scaled { .. } => Source::Scaled { sgpr: u8::MAX, shift: 0 },
+            Source::Constant(v) => Source::Constant(v.get(bytes as usize / 4..).map_or(Vec::new(), <[u32]>::to_vec)),
         }
     }
 }
@@ -226,6 +241,29 @@ pub fn translate(req: &Request) -> Result<Translated, TranslateError> {
 /// whose origin is known.
 type Syms = Vec<Option<Source>>;
 
+/// The value of a scalar source that is an integer inline constant or a
+/// literal. A 32-bit literal in a 64-bit move is zero-extended (our reading
+/// of the ISA guide); inline constants are sign-extended.
+fn constant(inst: &Inst, code: u16) -> Option<u32> {
+    match code {
+        src::LITERAL => inst.literal,
+        c if (src::ZERO..=src::ZERO + 64).contains(&c) => Some((c - src::ZERO) as u32),
+        c if (193..=208).contains(&c) => Some((192i32 - c as i32) as u32),
+        _ => None,
+    }
+}
+
+/// Dwords a scalar memory load reads, from its name's suffix.
+fn smem_dwords(name: &str) -> u16 {
+    match name.rsplit_once("_dword").map_or("", |(_, x)| x) {
+        "" => 1,
+        "x2" => 2,
+        "x4" => 4,
+        "x8" => 8,
+        _ => 16,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Interp {
     Perspective,
@@ -266,6 +304,8 @@ struct Tx<'a> {
 }
 
 const SGPR_COUNT: u16 = 106;
+/// SGPRs `sgpr_sources` follows: the general ones and VCC.
+const TRACKED_SGPRS: u16 = 108;
 
 impl<'a> Tx<'a> {
     fn new(req: &'a Request<'a>, insts: Vec<(usize, Inst)>) -> Self {
@@ -351,7 +391,7 @@ impl<'a> Tx<'a> {
     }
 
     fn written(&mut self, code: u16) {
-        if code < SGPR_COUNT {
+        if code < TRACKED_SGPRS {
             self.writes.entry(self.pc).or_default().insert(code);
         }
     }
@@ -510,6 +550,7 @@ impl<'a> Tx<'a> {
                 ..
             } => self.exp(pc, en, target, compr, done, vsrc),
             Kind::Mubuf(b) => self.mubuf(pc, name, &b),
+            Kind::Flat(f) => self.flat(pc, name, &f),
             Kind::Ds {
                 offset0,
                 offset1,
@@ -1645,6 +1686,40 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
+    /// FLAT and GLOBAL loads, reading guest memory through the memory window.
+    fn flat(&mut self, pc: usize, name: &str, f: &crate::decode::Flat) -> Result<(), TranslateError> {
+        let (n, call): (u16, &str) = match name.split_once('_').map_or("", |(_, x)| x) {
+            "load_ubyte" => (1, "flat_load_ubyte"),
+            "load_sbyte" => (1, "flat_load_sbyte"),
+            "load_ushort" => (1, "flat_load_ushort"),
+            "load_sshort" => (1, "flat_load_sshort"),
+            "load_dword" => (1, "flat_load_raw"),
+            "load_dwordx2" => (2, "flat_load_raw"),
+            "load_dwordx3" => (3, "flat_load_raw"),
+            "load_dwordx4" => (4, "flat_load_raw"),
+            _ => return Err(err(pc, format!("unsupported instruction {name}"))),
+        };
+        if f.lds || !(name.starts_with("flat_") || name.starts_with("global_")) {
+            return Err(err(pc, format!("unsupported instruction {name}")));
+        }
+        self.mem = true;
+        let lo = self.v(f.addr as u16);
+        let addr = if name.starts_with("global_") && (f.saddr as u16) < SGPR_COUNT {
+            let (s0, s1) = (self.s(f.saddr as u16), self.s(f.saddr as u16 + 1));
+            format!("((ulong({s0}) | (ulong({s1}) << 32)) + ulong({lo}))")
+        } else {
+            let hi = self.v(f.addr as u16 + 1);
+            format!("(ulong({lo}) | (ulong({hi}) << 32))")
+        };
+        let mut s = format!("uint4 r = {call}(mem, long({addr} + ulong(long({})) - mem_base));", f.offset);
+        for i in 0..n {
+            let d = self.v(f.vdst as u16 + i);
+            write!(s, " {d} = r[{i}];").unwrap();
+        }
+        self.guard(&s);
+        Ok(())
+    }
+
     fn mubuf(
         &mut self,
         pc: usize,
@@ -1902,7 +1977,17 @@ impl<'a> Tx<'a> {
         let none = || err(pc, "descriptor not from user SGPRs or memory they point to");
         let st = syms.get(&pc).ok_or_else(none)?;
         let at = |r: u16| st.get(r as usize).cloned().flatten();
-        let first_src = at(first).ok_or_else(none)?;
+        let first_src = at(first).filter(|s| !matches!(s, Source::Scaled { .. })).ok_or_else(none)?;
+        if let Source::Constant(_) = first_src {
+            let mut dwords = Vec::new();
+            for i in 0..n {
+                match at(first + i) {
+                    Some(Source::Constant(v)) if v.len() == 1 => dwords.push(v[0]),
+                    _ => return Err(none()),
+                }
+            }
+            return Ok(Source::Constant(dwords));
+        }
         for i in 1..n {
             if at(first + i) != Some(first_src.advance(4 * i as u32)) {
                 return Err(none());
@@ -1916,7 +2001,7 @@ impl<'a> Tx<'a> {
     fn sgpr_sources(&self) -> BTreeMap<usize, Syms> {
         let index: BTreeMap<usize, usize> =
             self.insts.iter().enumerate().map(|(i, (pc, _))| (*pc, i)).collect();
-        let mut entry: Syms = vec![None; SGPR_COUNT as usize];
+        let mut entry: Syms = vec![None; TRACKED_SGPRS as usize];
         for i in 0..self.req.user_sgprs as u16 {
             let r = (self.user_base + i) as usize;
             if r < entry.len() {
@@ -1939,21 +2024,67 @@ impl<'a> Tx<'a> {
                 Kind::Sop1 { sdst, ssrc0 } if inst.op.name == "s_mov_b32" && ssrc0 < SGPR_COUNT => {
                     new.insert(sdst as u16, st[ssrc0 as usize].clone());
                 }
+                Kind::Sop1 { sdst, ssrc0 } if inst.op.name.starts_with("s_mov_b") && constant(inst, ssrc0).is_some() => {
+                    let v = constant(inst, ssrc0).unwrap_or(0);
+                    new.insert(sdst as u16, Some(Source::Constant(vec![v])));
+                    if inst.op.name == "s_mov_b64" {
+                        let high = if v as i32 >= 0 || ssrc0 == src::LITERAL { 0 } else { u32::MAX };
+                        new.insert(sdst as u16 + 1, Some(Source::Constant(vec![high])));
+                    }
+                }
+                Kind::Sopk { sdst, simm16 } if inst.op.name == "s_movk_i32" => {
+                    new.insert(sdst as u16, Some(Source::Constant(vec![simm16 as i16 as i32 as u32])));
+                }
+                Kind::Sop2 { sdst, ssrc0, ssrc1 } if inst.op.name == "s_bfm_b32" => {
+                    let mask = constant(inst, ssrc0).zip(constant(inst, ssrc1)).map(|(width, offset)| {
+                        1u32.checked_shl(width & 31).map_or(u32::MAX, |b| b.wrapping_sub(1)) << (offset & 31)
+                    });
+                    new.insert(sdst as u16, mask.map(|m| Source::Constant(vec![m])));
+                }
                 Kind::Sop1 { sdst, ssrc0 } if inst.op.name == "s_mov_b64" && ssrc0 + 1 < SGPR_COUNT => {
                     new.insert(sdst as u16, st[ssrc0 as usize].clone());
                     new.insert(sdst as u16 + 1, st[ssrc0 as usize + 1].clone());
+                }
+                Kind::Sop2 { sdst, ssrc0, ssrc1 }
+                    if inst.op.name == "s_lshl_b32"
+                        && ssrc0 < TRACKED_SGPRS
+                        && (src::ZERO..=src::ZERO + 31).contains(&ssrc1) =>
+                {
+                    let shift = (ssrc1 - src::ZERO) as u8;
+                    let scaled = match st[ssrc0 as usize] {
+                        Some(Source::UserSgpr(sgpr)) => Some(Source::Scaled { sgpr, shift }),
+                        _ => None,
+                    };
+                    new.insert(sdst as u16, scaled);
+                }
+                Kind::Smem { sdata, sbase, offset, soffset, .. } if inst.op.name.starts_with("s_buffer_load_dword") => {
+                    let vsharp = st.get(sbase as usize).cloned().flatten().filter(|v| {
+                        (1..4u16).all(|k| st.get(sbase as usize + k as usize).cloned().flatten() == Some(v.advance(4 * k as u32)))
+                    });
+                    let index = match soffset as u16 {
+                        src::NULL => Some(None),
+                        r if r < TRACKED_SGPRS => match st[r as usize] {
+                            Some(Source::Scaled { sgpr, shift }) if sgpr != u8::MAX => Some(Some((sgpr, shift))),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let (Some(v), Some(index)) = (vsharp, index) {
+                        let n = smem_dwords(inst.op.name);
+                        for k in 0..n {
+                            new.insert(sdata as u16 + k, Some(Source::Buffer {
+                                buffer: Box::new(v.clone()),
+                                offset: (offset as u32).wrapping_add(4 * k as u32),
+                                index,
+                            }));
+                        }
+                    }
                 }
                 Kind::Smem { sdata, sbase, offset, soffset, .. }
                     if inst.op.name.starts_with("s_load_dword") && soffset as u16 == src::NULL =>
                 {
                     if let Some(p) = pointer(&st, sbase as u16) {
-                        let n = match inst.op.name {
-                            "s_load_dword" => 1,
-                            "s_load_dwordx2" => 2,
-                            "s_load_dwordx4" => 4,
-                            "s_load_dwordx8" => 8,
-                            _ => 16,
-                        };
+                        let n = smem_dwords(inst.op.name);
                         for k in 0..n {
                             new.insert(sdata as u16 + k, Some(Source::Memory {
                                 pointer: Box::new(p.clone()),
@@ -1968,6 +2099,13 @@ impl<'a> Tx<'a> {
                 for &r in w {
                     st[r as usize] = new.remove(&r).flatten();
                 }
+            }
+            if !matches!(
+                inst.kind,
+                Kind::Sop1 { .. } | Kind::Sop2 { .. } | Kind::Sopk { .. } | Kind::Sopc { .. } | Kind::Sopp { .. } | Kind::Smem { .. }
+            ) {
+                st[106] = None;
+                st[107] = None;
             }
             let next = pc + inst.words as usize;
             let name = inst.op.name;
@@ -2670,6 +2808,28 @@ static inline uint4 buffer_load_ushort(device const uchar* mem, ulong mem_base, 
 
 static inline uint4 buffer_load_sshort(device const uchar* mem, ulong mem_base, uint4 vs, uint index, uint offset, uint idxen) {
     long o = buffer_offset(mem_base, vs, index, offset, idxen);
+    return uint4(o < 0 ? 0u : uint(int(*(device const short*)(mem + o))), 0u, 0u, 0u);
+}
+
+static inline uint4 flat_load_raw(device const uchar* mem, long o) {
+    if (o < 0) return uint4(0u);
+    device const uint* p = (device const uint*)(mem + o);
+    return uint4(p[0], p[1], p[2], p[3]);
+}
+
+static inline uint4 flat_load_ubyte(device const uchar* mem, long o) {
+    return uint4(o < 0 ? 0u : uint(mem[o]), 0u, 0u, 0u);
+}
+
+static inline uint4 flat_load_sbyte(device const uchar* mem, long o) {
+    return uint4(o < 0 ? 0u : uint(int(char(mem[o]))), 0u, 0u, 0u);
+}
+
+static inline uint4 flat_load_ushort(device const uchar* mem, long o) {
+    return uint4(o < 0 ? 0u : uint(*(device const ushort*)(mem + o)), 0u, 0u, 0u);
+}
+
+static inline uint4 flat_load_sshort(device const uchar* mem, long o) {
     return uint4(o < 0 ? 0u : uint(int(*(device const short*)(mem + o))), 0u, 0u, 0u);
 }
 

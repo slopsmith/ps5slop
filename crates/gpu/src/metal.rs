@@ -1683,6 +1683,19 @@ impl Metal {
                 host.read(ptr.wrapping_add(*offset as u64), &mut b)
                     .then(|| b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect())
             }
+            Source::Buffer { buffer, offset, index } => {
+                let v = self.descriptor(host, user, buffer, 4)?;
+                let base = v[0] as u64 | (v[1] as u64 & 0xFFFF) << 32;
+                let indexed = match *index {
+                    Some((sgpr, shift)) => user.get(sgpr as usize)?.checked_shl(shift as u32)?,
+                    None => 0,
+                };
+                let mut b = vec![0u8; n * 4];
+                host.read(base.wrapping_add(*offset as u64).wrapping_add(indexed as u64), &mut b)
+                    .then(|| b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect())
+            }
+            Source::Scaled { .. } => None,
+            Source::Constant(v) => v.get(..n).map(<[u32]>::to_vec),
         }
     }
 
