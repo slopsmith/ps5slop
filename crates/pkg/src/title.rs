@@ -1,4 +1,5 @@
-//! Title ids (`PPSA01234`, `CUSA01234`) from a title's metadata files.
+//! Title ids (`PPSA01234`, `CUSA01234`), names and versions from a title's
+//! metadata files.
 
 use crate::read::{u16_le, u32_le};
 use crate::{Package, entry_id};
@@ -11,6 +12,26 @@ pub fn from_param_json(json: &[u8]) -> Option<String> {
     let value = value.strip_prefix('"')?;
     let id = &value[..value.find('"')?];
     is_title_id(id).then(|| id.to_owned())
+}
+
+/// The name in the default language and the content version of a PS5
+/// `param.json`.
+pub fn name_from_param_json(json: &[u8]) -> (Option<String>, Option<String>) {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(json) else {
+        return (None, None);
+    };
+    let local = &v["localizedParameters"];
+    let name = local["defaultLanguage"]
+        .as_str()
+        .and_then(|lang| local[lang]["titleName"].as_str())
+        .map(str::to_owned);
+    let version = v["contentVersion"].as_str().map(str::to_owned);
+    (name, version)
+}
+
+/// The `TITLE` and `APP_VER` strings of a PS4 `param.sfo`.
+pub fn name_from_param_sfo(sfo: &[u8]) -> (Option<String>, Option<String>) {
+    (sfo_string(sfo, "TITLE"), sfo_string(sfo, "APP_VER"))
 }
 
 /// The `TITLE_ID` string of a PS4 `param.sfo`.
@@ -77,6 +98,16 @@ impl Package {
             .is_some_and(|c| c == "gp")
     }
 
+    /// The title's name and version from `param.json` (PS5) or `param.sfo`
+    /// (PS4), when stored in the clear.
+    pub fn name_and_version(&self) -> (Option<String>, Option<String>) {
+        if let Some(j) = self.clear_entry(entry_id::PARAM_JSON) {
+            return name_from_param_json(&j);
+        }
+        self.clear_entry(entry_id::PARAM_SFO)
+            .map_or((None, None), |s| name_from_param_sfo(&s))
+    }
+
     /// The title id from `param.json` (PS5) or `param.sfo` (PS4) when they
     /// are stored in the clear, else from the content id.
     pub fn title_id(&self) -> Option<String> {
@@ -91,6 +122,17 @@ impl Package {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_name_in_the_default_language_and_version_from_param_json() {
+        let json = br#"{"contentVersion": "01.010.000", "localizedParameters":
+            {"defaultLanguage": "fr-FR", "en-US": {"titleName": "Game"}, "fr-FR": {"titleName": "Jeu"}}}"#;
+        assert_eq!(
+            name_from_param_json(json),
+            (Some("Jeu".into()), Some("01.010.000".into()))
+        );
+        assert_eq!(name_from_param_json(b"not json"), (None, None));
+    }
 
     #[test]
     fn reads_title_id_from_param_json() {

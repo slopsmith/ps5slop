@@ -25,6 +25,9 @@ pub enum Title {
         path: PathBuf,
         fs: Arc<dyn ImageFs>,
         id: Option<String>,
+        /// The name and version from the package's metadata (the patch's
+        /// version when there is one).
+        meta: (Option<String>, Option<String>),
     },
 }
 
@@ -66,6 +69,10 @@ impl Title {
             (path.to_path_buf(), package, patch)
         };
         let id = base.title_id();
+        let mut meta = base.name_and_version();
+        if let Some((_, p)) = &patch {
+            meta.1 = p.name_and_version().1.or(meta.1);
+        }
         let mut fs: Arc<dyn ImageFs> = Arc::new(package_fs(&base_path, base, passcode)?);
         if let Some((patch_path, patch)) = patch {
             if !patch.is_patch() {
@@ -88,6 +95,7 @@ impl Title {
             path: base_path,
             fs,
             id,
+            meta,
         })
     }
 
@@ -150,6 +158,35 @@ impl Title {
             }
             Title::Package { id, .. } => id.clone(),
         }
+    }
+
+    /// What to call the title in the window: its name, version and title id
+    /// as far as its metadata gives them, else its file or folder name.
+    pub fn label(&self) -> String {
+        let (name, version) = match self {
+            Title::Executable(_) => (None, None),
+            Title::Folder(d) => {
+                let sce_sys = d.join("sce_sys");
+                match std::fs::read(sce_sys.join("param.json")) {
+                    Ok(j) => pkg::title::name_from_param_json(&j),
+                    Err(_) => std::fs::read(sce_sys.join("param.sfo"))
+                        .map_or((None, None), |s| pkg::title::name_from_param_sfo(&s)),
+                }
+            }
+            Title::Package { meta, .. } => meta.clone(),
+        };
+        let name = name.or_else(|| {
+            self.fallback_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        });
+        let mut label = name.unwrap_or_else(|| "ps5slop".into());
+        if let Some(v) = version {
+            label = format!("{label} v{v}");
+        }
+        if let Some(id) = self.id() {
+            label = format!("{label} ({id})");
+        }
+        label
     }
 
     /// The name used for the title's data folders when it has no title id:

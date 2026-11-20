@@ -42,7 +42,7 @@ enum Start {
 /// Runs `booted` on a new thread. Once the title opens its video output, a
 /// window shows its frames until the guest exits or the window closes (which
 /// ends it). Returns the guest's exit status.
-pub fn run(booted: Booted) -> Result<i32, Error> {
+pub fn run(booted: Booted, label: String) -> Result<i32, Error> {
     let kernel = booted.kernel.clone();
     let (start, started) = std::sync::mpsc::channel();
     let opened = Mutex::new(start.clone());
@@ -102,6 +102,9 @@ pub fn run(booted: Booted) -> Result<i32, Error> {
         sent: PadInput::default(),
         feedback: feedback::Feedback::default(),
         rate_at: (Instant::now(), kernel.instructions()),
+        label,
+        size: None,
+        flips_then: 0,
     };
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("ps5slop: window: {e}");
@@ -123,6 +126,12 @@ struct App {
     feedback: feedback::Feedback,
     /// When the title was last refreshed, and the instruction counts then.
     rate_at: (Instant, (u64, u64)),
+    /// The game's name, version and title id.
+    label: String,
+    /// The size of the last frame shown.
+    size: Option<(u32, u32)>,
+    /// `flips` when the title was last refreshed.
+    flips_then: u64,
 }
 
 /// The pad button a key stands for, as `ORBIS_PAD_BUTTON_*` bits.
@@ -165,8 +174,8 @@ impl App {
         self.update_pad();
     }
 
-    /// Shows the guest's instruction rates (interpreted and translated) in the
-    /// title, every [`TITLE_INTERVAL`].
+    /// Shows the game, its frame rate and size, the guest's instruction rates
+    /// and the controller in the title, every [`TITLE_INTERVAL`].
     fn retitle(&mut self) {
         let (at, (interp, jit)) = self.rate_at;
         let elapsed = at.elapsed();
@@ -174,15 +183,24 @@ impl App {
             return;
         }
         let now = self.kernel.instructions();
-        let mips = |a: u64, b: u64| (b - a) as f64 / elapsed.as_secs_f64() / 1e6;
+        let secs = elapsed.as_secs_f64();
+        let mips = |a: u64, b: u64| (b - a) as f64 / secs / 1e6;
+        let fps = (self.flips - self.flips_then) as f64 / secs;
+        let mut parts = vec![self.label.clone(), format!("{fps:.0} fps")];
+        if let Some((w, h)) = self.size {
+            parts.push(format!("{w}x{h}"));
+        }
+        parts.push(format!(
+            "JIT {:.0} MIPS, interpreter {:.1}",
+            mips(jit, now.1),
+            mips(interp, now.0)
+        ));
+        parts.push(gamepad::current().map_or("no controller".into(), |c| feedback::kind(&c)));
         if let Some(w) = &self.window {
-            w.set_title(&format!(
-                "ps5slop | interpreter {:.1} MIPS | JIT {:.1} MIPS",
-                mips(interp, now.0),
-                mips(jit, now.1)
-            ));
+            w.set_title(&parts.join(" | "));
         }
         self.rate_at = (Instant::now(), now);
+        self.flips_then = self.flips;
     }
 
     /// Gives the guest the keyboard and controller state, if it changed, and
@@ -206,6 +224,7 @@ impl App {
             return;
         }
         self.flips = frame.flips;
+        self.size = Some((frame.width, frame.height));
         if let (Some(p), Some(w)) = (&mut self.presenter, &self.window) {
             match &frame.texture {
                 Some(t) => p.show(&t.0),
@@ -227,7 +246,7 @@ impl ApplicationHandler<Wake> for App {
         });
         let (w, h) = window_size_for(FIRST_SIZE, screen);
         let attrs = Window::default_attributes()
-            .with_title("ps5slop")
+            .with_title(&self.label)
             .with_inner_size(LogicalSize::new(w, h))
             .with_resizable(true);
         let window = match event_loop.create_window(attrs) {

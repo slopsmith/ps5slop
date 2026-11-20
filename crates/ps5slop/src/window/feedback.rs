@@ -117,6 +117,11 @@ impl Drop for Feedback {
     }
 }
 
+/// The controller's kind, such as "DualShock 4".
+pub fn kind(c: &GCController) -> String {
+    unsafe { c.productCategory() }.to_string()
+}
+
 unsafe fn describe(c: &GCController) -> String {
     let name = |s: Option<Retained<NSString>>| s.map(|s| s.to_string()).unwrap_or_default();
     let (vendor, category) = unsafe { (name(c.vendorName()), c.productCategory().to_string()) };

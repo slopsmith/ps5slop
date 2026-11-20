@@ -1256,6 +1256,7 @@ dependencies = [
  "clap",
  "flate2",
  "hmac",
+ "serde_json",
  "sha2",
  "xts-mode",
 ]

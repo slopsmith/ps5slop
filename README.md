@@ -32,7 +32,7 @@ cargo run --release -p ps5slop -- run --interpreter games/TITLE   # no JIT; by d
 PS5SLOP_JIT_VERIFY=1 PS5SLOP_JIT_STATS=1 cargo run ...   # check the JIT against the interpreter / see what it leaves to the interpreter
 ```
 
-A DualShock 4, DualSense or other controller macOS knows (through its GameController framework) works as the pad, over USB or Bluetooth (pair it in System Settings first), and can be connected while a title runs. Vibration reaches it; the light bar works on a DualSense or DualShock 4 and trigger effects on a DualSense ([input](docs/input.md)). The keyboard works too, and the two combine: arrow keys for the D-pad, X Cross, C Circle, Z Square, V Triangle, Q/E for L1/R1, 1/3 for L2/R2, Enter for Options, T for the touchpad button. Closing the window ends the guest.
+A DualShock 4, DualSense or other controller macOS knows (through its GameController framework) works as the pad, over USB or Bluetooth (pair it in System Settings first), and can be connected while a title runs. Vibration reaches it; the light bar works on a DualSense or DualShock 4 and trigger effects on a DualSense ([input](docs/input.md)). The keyboard works too, and the two combine: arrow keys for the D-pad, X Cross, C Circle, Z Square, V Triangle, Q/E for L1/R1, 1/3 for L2/R2, Enter for Options, T for the touchpad button. Closing the window ends the guest. The window's title shows the game's name, version and title id, its frame rate (flips a second) and frame size, the guest's instruction rate in translated code and in the interpreter, and which controller is in use.
 
 ## Docs
 

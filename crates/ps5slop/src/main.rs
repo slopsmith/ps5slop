@@ -116,6 +116,8 @@ fn main() -> ExitCode {
             }
         }
     }
+    let label = title.label();
+    eprintln!("ps5slop: running {label}");
     let data = data.or_else(|| default_data(&title));
     let temp = data.as_ref().map(|d| beside(d, "temp"));
     let saves = data.as_ref().map(|d| beside(d, "savedata"));
@@ -150,7 +152,7 @@ fn main() -> ExitCode {
                 play_input(booted.kernel.clone(), script);
             }
             ps5slop::control::serve(booted.kernel.clone(), control.clone());
-            run(booted, headless)
+            run(booted, headless, label)
         });
     let _ = std::fs::remove_file(&control);
     match status {
@@ -163,17 +165,17 @@ fn main() -> ExitCode {
 }
 
 #[cfg(all(target_os = "macos", feature = "window"))]
-fn run(booted: ps5slop::Booted, headless: bool) -> Result<i32, ps5slop::Error> {
+fn run(booted: ps5slop::Booted, headless: bool, label: String) -> Result<i32, ps5slop::Error> {
     if headless {
         booted.run()
     } else {
         booted.kernel.use_audio_device();
-        ps5slop::window::run(booted)
+        ps5slop::window::run(booted, label)
     }
 }
 
 #[cfg(not(all(target_os = "macos", feature = "window")))]
-fn run(booted: ps5slop::Booted, _headless: bool) -> Result<i32, ps5slop::Error> {
+fn run(booted: ps5slop::Booted, _headless: bool, _label: String) -> Result<i32, ps5slop::Error> {
     booted.run()
 }
 
