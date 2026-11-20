@@ -437,6 +437,9 @@ const CASES: &[Case] = &[
     ("casal w1, w2, [x3]", |a| {
         a.casal(Width::W, r(1), r(2), r(3))
     }),
+    ("caspal x20, x21, x22, x23, [x19]", |a| {
+        a.caspal(r(20), r(22), r(19))
+    }),
     ("casalh w1, w2, [x3]", |a| {
         a.casal(Width::H, r(1), r(2), r(3))
     }),

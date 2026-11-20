@@ -99,6 +99,7 @@ fn lockable(i: &Insn) -> bool {
             (Map::Primary, 0xfe | 0xff) => i.ext() <= 1,
             (Map::M0F, 0xb0 | 0xb1 | 0xc0 | 0xc1 | 0xab | 0xb3 | 0xbb) => true,
             (Map::M0F, 0xba) => i.ext() >= 5,
+            (Map::M0F, 0xc7) => i.ext() == 1 && i.rex_w(),
             _ => false,
         }
 }
@@ -197,6 +198,7 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         (Map::Primary, 0xfe | 0xff) if i.ext() <= 1 => (false, both),
         (Map::M0F, 0xb0 | 0xb1) if i.mem.is_some() => (false, writes),
         (Map::M0F, 0xc0 | 0xc1) => (false, writes),
+        (Map::M0F, 0xc7) if i.ext() == 1 && i.rex_w() && i.mem.is_some() => (false, both),
         (Map::M0F, 0xbc | 0xbd) if i.osize() >= 4 => (false, both),
         (Map::M0F, 0xc3) if i.mem.is_some() => (false, none),
         (Map::Primary, 0x84 | 0x85) => (false, writes),
@@ -673,6 +675,7 @@ impl Translator {
             (Map::Primary, 0xc1 | 0xd1 | 0xd3) if i.ext() <= 1 => self.rotate(i, next, flags),
             (Map::Primary, 0x86 | 0x87 | 0x91..=0x97) => self.xchg(i, next),
             (Map::M0F, 0xb0 | 0xb1 | 0xc0 | 0xc1) => self.atomic(i, next, flags),
+            (Map::M0F, 0xc7) => self.cmpxchg16b(i, next),
             (Map::M0F, 0xbc | 0xbd) => self.bit_scan(i, next, flags),
             (Map::M0F, 0xc3) => {
                 let size = i.osize();
@@ -1192,6 +1195,28 @@ impl Translator {
             self.a.bfi(Size::X, OLD_NZCV, B, 0, size as u32 * 8);
             self.a.csel(Size::X, r(0), OLD_NZCV, r(0), Cond::Ne);
         }
+    }
+
+    /// CMPXCHG16B, always atomic (CASPAL); only ZF changes. A misaligned
+    /// address faults in the VM and the interpreter raises #GP.
+    fn cmpxchg16b(&mut self, i: &Insn, next: u64) {
+        self.addr(&i.mem.expect("classified"), next);
+        let a = &mut self.a;
+        a.mov(Size::X, A, r(0));
+        a.mov(Size::X, B, r(2));
+        a.mov(Size::X, T, r(3));
+        a.mov(Size::X, U, r(1));
+        a.caspal(A, T, ADDR);
+        a.eor(Size::X, T, A, r(0));
+        a.eor(Size::X, U, B, r(2));
+        a.orr(Size::X, T, T, U);
+        a.mov(Size::X, r(0), A);
+        a.mov(Size::X, r(2), B);
+        a.mrs(B, a64::sysreg::NZCV);
+        a.cmp_imm(Size::X, T, 0);
+        a.cset(Size::X, T, Cond::Eq);
+        a.bfi(Size::X, B, T, 30, 1);
+        a.msr(a64::sysreg::NZCV, B);
     }
 
     /// XCHG; with memory it is atomic, as on x86.

@@ -1058,6 +1058,14 @@ impl Asm {
         self.excl(w, 1, 1, 1, 1, rs, rt, rn)
     }
 
+    /// Compares the pair `rs`, `rs + 1` with the 16 bytes at `[rn]` and
+    /// stores the pair `rt`, `rt + 1` if equal; `rs` and `rs + 1` receive
+    /// the old value. Both pairs start at an even register.
+    pub fn caspal(&mut self, rs: Reg, rt: Reg, rn: Reg) {
+        assert!(reg(rs).is_multiple_of(2) && reg(rt).is_multiple_of(2));
+        self.emit(0x4860_fc00 | reg(rs) << 16 | reg(rn) << 5 | reg(rt));
+    }
+
     fn lse(&mut self, w: Width, opc: u32, o3: u32, rs: Reg, rt: Reg, rn: Reg) {
         self.emit(
             w.size() << 30

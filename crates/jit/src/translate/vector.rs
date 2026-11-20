@@ -97,7 +97,7 @@ fn simd_three(op: u16) -> Option<(bool, u32, u32)> {
 
 /// Two-source integer operations done per 128-bit half.
 fn packed_int(op: u16) -> bool {
-    matches!(op, 0x160..=0x16d | 0x1db | 0x1df | 0x1eb | 0x1ef | 0x1e4 | 0x1e5 | 0x1f4..=0x1f6 | 0x200)
+    matches!(op, 0x160..=0x16d | 0x1db | 0x1df | 0x1eb | 0x1ef | 0x1e4 | 0x1e5 | 0x1f4..=0x1f6 | 0x200 | 0x22b)
         || simd_three(op).is_some()
 }
 
@@ -188,6 +188,10 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x1c5 => p == Pfx::P66 && i.mem.is_none() && !wide,
         0x114 | 0x115 => matches!(p, Pfx::None | Pfx::P66),
         0x3f0 => i.vex.is_some() && p == Pfx::F2,
+        0x17c | 0x17d | 0x1d0 => matches!(p, Pfx::P66 | Pfx::F2),
+        0x150 => matches!(p, Pfx::None | Pfx::P66) && i.mem.is_none(),
+        0x152 | 0x153 => matches!(p, Pfx::None | Pfx::F3),
+        0x1d1..=0x1d3 | 0x1e1 | 0x1e2 | 0x1f1..=0x1f3 => p == Pfx::P66,
         _ => false,
     };
     if !ok || (i.vex.is_none() && wide) {
@@ -953,6 +957,96 @@ impl Translator {
                 }
                 return;
             }
+            0x17c | 0x17d | 0x1d0 => {
+                let d = (p == Pfx::P66) as u32;
+                for h in 0..halves {
+                    self.a.ldr_q(XA, CTX, ymm(src1, h));
+                    self.rm_half(i, h, XB);
+                    let a = &mut self.a;
+                    match op {
+                        0x17c => a.vec3(true, true, d, 0b11010, XR, XA, XB),
+                        0x17d => {
+                            a.uzp(true, 2 + d, false, XT, XA, XB);
+                            a.uzp(true, 2 + d, true, XS, XA, XB);
+                            a.vec3(true, false, 2 | d, 0b11010, XR, XT, XS);
+                        }
+                        _ => {
+                            a.vec3(true, false, 2 | d, 0b11010, XR, XA, XB);
+                            a.vec3(true, false, d, 0b11010, XT, XA, XB);
+                            if d == 1 {
+                                a.ins(3, XR, 1, XT, 1);
+                            } else {
+                                a.ins(2, XR, 1, XT, 1);
+                                a.ins(2, XR, 3, XT, 3);
+                            }
+                        }
+                    }
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
+            0x150 => {
+                let double = p == Pfx::P66;
+                let lanes = if double { 2 } else { 4 };
+                for h in 0..halves {
+                    let a = &mut self.a;
+                    a.ldr_q(XB, CTX, ymm(i.rm, h));
+                    if double {
+                        a.shr_v(true, false, 64, XR, XB, 63);
+                    } else {
+                        a.shr_v(true, false, 32, XR, XB, 31);
+                        a.usra(true, 64, XR, XR, 31);
+                    }
+                    a.umov_b(B, XR, 0);
+                    a.umov_b(T, XR, 8);
+                    a.logic_shift(Logic::Orr, false, Size::W, B, B, T, a64::Shift::Lsl, lanes / 2);
+                    if h == 0 {
+                        a.mov(Size::W, A, B);
+                    } else {
+                        a.logic_shift(Logic::Orr, false, Size::W, A, A, B, a64::Shift::Lsl, lanes);
+                    }
+                }
+                self.a.mov(Size::X, r(i.reg), A);
+                return;
+            }
+            0x152 | 0x153 if p == Pfx::F3 => {
+                self.a.ldr_q(XA, CTX, ymm(src1, 0));
+                self.scalar_src(i, false, XB);
+                self.reciprocal(op == 0x152);
+                self.a.ins(2, XA, 0, XR, 0);
+                self.a.str_q(XA, CTX, ymm(i.reg, 0));
+            }
+            0x152 | 0x153 => {
+                for h in 0..halves {
+                    self.rm_half(i, h, XB);
+                    self.reciprocal(op == 0x152);
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
+            0x1d1..=0x1d3 | 0x1e1 | 0x1e2 | 0x1f1..=0x1f3 => {
+                let size = (op & 3) as u32;
+                let right = op < 0x1f0;
+                match i.mem {
+                    Some(_) => self.a.ldr(Width::X, B, ADDR, 0),
+                    None => self.a.ldr(Width::X, B, CTX, ymm(i.rm, 0)),
+                }
+                let a = &mut self.a;
+                a.lsr_imm(Size::X, T, B, 3 + size);
+                a.clz(Size::X, T, T);
+                a.lsr_imm(Size::X, T, T, 6);
+                a.sub_imm(Size::X, T, T, 1);
+                a.bic(Size::X, B, B, T);
+                assert!(a.logic_imm(Logic::And, Size::X, T, T, 8 << size));
+                a.orr(Size::X, B, B, T);
+                if right {
+                    a.neg(Size::X, B, B);
+                }
+                a.dup_gen(size, XB, B);
+                for h in 0..halves {
+                    self.a.ldr_q(XA, CTX, ymm(src1, h));
+                    self.a.vec3(true, op & 0xf0 != 0xe0, size, 0b01000, XR, XA, XB);
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
             0x1d7 => {
                 for h in 0..halves {
                     let a = &mut self.a;
@@ -1133,6 +1227,38 @@ impl Translator {
         a.mov(Size::X, super::AF_AUX, super::PF_RESULT);
     }
 
+    /// XR = RCPPS (or RSQRTPS) of the four singles in XB, as the
+    /// interpreter computes them: exact, NaNs quieted, denormals and zeros
+    /// giving infinity of their sign, other negatives the default NaN.
+    fn reciprocal(&mut self, sqrt: bool) {
+        const CMEQ_ZERO: u32 = 0x4ea0_9800;
+        const CMLT_ZERO: u32 = 0x4ea0_a800;
+        let a = &mut self.a;
+        let splat = |a: &mut a64::Asm, v: V, imm: u64| {
+            a.mov_imm(Size::W, T, imm);
+            a.dup_gen(2, v, T);
+        };
+        splat(a, XT, 0x3f80_0000);
+        if sqrt {
+            a.fsqrt_v(false, XS, XB);
+            a.vec3(true, true, 0, 0b11111, XR, XT, XS);
+            a.fcm_v(Fcm::Eq, false, XU, XB, XB);
+            a.emit(CMLT_ZERO | vregs(XS, XB));
+            a.vec3(true, false, 0, 0b00011, XU, XU, XS);
+            splat(a, XT, 0xffc0_0000);
+            a.vec3(true, true, 2, 0b00011, XR, XT, XU);
+        } else {
+            a.vec3(true, true, 0, 0b11111, XR, XT, XB);
+        }
+        splat(a, XS, 0x7f80_0000);
+        a.vec3(true, false, 0, 0b00011, XU, XB, XS);
+        a.emit(CMEQ_ZERO | vregs(XU, XU));
+        splat(a, XT, 0x8000_0000);
+        a.vec3(true, false, 0, 0b00011, XT, XB, XT);
+        a.vec3(true, false, 2, 0b00011, XT, XT, XS);
+        a.vec3(true, true, 2, 0b00011, XR, XT, XU);
+    }
+
     fn zero_upper(&mut self, n: u8) {
         self.a.stp(Size::X, Reg(31), Reg(31), CTX, ymm(n, 1));
     }
@@ -1149,10 +1275,11 @@ impl Translator {
             0x16c => a.zip(true, 3, false, XR, XA, XB),
             0x168..=0x16a => a.zip(true, (op - 0x168) as u32, true, XR, XA, XB),
             0x16d => a.zip(true, 3, true, XR, XA, XB),
-            0x163 | 0x167 | 0x16b => {
+            0x163 | 0x167 | 0x16b | 0x22b => {
                 let (kind, size) = match op {
                     0x163 => (Narrow::Sqxtn, 0),
                     0x167 => (Narrow::Sqxtun, 0),
+                    0x22b => (Narrow::Sqxtun, 1),
                     _ => (Narrow::Sqxtn, 1),
                 };
                 a.narrow(kind, size, XR, XA);
