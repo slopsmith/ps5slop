@@ -740,7 +740,8 @@ impl Metal {
         if let (Some(mode), Some(bpe)) = (t.tile, t.format.bytes())
             && let Some(layout) = Layout::new(mode, bpe, t.width, t.height)
         {
-            self.detile_into(host, &texture, 0, t.address, layout);
+            let at = t.address + layout.mip0_offset(t.max_mip + 1);
+            self.detile_into(host, &texture, 0, at, layout);
         }
         self.targets.insert(
             t.address,
@@ -1456,7 +1457,8 @@ impl Metal {
         if let Some(mode) = image.tile
             && let Some(layout) = Layout::new(mode, bpe, image.width, image.height)
         {
-            self.detile_into(host, &texture, 0, image.address, layout);
+            let at = image.address + layout.mip0_offset(image.last_level + 1);
+            self.detile_into(host, &texture, 0, at, layout);
         }
         self.targets.insert(image.address, Target { texture: texture.clone(), pixel_format: format });
         if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some()
@@ -1861,6 +1863,9 @@ impl Metal {
             }
             let Some(t) = ColorTarget::read(c, n) else { continue };
             self.note(|| format!("mrt{n} {t:x?}"));
+            if t.mip_level != 0 {
+                return Err("draw to a mip level above 0");
+            }
             let (tex, format) = self.target(host, &t).ok_or("color target format")?;
             key.formats[targets.len()] = format.0;
             key.blends[targets.len()] = (Blend::read(c, n), write_mask(write, t.format.swap) as u8);

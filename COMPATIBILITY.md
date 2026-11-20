@@ -23,7 +23,7 @@ What each title does under ps5slop, from our own runs on an Apple Silicon Mac.
 | Title ID | Name | Status | Notes |
 | --- | --- | --- | --- |
 | PPSA21402 | Balatro | ⭐ Perfect | 01.015.000: plays normally with sound. |
-| PPSA17221 | Minecraft | 🟡 Ingame | v26.10: menus work, a world loads in about 25 s and renders at 10 to 16 fps, but block textures have wrong colours and some menu letters go missing. |
+| PPSA17221 | Minecraft | 🟡 Ingame | v26.10: menus work, a world loads in about 25 s and renders at 10 to 16 fps with correct block textures; some menu letters go missing and the settings page breaks past General. |
 | PPSA03311 | The Binding of Isaac: Repentance | 🟢 Playable | 01.000: plays at about 55 fps. The screen filter setting needed `v_cvt_off_f32_i4` (now translated, not yet rechecked); pad vibration is a stub. |
 | PPSA21564 | Astro Bot | ⚫ Nothing | v1.019 (.pkg): loads and starts flipping (with `PS5SLOP_UNIMPLEMENTED_ZERO=1`; otherwise stops at a libSceAudioPropagation call); most compute programs do not translate yet. Needs `scripts/fetch-fonts`. |
 | CUSA52463 | Deltarune (PS4) | ⚫ Nothing | v1.12 (patch over base .pkg): game loop runs at about 30 fps; nothing drawn yet (no Gnm renderer). |

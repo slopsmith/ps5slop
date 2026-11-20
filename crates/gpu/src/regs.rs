@@ -111,6 +111,11 @@ pub struct ColorTarget {
     pub format: ColorFormat,
     pub tile: Option<TileMode>,
     pub raw_tile: u32,
+    /// The surface's last mip level (`CB_COLOR_ATTRIB2.MAX_MIP`): level 0
+    /// lies after the smaller levels in memory.
+    pub max_mip: u32,
+    /// The level drawn to (`CB_COLOR_VIEW.MIP_LEVEL`).
+    pub mip_level: u32,
 }
 
 impl ColorTarget {
@@ -139,6 +144,8 @@ impl ColorTarget {
             format,
             tile: TileMode::from_bits(raw_tile),
             raw_tile,
+            max_mip: attrib2 >> 28,
+            mip_level: (r(CB_COLOR0_VIEW) >> 26) & 0xF,
         })
     }
 }
