@@ -60,6 +60,41 @@ fn unsupported(_: &mut Env) -> Result<Outcome, CallError> {
     )))
 }
 
+/// A libSceJson2 call that returns a reference (or a C string): the
+/// shared null value.
+const fn json_null(name: &'static str) -> Function {
+    Function {
+        library: "libSceJson2",
+        name,
+        func: null_value,
+    }
+}
+
+/// A zeroed guest block standing for every JSON value we hand out: its type
+/// reads as null (0, assumed), its count as 0 and its text as "".
+fn null_value(env: &mut Env) -> Result<Outcome, CallError> {
+    static NULL: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let at = *NULL.get_or_init(|| {
+        let at = env.kernel.heap.alloc(env.mem, 256).unwrap_or(0);
+        if at != 0 {
+            let _ = env.mem.write(at, &[0u8; 256]);
+        }
+        at
+    });
+    Ok(Outcome::Return(at))
+}
+
+/// `sce::Json::Parser::parse(Value&, const char* text, size_t size)`:
+/// succeeds and leaves the value as it was (we keep no JSON values).
+fn json_parse(env: &mut Env) -> Result<Outcome, CallError> {
+    let size = (env.arg(2) as usize).min(256);
+    let mut text = vec![0u8; size];
+    if env.mem.read(env.arg(1), &mut text).is_ok() {
+        eprintln!("ps5slop: sce::Json::Parser::parse({:?})", String::from_utf8_lossy(&text));
+    }
+    Ok(Outcome::Return(0))
+}
+
 fn ok(_: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(0))
 }
@@ -302,6 +337,20 @@ pub static STUBS: &[Function] = &[
     zero("libSceJson2", "_ZN3sce4Json5Value3setENS0_9ValueTypeE"),
     zero("libSceJson2", "_ZN3sce4Json6StringC1EPKc"),
     zero("libSceJson2", "_ZN3sce4Json6StringD1Ev"),
+    Function {
+        library: "libSceJson2",
+        name: "_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm",
+        func: json_parse,
+    },
+    json_null("_ZNK3sce4Json5ValueixEPKc"),
+    json_null("_ZNK3sce4Json5ValueixEm"),
+    json_null("_ZN3sce4Json6ObjectixERKNS0_6StringE"),
+    json_null("_ZNK3sce4Json5Value8getArrayEv"),
+    json_null("_ZNK3sce4Json5Value9getObjectEv"),
+    json_null("_ZNK3sce4Json5Value9getStringEv"),
+    json_null("_ZNK3sce4Json6String5c_strEv"),
+    zero("libSceJson2", "_ZNK3sce4Json5Value7getTypeEv"),
+    zero("libSceJson2", "_ZNK3sce4Json5Value5countEv"),
     zero("libSceJson2", "#6l3Bv2gysNc"),
     zero("libSceJson2", "#00oCq0RwSAY"),
     zero("libSceNpCppWebApi", "#oTirsxQpqj0"),

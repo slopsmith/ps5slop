@@ -15,6 +15,7 @@ use x86::cpu::reg::*;
 
 mod agc;
 mod ajm;
+mod avplayer;
 mod ampr;
 mod audio;
 mod dialog;
@@ -547,6 +548,8 @@ fn placeholders() -> impl Iterator<Item = &'static Function> {
         .chain(file::STUBS)
         .chain(gnm::STUBS)
         .chain(videoout::STUBS)
+        .chain(audio::PROPAGATION_STUBS)
+        .chain(avplayer::STUBS)
 }
 
 /// Every function we implement.

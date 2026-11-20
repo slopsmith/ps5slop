@@ -8,6 +8,7 @@
 mod coreaudio;
 mod out2;
 mod input;
+mod propagation;
 mod wav;
 
 use std::collections::{HashMap, VecDeque};
@@ -36,6 +37,8 @@ const DEVICE_STALL: Duration = Duration::from_millis(250);
 pub use out2::FUNCTIONS as OUT2_FUNCTIONS;
 
 pub use input::FUNCTIONS as INPUT_FUNCTIONS;
+
+pub use propagation::STUBS as PROPAGATION_STUBS;
 
 pub static FUNCTIONS: &[Function] = &[
     f("sceAudioOutInit", ok),
