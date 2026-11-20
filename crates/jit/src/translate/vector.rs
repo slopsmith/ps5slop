@@ -3,7 +3,7 @@
 //! 256-bit operation runs as two 128-bit halves. Many NEON choices follow
 //! 86slopper's `translate/sse.rs`.
 
-use a64::{Logic, Narrow, Reg, Size, V, Width, r};
+use a64::{Fcm, Logic, Narrow, Reg, Size, V, Width, r};
 use x86::decode::{Insn, Map, Rep};
 
 use super::{A, ADDR, B, FlagUse, T, Translator};
@@ -82,6 +82,15 @@ fn simd_three(op: u16) -> Option<(bool, u32, u32)> {
         0x1ee => (false, 1, 0b01100),
         0x229 => (true, 3, 0b10001),
         0x237 => (false, 3, 0b00110),
+        0x240 => (false, 2, 0b10011),
+        0x238 => (false, 0, 0b01101),
+        0x239 => (false, 2, 0b01101),
+        0x23a => (true, 1, 0b01101),
+        0x23b => (true, 2, 0b01101),
+        0x23c => (false, 0, 0b01100),
+        0x23d => (false, 2, 0b01100),
+        0x23e => (true, 1, 0b01100),
+        0x23f => (true, 2, 0b01100),
         _ => return None,
     })
 }
@@ -124,10 +133,11 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x110 | 0x111 if matches!(p, Pfx::F3 | Pfx::F2) => true,
         0x12e | 0x12f => matches!(p, Pfx::None | Pfx::P66),
         0x12a | 0x12c | 0x12d => matches!(p, Pfx::F3 | Pfx::F2),
-        0x15a => matches!(p, Pfx::F3 | Pfx::F2) || !wide,
+        0x15a => true,
         0x1e7 => p == Pfx::P66 && i.mem.is_some(),
         0x12b => matches!(p, Pfx::None | Pfx::P66) && i.mem.is_some(),
         0x112 | 0x116 if p == Pfx::F3 => true,
+        0x112 if p == Pfx::F2 => true,
         0x112 | 0x116 => !wide && (p == Pfx::None || p == Pfx::P66 && i.mem.is_some()),
         0x113 | 0x117 => !wide && matches!(p, Pfx::None | Pfx::P66) && i.mem.is_some(),
         _ if fma_scalar(op) || fma_packed(op) => i.vex.is_some() && p == Pfx::P66,
@@ -151,7 +161,10 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x16e => p == Pfx::P66 && !wide,
         0x17e => (p == Pfx::P66 || p == Pfx::F3) && !wide,
         0x1d6 => p == Pfx::P66 && !wide,
-        0x1d7 => p == Pfx::P66 && i.mem.is_none() && !wide,
+        0x1d7 => p == Pfx::P66 && i.mem.is_none(),
+        0x308..=0x30d => p == Pfx::P66,
+        0x1c2 | 0x151 => true,
+        0x2f3 => i.vex.is_some() && p == Pfx::None && (1..=3).contains(&i.ext()),
         _ if packed_int(op) => p == Pfx::P66 && (op != 0x200 || i.map == Map::M0F38),
         0x258 | 0x259 | 0x278 | 0x279 | 0x218 => i.vex.is_some() && p == Pfx::P66 && !i.rex_w(),
         0x219 => i.vex.is_some_and(|v| v.l) && p == Pfx::P66 && !i.rex_w(),
@@ -161,7 +174,7 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x2f7 => i.vex.is_some(),
         0x2f5 => i.vex.is_some() && p != Pfx::P66,
         0x22a => p == Pfx::P66 && i.mem.is_some(),
-        0x1e6 => p != Pfx::None && !wide,
+        0x1e6 => p != Pfx::None,
         0x1c6 => matches!(p, Pfx::None | Pfx::P66),
         0x300 | 0x301 => wide && p == Pfx::P66 && i.rex_w(),
         0x302 => i.vex.is_some() && p == Pfx::P66 && !i.rex_w(),
@@ -182,7 +195,7 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
     }
     Some(match op {
         0x12e | 0x12f => (false, writes),
-        0x2f2 | 0x217 => (false, writes),
+        0x2f2 | 0x217 | 0x2f3 => (false, writes),
         0x2f7 | 0x2f5 if p == Pfx::None => (false, writes),
         _ => (false, none),
     })
@@ -195,6 +208,10 @@ const SSHLL_2D: u32 = 0x0f20_a400;
 const SSHLL: u32 = 0x0f00_a400;
 const USHLL: u32 = 0x2f00_a400;
 const FCVTN: u32 = 0x0e61_6800;
+/// The Q bit: FCVTL2, FCVTN2, SSHLL2 and XTN2 work on the upper half.
+const Q: u32 = 1 << 30;
+/// XTN Vd.2S, Vn.2D.
+const XTN_2S: u32 = 0x0ea1_2800;
 /// FMLA Vd.4S, Vn.4S, Vm.4S (bit 23 makes it FMLS, bit 22 .2D).
 const FMLA_V: u32 = 0x4e20_cc00;
 /// FNEG Vd.4S, Vn.4S (bit 22 makes it .2D).
@@ -207,6 +224,26 @@ fn vregs(d: V, n: V) -> u32 {
 /// UMOV Xd, Vn.D[1].
 fn umov_d1(d: Reg, n: V) -> u32 {
     0x4e18_3c00 | (n.0 as u32) << 5 | d.0 as u32
+}
+
+/// The `fp1` operation for ROUNDSS/ROUNDSD's immediate: FRINTI (FPCR's mode,
+/// which follows MXCSR.RC) with bit 2, else FRINTN, FRINTM, FRINTP or FRINTZ.
+fn frint_scalar(imm: u32) -> u32 {
+    if imm & 4 != 0 {
+        15
+    } else {
+        [8, 10, 9, 11][(imm & 3) as usize]
+    }
+}
+
+/// The vector FRINT on four singles for ROUNDPS's immediate (bit 22 makes
+/// it .2D), chosen as [`frint_scalar`] does.
+fn frint_vector(imm: u32) -> u32 {
+    if imm & 4 != 0 {
+        0x6ea1_9800
+    } else {
+        [0x4e21_8800, 0x4e21_9800, 0x4ea1_8800, 0x4ea1_9800][(imm & 3) as usize]
+    }
 }
 
 fn ymm(n: u8, half: u32) -> i32 {
@@ -222,14 +259,16 @@ impl Translator {
         let scalar = matches!(p, Pfx::F3 | Pfx::F2)
             && matches!(
                 op,
-                0x110 | 0x111 | 0x12a | 0x158 | 0x159 | 0x15a | 0x15c..=0x15f
+                0x110 | 0x111 | 0x12a | 0x158 | 0x159 | 0x15a | 0x15c..=0x15f | 0x1c2 | 0x151
             )
-            || fma_scalar(op);
+            || fma_scalar(op)
+            || matches!(op, 0x30a | 0x30b);
         let halves = if i.vex.is_some_and(|v| v.l) && !scalar {
             2
         } else {
             1
         };
+        let wide = i.vex.is_some_and(|v| v.l);
         let src1 = i.vex.map_or(i.reg, |v| v.vvvv);
         if let Some(m) = i.mem {
             self.addr(&m, next);
@@ -237,21 +276,101 @@ impl Translator {
         match op {
             0x2f2 | 0x2f6 | 0x2f7 | 0x3f0 => return self.bmi(i, op, p, flags),
             0x2f5 => return self.bmi2_bits(i, p, flags),
-            0x1e6 if p == Pfx::F3 => {
-                match i.mem {
-                    Some(_) => self.a.ldr_d(XB, ADDR, 0),
-                    None => self.a.ldr_q(XB, CTX, ymm(i.rm, 0)),
+            0x2f3 => return self.bmi1_lowest(i, flags),
+            0x151 if scalar => {
+                let double = p == Pfx::F2;
+                self.a.ldr_q(XA, CTX, ymm(src1, 0));
+                self.scalar_src(i, double, XB);
+                self.a.fp1(double, 3, XR, XB);
+                self.a.ins(if double { 3 } else { 2 }, XA, 0, XR, 0);
+                self.a.str_q(XA, CTX, ymm(i.reg, 0));
+            }
+            0x151 => {
+                for h in 0..halves {
+                    self.rm_half(i, h, XB);
+                    self.a.fsqrt_v(p == Pfx::P66, XR, XB);
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
                 }
+            }
+            0x30a | 0x30b => {
+                let double = op == 0x30b;
+                self.a.ldr_q(XA, CTX, ymm(src1, 0));
+                self.scalar_src(i, double, XB);
+                self.a.fp1(double, frint_scalar(i.imm as u32), XR, XB);
+                self.a.ins(if double { 3 } else { 2 }, XA, 0, XR, 0);
+                self.a.str_q(XA, CTX, ymm(i.reg, 0));
+            }
+            0x308 | 0x309 => {
+                let word = frint_vector(i.imm as u32) | ((op == 0x309) as u32) << 22;
+                for h in 0..halves {
+                    self.rm_half(i, h, XB);
+                    self.a.emit(word | vregs(XR, XB));
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
+            0x30c | 0x30d => {
+                let (lanes, size) = if op == 0x30c { (4, 2) } else { (2, 3) };
+                for h in 0..halves {
+                    self.a.ldr_q(XA, CTX, ymm(src1, h));
+                    self.rm_half(i, h, XB);
+                    for k in 0..lanes {
+                        if i.imm as u32 >> (lanes * h + k) & 1 != 0 {
+                            self.a.ins(size, XA, k, XB, k);
+                        }
+                    }
+                    self.a.str_q(XA, CTX, ymm(i.reg, h));
+                }
+            }
+            0x1c2 if scalar => {
+                let double = p == Pfx::F2;
+                self.a.ldr_q(XA, CTX, ymm(src1, 0));
+                self.scalar_src(i, double, XB);
+                self.compare(i, double, false);
+                self.a.ins(if double { 3 } else { 2 }, XA, 0, XR, 0);
+                self.a.str_q(XA, CTX, ymm(i.reg, 0));
+            }
+            0x1c2 => {
+                for h in 0..halves {
+                    self.a.ldr_q(XA, CTX, ymm(src1, h));
+                    self.rm_half(i, h, XB);
+                    self.compare(i, p == Pfx::P66, true);
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
+            0x112 if p == Pfx::F2 => {
+                for h in 0..halves {
+                    match i.mem {
+                        Some(_) if halves == 1 => self.a.ldr_d(XB, ADDR, 0),
+                        _ => self.rm_half(i, h, XB),
+                    }
+                    self.a.dup_elem(3, XR, XB);
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
+            0x1e6 if p == Pfx::F3 => {
+                self.convert_source(i, wide, XB);
                 self.a.emit(SSHLL_2D | vregs(XR, XB));
                 self.a.scvtf_v(true, XR, XR);
                 self.a.str_q(XR, CTX, ymm(i.reg, 0));
+                if wide {
+                    self.a.emit(SSHLL_2D | Q | vregs(XR, XB));
+                    self.a.scvtf_v(true, XR, XR);
+                    self.a.str_q(XR, CTX, ymm(i.reg, 1));
+                    return;
+                }
             }
             0x1e6 => {
-                self.rm_half(i, 0, XB);
-                self.a.frint32_v(p == Pfx::F2, true, XR, XB);
-                self.a.fcvtzs_v(true, XR, XR);
-                self.a.narrow(Narrow::Xtn, 2, XR, XR);
+                for h in 0..halves {
+                    self.rm_half(i, h, XB);
+                    self.a.frint32_v(p == Pfx::F2, true, XT, XB);
+                    self.a.fcvtzs_v(true, XT, XT);
+                    self.a.emit(XTN_2S | (h * Q) | vregs(XR, XT));
+                }
                 self.a.str_q(XR, CTX, ymm(i.reg, 0));
+                if wide {
+                    self.zero_upper(i.reg);
+                    return;
+                }
             }
             0x1c6 => {
                 let imm = i.imm as u32 & 0xff;
@@ -424,17 +543,25 @@ impl Translator {
                 self.a.str_q(XA, CTX, ymm(i.reg, 0));
             }
             0x15a if p == Pfx::None => {
-                match i.mem {
-                    Some(_) => self.a.ldr_d(XB, ADDR, 0),
-                    None => self.a.ldr_q(XB, CTX, ymm(i.rm, 0)),
-                }
+                self.convert_source(i, wide, XB);
                 self.a.emit(FCVTL | vregs(XR, XB));
                 self.a.str_q(XR, CTX, ymm(i.reg, 0));
+                if wide {
+                    self.a.emit(FCVTL | Q | vregs(XR, XB));
+                    self.a.str_q(XR, CTX, ymm(i.reg, 1));
+                    return;
+                }
             }
             0x15a => {
-                self.rm_half(i, 0, XB);
-                self.a.emit(FCVTN | vregs(XR, XB));
+                for h in 0..halves {
+                    self.rm_half(i, h, XB);
+                    self.a.emit(FCVTN | (h * Q) | vregs(XR, XB));
+                }
                 self.a.str_q(XR, CTX, ymm(i.reg, 0));
+                if wide {
+                    self.zero_upper(i.reg);
+                    return;
+                }
             }
             0x12c | 0x12d => return self.convert_to_int(i, op, p),
             _ if fma_packed(op) => {
@@ -827,15 +954,22 @@ impl Translator {
                 return;
             }
             0x1d7 => {
-                self.a.ldr_q(XB, CTX, ymm(i.rm, 0));
-                self.a.shr_v(true, false, 8, XR, XB, 7);
-                self.a.usra(true, 16, XR, XR, 7);
-                self.a.usra(true, 32, XR, XR, 14);
-                self.a.usra(true, 64, XR, XR, 28);
-                self.a.umov_b(A, XR, 0);
-                self.a.umov_b(B, XR, 8);
-                self.a
-                    .logic_shift(Logic::Orr, false, Size::W, A, A, B, a64::Shift::Lsl, 8);
+                for h in 0..halves {
+                    let a = &mut self.a;
+                    a.ldr_q(XB, CTX, ymm(i.rm, h));
+                    a.shr_v(true, false, 8, XR, XB, 7);
+                    a.usra(true, 16, XR, XR, 7);
+                    a.usra(true, 32, XR, XR, 14);
+                    a.usra(true, 64, XR, XR, 28);
+                    a.umov_b(B, XR, 0);
+                    a.umov_b(T, XR, 8);
+                    a.logic_shift(Logic::Orr, false, Size::W, B, B, T, a64::Shift::Lsl, 8);
+                    if h == 0 {
+                        a.mov(Size::W, A, B);
+                    } else {
+                        a.logic_shift(Logic::Orr, false, Size::W, A, A, B, a64::Shift::Lsl, 16);
+                    }
+                }
                 self.a.mov(Size::X, r(i.reg), A);
                 return;
             }
@@ -913,11 +1047,55 @@ impl Translator {
         a.mov_imm(Size::X, super::AF_AUX, 1);
     }
 
+    /// CMPPS/CMPPD/CMPSS/CMPSD: XR = all ones where XA `predicate` XB holds.
+    fn compare(&mut self, i: &Insn, double: bool, vector: bool) {
+        let pred = i.imm as u8 & if i.vex.is_some() { 0x1f } else { 7 };
+        let a = &mut self.a;
+        let fcm = |a: &mut a64::Asm, kind, rd, rn, rm| {
+            if vector {
+                a.fcm_v(kind, double, rd, rn, rm);
+            } else {
+                a.fcm(kind, double, rd, rn, rm);
+            }
+        };
+        let base = pred & 7;
+        match base {
+            0 | 4 => fcm(a, Fcm::Eq, XR, XA, XB),
+            1 | 5 => fcm(a, Fcm::Gt, XR, XB, XA),
+            2 | 6 => fcm(a, Fcm::Ge, XR, XB, XA),
+            _ => {}
+        }
+        if matches!(base, 3 | 7) || pred & 8 != 0 {
+            fcm(a, Fcm::Eq, XT, XA, XA);
+            fcm(a, Fcm::Eq, XS, XB, XB);
+            a.vec3(true, false, 0, 0b00011, XT, XT, XS);
+        }
+        if matches!(base, 3 | 7) {
+            a.vec3(true, false, 2, 0b00011, XR, XT, XT);
+        }
+        if matches!(base, 3..=6) {
+            a.not_v(XR, XR);
+        }
+        if pred & 8 != 0 {
+            a.vec3(true, true, 0, 0b00011, XR, XR, XT);
+            a.not_v(XR, XR);
+        }
+    }
+
     /// `dst` = half `h` of the r/m operand (memory at x19, or a register).
     fn rm_half(&mut self, i: &Insn, h: u32, dst: V) {
         match i.mem {
             Some(_) => self.a.ldr_q(dst, ADDR, 16 * h as i32),
             None => self.a.ldr_q(dst, CTX, ymm(i.rm, h)),
+        }
+    }
+
+    /// `dst` = the 64-bit source of a widening conversion, or 128 bits for
+    /// its 256-bit form.
+    fn convert_source(&mut self, i: &Insn, wide: bool, dst: V) {
+        match i.mem {
+            Some(_) if !wide => self.a.ldr_d(dst, ADDR, 0),
+            _ => self.rm_half(i, 0, dst),
         }
     }
 
@@ -1114,6 +1292,40 @@ impl Translator {
         a.b(top);
         a.bind(done);
         a.mov(s, r(i.reg), T);
+    }
+
+    /// BLSR, BLSMSK and BLSI: ZF and SF from the result, CF from the
+    /// source, the other arithmetic flags clear.
+    fn bmi1_lowest(&mut self, i: &Insn, flags: bool) {
+        let s = if i.rex_w() { Size::X } else { Size::W };
+        let v = r(i.vex.expect("classified").vvvv);
+        match i.mem {
+            Some(_) => self
+                .a
+                .ldr(if i.rex_w() { Width::X } else { Width::W }, A, ADDR, 0),
+            None => self.a.mov(s, A, r(i.rm)),
+        }
+        let a = &mut self.a;
+        a.sub_imm(s, B, A, 1);
+        match i.ext() {
+            1 => a.and(s, T, A, B),
+            2 => a.eor(s, T, A, B),
+            _ => {
+                a.neg(s, T, A);
+                a.and(s, T, A, T);
+            }
+        }
+        if flags {
+            a.cmp_imm(s, A, 0);
+            a.cset(Size::X, B, if i.ext() == 3 { a64::Cond::Eq } else { a64::Cond::Ne });
+            a.tst(s, T, T);
+            a.mrs(super::U, a64::sysreg::NZCV);
+            a.bfi(Size::X, super::U, B, 29, 1);
+            a.msr(a64::sysreg::NZCV, super::U);
+            a.mov_imm(Size::X, super::PF_RESULT, 1);
+            a.mov_imm(Size::X, super::AF_AUX, 1);
+        }
+        a.mov(s, v, T);
     }
 
     /// ANDN, BEXTR, SHLX/SHRX/SARX, RORX and MULX on general registers.

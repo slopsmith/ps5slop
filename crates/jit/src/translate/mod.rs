@@ -97,7 +97,8 @@ fn lockable(i: &Insn) -> bool {
             (Map::Primary, 0x80 | 0x81 | 0x83) => logic(i.ext()),
             (Map::Primary, 0x86 | 0x87) => true,
             (Map::Primary, 0xfe | 0xff) => i.ext() <= 1,
-            (Map::M0F, 0xb0 | 0xb1 | 0xc0 | 0xc1) => true,
+            (Map::M0F, 0xb0 | 0xb1 | 0xc0 | 0xc1 | 0xab | 0xb3 | 0xbb) => true,
+            (Map::M0F, 0xba) => i.ext() >= 5,
             _ => false,
         }
 }
@@ -244,20 +245,12 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         {
             (false, none)
         }
-        (Map::M0F, 0xa3) if i.mem.is_none() && i.osize() >= 4 => (
-            false,
-            FlagUse {
-                reads: true,
-                writes: true,
-            },
-        ),
-        (Map::M0F, 0xba) if i.ext() == 4 && i.osize() >= 4 => (
-            false,
-            FlagUse {
-                reads: true,
-                writes: true,
-            },
-        ),
+        (Map::M0F, 0xa3 | 0xab | 0xb3 | 0xbb) if i.osize() >= 4 => (false, both),
+        (Map::M0F, 0xba) if i.ext() >= 4 && i.osize() >= 4 => (false, both),
+        (Map::Primary, 0x99) => (false, none),
+        (Map::Primary, 0xd2 | 0xd3) if i.ext() >= 4 => (false, both),
+        (Map::Primary, 0xc9) if i.osize64() == 8 => (false, none),
+        (Map::Primary, 0xff) if i.ext() == 6 && i.osize64() == 8 => (false, none),
         (Map::M0F, 0x40..=0x4f) if i.osize() >= 4 => (false, reads),
         (Map::M0F, 0x80..=0x8f) => (true, reads),
         (Map::M0F, 0x90..=0x9f) => (false, reads),
@@ -674,6 +667,7 @@ impl Translator {
             }
             (Map::Primary, 0xf7) if matches!(i.ext(), 4 | 5) => self.mul_wide(i, next, flags),
             (Map::Primary, 0xf7) => self.div(i, next),
+            (Map::Primary, 0xd2 | 0xd3) if i.ext() >= 4 => self.shift_cl(i, next, flags),
             (Map::Primary, 0xc0 | 0xd0) => self.narrow_shift(i, next, flags),
             (Map::Primary, 0xc1 | 0xd1) if i.osize() == 2 => self.narrow_shift(i, next, flags),
             (Map::Primary, 0xc1 | 0xd1 | 0xd3) if i.ext() <= 1 => self.rotate(i, next, flags),
@@ -685,6 +679,26 @@ impl Translator {
                 self.get(B, i.reg, size, rex);
                 self.addr(&i.mem.expect("classified"), next);
                 self.store(B, size);
+            }
+            (Map::Primary, 0x99) => match i.osize() {
+                8 => self.a.asr_imm(Size::X, r(2), r(0), 63),
+                4 => self.a.asr_imm(Size::W, r(2), r(0), 31),
+                _ => {
+                    self.a.sxth(Size::W, T, r(0));
+                    self.a.asr_imm(Size::W, T, T, 15);
+                    self.set(2, 2, rex, T);
+                }
+            },
+            (Map::Primary, 0xc9) => {
+                self.a.ldr(Width::X, A, r(5), 0);
+                self.a.add_imm(Size::X, r(4), r(5), 8);
+                self.a.mov(Size::X, r(5), A);
+            }
+            (Map::Primary, 0xff) if i.ext() == 6 => {
+                self.get_rm(i, 8, next);
+                self.a.sub_imm(Size::X, ADDR, r(4), 8);
+                self.a.str(Width::X, A, ADDR, 0);
+                self.a.mov(Size::X, r(4), ADDR);
             }
             (Map::Primary, 0x98) => {
                 if i.osize() == 8 {
@@ -772,21 +786,7 @@ impl Translator {
                     self.a.dmb(0xb);
                 }
             }
-            (Map::M0F, 0xa3 | 0xba) => {
-                let size = i.osize();
-                let bits = size as u64 * 8;
-                self.get_rm(i, size, next);
-                if i.op == 0xa3 {
-                    self.get(B, i.reg, size, rex);
-                } else {
-                    self.a.mov_imm(Size::X, B, i.imm as u64 & (bits - 1));
-                }
-                self.a.lsrv(sz(size), T, A, B);
-                self.a.mrs(U, a64::sysreg::NZCV);
-                assert!(self.a.logic_imm(Logic::Eor, Size::X, T, T, 1));
-                self.a.bfi(Size::X, U, T, 29, 1);
-                self.a.msr(a64::sysreg::NZCV, U);
-            }
+            (Map::M0F, 0xa3 | 0xab | 0xb3 | 0xbb | 0xba) => self.bit_test(i, next, flags),
             (Map::Primary, 0xc1 | 0xd1) => {
                 let size = i.osize();
                 let bits = size as u32 * 8;
@@ -1276,8 +1276,17 @@ impl Translator {
                 a.cbz(Size::X, x, bail);
                 a.sdiv(Size::X, T, r(0), A);
             } else {
-                a.cbnz(Size::X, r(2), bail);
-                a.udiv(Size::X, T, r(0), A);
+                let (fast, done) = (a.label(), a.label());
+                a.cbz(Size::X, r(2), fast);
+                self.wide_udiv(bail);
+                self.a.b(done);
+                self.a.bind(fast);
+                self.a.udiv(Size::X, T, r(0), A);
+                self.a.msub(Size::X, U, T, A, r(0));
+                self.a.mov(Size::X, r(0), T);
+                self.a.mov(Size::X, r(2), U);
+                self.a.bind(done);
+                return;
             }
             a.msub(Size::X, U, T, A, r(0));
             a.mov(Size::X, r(0), T);
@@ -1300,6 +1309,124 @@ impl Translator {
         a.msub(Size::X, B, T, A, U);
         a.mov(Size::W, r(0), T);
         a.mov(Size::W, r(2), B);
+    }
+
+    /// SHL, SHR and SAR by CL; a count of 0 changes nothing.
+    fn shift_cl(&mut self, i: &Insn, next: u64, flags: bool) {
+        let size = if i.op == 0xd2 { 1 } else { i.osize() };
+        let bits = size as u32 * 8;
+        let ext = i.ext();
+        let done = self.a.label();
+        self.get_rm(i, size, next);
+        let (carry, a) = (OLD_AF, &mut self.a);
+        let count_mask = if size == 8 { 63 } else { 31 };
+        assert!(a.logic_imm(Logic::And, Size::X, B, r(1), count_mask));
+        a.cbz(Size::X, B, done);
+        let m = mask(size);
+        match ext {
+            4 | 6 => {
+                a.lslv(Size::X, T, A, B);
+                if m != u64::MAX {
+                    assert!(a.logic_imm(Logic::And, Size::X, T, T, m));
+                }
+                if size == 8 {
+                    a.mov_imm(Size::X, U, 64);
+                    a.sub(Size::X, U, U, B);
+                    a.lsrv(Size::X, carry, A, U);
+                } else {
+                    a.lslv(Size::X, carry, A, B);
+                    a.lsr_imm(Size::X, carry, carry, bits);
+                }
+            }
+            5 => {
+                a.lsrv(Size::X, T, A, B);
+                a.sub_imm(Size::X, U, B, 1);
+                a.lsrv(Size::X, carry, A, U);
+            }
+            _ => {
+                match size {
+                    1 => a.sxtb(Size::X, U, A),
+                    2 => a.sxth(Size::X, U, A),
+                    4 => a.sxtw(U, A),
+                    _ => a.mov(Size::X, U, A),
+                }
+                a.asrv(Size::X, T, U, B);
+                if m != u64::MAX {
+                    assert!(a.logic_imm(Logic::And, Size::X, T, T, m));
+                }
+                a.sub_imm(Size::X, B, B, 1);
+                a.asrv(Size::X, carry, U, B);
+            }
+        }
+        self.set_rm(i, size, T);
+        if flags {
+            self.shift_cl_flags(ext, size);
+        }
+        self.a.bind(done);
+    }
+
+    /// The flags of [`Self::shift_cl`] from the old value in A, the result in
+    /// T and the last bit shifted out in bit 0 of x18.
+    fn shift_cl_flags(&mut self, ext: u8, size: u8) {
+        let bits = size as u32 * 8;
+        let (old, carry, a) = (OLD_NZCV, OLD_AF, &mut self.a);
+        assert!(a.logic_imm(Logic::And, Size::X, carry, carry, 1));
+        match ext {
+            4 | 6 => {
+                a.lsr_imm(Size::X, U, T, bits - 1);
+                a.eor(Size::X, U, U, carry);
+            }
+            5 => a.lsr_imm(Size::X, U, A, bits - 1),
+            _ => a.mov_imm(Size::X, U, 0),
+        }
+        assert!(a.logic_imm(Logic::And, Size::X, U, U, 1));
+        a.eor(Size::X, old, PF_RESULT, AF_AUX);
+        assert!(a.logic_imm(Logic::And, Size::X, old, old, 0x10));
+        if bits < 32 {
+            a.lsl_imm(Size::W, B, T, 32 - bits);
+            a.tst(Size::W, B, B);
+        } else {
+            a.tst(sz(size), T, T);
+        }
+        a.mrs(B, a64::sysreg::NZCV);
+        assert!(a.logic_imm(Logic::Eor, Size::X, carry, carry, 1));
+        a.bfi(Size::X, B, carry, 29, 1);
+        a.bfi(Size::X, B, U, 28, 1);
+        a.msr(a64::sysreg::NZCV, B);
+        a.mov(Size::X, PF_RESULT, T);
+        a.eor(Size::X, AF_AUX, T, old);
+    }
+
+    /// RDX:RAX / A for RDX not zero, bit by bit; a quotient that does not fit
+    /// in 64 bits goes to `bail`. NZCV is kept.
+    fn wide_udiv(&mut self, bail: Label) {
+        let (high, low, count, carry, saved) = (U, T, B, OLD_AF, OLD_NZCV);
+        let a = &mut self.a;
+        let (top, skip) = (a.label(), a.label());
+        a.mrs(saved, a64::sysreg::NZCV);
+        a.cmp(Size::X, r(2), A);
+        a.cset(Size::X, ADDR, Cond::Hs);
+        a.msr(a64::sysreg::NZCV, saved);
+        a.cbnz(Size::X, ADDR, bail);
+        a.mov(Size::X, high, r(2));
+        a.mov(Size::X, low, r(0));
+        a.mov_imm(Size::X, count, 64);
+        a.bind(top);
+        a.lsr_imm(Size::X, carry, high, 63);
+        a.extr(Size::X, high, high, low, 63);
+        a.lsl_imm(Size::X, low, low, 1);
+        a.cmp(Size::X, high, A);
+        a.cset(Size::X, ADDR, Cond::Hs);
+        a.orr(Size::X, ADDR, ADDR, carry);
+        a.cbz(Size::X, ADDR, skip);
+        a.sub(Size::X, high, high, A);
+        assert!(a.logic_imm(Logic::Orr, Size::X, low, low, 1));
+        a.bind(skip);
+        a.sub_imm(Size::X, count, count, 1);
+        a.cbnz(Size::X, count, top);
+        a.msr(a64::sysreg::NZCV, saved);
+        a.mov(Size::X, r(0), low);
+        a.mov(Size::X, r(2), high);
     }
 
     /// ROL and ROR by 1, a constant or CL: only CF and OF change, and
@@ -1355,6 +1482,73 @@ impl Translator {
         a.bfi(Size::X, old, U, 28, 1);
         a.msr(a64::sysreg::NZCV, old);
         a.bind(skip);
+    }
+
+    /// BT, BTS, BTR and BTC: CF = the old bit, the other flags kept. A
+    /// register offset into memory may reach outside the operand.
+    fn bit_test(&mut self, i: &Insn, next: u64, flags: bool) {
+        let size = i.osize();
+        let s = sz(size);
+        let bits = size as u32 * 8;
+        let rex = i.rex != 0;
+        let op = if i.op == 0xba {
+            i.ext() - 4
+        } else {
+            (i.op >> 3) & 3
+        };
+        if i.op == 0xba {
+            self.a.mov_imm(Size::X, B, i.imm as u64 & (bits as u64 - 1));
+        } else {
+            self.get(B, i.reg, size, rex);
+        }
+        match i.mem {
+            Some(m) => {
+                self.addr(&m, next);
+                if i.op != 0xba {
+                    if size == 4 {
+                        self.a.sxtw(T, B);
+                    } else {
+                        self.a.mov(Size::X, T, B);
+                    }
+                    self.a.asr_imm(Size::X, T, T, bits.trailing_zeros());
+                    self.a
+                        .add_shift(Size::X, ADDR, ADDR, T, Shift::Lsl, size.trailing_zeros());
+                }
+            }
+            None => self.get(A, i.rm, size, rex),
+        }
+        if op != 0 {
+            self.a.mov_imm(Size::X, U, 1);
+            self.a.lslv(s, U, U, B);
+        }
+        if i.lock {
+            let w = width(size);
+            match op {
+                1 => self.a.ldsetal(w, U, A, ADDR),
+                2 => self.a.ldclral(w, U, A, ADDR),
+                _ => self.a.ldeoral(w, U, A, ADDR),
+            }
+        } else {
+            if i.mem.is_some() {
+                self.load(A, size);
+            }
+            if op != 0 {
+                match op {
+                    1 => self.a.orr(s, U, A, U),
+                    2 => self.a.bic(s, U, A, U),
+                    _ => self.a.eor(s, U, A, U),
+                }
+                self.set_rm(i, size, U);
+            }
+        }
+        if flags {
+            let a = &mut self.a;
+            a.lsrv(s, T, A, B);
+            a.mrs(U, a64::sysreg::NZCV);
+            assert!(a.logic_imm(Logic::Eor, Size::X, T, T, 1));
+            a.bfi(Size::X, U, T, 29, 1);
+            a.msr(a64::sysreg::NZCV, U);
+        }
     }
 
     /// POPCNT: ZF says the source was zero; the other arithmetic flags clear.
