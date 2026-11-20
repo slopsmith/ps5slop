@@ -55,6 +55,8 @@ pub static FUNCTIONS: &[Function] = &[
         "sceSystemServiceGetDisplaySafeAreaInfo",
         safe_area,
     ),
+    f("libSceRtc", "sceRtcGetCurrentNetworkTick", rtc_current_tick),
+    f("libSceRtc", "sceRtcSetTick", rtc_set_tick),
 ];
 
 /// `sceSystemServiceGetDisplaySafeAreaInfo(info)`: the whole screen is safe.
@@ -219,7 +221,47 @@ fn no_system_event(_: &mut Env) -> Result<Outcome, CallError> {
 /// Seconds from 0001-01-01 to the Unix epoch.
 const RTC_EPOCH_OFFSET: u64 = 62_135_596_800;
 
-/// `sceRtcGetCurrentTick(&tick)`: microseconds since 0001-01-01 UTC.
+/// `sceRtcSetTick(&date_time, &tick)`: the tick as a date in shadPS4's
+/// layout: year, month, day, hour, minute and second as `u16`, then the
+/// microseconds as `u32`.
+fn rtc_set_tick(env: &mut Env) -> Result<Outcome, CallError> {
+    let (out, tick_at) = (env.arg(0), env.arg(1));
+    if out == 0 || tick_at == 0 {
+        return ret(crate::dmem::sce_error(crate::errno::EINVAL));
+    }
+    let tick = env.mem.read_u64(tick_at)?;
+    let (secs, micros) = (tick / 1_000_000, (tick % 1_000_000) as u32);
+    let (year, month, day) = civil_from_days((secs / 86_400) as i64 - 719_162);
+    let in_day = secs % 86_400;
+    let mut b = [0u8; 16];
+    for (k, v) in [year as u64, month, day, in_day / 3600, in_day / 60 % 60, in_day % 60]
+        .into_iter()
+        .enumerate()
+    {
+        b[2 * k..2 * k + 2].copy_from_slice(&(v as u16).to_le_bytes());
+    }
+    b[12..16].copy_from_slice(&micros.to_le_bytes());
+    env.mem.write(out, &b)?;
+    ret(0)
+}
+
+/// Year, month and day of the day `days` after 1970-01-01 (proleptic
+/// Gregorian calendar).
+fn civil_from_days(days: i64) -> (i64, u64, u64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u64;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u64;
+    let year = yoe + era * 400 + (month <= 2) as i64;
+    (year, month, day)
+}
+
+/// `sceRtcGetCurrentTick(&tick)`: microseconds since 0001-01-01 UTC. The
+/// network tick (`sceRtcGetCurrentNetworkTick`) is the same clock here.
 fn rtc_current_tick(env: &mut Env) -> Result<Outcome, CallError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -227,4 +269,17 @@ fn rtc_current_tick(env: &mut Env) -> Result<Outcome, CallError> {
     let tick = (now.as_secs() + RTC_EPOCH_OFFSET) * 1_000_000 + now.subsec_micros() as u64;
     env.mem.write_u64(env.arg(0), tick)?;
     ret(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::civil_from_days;
+
+    #[test]
+    fn days_map_to_gregorian_dates_across_leap_days_and_the_epoch() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(-1), (1969, 12, 31));
+        assert_eq!(civil_from_days(11_016), (2000, 2, 29));
+        assert_eq!(civil_from_days(-719_162), (1, 1, 1));
+    }
 }

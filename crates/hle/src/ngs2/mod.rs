@@ -39,6 +39,7 @@ const RACK_CUSTOM_MASTERING: u32 = 0x4003;
 pub static FUNCTIONS: &[Function] = &[
     f("sceNgs2ParseWaveformData", parse_waveform_data),
     f("sceNgs2ParseWaveformFile", parse_waveform_file),
+    f("sceNgs2CalcWaveformBlock", calc_waveform_block),
     f("sceNgs2SystemCreateWithAllocator", system_create),
     f("sceNgs2SystemCreate", system_create),
     f("sceNgs2SystemDestroy", system_destroy),
@@ -371,6 +372,34 @@ fn parse_waveform_data(env: &mut Env) -> Result<Outcome, CallError> {
     let mut data = vec![0u8; (size as usize).min(HEADER_MAX)];
     env.mem.read(at, &mut data)?;
     write_waveform_info(env, &data, size, out)
+}
+
+/// `sceNgs2CalcWaveformBlock(&format, sample_pos, samples, &block)`: the
+/// byte range of a waveform that holds `samples` frames from `sample_pos`,
+/// after SharpEmu-mac's `Ngs2CalcWaveformBlock`. PCM formats only.
+fn calc_waveform_block(env: &mut Env) -> Result<Outcome, CallError> {
+    let (format, pos, samples, out) = (env.arg(0), env.arg(1), env.arg(2), env.arg(3));
+    if out == 0 {
+        return ret(ERROR_INVALID_OUT_ADDRESS);
+    }
+    if format == 0 {
+        return ret(ERROR_INVALID_WAVEFORM_FORMAT);
+    }
+    let mut f = [0u8; 12];
+    env.mem.read(format, &mut f)?;
+    let word = |k: usize| u32::from_le_bytes(f[4 * k..4 * k + 4].try_into().expect("4 bytes"));
+    let (kind, channels, rate) = (word(0), word(1), word(2));
+    let frame = waveform::sample_bytes(kind) as u64 * channels as u64;
+    if frame == 0 || channels > 8 || rate == 0 {
+        return ret(ERROR_INVALID_WAVEFORM_FORMAT);
+    }
+    let (pos, samples) = (pos & 0xffff_ffff, samples & 0xffff_ffff);
+    let mut b = [0u8; waveform::BLOCK_SIZE];
+    b[0..8].copy_from_slice(&(pos * frame).to_le_bytes());
+    b[8..16].copy_from_slice(&(samples * frame).to_le_bytes());
+    b[0x18..0x1c].copy_from_slice(&(samples as u32).to_le_bytes());
+    env.mem.write(out, &b)?;
+    ret(0)
 }
 
 /// `sceNgs2ParseWaveformFile(path, offset, &info)`.

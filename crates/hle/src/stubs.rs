@@ -416,6 +416,7 @@ pub static STUBS: &[Function] = &[
     ),
     id("libSceNpManager", "sceNpRegisterStateCallbackA"),
     zero("libSceNpManager", "sceNpCheckCallback"),
+    zero("libSceNpManager", "sceNpSetNpTitleId"),
     out_id::<2>("libSceNetCtl", "sceNetCtlRegisterCallback"),
     zero("libSceNetCtl", "sceNetCtlCheckCallback"),
     zero("libSceCoredump", "sceCoredumpRegisterCoredumpHandler"),
@@ -483,6 +484,36 @@ pub static STUBS: &[Function] = &[
     Function {
         library: "libkernel_write_throttling",
         name: "#YFC3dBBipj8",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpTrophy2",
+        name: "sceNpTrophy2GetGameInfo",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpTrophy2",
+        name: "sceNpTrophy2GetTrophyInfo",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpCppWebApi",
+        name: "#Y295ygEccqk",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpCppWebApi",
+        name: "#52AlYvq+dmk",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpCppWebApi",
+        name: "#UYPxv8MIzGo",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpCppWebApi",
+        name: "#8x++mBOUeso",
         func: unsupported,
     },
 ];
