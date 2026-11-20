@@ -2,15 +2,103 @@
 //! thread's time goes, the hottest guest code by sample, and what falls back
 //! to the interpreter. Off, it costs one relaxed load per VM exit.
 
+use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::layout;
 
 static ON: AtomicBool = AtomicBool::new(false);
 static STATE: Mutex<Option<State>> = Mutex::new(None);
+/// Bumped for every new window, so threads start their counts afresh.
+static WINDOW: AtomicU64 = AtomicU64::new(0);
+static THREADS: Mutex<Vec<Arc<Thread>>> = Mutex::new(Vec::new());
+
+thread_local! {
+    static MINE: OnceCell<Arc<Thread>> = const { OnceCell::new() };
+}
+
+/// One thread's counts, locked only by that thread and by reports.
+struct Thread {
+    name: String,
+    port: u32,
+    counts: Mutex<Counts>,
+}
+
+struct Counts {
+    window: u64,
+    kinds: [u64; 4],
+    cpu_at_start: u64,
+    first: Instant,
+    /// Host functions by trap address: calls and nanoseconds.
+    host: HashMap<u64, (u64, u64)>,
+}
+
+impl Counts {
+    fn new(window: u64, port: u32) -> Self {
+        Counts {
+            window,
+            kinds: [0; 4],
+            cpu_at_start: cpu_ns(port).unwrap_or(0),
+            first: Instant::now(),
+            host: HashMap::new(),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn this_port() -> u32 {
+    // SAFETY: plain queries about the calling thread.
+    unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn this_port() -> u32 {
+    0
+}
+
+/// The CPU time the thread with Mach port `port` has used.
+#[cfg(target_os = "macos")]
+fn cpu_ns(port: u32) -> Option<u64> {
+    // SAFETY: `info` is large enough for THREAD_BASIC_INFO, as `count` says.
+    unsafe {
+        let mut info: libc::thread_basic_info = std::mem::zeroed();
+        let mut count = libc::THREAD_BASIC_INFO_COUNT;
+        let r = libc::thread_info(port, libc::THREAD_BASIC_INFO as u32, (&raw mut info).cast(), &mut count);
+        (r == 0).then(|| {
+            let t = |v: libc::time_value_t| v.seconds as u64 * 1_000_000_000 + v.microseconds as u64 * 1000;
+            t(info.user_time) + t(info.system_time)
+        })
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn cpu_ns(_port: u32) -> Option<u64> {
+    None
+}
+
+fn with_counts(f: impl FnOnce(&mut Counts)) {
+    MINE.with(|m| {
+        let t = m.get_or_init(|| {
+            let port = this_port();
+            let t = Arc::new(Thread {
+                name: std::thread::current().name().unwrap_or("?").to_owned(),
+                port,
+                counts: Mutex::new(Counts::new(u64::MAX, port)),
+            });
+            THREADS.lock().unwrap_or_else(|e| e.into_inner()).push(t.clone());
+            t
+        });
+        let mut c = t.counts.lock().unwrap_or_else(|e| e.into_inner());
+        let window = WINDOW.load(Ordering::Relaxed);
+        if c.window != window {
+            *c = Counts::new(window, t.port);
+        }
+        f(&mut c)
+    })
+}
 
 /// What a thread was doing, for [`add`].
 #[derive(Clone, Copy)]
@@ -25,15 +113,11 @@ pub enum Kind {
 
 struct State {
     started: Instant,
-    /// By thread name: nanoseconds per [`Kind`].
-    threads: HashMap<String, [u64; 4]>,
     /// Samples by guest RIP, and samples in runtime code.
     samples: HashMap<u64, u64>,
     runtime_samples: u64,
     /// Samples in runtime code by what is there.
     runtime: HashMap<&'static str, u64>,
-    /// Host functions by thread name and trap address: calls and nanoseconds.
-    host: HashMap<(String, u64), (u64, u64)>,
     translations_at_start: u64,
     evictions_at_start: u64,
 }
@@ -42,8 +126,9 @@ struct State {
 pub struct Report {
     pub seconds: f64,
     /// Thread name and nanoseconds in the VM, interpreter, translating and
-    /// host functions, busiest first.
-    pub threads: Vec<(String, [u64; 4])>,
+    /// host functions, then CPU time used and wall time seen in the window,
+    /// busiest first.
+    pub threads: Vec<(String, [u64; 6])>,
     /// Guest RIPs by samples, most first, with the total.
     pub samples: Vec<(u64, u64)>,
     pub total_samples: u64,
@@ -67,14 +152,13 @@ pub fn on() -> bool {
 /// Starts a fresh profile window, or stops profiling.
 pub fn set(enable: bool) {
     crate::engine::reset_stats();
+    WINDOW.fetch_add(1, Ordering::SeqCst);
     let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     *s = enable.then(|| State {
         started: Instant::now(),
-        threads: HashMap::new(),
         samples: HashMap::new(),
         runtime_samples: 0,
         runtime: HashMap::new(),
-        host: HashMap::new(),
         translations_at_start: TRANSLATIONS.load(Ordering::Relaxed),
         evictions_at_start: crate::cache::evictions(),
     });
@@ -90,23 +174,19 @@ pub fn start() -> Option<Instant> {
 pub fn add(kind: Kind, since: Option<Instant>) {
     let Some(t) = since else { return };
     let ns = t.elapsed().as_nanos() as u64;
-    let name = std::thread::current().name().unwrap_or("?").to_owned();
-    if let Some(s) = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-        s.threads.entry(name).or_default()[kind as usize] += ns;
-    }
+    with_counts(|c| c.kinds[kind as usize] += ns);
 }
 
 /// Counts one call of the host function at `addr` that began at `since`.
 pub fn add_host(addr: u64, since: Option<Instant>) {
     let Some(t) = since else { return };
     let ns = t.elapsed().as_nanos() as u64;
-    let name = std::thread::current().name().unwrap_or("?").to_owned();
-    if let Some(s) = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-        s.threads.entry(name.clone()).or_default()[Kind::Host as usize] += ns;
-        let e = s.host.entry((name, addr)).or_default();
+    with_counts(|c| {
+        c.kinds[Kind::Host as usize] += ns;
+        let e = c.host.entry(addr).or_default();
         e.0 += 1;
         e.1 += ns;
-    }
+    });
 }
 
 /// Records a sample of a vCPU stopped at runtime address `pc`.
@@ -131,22 +211,34 @@ pub(crate) fn sample(pc: u64) {
 pub fn report() -> Option<Report> {
     let s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let s = s.as_ref()?;
-    let mut threads: Vec<_> = s.threads.iter().map(|(n, t)| (n.clone(), *t)).collect();
-    threads.sort_by_key(|(_, t)| std::cmp::Reverse(t[0] + t[1] + t[2]));
+    let window = WINDOW.load(Ordering::SeqCst);
+    let mut threads = Vec::new();
+    let mut by_thread: Vec<(String, u64, u64, u64)> = Vec::new();
+    for t in THREADS.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        let c = t.counts.lock().unwrap_or_else(|e| e.into_inner());
+        if c.window != window {
+            continue;
+        }
+        let cpu = cpu_ns(t.port).map_or(0, |n| n.saturating_sub(c.cpu_at_start));
+        let k = c.kinds;
+        threads.push((t.name.clone(), [k[0], k[1], k[2], k[3], cpu, c.first.elapsed().as_nanos() as u64]));
+        by_thread.extend(c.host.iter().map(|(&a, &(n, ns))| (t.name.clone(), a, n, ns)));
+    }
+    threads.sort_by_key(|(_, t)| std::cmp::Reverse(t[4]));
     let mut samples: Vec<_> = s.samples.iter().map(|(&r, &n)| (r, n)).collect();
     samples.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
     let total_samples = samples.iter().map(|s| s.1).sum::<u64>() + s.runtime_samples;
     let mut runtime: Vec<_> = s.runtime.iter().map(|(&k, &n)| (k, n)).collect();
     runtime.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
     let mut totals: HashMap<u64, (u64, u64)> = HashMap::new();
-    for (&(_, a), &(c, ns)) in &s.host {
+    for &(_, a, c, ns) in &by_thread {
         let t = totals.entry(a).or_default();
         t.0 += c;
         t.1 += ns;
     }
     let mut host: Vec<_> = totals.iter().map(|(&a, &(c, ns))| (a, c, ns)).collect();
     host.sort_by_key(|&(_, _, ns)| std::cmp::Reverse(ns));
-    let mut host_by_thread: Vec<_> = s.host.iter().map(|((t, a), &(c, ns))| (t.clone(), *a, c, ns)).collect();
+    let mut host_by_thread = by_thread;
     host_by_thread.sort_by_key(|h| std::cmp::Reverse(h.3));
     Some(Report {
         seconds: s.started.elapsed().as_secs_f64(),

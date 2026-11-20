@@ -254,3 +254,9 @@ Reason: Minecraft filled the cache when creating a world, and from then on all n
 A new guest mapping under 64 MiB over host pages that already exist is zeroed in place instead of getting fresh pages, and unmaps under 64 MiB leave the host pages alone ([memory.md](memory.md)).
 
 Reason: every page replacement invalidates whatever maps those pages elsewhere. Minecraft maps and unmaps small pieces of direct memory many times a second during world loading, and each time the GPU windows over that memory (up to 2 GB, for shaders that read through pointers) had to be made again. Metal ran out of memory ("Insufficient Memory") during world loading. Zeroing costs a write per byte, so large mappings keep the page replacement.
+
+## 2026-11-20: The thread that changes guest memory syncs the VM
+
+With the JIT on, every change to guest memory syncs the VM's tables on the changing thread at once, and vCPUs enter without comparing the region generation ([jit.md](jit.md)).
+
+Reason: Minecraft changes its memory map about 450 times a second while loading, and every change made every running vCPU take the machine lock to sync, where they queued behind translations. World loading took 49 s with that and 30 s without it. A vCPU that races ahead of a sync sees what a vCPU already inside the VM always could: a fault on a range not mapped yet (interpreted by the host), or a range unmapped a moment ago.

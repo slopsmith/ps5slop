@@ -105,11 +105,37 @@ fn has_native(addr: u64) -> bool {
         .contains(&addr)
 }
 
+static EAGER: AtomicBool = AtomicBool::new(false);
+
+/// Makes every change to guest memory sync the VM at once, on the thread
+/// that made it, so vCPUs enter without checking the region generation. A
+/// vCPU that races ahead of a sync faults on a range not mapped yet (the
+/// host interprets the access) or reaches a range unmapped a moment ago,
+/// as vCPUs already inside the VM always could.
+pub fn sync_eagerly() {
+    memory::on_change(sync_after_change);
+    EAGER.store(true, Ordering::SeqCst);
+}
+
+fn sync_after_change(mem: &Memory) {
+    if SHARED.id.load(Ordering::SeqCst) != mem.id() {
+        return;
+    }
+    let Ok(mut m) = machine() else { return };
+    while let Ok(false) = m.sync(mem) {
+        m.kick_running();
+        drop(m);
+        std::thread::yield_now();
+        let Ok(again) = machine() else { return };
+        m = again;
+    }
+}
+
 /// Frees evicted code cache segments that are safe to reuse; cheap when
 /// none waits.
 pub fn reclaim_if_wanted() {
     if SHARED.reclaim_wanted.load(Ordering::Relaxed)
-        && let Ok(mut m) = machine()
+        && let Ok(Some(mut m)) = try_machine()
     {
         m.reclaim();
     }
@@ -203,20 +229,38 @@ struct Shared {
     /// The table pool new entries use, and the root table of each pool.
     active: AtomicUsize,
     roots: [AtomicUsize; 2],
-    /// vCPUs inside the VM with each pool.
-    users: [AtomicU32; 2],
     /// Bumped when the tables change, so vCPUs flush their TLBs.
     epoch: AtomicU64,
-    running: [AtomicBool; layout::MAX_VCPUS],
-    /// Set from just before a vCPU enters translated code until it leaves.
-    inside: [AtomicBool; layout::MAX_VCPUS],
-    /// Times each vCPU left the VM.
-    exits: [AtomicU64; layout::MAX_VCPUS],
-    /// The code address a vCPU still needs from its last exit (a cancelled
-    /// run it resumes, or a fault whose RIP it looks up), or 0.
-    old_pc: [AtomicU64; layout::MAX_VCPUS],
     /// Whether an evicted code cache segment waits to be reused.
     reclaim_wanted: AtomicBool,
+    /// vCPUs inside the VM with each pool, written on every entry and exit,
+    /// so kept off the lines the fields above are read from.
+    users: Padded<[AtomicU32; 2]>,
+    slots: [Slot; layout::MAX_VCPUS],
+}
+
+#[repr(align(128))]
+struct Padded<T>(T);
+
+impl<T> std::ops::Deref for Padded<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+/// One vCPU's flags, on its own cache lines so vCPUs do not slow each
+/// other's entries and exits.
+#[repr(align(128))]
+struct Slot {
+    running: AtomicBool,
+    /// Set from just before a vCPU enters translated code until it leaves.
+    inside: AtomicBool,
+    /// Times the vCPU left the VM.
+    exits: AtomicU64,
+    /// The code address the vCPU still needs from its last exit (a cancelled
+    /// run it resumes, or a fault whose RIP it looks up), or 0.
+    old_pc: AtomicU64,
 }
 
 static SHARED: Shared = Shared {
@@ -224,32 +268,36 @@ static SHARED: Shared = Shared {
     generation: AtomicU64::new(u64::MAX),
     active: AtomicUsize::new(0),
     roots: [const { AtomicUsize::new(0) }; 2],
-    users: [const { AtomicU32::new(0) }; 2],
     epoch: AtomicU64::new(0),
-    running: [const { AtomicBool::new(false) }; layout::MAX_VCPUS],
-    inside: [const { AtomicBool::new(false) }; layout::MAX_VCPUS],
-    exits: [const { AtomicU64::new(0) }; layout::MAX_VCPUS],
-    old_pc: [const { AtomicU64::new(0) }; layout::MAX_VCPUS],
     reclaim_wanted: AtomicBool::new(false),
+    users: Padded([const { AtomicU32::new(0) }; 2]),
+    slots: [const {
+        Slot {
+            running: AtomicBool::new(false),
+            inside: AtomicBool::new(false),
+            exits: AtomicU64::new(0),
+            old_pc: AtomicU64::new(0),
+        }
+    }; layout::MAX_VCPUS],
 };
 
 impl Shared {
-    /// Takes the active pool for an entry if the tables mirror `mem` and
-    /// were last flushed at `epoch`; `None` means take the locked path.
-    fn try_use(&self, mem: &Memory, epoch: Option<u64>) -> Option<usize> {
+    /// Takes the active pool for an entry if the tables mirror `mem`, with
+    /// the epoch they were built at; `None` means take the locked path.
+    fn try_use(&self, mem: &Memory) -> Option<(usize, u64)> {
         let sc = Ordering::SeqCst;
-        if self.generation.load(sc) != mem.generation()
-            || self.id.load(sc) != mem.id()
-            || Some(self.epoch.load(sc)) != epoch
-        {
+        let epoch = self.epoch.load(sc);
+        let generation = self.generation.load(sc);
+        let current = generation == mem.generation() || (EAGER.load(Ordering::Relaxed) && generation != u64::MAX);
+        if !current || self.id.load(sc) != mem.id() {
             return None;
         }
         let pool = self.active.load(sc);
         self.users[pool].fetch_add(1, sc);
         // `sync` bumps the epoch before it switches pools, so a pool that
         // is still active with the same epoch was not rebuilt meanwhile.
-        if self.active.load(sc) == pool && Some(self.epoch.load(sc)) == epoch {
-            return Some(pool);
+        if self.active.load(sc) == pool && self.epoch.load(sc) == epoch && self.generation.load(sc) == generation {
+            return Some((pool, epoch));
         }
         self.users[pool].fetch_sub(1, sc);
         None
@@ -307,6 +355,19 @@ unsafe impl Send for Machine {}
 static MACHINE: OnceLock<Result<Mutex<Machine>, Error>> = OnceLock::new();
 
 /// The process's machine, created on first use.
+/// The machine if its lock is free; `Ok(None)` if another thread holds it.
+fn try_machine() -> Result<Option<MutexGuard<'static, Machine>>, Error> {
+    let m = MACHINE.get_or_init(|| Machine::new().map(Mutex::new));
+    match m {
+        Ok(m) => match m.try_lock() {
+            Ok(g) => Ok(Some(g)),
+            Err(std::sync::TryLockError::Poisoned(e)) => Ok(Some(e.into_inner())),
+            Err(std::sync::TryLockError::WouldBlock) => Ok(None),
+        },
+        Err(e) => Err(*e),
+    }
+}
+
 pub fn machine() -> Result<MutexGuard<'static, Machine>, Error> {
     let m = MACHINE.get_or_init(|| Machine::new().map(Mutex::new));
     match m {
@@ -565,7 +626,7 @@ impl Machine {
     fn kick_running(&self) {
         for (slot, k) in self.vcpus.iter().enumerate() {
             if let Some(k) = k
-                && SHARED.running[slot].load(Ordering::SeqCst)
+                && SHARED.slots[slot].running.load(Ordering::SeqCst)
             {
                 k.kick();
             }
@@ -1162,7 +1223,7 @@ impl Cpu {
 
     pub fn release(self, m: &mut Machine) {
         m.vcpus[self.slot] = None;
-        SHARED.running[self.slot].store(false, Ordering::SeqCst);
+        SHARED.slots[self.slot].running.store(false, Ordering::SeqCst);
     }
 }
 

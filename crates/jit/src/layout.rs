@@ -38,7 +38,7 @@ pub const FPSR_KEPT: usize = 0x268;
 pub const TABLES: [(usize, usize); 2] = [(0x10_0000, 0x90_0000), (0x90_0000, 0x110_0000)];
 /// Guest RIP to translated code: `LOOKUP_ENTRIES` of (RIP, address).
 pub const LOOKUP: usize = RUNTIME_SIZE - LOOKUP_ENTRIES * 16;
-pub const LOOKUP_BITS: u32 = 20;
+pub const LOOKUP_BITS: u32 = 22;
 pub const LOOKUP_ENTRIES: usize = 1 << LOOKUP_BITS;
 pub const CODE_CACHE: usize = 0x120_0000;
 /// Blocks branch to the dispatcher (at `CODE`) with B, which reaches 128 MiB.

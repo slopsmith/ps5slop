@@ -254,6 +254,7 @@ fn run(kernel: &Kernel, line: &str) -> String {
         },
         "profile" => match it.next() {
             Some("on") => {
+                PROFILE_GENERATION.store(kernel.memory().generation(), std::sync::atomic::Ordering::Relaxed);
                 jit::profile::set(true);
                 hle::gpu::timing::set(true);
                 "profiling".into()
@@ -383,6 +384,8 @@ fn hits(kernel: &Kernel, last: usize, (lo, hi): (u64, u64)) -> String {
     out.join("\n")
 }
 
+static PROFILE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> String {
     let ms = |ns: u64| ns as f64 / 1e6;
     let names: std::collections::HashMap<String, String> = kernel
@@ -390,20 +393,24 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
         .into_iter()
         .filter_map(|t| Some((format!("guest {:#x}", t.tcb), t.name?)))
         .collect();
+    let changes = kernel.memory().generation() - PROFILE_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
     let mut out = vec![format!(
-        "{:.1} s; {} translations, {} segments evicted",
+        "{:.1} s; {} translations, {} segments evicted, {changes} memory map changes",
         r.seconds, r.translations, r.evictions
     )];
-    out.push("threads (ms in translated code, interpreter, translating, host functions):".into());
+    out.push("threads (ms: translated code, interpreter, translating, host functions, none of these, CPU used):".into());
     for (thread, t) in r.threads.iter().take(top) {
         let name = names.get(thread).map_or(thread.as_str(), String::as_str);
+        let other = t[5].saturating_sub(t[0] + t[1] + t[2] + t[3]);
         out.push(format!(
-            "  {:<28} {:>9.0} {:>9.0} {:>9.0} {:>9.0}",
+            "  {:<28} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0}",
             name,
             ms(t[0]),
             ms(t[1]),
             ms(t[2]),
-            ms(t[3])
+            ms(t[3]),
+            ms(other),
+            ms(t[4])
         ));
     }
     let gpu: Vec<String> = hle::gpu::timing::NAMES

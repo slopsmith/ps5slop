@@ -149,6 +149,14 @@ fn make_physical(size: u64) -> i32 {
 // mappings of them stay valid.
 const ZERO_IN_PLACE: u64 = 64 << 20;
 
+static ON_CHANGE: std::sync::OnceLock<fn(&Memory)> = std::sync::OnceLock::new();
+
+/// Has `f` called, on the changing thread, after every change to any
+/// address space's regions (once per process; later calls are ignored).
+pub fn on_change(f: fn(&Memory)) {
+    let _ = ON_CHANGE.set(f);
+}
+
 /// Past this many unread fresh ranges, everything counts as fresh.
 const FRESH_LIMIT: usize = 4096;
 
@@ -187,6 +195,10 @@ impl Drop for Shared {
     }
 }
 
+/// Regions each handle remembers: a thread's stack, code, data and the
+/// host functions it calls are usually all different regions.
+const CACHED: usize = 8;
+
 #[derive(Clone, Copy)]
 struct Cached {
     start: u64,
@@ -197,14 +209,15 @@ struct Cached {
 }
 
 /// A handle on a guest address space. Clones share the address space; give
-/// each thread its own clone (a handle caches the last region it touched).
+/// each thread its own clone (a handle caches the last regions it touched).
 ///
 /// Accesses follow x86-TSO: a load is followed by a load barrier and a store
 /// is preceded by a store barrier, and aligned accesses of 1, 2, 4 or 8 bytes
 /// are single host accesses.
 pub struct Memory {
     shared: Arc<Shared>,
-    last: Cell<Option<Cached>>,
+    last: [Cell<Option<Cached>>; CACHED],
+    next: Cell<usize>,
     journal: RefCell<Option<Vec<Write>>>,
 }
 
@@ -221,7 +234,8 @@ impl Clone for Memory {
     fn clone(&self) -> Self {
         Self {
             shared: self.shared.clone(),
-            last: Cell::new(None),
+            last: Default::default(),
+            next: Cell::new(0),
             journal: RefCell::new(None),
         }
     }
@@ -269,7 +283,8 @@ impl Memory {
                 backed: Mutex::new(BTreeMap::new()),
                 physical: std::sync::OnceLock::new(),
             }),
-            last: Cell::new(None),
+            last: Default::default(),
+            next: Cell::new(0),
             journal: RefCell::new(None),
         })
     }
@@ -311,6 +326,9 @@ impl Memory {
 
     fn changed(&self) {
         self.shared.generation.fetch_add(1, Ordering::Release);
+        if let Some(f) = ON_CHANGE.get() {
+            f(self);
+        }
     }
 
     fn check_range(&self, addr: u64, len: u64) -> Result<(), MapError> {
@@ -647,12 +665,14 @@ impl Memory {
     /// The region containing `at`, from this handle's cache when it is current.
     fn region(&self, at: u64) -> Option<Cached> {
         let generation = self.shared.generation.load(Ordering::Acquire);
-        if let Some(c) = self.last.get()
-            && c.generation == generation
-            && at >= c.start
-            && at < c.end
-        {
-            return Some(c);
+        for slot in &self.last {
+            if let Some(c) = slot.get()
+                && c.generation == generation
+                && at >= c.start
+                && at < c.end
+            {
+                return Some(c);
+            }
         }
         let regions = self.regions_read();
         let (&start, r) = regions.range(..=at).next_back()?;
@@ -666,7 +686,9 @@ impl Memory {
             trap: r.trap,
             generation,
         };
-        self.last.set(Some(c));
+        let n = self.next.get();
+        self.last[n].set(Some(c));
+        self.next.set((n + 1) % CACHED);
         Some(c)
     }
 

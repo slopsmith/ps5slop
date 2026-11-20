@@ -199,8 +199,8 @@ impl Machine {
         self.chain_wanted.retain(|_, v| !v.is_empty());
         let sc = Ordering::SeqCst;
         self.segments.wait[s] = (0..layout::MAX_VCPUS)
-            .filter(|&v| SHARED.inside[v].load(sc))
-            .map(|v| (v, SHARED.exits[v].load(sc)))
+            .filter(|&v| SHARED.slots[v].inside.load(sc))
+            .map(|v| (v, SHARED.slots[v].exits.load(sc)))
             .collect();
         self.segments.state[s] = State::Draining;
         SHARED.reclaim_wanted.store(true, sc);
@@ -210,13 +210,13 @@ impl Machine {
     /// address in.
     pub(crate) fn reclaim(&mut self) {
         let sc = Ordering::SeqCst;
-        let held: Vec<u64> = SHARED.old_pc.iter().map(|p| p.load(sc)).filter(|&p| p != 0).collect();
+        let held: Vec<u64> = SHARED.slots.iter().map(|s| s.old_pc.load(sc)).filter(|&p| p != 0).collect();
         for (s, samples) in SAMPLES.iter().enumerate() {
             if self.segments.state[s] != State::Draining {
                 continue;
             }
             let (lo, hi) = (layout::va(start(s)), layout::va(end(s)));
-            let left = self.segments.wait[s].iter().all(|&(v, n)| SHARED.exits[v].load(sc) > n);
+            let left = self.segments.wait[s].iter().all(|&(v, n)| SHARED.slots[v].exits.load(sc) > n);
             if left && !held.iter().any(|&p| (lo..hi).contains(&p)) {
                 self.segments.state[s] = State::Free;
                 self.segments.score[s] = 0;

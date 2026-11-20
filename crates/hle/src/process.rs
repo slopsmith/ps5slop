@@ -326,6 +326,9 @@ impl Kernel {
             return;
         }
         jit::start_sampler();
+        if std::env::var_os("PS5SLOP_JIT_LAZY_SYNC").is_none() {
+            jit::sync_eagerly();
+        }
         let natives = [
             ("memset", jit::Native::Memset),
             ("memcpy", jit::Native::Memmove),

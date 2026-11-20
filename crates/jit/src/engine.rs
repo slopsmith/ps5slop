@@ -4,7 +4,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use memory::{FaultKind, Memory};
 use x86::Cpu as X86;
@@ -138,15 +138,12 @@ impl Cause {
 pub type Causes = Vec<(Cause, u64, Vec<(u64, u64)>)>;
 
 pub(crate) fn note_exit(cause: Cause, rip: u64) {
-    if let Some(s) = stats() {
-        *s.lock().unwrap_or_else(|e| e.into_inner()).causes.entry((cause, rip)).or_default() += 1;
-    }
+    with_stats(|s| *s.causes.entry((cause, rip)).or_default() += 1);
 }
 
 /// What [`note_exit`] gathered, with the `top` hottest RIPs per cause.
 pub fn exit_causes(top: usize) -> Causes {
     let Some(s) = stats() else { return Vec::new() };
-    let s = s.lock().unwrap_or_else(|e| e.into_inner());
     let mut by: HashMap<Cause, (u64, Vec<(u64, u64)>)> = HashMap::new();
     for (&(c, rip), &n) in &s.causes {
         let e = by.entry(c).or_default();
@@ -165,15 +162,54 @@ pub fn exit_causes(top: usize) -> Causes {
     out
 }
 
-fn stats() -> Option<&'static Mutex<Stats>> {
-    static STATS: OnceLock<Mutex<Stats>> = OnceLock::new();
+static ALL_STATS: Mutex<Vec<Arc<Mutex<Stats>>>> = Mutex::new(Vec::new());
+
+thread_local! {
+    static MY_STATS: Arc<Mutex<Stats>> = {
+        let s = Arc::new(Mutex::new(Stats::default()));
+        ALL_STATS.lock().unwrap_or_else(|e| e.into_inner()).push(s.clone());
+        s
+    };
+}
+
+fn stats_on() -> bool {
     static ENV: OnceLock<bool> = OnceLock::new();
-    let env = *ENV.get_or_init(|| std::env::var_os("PS5SLOP_JIT_STATS").is_some());
-    (env || crate::profile::on()).then(|| STATS.get_or_init(Mutex::default))
+    *ENV.get_or_init(|| std::env::var_os("PS5SLOP_JIT_STATS").is_some()) || crate::profile::on()
+}
+
+/// Runs `f` on this thread's statistics, if statistics or profiling are on.
+fn with_stats(f: impl FnOnce(&mut Stats)) {
+    if stats_on() {
+        MY_STATS.with(|s| f(&mut s.lock().unwrap_or_else(|e| e.into_inner())));
+    }
+}
+
+/// Every thread's statistics added up.
+fn stats() -> Option<Stats> {
+    if !stats_on() {
+        return None;
+    }
+    let mut all = Stats::default();
+    for s in ALL_STATS.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        let s = s.lock().unwrap_or_else(|e| e.into_inner());
+        for (k, n) in &s.opcodes {
+            *all.opcodes.entry(*k).or_default() += n;
+        }
+        for (k, n) in &s.rips {
+            *all.rips.entry(*k).or_default() += n;
+        }
+        for (k, n) in &s.causes {
+            *all.causes.entry(*k).or_default() += n;
+        }
+        for (a, n) in all.exits.iter_mut().zip(s.exits) {
+            *a += n;
+        }
+    }
+    Some(all)
 }
 
 pub(crate) fn reset_stats() {
-    if let Some(s) = stats() {
+    for s in ALL_STATS.lock().unwrap_or_else(|e| e.into_inner()).iter() {
         *s.lock().unwrap_or_else(|e| e.into_inner()) = Stats::default();
     }
 }
@@ -186,7 +222,6 @@ pub fn interpreted(top: usize) -> Interpreted {
     let Some(s) = stats() else {
         return (Vec::new(), Vec::new(), [0; 10]);
     };
-    let s = s.lock().unwrap_or_else(|e| e.into_inner());
     let mut ops: Vec<_> = s.opcodes.iter().map(|(&k, &n)| (k, n)).collect();
     ops.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
     ops.truncate(top);
@@ -197,25 +232,26 @@ pub fn interpreted(top: usize) -> Interpreted {
 }
 
 pub(crate) fn count_exit(c: Count) {
-    if let Some(s) = stats() {
-        s.lock().unwrap_or_else(|e| e.into_inner()).exits[c as usize] += 1;
-    }
+    with_stats(|s| s.exits[c as usize] += 1);
 }
 
 /// In statistics mode, counts the instruction the interpreter is about to run.
 fn count_insn(x: &X86, mem: &Memory) {
-    let Some(s) = stats() else { return };
+    if !stats_on() {
+        return;
+    }
     let insn = x86::decode::decode(|i| {
         let mut b = [0u8];
         mem.fetch(x.rip.wrapping_add(i as u64), &mut b)
             .map(|_| b[0])
     });
-    let mut s = s.lock().unwrap_or_else(|e| e.into_inner());
-    if let Ok(i) = insn {
-        let ext = i.modrm.map_or(0xff, |_| i.ext());
-        *s.opcodes.entry((i.map as u8, i.op, ext)).or_default() += 1;
-    }
-    *s.rips.entry(x.rip).or_default() += 1;
+    with_stats(|s| {
+        if let Ok(i) = insn {
+            let ext = i.modrm.map_or(0xff, |_| i.ext());
+            *s.opcodes.entry((i.map as u8, i.op, ext)).or_default() += 1;
+        }
+        *s.rips.entry(x.rip).or_default() += 1;
+    });
 }
 
 /// Prints what statistics mode gathered, if it is on.
@@ -224,7 +260,6 @@ pub fn report(mem: &Memory) {
         return;
     }
     let Some(s) = stats() else { return };
-    let s = s.lock().unwrap_or_else(|e| e.into_inner());
     let (interp, jit) = instructions();
     let top = std::env::var("PS5SLOP_JIT_STATS_TOP")
         .ok()
@@ -286,7 +321,7 @@ impl Drop for Engine {
         if let Ok(mut m) = machine() {
             m.vcpus[self.cpu.slot] = None;
         }
-        SHARED.running[self.cpu.slot].store(false, Ordering::SeqCst);
+        SHARED.slots[self.cpu.slot].running.store(false, Ordering::SeqCst);
     }
 }
 
@@ -526,13 +561,28 @@ impl Engine {
         let sc = Ordering::SeqCst;
         crate::reclaim_if_wanted();
         self.shadow = None;
-        SHARED.running[self.cpu.slot].store(true, sc);
+        SHARED.slots[self.cpu.slot].running.store(true, sc);
+        let mut tries = 0;
         let (pool, flush) = loop {
-            if let Some(pool) = SHARED.try_use(mem, self.epoch) {
-                break (pool, false);
+            if let Some((pool, epoch)) = SHARED.try_use(mem) {
+                let flush = self.epoch != Some(epoch);
+                self.epoch = Some(epoch);
+                break (pool, flush);
             }
-            count_exit(Count::SlowEntry);
-            let mut m = machine()?;
+            if tries == 0 {
+                count_exit(Count::SlowEntry);
+            }
+            tries += 1;
+            // Another thread may sync meanwhile; queue for the lock only
+            // when it stays taken.
+            let m = if tries < 64 { crate::try_machine()? } else { Some(machine()?) };
+            let Some(mut m) = m else {
+                std::hint::spin_loop();
+                if tries % 8 == 0 {
+                    std::thread::yield_now();
+                }
+                continue;
+            };
             if m.sync(mem)? {
                 let epoch = SHARED.epoch.load(sc);
                 let flush = self.epoch != Some(epoch);
@@ -546,7 +596,7 @@ impl Engine {
         };
         let root = SHARED.roots[pool].load(sc);
         let slot = self.cpu.slot;
-        SHARED.inside[slot].store(true, sc);
+        SHARED.slots[slot].inside.store(true, sc);
         let started = crate::profile::start();
         let exit = match entry {
             Entry::Dispatch(nzcv) => {
@@ -566,11 +616,11 @@ impl Engine {
             Ok(Exit::Stage2 { pc }) => pc,
             _ => 0,
         };
-        SHARED.old_pc[slot].store(held, sc);
-        SHARED.exits[slot].fetch_add(1, sc);
-        SHARED.inside[slot].store(false, sc);
+        SHARED.slots[slot].old_pc.store(held, sc);
+        SHARED.slots[slot].exits.fetch_add(1, sc);
+        SHARED.slots[slot].inside.store(false, sc);
         SHARED.users[pool].fetch_sub(1, sc);
-        SHARED.running[slot].store(false, sc);
+        SHARED.slots[slot].running.store(false, sc);
         let icount = self.cpu.reg(ICOUNT.0)?;
         TRANSLATED.fetch_add(icount.wrapping_sub(self.icount), Ordering::Relaxed);
         self.icount = icount;
@@ -646,7 +696,7 @@ impl Engine {
                 }
                 Exit::Fault { elr: pc, .. } | Exit::Stage2 { pc } if crate::in_native(pc) => {
                     count_exit(Count::Fault);
-                    SHARED.old_pc[self.cpu.slot].store(0, Ordering::SeqCst);
+                    SHARED.slots[self.cpu.slot].old_pc.store(0, Ordering::SeqCst);
                     let rip = self.cpu.reg(RIP.0)?;
                     note_exit(Cause::NativeFault, rip);
                     self.store(x)?;
@@ -660,14 +710,14 @@ impl Engine {
                         panic!("the JIT faulted outside translated code at {pc:#x}");
                     };
                     note_exit(Cause::Fault, rip);
-                    SHARED.old_pc[self.cpu.slot].store(0, Ordering::SeqCst);
+                    SHARED.slots[self.cpu.slot].old_pc.store(0, Ordering::SeqCst);
                     rip
                 }
                 Exit::Canceled { pc, cpsr } => {
                     count_exit(Count::Cancel);
                     note_exit(Cause::Canceled, 0);
                     if stop() {
-                        SHARED.old_pc[self.cpu.slot].store(0, Ordering::SeqCst);
+                        SHARED.slots[self.cpu.slot].old_pc.store(0, Ordering::SeqCst);
                         return Ok(x86::Exit::Limit);
                     }
                     entry = resume_after_cancel(previous, pc, cpsr);
