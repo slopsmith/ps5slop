@@ -1038,6 +1038,27 @@ impl Memory {
         Ok(old)
     }
 
+    /// Atomically compares the 16 bytes at `addr` (16-byte aligned) with
+    /// `expected` and stores `new` if they match, as `lock cmpxchg16b` does.
+    /// Returns the old value. A full barrier.
+    pub fn atomic_cas128(&self, addr: u64, expected: u128, new: u128) -> Result<u128, Fault> {
+        self.check(addr, 16, Access::Read)?;
+        self.check(addr, 16, Access::Write)?;
+        debug_assert!(addr.is_multiple_of(16));
+        let p = self.host(addr);
+        let old = cas128(p, expected, new);
+        if old == expected
+            && let Some(j) = self.journal.borrow_mut().as_mut()
+        {
+            j.push(Write {
+                addr,
+                old: old.to_le_bytes().to_vec(),
+                new: new.to_le_bytes().to_vec(),
+            });
+        }
+        Ok(old)
+    }
+
     pub fn read_u64(&self, addr: u64) -> Result<u64, Fault> {
         let mut b = [0u8; 8];
         self.read(addr, &mut b)?;
@@ -1090,6 +1111,40 @@ fn carve(regions: &mut BTreeMap<u64, Region>, start: u64, end: u64) -> Result<()
         }
     }
     Ok(())
+}
+
+#[cfg(target_arch = "aarch64")]
+fn cas128(p: *mut u8, expected: u128, new: u128) -> u128 {
+    let (mut lo, mut hi) = (expected as u64, (expected >> 64) as u64);
+    // SAFETY: the caller checked that the 16 aligned bytes are mapped.
+    unsafe {
+        std::arch::asm!(
+            ".arch_extension lse",
+            "caspal x0, x1, x2, x3, [x4]",
+            inout("x0") lo,
+            inout("x1") hi,
+            in("x2") new as u64,
+            in("x3") (new >> 64) as u64,
+            in("x4") p,
+            options(nostack),
+        );
+    }
+    (hi as u128) << 64 | lo as u128
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn cas128(p: *mut u8, expected: u128, new: u128) -> u128 {
+    static LOCK: Mutex<()> = Mutex::new(());
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: the caller checked that the 16 aligned bytes are mapped.
+    unsafe {
+        let p = p.cast::<u128>();
+        let old = p.read_volatile();
+        if old == expected {
+            p.write_volatile(new);
+        }
+        old
+    }
 }
 
 #[cfg(test)]

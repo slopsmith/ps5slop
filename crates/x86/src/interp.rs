@@ -294,6 +294,38 @@ impl Ctx<'_> {
         }
     }
 
+    /// `cmpxchg8b` and (`wide`) `cmpxchg16b`: compare EDX:EAX (RDX:RAX)
+    /// with memory, store ECX:EBX (RCX:RBX) if equal, else load it.
+    fn cmpxchg_wide(&mut self, a: u64, wide: bool) -> Res<()> {
+        let r = &self.cpu.regs;
+        let equal = if wide {
+            if !a.is_multiple_of(16) {
+                return Err(CpuFault::GeneralProtection);
+            }
+            let expected = (r[RDX] as u128) << 64 | r[RAX] as u128;
+            let new = (r[RCX] as u128) << 64 | r[RBX] as u128;
+            let old = self.mem.atomic_cas128(a, expected, new)?;
+            if old != expected {
+                self.cpu.regs[RAX] = old as u64;
+                self.cpu.regs[RDX] = (old >> 64) as u64;
+            }
+            old == expected
+        } else {
+            let expected = (r[RDX] & 0xffff_ffff) << 32 | r[RAX] & 0xffff_ffff;
+            let new = (r[RCX] & 0xffff_ffff) << 32 | r[RBX] & 0xffff_ffff;
+            let old = self
+                .mem
+                .atomic_update(a, 8, |old| (old == expected).then_some(new))?;
+            if old != expected {
+                self.cpu.regs[RAX] = old & 0xffff_ffff;
+                self.cpu.regs[RDX] = old >> 32;
+            }
+            old == expected
+        };
+        self.cpu.set_flag(ZF, equal);
+        Ok(())
+    }
+
     fn alu_rm(&mut self, op: u8, dst: Loc, src: u64, size: u8) -> Res<()> {
         let cf = self.cpu.flag(CF);
         let old = if op == 7 {
@@ -746,6 +778,12 @@ impl Ctx<'_> {
                 }
                 self.cpu.regs[RAX] = sse::XCR0 & 0xffff_ffff;
                 self.cpu.regs[RDX] = sse::XCR0 >> 32;
+            }
+            0xc7 if i.ext() == 1 => {
+                let Loc::Mem(a) = self.rm() else {
+                    return Err(CpuFault::InvalidOpcode);
+                };
+                self.cmpxchg_wide(a, osz == 8)?;
             }
             0xc7 if i.ext() == 4 => {
                 let Loc::Mem(a) = self.rm() else {

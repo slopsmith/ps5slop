@@ -592,3 +592,60 @@ fn sse4a_insertq_and_extrq_move_a_bit_field() {
     assert_eq!(cpu.xmm[2][0], 0x1ab1);
     assert_eq!(cpu.xmm[0], [0; 4]);
 }
+
+#[test]
+fn cmpxchg16b_stores_on_a_match_and_loads_on_a_mismatch() {
+    let (mut cpu, mem) = machine("lock cmpxchg16b xmmword ptr [rdi]", &[0xf0, 0x48, 0x0f, 0xc7, 0x0f]);
+    mem.write(DATA, &[1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+    cpu.regs[RDI] = DATA;
+    (cpu.regs[RAX], cpu.regs[RDX], cpu.regs[RBX], cpu.regs[RCX]) = (1, 2, 3, 4);
+    steps(&mut cpu, &mem, 1);
+    assert!(cpu.flag(ZF));
+    assert_eq!((mem.read_u64(DATA).unwrap(), mem.read_u64(DATA + 8).unwrap()), (3, 4));
+
+    cpu.rip = CODE;
+    steps(&mut cpu, &mem, 1);
+    assert!(!cpu.flag(ZF));
+    assert_eq!((cpu.regs[RAX], cpu.regs[RDX]), (3, 4));
+    assert_eq!((mem.read_u64(DATA).unwrap(), mem.read_u64(DATA + 8).unwrap()), (3, 4));
+}
+
+#[test]
+fn cmpxchg16b_on_a_misaligned_address_faults() {
+    let (mut cpu, mem) = machine("lock cmpxchg16b xmmword ptr [rdi]", &[0xf0, 0x48, 0x0f, 0xc7, 0x0f]);
+    cpu.regs[RDI] = DATA + 8;
+    assert!(matches!(
+        step(&mut cpu, &mem),
+        Exit::Fault {
+            kind: CpuFault::GeneralProtection,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn cmpxchg16b_increments_from_several_threads_are_atomic() {
+    let (cpu, mem) = machine(
+        "l: mov rax, [rdi]; mov rdx, [rdi+8]; lea rbx, [rax+1]; lea rcx, [rdx+1]; \
+         lock cmpxchg16b [rdi]; jnz l; dec esi; jnz l; hlt",
+        &[
+            0x48, 0x8b, 0x07, 0x48, 0x8b, 0x57, 0x08, 0x48, 0x8d, 0x58, 0x01, 0x48, 0x8d, 0x4a,
+            0x01, 0xf0, 0x48, 0x0f, 0xc7, 0x0f, 0x75, 0xea, 0xff, 0xce, 0x75, 0xe6, 0xf4,
+        ],
+    );
+    let threads = 4;
+    let per_thread = 5_000;
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            let mut cpu = cpu.clone();
+            let mem = mem.clone();
+            s.spawn(move || {
+                cpu.regs[RDI] = DATA;
+                cpu.regs[RSI] = per_thread;
+                run(&mut cpu, &mem, u64::MAX);
+            });
+        }
+    });
+    let total = threads * per_thread;
+    assert_eq!((mem.read_u64(DATA).unwrap(), mem.read_u64(DATA + 8).unwrap()), (total, total));
+}
