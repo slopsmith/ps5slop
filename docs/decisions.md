@@ -212,7 +212,6 @@ In compute programs, `s_cbranch_execz`/`execnz`/`vccz`/`vccnz` use `simd_any` ov
 
 Reason: Minecraft's compute programs skip their work with `execz` before an `s_barrier`, and Metal needs barriers in control flow that is uniform across threads that reach them; per-lane branching would send threads of one SIMD group down different paths to the barrier. A SIMD group is the largest unit Metal lets a shader vote over, and matches a hardware wave branching as a whole within its 32-lane halves. Pixel programs are left alone because Balatro's pixel programs are verified with per-lane branching and fragments that discard make SIMD votes harder to reason about. Minecraft loads most texture and sampler descriptors from a table that a user SGPR pair points to, sometimes through two levels, so a fixed rule (user SGPRs only) translated none of them.
 
-
 ## 2026-11-20: GPL-3.0 decoders only as black-box oracles
 
 To write our own Kraken decoder, we may run a GPL-3.0 decoder (ooz-wasm, pkg-to-anyps5 built from source without reading it) on a developer's machine as a black box and compare outputs. Its outputs (decompressed game files) stay outside the repo like any game data. We never read its source, never copy from it, never link or load it into ps5slop (statically or as a dynamic library), and never ask users to supply one. User-supplied Oodle libraries are out for the same reason.
@@ -231,3 +230,8 @@ The translator does not guess whether a texture holds integers. The renderer rea
 
 Reason: the format is only in the descriptor, which can differ between draws of one program, while the instruction alone cannot tell UINT from float data. A variant per descriptor combination is exact and costs one more translation per combination (Minecraft has a handful). Keeping GPU-written images on the GPU avoids read-backs and needs no equation for the depth swizzle modes, which no source we may use describes. The cost: a CPU read of such memory, or a T# that reads it through a layout we do not track, sees stale or zero data.
 
+## 2026-11-20: A control socket with write watchpoints, and Rosetta as a fuzzing oracle
+
+Every run serves a control socket (protocol taken from 86slopper) for reading and writing guest memory, listing threads and watching writes ([debugging.md](debugging.md)). Write watchpoints protect pages at stage 2 so translated stores fall back to the interpreter, which logs them with their RIP. `ps5slop-fuzz` compares single instructions between our interpreter and Rosetta 2 ([cpu.md](cpu.md)).
+
+Reason: vic asked for a way to poke at the guest live, as 86slopper allows. Minecraft's striped textures came from a CPU store with a wrong address; a watchpoint found the stores and a fuzzer found the instruction, without reading the game's code. Rosetta is the only x86-64 implementation on this Mac, and it runs AVX2 and BMI2; where it disagrees with the Intel SDM we follow the SDM and list the case.

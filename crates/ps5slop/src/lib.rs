@@ -15,6 +15,7 @@ use modules::Unit;
 use x86::Cpu;
 use x86::cpu::reg::*;
 
+pub mod control;
 pub mod modules;
 pub mod title;
 #[cfg(all(target_os = "macos", feature = "window"))]
@@ -289,4 +290,18 @@ fn initialisers(units: &[Unit], images: &[Image]) -> Vec<u64> {
         }
     }
     out
+}
+
+/// Writes the screen to `out` as a binary PPM.
+pub fn write_frame(kernel: &Kernel, out: &std::path::Path) -> Result<(), String> {
+    let Some(mut f) = kernel.frame() else {
+        return Err("no frame on screen to dump".into());
+    };
+    #[cfg(target_os = "macos")]
+    if let Some((w, h, px)) = f.texture.as_ref().and_then(hle::gpu::metal::read_rgba) {
+        (f.width, f.height, f.rgba) = (w, h, px);
+    }
+    let mut ppm = format!("P6\n{} {}\n255\n", f.width, f.height).into_bytes();
+    ppm.extend(f.rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]));
+    std::fs::write(out, ppm).map_err(|e| format!("cannot write {}: {e}", out.display()))
 }

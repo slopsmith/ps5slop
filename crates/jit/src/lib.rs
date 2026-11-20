@@ -84,6 +84,26 @@ fn has_native(addr: u64) -> bool {
         .contains(&addr)
 }
 
+/// Logs writes to `[start, end)` (see [`memory::watch`]): translated code
+/// faults on the pages at stage 2 and the interpreter runs the store.
+pub fn watch(start: u64, end: u64) -> Result<(), Error> {
+    let mut m = machine()?;
+    memory::watch::add(start, end);
+    let page = memory::PAGE_SIZE;
+    m.watched.push((start & !(page - 1), end.next_multiple_of(page)));
+    m.protect_watched(hvf::mem::READ | hvf::mem::EXEC);
+    Ok(())
+}
+
+/// Ends every watch and forgets the log.
+pub fn unwatch() -> Result<(), Error> {
+    let mut m = machine()?;
+    m.protect_watched(hvf::mem::RWX);
+    m.watched.clear();
+    memory::watch::clear();
+    Ok(())
+}
+
 /// Makes calls to the host function at trap address `addr` run `native`
 /// inside the VM (not in verify mode, which checks the host versions).
 pub fn set_native(addr: u64, native: Native) {
@@ -225,6 +245,8 @@ pub struct Machine {
     tier2: translate::Tier2,
     /// Tier-2 regions by entry RIP.
     regions: HashMap<u64, RegionInfo>,
+    /// Write-watched ranges, page-aligned, kept read-only at stage 2.
+    watched: Vec<(u64, u64)>,
 }
 
 // SAFETY: the VM is process-wide and HVF's VM calls may come from any thread;
@@ -309,6 +331,7 @@ impl Machine {
             pending_chains: Vec::new(),
             tier2: translate::Tier2::from_env(),
             regions: HashMap::new(),
+            watched: Vec::new(),
         };
         for pool in 0..2 {
             let t = tables::Tables::new(m.runtime.as_mut_slice(), pool);
@@ -410,7 +433,19 @@ impl Machine {
             };
         }
         self.mapped = wanted;
+        self.protect_watched(hvf::mem::READ | hvf::mem::EXEC);
         Ok(())
+    }
+
+    fn protect_watched(&self, flags: u64) {
+        for &(ws, we) in &self.watched {
+            for &(ms, me) in &self.mapped {
+                let (s, e) = (ws.max(ms), we.min(me));
+                if s < e {
+                    let _ = self.vm.protect(s, (e - s) as usize, flags);
+                }
+            }
+        }
     }
 
     /// Whether a writable address in the active tables stays mapped read-only

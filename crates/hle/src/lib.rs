@@ -40,7 +40,7 @@ mod vfs;
 mod videoout;
 
 pub use pad::PadInput;
-pub use process::{Kernel, Thread, ThreadError, TlsBlock, TlsTemplate};
+pub use process::{Kernel, Thread, ThreadError, ThreadInfo, TlsBlock, TlsTemplate};
 pub use rtld::ModuleInfo;
 pub use vfs::{ImageFile, ImageFs, ImageStat, Target, Vfs};
 pub use videoout::Frame;

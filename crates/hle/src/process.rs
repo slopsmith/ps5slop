@@ -180,6 +180,30 @@ pub struct Kernel {
     pub(crate) started: std::time::Instant,
     /// Every thread pointer `new_tls` handed out.
     pub(crate) tcbs: Mutex<Vec<u64>>,
+    /// Names guest code gave its threads, by thread pointer.
+    pub(crate) names: Mutex<std::collections::HashMap<u64, String>>,
+    running: Mutex<Vec<(u64, Arc<Whereabouts>)>>,
+}
+
+/// The last host function a thread called, for [`Kernel::threads`].
+#[derive(Default)]
+struct Whereabouts {
+    stub: AtomicU64,
+    caller: AtomicU64,
+    calls: AtomicU64,
+    done: AtomicBool,
+}
+
+/// A guest thread as [`Kernel::threads`] sees it.
+#[derive(Debug, Clone)]
+pub struct ThreadInfo {
+    pub tcb: u64,
+    pub name: Option<String>,
+    /// The host function it called last, and where from.
+    pub stub: u64,
+    pub caller: u64,
+    pub calls: u64,
+    pub running: bool,
 }
 
 impl Kernel {
@@ -221,7 +245,26 @@ impl Kernel {
 
             started: std::time::Instant::now(),
             tcbs: Mutex::default(),
+            names: Mutex::default(),
+            running: Mutex::default(),
         })
+    }
+
+    /// Every guest thread started so far.
+    pub fn threads(&self) -> Vec<ThreadInfo> {
+        let names = self.names.lock().unwrap_or_else(|e| e.into_inner());
+        let running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        running
+            .iter()
+            .map(|(tcb, w)| ThreadInfo {
+                tcb: *tcb,
+                name: names.get(tcb).cloned(),
+                stub: w.stub.load(Ordering::Relaxed),
+                caller: w.caller.load(Ordering::Relaxed),
+                calls: w.calls.load(Ordering::Relaxed),
+                running: !w.done.load(Ordering::Relaxed),
+            })
+            .collect()
     }
 
     /// A fresh handle on the address space, for a new thread.
@@ -385,10 +428,15 @@ impl Kernel {
         let kernel = self.this();
         let thread = Thread { tcb: cpu.fs_base };
         self.live.fetch_add(1, Ordering::AcqRel);
-        std::thread::spawn(move || {
-            let mem = kernel.memory();
-            kernel.run_thread(cpu, mem, thread);
-        });
+        let spawned = std::thread::Builder::new()
+            .name(format!("guest {:#x}", thread.tcb))
+            .spawn(move || {
+                let mem = kernel.memory();
+                kernel.run_thread(cpu, mem, thread);
+            });
+        if let Err(e) = spawned {
+            panic!("cannot start a host thread: {e}");
+        }
     }
 
     pub(crate) fn this(&self) -> Arc<Kernel> {
@@ -396,6 +444,11 @@ impl Kernel {
     }
 
     fn run_thread(&self, mut cpu: Cpu, mem: Memory, thread: Thread) {
+        let whereabouts = Arc::new(Whereabouts::default());
+        self.running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((thread.tcb, whereabouts.clone()));
         loop {
             if self.has_exited() {
                 break;
@@ -403,6 +456,13 @@ impl Kernel {
             match self.execute(&mut cpu, &mem) {
                 Exit::Continue | Exit::Limit => {}
                 Exit::Trap(addr) => {
+                    let caller = mem.read_u64(cpu.regs[RSP]).unwrap_or(0);
+                    whereabouts.stub.store(addr, Ordering::Relaxed);
+                    whereabouts.caller.store(caller, Ordering::Relaxed);
+                    whereabouts.calls.fetch_add(1, Ordering::Relaxed);
+                    if memory::watch::active() {
+                        memory::watch::set_site(caller | memory::watch::HOST_CALL);
+                    }
                     let mut env = Env {
                         cpu: &mut cpu,
                         mem: &mem,
@@ -452,6 +512,7 @@ impl Kernel {
                 }
             }
         }
+        whereabouts.done.store(true, Ordering::Relaxed);
         if self.live.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.exit(Ok(0));
         }

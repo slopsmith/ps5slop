@@ -80,9 +80,30 @@ const fn f(name: &'static str, func: crate::HostFn) -> Function {
     }
 }
 
-/// `pthread_set_name_np(thread, name)`: names are not kept.
-fn set_name(_: &mut Env) -> Result<Outcome, CallError> {
+/// `pthread_set_name_np(thread, name)`, also `scePthreadRename`: kept for
+/// the control socket only.
+fn set_name(env: &mut Env) -> Result<Outcome, CallError> {
+    remember_name(env, env.arg(0), env.arg(1));
     ret(0)
+}
+
+fn remember_name(env: &Env, tcb: u64, name: u64) {
+    if let Ok(n) = env.mem.read_cstr(name, 64) {
+        lock(&env.kernel.names).insert(tcb, String::from_utf8_lossy(&n).into_owned());
+    }
+}
+
+/// `scePthreadCreate(thread, attr, start, arg, name)`.
+fn sce_create_named(env: &mut Env) -> Result<Outcome, CallError> {
+    let (out, name) = (env.arg(0), env.arg(4));
+    let result = sce_create(env)?;
+    if name != 0
+        && matches!(result, Outcome::Return(0))
+        && let Ok(tcb) = env.mem.read_u64(out)
+    {
+        remember_name(env, tcb, name);
+    }
+    Ok(result)
 }
 
 /// The attributes behind the `pthread_attr_t` at `at` (0 for the defaults).
@@ -324,14 +345,14 @@ const PRIORITY_DEFAULT: u32 = 700;
 const ALL_CPUS: u64 = 0xff;
 
 pub static SCE_FUNCTIONS: &[Function] = &[
-    f("scePthreadCreate", sce_create),
+    f("scePthreadCreate", sce_create_named),
     f("scePthreadJoin", sce_join),
     f("scePthreadDetach", sce_detach),
     f("scePthreadExit", exit),
     f("scePthreadYield", sce_yield),
     f("scePthreadGetthreadid", sce_getthreadid),
     f("scePthreadGetname", sce_getname),
-    f("scePthreadRename", sce_ok),
+    f("scePthreadRename", set_name),
     f("scePthreadSetaffinity", sce_ok),
     f("scePthreadSetprio", sce_ok),
     f("scePthreadAttrInit", sce_attr_init),

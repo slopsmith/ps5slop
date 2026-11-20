@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Sends commands to a ps5slop control socket and prints the answers.
+
+Usage: ps5slop-ctl SOCKET COMMAND... (one command per argument; see
+docs/debugging.md). With no commands, reads them from stdin.
+"""
+import socket
+import sys
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    sock = socket.socket(socket.AF_UNIX)
+    sock.connect(sys.argv[1])
+    f = sock.makefile("rw")
+    commands = sys.argv[2:] or (line.strip() for line in sys.stdin)
+    for command in commands:
+        if not command:
+            continue
+        f.write(command + "\n")
+        f.flush()
+        for line in f:
+            if line.rstrip("\n") == ".":
+                break
+            sys.stdout.write(line)
+
+
+main()

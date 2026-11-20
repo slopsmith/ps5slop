@@ -12,6 +12,8 @@ use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering, fence};
 use std::sync::{Arc, Mutex, RwLock};
 
+pub mod watch;
+
 /// Orbis allocates in 16 KiB pages, and so does macOS on Apple Silicon.
 pub const PAGE_SIZE: u64 = 0x4000;
 
@@ -615,6 +617,9 @@ impl Memory {
 
     fn copy_in(&self, addr: u64, data: &[u8]) {
         self.record(addr, data);
+        if watch::active() {
+            watch::note(addr, data);
+        }
         let p = self.host(addr);
         // SAFETY: the caller checked the range; host pages of mapped regions are writable.
         unsafe {

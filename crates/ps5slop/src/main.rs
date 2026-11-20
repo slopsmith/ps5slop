@@ -40,6 +40,10 @@ enum Command {
         /// default).
         #[arg(long)]
         passcode: Option<String>,
+        /// The Unix socket for debugging commands (default:
+        /// `ps5slop-PID.sock` in the temporary folder).
+        #[arg(long, value_name = "PATH")]
+        control: Option<PathBuf>,
     },
 }
 
@@ -52,7 +56,9 @@ fn main() -> ExitCode {
         interpreter,
         data,
         passcode,
+        control,
     } = Cli::parse().command;
+    let control = control.unwrap_or_else(|| std::env::temp_dir().join(format!("ps5slop-{}.sock", std::process::id())));
     let passcode = match passcode
         .as_deref()
         .map(Passcode::new)
@@ -129,8 +135,10 @@ fn main() -> ExitCode {
             if let Ok(script) = std::env::var("PS5SLOP_INPUT") {
                 play_input(booted.kernel.clone(), script);
             }
+            ps5slop::control::serve(booted.kernel.clone(), control.clone());
             run(booted, headless)
         });
+    let _ = std::fs::remove_file(&control);
     match status {
         Ok(code) => ExitCode::from(code as u8),
         Err(e) => {
@@ -219,21 +227,9 @@ fn play_input(kernel: std::sync::Arc<hle::Kernel>, script: String) {
     });
 }
 
-/// Writes the screen to `out` as a binary PPM.
 fn write_frame(kernel: &hle::Kernel, out: &std::path::Path) {
-    match kernel.frame() {
-        Some(mut f) => {
-            #[cfg(target_os = "macos")]
-            if let Some((w, h, px)) = f.texture.as_ref().and_then(hle::gpu::metal::read_rgba) {
-                (f.width, f.height, f.rgba) = (w, h, px);
-            }
-            let mut ppm = format!("P6\n{} {}\n255\n", f.width, f.height).into_bytes();
-            ppm.extend(f.rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]));
-            if let Err(e) = std::fs::write(out, ppm) {
-                eprintln!("ps5slop: cannot write {}: {e}", out.display());
-            }
-        }
-        None => eprintln!("ps5slop: no frame on screen to dump"),
+    if let Err(e) = ps5slop::write_frame(kernel, out) {
+        eprintln!("ps5slop: {e}");
     }
 }
 
