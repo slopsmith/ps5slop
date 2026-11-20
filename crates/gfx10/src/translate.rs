@@ -1614,6 +1614,23 @@ impl<'a> Tx<'a> {
             self.guard(&s);
             return Ok(());
         }
+        let store_format = match name {
+            "buffer_store_format_x" => Some(1u16),
+            "buffer_store_format_xy" => Some(2),
+            "buffer_store_format_xyz" => Some(3),
+            "buffer_store_format_xyzw" => Some(4),
+            _ => None,
+        };
+        if let Some(n) = store_format {
+            self.mem_write = true;
+            let vals: Vec<String> = (0..4).map(|i| if i < n { self.v(vd + i) } else { "0u".into() }).collect();
+            let stmt = format!(
+                "buffer_store_format(mem, {args}, uint4({}, {}, {}, {}), {n}u);",
+                vals[0], vals[1], vals[2], vals[3]
+            );
+            self.guard(&stmt);
+            return Ok(());
+        }
         let (n, call): (u16, &str) = match name {
             "buffer_load_format_x" => (1, "buffer_load_format"),
             "buffer_load_format_xy" => (2, "buffer_load_format"),
@@ -2599,12 +2616,9 @@ static inline uint ld_le(device const uchar* p, uint bytes) {
     return v;
 }
 
-// Buffer formats (GFX10 unified encoding, BUF_FMT_*), as raw result dwords.
-static inline uint4 buffer_load_format(device const uchar* mem, ulong mem_base, uint4 vs, uint index, uint offset, uint idxen) {
-    long o = buffer_offset(mem_base, vs, index, offset, idxen);
-    if (o < 0) return uint4(0u);
-    device const uchar* p = mem + o;
-    uint fmt = (vs.w >> 12) & 0x7fu;
+// Components, bits per component and conversion of a buffer format
+// (GFX10 unified encoding, BUF_FMT_*); n is 0 for formats not handled.
+static inline uint3 buffer_fmt(uint fmt) {
     uint n = 0u, bits = 0u, kind = 0u;
     if (fmt >= 1u && fmt <= 6u) { n = 1u; bits = 8u; kind = fmt - 1u; }
     else if (fmt >= 7u && fmt <= 13u) { n = 1u; bits = 16u; kind = fmt - 7u; }
@@ -2617,6 +2631,16 @@ static inline uint4 buffer_load_format(device const uchar* mem, ulong mem_base, 
     else if (fmt >= 65u && fmt <= 71u) { n = 4u; bits = 16u; kind = fmt - 65u; }
     else if (fmt >= 72u && fmt <= 74u) { n = 3u; bits = 32u; kind = fmt - 68u; }
     else if (fmt >= 75u && fmt <= 77u) { n = 4u; bits = 32u; kind = fmt - 71u; }
+    return uint3(n, bits, kind);
+}
+
+// Buffer formats as raw result dwords.
+static inline uint4 buffer_load_format(device const uchar* mem, ulong mem_base, uint4 vs, uint index, uint offset, uint idxen) {
+    long o = buffer_offset(mem_base, vs, index, offset, idxen);
+    if (o < 0) return uint4(0u);
+    device const uchar* p = mem + o;
+    uint3 f = buffer_fmt((vs.w >> 12) & 0x7fu);
+    uint n = f.x, bits = f.y, kind = f.z;
     uint4 r = uint4(0u);
     if (bits == 10u) {
         uint w = ld_le(p, 4u);
@@ -2628,6 +2652,48 @@ static inline uint4 buffer_load_format(device const uchar* mem, ulong mem_base, 
     uint one = kind == 4u || kind == 5u ? 1u : 0x3f800000u;
     return uint4(fmt_sel(vs.w & 7u, r, one), fmt_sel((vs.w >> 3) & 7u, r, one),
                  fmt_sel((vs.w >> 6) & 7u, r, one), fmt_sel((vs.w >> 9) & 7u, r, one));
+}
+
+// The inverse of fmt_conv: a result dword packed into a `bits`-bit component.
+static inline uint fmt_pack(uint v, uint bits, uint kind) {
+    uint m = bits == 32u ? 0xffffffffu : (1u << bits) - 1u;
+    float f = as_type<float>(v);
+    switch (kind) {
+    case 0u: return uint(rint(clamp(f, 0.0f, 1.0f) * float(m))) & m;
+    case 1u: return uint(int(rint(clamp(f, -1.0f, 1.0f) * float(m >> 1)))) & m;
+    case 2u: return uint(clamp(f, 0.0f, float(m))) & m;
+    case 3u: return uint(int(clamp(f, -float(m >> 1) - 1.0f, float(m >> 1)))) & m;
+    case 4u: case 5u: return v & m;
+    default: return bits == 16u ? uint(as_type<ushort>(half(f))) : v;
+    }
+}
+
+static inline void st_le(device uchar* p, uint bytes, uint v) {
+    for (uint i = 0u; i < bytes; i++) p[i] = uchar(v >> (8u * i));
+}
+
+// Typed store: the first n data components go to the format's components in
+// order; components past n are left as they are.
+static inline void buffer_store_format(device uchar* mem, ulong mem_base, uint4 vs, uint index, uint offset, uint idxen, uint4 d, uint n) {
+    long o = buffer_offset(mem_base, vs, index, offset, idxen);
+    if (o < 0) return;
+    device uchar* p = mem + o;
+    uint3 f = buffer_fmt((vs.w >> 12) & 0x7fu);
+    uint bits = f.y, kind = f.z;
+    if (f.x == 0u) return;
+    if (bits == 10u) {
+        uint w = ld_le(p, 4u);
+        uint shift[4] = {0u, 10u, 20u, 30u};
+        for (uint i = 0u; i < min(n, 4u); i++) {
+            uint b = i == 3u ? 2u : 10u;
+            uint m = ((1u << b) - 1u) << shift[i];
+            w = (w & ~m) | ((fmt_pack(d[i], b, kind) << shift[i]) & m);
+        }
+        st_le(p, 4u, w);
+        return;
+    }
+    uint bytes = bits / 8u;
+    for (uint i = 0u; i < min(n, f.x); i++) st_le(p + i * bytes, bytes, fmt_pack(d[i], bits, kind));
 }
 
 "#;
