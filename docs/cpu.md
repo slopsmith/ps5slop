@@ -131,5 +131,7 @@ About 1,900 encodings that Rosetta rejects with `#UD` (wrong VEX.L or W for the 
 
 **Added for Minecraft's world creation (2026-11-20), each checked with the fuzzer:** `haddps`/`haddpd`/`hsubps`/`hsubpd` (all forms), the VEX.256 forms of `movmskps`/`movmskpd`, `pmovmskb`, `cvtdq2pd`, `cvttpd2dq` and `cvtpd2dq`, and `rcpps`/`rcpss`/`rsqrtps`/`rsqrtss`. We compute `rcp` and `rsqrt` exactly and round to f32; hardware returns an approximation good to about 12 bits (Rosetta's results have the low mantissa bits cleared), so results differ in the low bits; denormal inputs count as zero, as on hardware. Scalar FMA and `roundss`/`roundsd` now ignore VEX.L, as the SDM says.
 
+**Text-like vector states (2026-11-20):** a third of the vector registers in each state now hold bytes from a small alphabet with zeros (`0`, space, `a`, `b`, `A`, `-`, `0xFF`), so `pcmpistri`/`pcmpestri` and the byte compares meet matches and terminators, which random 64-bit values almost never contain. Run with 32 states: no new differences; the string instructions agree with Rosetta. Checked while looking for the cause of Minecraft's Settings spacing ([gpu.md](gpu.md)).
+
 **SSE4a (2026-11-20):** `extrq` and `insertq` (66/F2 0F 78 with two immediates, and 66/F2 0F 79), which Zen 2 has and Minecraft uses. Written from AMD's manual: a length of 0 means 64, and bits 127:64 of the destination, which AMD leaves undefined, are kept. Rosetta cannot check these: Intel CPUs do not have SSE4a.
 

@@ -38,6 +38,13 @@ impl Rng {
         }
     }
 
+    /// A lane of text-like bytes from a small alphabet with zeros, so string
+    /// and byte compares see matches and terminators.
+    fn text(&mut self) -> u64 {
+        const ALPHABET: [u8; 8] = [0, 0, b' ', b'a', b'b', b'A', b'-', 0xff];
+        (0..8).fold(0, |v, i| v | (ALPHABET[self.below(8) as usize] as u64) << (i * 8))
+    }
+
     fn reg(&mut self) -> u8 {
         loop {
             let r = self.below(16) as u8;
@@ -68,8 +75,9 @@ impl State {
             *r = rng.value();
         }
         for y in &mut s.y {
+            let text = rng.below(3) == 0;
             for l in y.iter_mut() {
-                *l = rng.value();
+                *l = if text { rng.text() } else { rng.value() };
             }
         }
         s
