@@ -23,10 +23,17 @@ The protocol is the one 86slopper uses: one command per line, and each answer en
 | `gputrace N` | Traces every draw and dispatch of the next N frames on stderr, as `PS5SLOP_GPU_TRACE` does (N decimal) |
 | `targets DIR` | Writes every render target, depth target and sampled texture as `ADDR.ppm` (the low hex digit says which: 1 texture, 2 colour target, 4 depth); needs `PS5SLOP_DUMP_TARGETS=1` |
 | `press BUTTONS [MS]` | Holds pad buttons (`cross`, `up+cross`, ...) for MS milliseconds (default 400: games read the pad once per frame, and our frames can be slow) |
+| `profile on` / `profile off` / `profile [N]` | Starts a fresh profile window, stops profiling, or reports the window so far (top N rows): per guest thread the time in translated code, the interpreter, translating and host functions; the hottest guest code by sample (module and offset); host functions by time and calls; the instructions and addresses the interpreter ran most; translations and evicted cache segments |
 | `shot PATH` | Writes the screen as PPM; with `press`, this drives menus step by step |
 | `quit` | Ends the guest |
 
 Thread names come from `scePthreadCreate`, `scePthreadRename` and `pthread_set_name_np`. Host threads are named `guest 0xTCB`.
+
+## Profiling
+
+`profile on` starts a window; `profile` reports it (see the table above). Times come from the engine: around each VM entry, each interpreter run and each translation, and around each host call in the process. Samples come from the code cache sampler, which kicks running vCPUs 100 times a second (see [jit.md](jit.md)); while profiling, each sample's PC is mapped back to a guest RIP. Off, it costs one relaxed load per VM exit and per host call. It reports addresses and module offsets only, never code bytes: the hot code may be Sony's own modules, which we do not disassemble ([legal.md](legal.md)).
+
+First use (2026-11-20, Minecraft loading a world, 60 s): each of the 7 world-streaming threads spent about 12 s in the interpreter and 4.5 s in translated code. The interpreter ran mostly `roundss`/`roundsd` (13M), `blendps`, `cmpps`/`cmpss`, `btr`, `pmulld` and `movlps`/`movhlps`, none of which the JIT translates yet.
 
 ## Write watchpoints
 

@@ -577,3 +577,18 @@ fn wide_int_to_double_conversion_widens_four_lanes() {
     steps(&mut cpu, &mem, 1);
     assert_eq!(cpu.xmm[12], [1.0f64, -1.0, 7.0, -2147483648.0].map(f64::to_bits));
 }
+
+#[test]
+fn sse4a_insertq_and_extrq_move_a_bit_field() {
+    let (mut cpu, mem) = machine(
+        "insertq xmm2, xmm1, 8, 8; extrq xmm2, 16, 4",
+        &[0xf2, 0x0f, 0x78, 0xd1, 0x08, 0x08, 0x66, 0x0f, 0x78, 0xc2, 0x10, 0x04],
+    );
+    cpu.xmm[2] = [0x1111_1111_1111_1111, 0x2222, 0, 0];
+    cpu.xmm[1] = [0xab, 0, 0, 0];
+    steps(&mut cpu, &mem, 1);
+    assert_eq!(cpu.xmm[2][0], 0x1111_1111_1111_ab11);
+    steps(&mut cpu, &mem, 1);
+    assert_eq!(cpu.xmm[2][0], 0x1ab1);
+    assert_eq!(cpu.xmm[0], [0; 4]);
+}

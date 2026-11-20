@@ -716,6 +716,31 @@ impl Ctx<'_> {
                 let v = self.read(self.rm(), n)?;
                 self.xset(d, v as u128);
             }
+            (Pfx::P66 | Pfx::F2, 0x78 | 0x79) => {
+                let Loc::Reg(r) = self.rm() else {
+                    return Err(CpuFault::InvalidOpcode);
+                };
+                let d = if op == 0x78 && p == Pfx::P66 { r } else { d };
+                let (dst, src) = (self.xget(d), self.xget(r));
+                let (len, idx) = if op == 0x78 {
+                    (i.imm as u32 & 63, i.imm2 as u32 & 63)
+                } else if p == Pfx::P66 {
+                    (src as u32 & 63, (src >> 8) as u32 & 63)
+                } else {
+                    ((src >> 64) as u32 & 63, (src >> 72) as u32 & 63)
+                };
+                let mask = if len == 0 { u64::MAX } else { (1u64 << len) - 1 };
+                let low = if p == Pfx::P66 {
+                    if op == 0x78 && i.ext() != 0 {
+                        return Err(CpuFault::InvalidOpcode);
+                    }
+                    (dst as u64).checked_shr(idx).unwrap_or(0) & mask
+                } else {
+                    let field = mask.checked_shl(idx).unwrap_or(0);
+                    (dst as u64 & !field) | ((src as u64 & mask).checked_shl(idx).unwrap_or(0) & field)
+                };
+                self.xset(d, (dst & !(u64::MAX as u128)) | low as u128);
+            }
             (Pfx::P66, 0x7e) => {
                 let n = if i.rex_w() { 8 } else { 4 };
                 let v = self.xget(d) as u64 & alu::mask(n);

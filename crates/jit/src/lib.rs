@@ -4,6 +4,7 @@
 
 mod cache;
 mod engine;
+pub mod profile;
 pub mod layout;
 mod tables;
 mod translate;
@@ -16,7 +17,7 @@ use a64::{Asm, Reg, Shift, Size, Width};
 use hvf::{GuestMemory, Vcpu, VcpuKicker, Vm, reg, sysreg};
 use memory::Memory;
 
-pub use engine::{instructions, interpret, kick_all, recent_blocks, report, run};
+pub use engine::{instructions, interpret, interpreted, kick_all, recent_blocks, report, run};
 pub use hvf::Error;
 
 /// `hvc` numbers the runtime's exception vectors use.
@@ -701,6 +702,7 @@ impl Machine {
             }
         }
         let len = block.code.len() * 4;
+        profile::TRANSLATIONS.fetch_add(1, Ordering::Relaxed);
         self.runtime.write_words(place, &block.code);
         // SAFETY: the range was just written inside the runtime region.
         unsafe { sys_icache_invalidate(self.runtime.as_ptr().add(place).cast(), len) };

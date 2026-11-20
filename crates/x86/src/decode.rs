@@ -140,6 +140,8 @@ enum Imm {
     Moffs,
     /// ENTER: 16 then 8 bits.
     Enter,
+    /// Two bytes, in `imm` and `imm2` (SSE4a `extrq`/`insertq`).
+    BB,
 }
 
 fn primary(op: u8) -> Option<(bool, Imm)> {
@@ -394,6 +396,7 @@ pub fn decode<E>(mut fetch: impl FnMut(usize) -> Result<u8, E>) -> Result<Insn, 
     let imm = match (insn.map, b) {
         (Map::Primary, 0xf6) if insn.ext() < 2 => Imm::B,
         (Map::Primary, 0xf7) if insn.ext() < 2 => Imm::Z,
+        (Map::M0F, 0x78) if insn.vex.is_none() && (insn.opsize_prefix || insn.rep == Rep::Repne) => Imm::BB,
         _ => imm,
     };
     let branch = matches!(
@@ -416,6 +419,10 @@ pub fn decode<E>(mut fetch: impl FnMut(usize) -> Result<u8, E>) -> Result<Insn, 
         Imm::Moffs => insn.imm = read(if addr32 { 4 } else { 8 }, &mut i)? as i64,
         Imm::Enter => {
             insn.imm = read(2, &mut i)? as i64;
+            insn.imm2 = read(1, &mut i)? as u8;
+        }
+        Imm::BB => {
+            insn.imm = read(1, &mut i)? as i64;
             insn.imm2 = read(1, &mut i)? as u8;
         }
     }

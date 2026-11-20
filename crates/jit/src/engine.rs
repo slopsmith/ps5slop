@@ -92,10 +92,34 @@ struct Stats {
 }
 
 fn stats() -> Option<&'static Mutex<Stats>> {
-    static STATS: OnceLock<Option<Mutex<Stats>>> = OnceLock::new();
-    STATS
-        .get_or_init(|| std::env::var_os("PS5SLOP_JIT_STATS").map(|_| Mutex::default()))
-        .as_ref()
+    static STATS: OnceLock<Mutex<Stats>> = OnceLock::new();
+    static ENV: OnceLock<bool> = OnceLock::new();
+    let env = *ENV.get_or_init(|| std::env::var_os("PS5SLOP_JIT_STATS").is_some());
+    (env || crate::profile::on()).then(|| STATS.get_or_init(Mutex::default))
+}
+
+pub(crate) fn reset_stats() {
+    if let Some(s) = stats() {
+        *s.lock().unwrap_or_else(|e| e.into_inner()) = Stats::default();
+    }
+}
+
+pub type Interpreted = (Vec<((u8, u8, u8), u64)>, Vec<(u64, u64)>, [u64; 10]);
+
+/// The opcodes ((map, opcode, /ext or 0xff), count) and addresses the
+/// interpreter ran most while statistics or profiling were on.
+pub fn interpreted(top: usize) -> Interpreted {
+    let Some(s) = stats() else {
+        return (Vec::new(), Vec::new(), [0; 10]);
+    };
+    let s = s.lock().unwrap_or_else(|e| e.into_inner());
+    let mut ops: Vec<_> = s.opcodes.iter().map(|(&k, &n)| (k, n)).collect();
+    ops.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+    ops.truncate(top);
+    let mut rips: Vec<_> = s.rips.iter().map(|(&k, &n)| (k, n)).collect();
+    rips.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+    rips.truncate(top);
+    (ops, rips, s.exits)
 }
 
 pub(crate) fn count_exit(c: Count) {
@@ -122,6 +146,9 @@ fn count_insn(x: &X86, mem: &Memory) {
 
 /// Prints what statistics mode gathered, if it is on.
 pub fn report(mem: &Memory) {
+    if std::env::var_os("PS5SLOP_JIT_STATS").is_none() {
+        return;
+    }
     let Some(s) = stats() else { return };
     let s = s.lock().unwrap_or_else(|e| e.into_inner());
     let (interp, jit) = instructions();
@@ -446,6 +473,7 @@ impl Engine {
         let root = SHARED.roots[pool].load(sc);
         let slot = self.cpu.slot;
         SHARED.inside[slot].store(true, sc);
+        let started = crate::profile::start();
         let exit = match entry {
             Entry::Dispatch(nzcv) => {
                 let at = if flush { ENTRY_FLUSH } else { DISPATCH };
@@ -453,9 +481,11 @@ impl Engine {
             }
             Entry::Resume { pc, cpsr } => self.cpu.enter(root, RESUME_FLUSH, Some((pc, cpsr)), 0),
         };
+        crate::profile::add(crate::profile::Kind::Vm, started);
         let held = match exit {
             Ok(Exit::Canceled { pc, .. }) => {
                 crate::cache::sample(pc);
+                crate::profile::sample(pc);
                 pc
             }
             Ok(Exit::Fault { elr, .. }) => elr,
@@ -498,8 +528,11 @@ impl Engine {
                         x.rip = rip;
                         return Ok(x86::Exit::Trap(rip));
                     }
+                    let started = crate::profile::start();
                     let mut m = machine()?;
-                    if m.translate(mem, rip) {
+                    let translated = m.translate(mem, rip);
+                    crate::profile::add(crate::profile::Kind::Translate, started);
+                    if translated {
                         let verifying = m.verifying(rip);
                         drop(m);
                         match verifying {
@@ -565,6 +598,7 @@ impl Engine {
             x.rip = rip;
             let mut steps = 0;
             let mut stopped = None;
+            let started = crate::profile::start();
             while steps < INTERP_RUN {
                 steps += 1;
                 count_insn(x, mem);
@@ -580,6 +614,7 @@ impl Engine {
                 }
             }
             count_interpreted(steps as u64);
+            crate::profile::add(crate::profile::Kind::Interp, started);
             if let Some(exit) = stopped {
                 return Ok(exit);
             }

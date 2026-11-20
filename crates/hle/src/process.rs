@@ -488,7 +488,9 @@ impl Kernel {
                     let args = TRACING.load(Ordering::Relaxed).then(|| {
                         [RDI, RSI, RDX, RCX, R8, R9].map(|r| env.cpu.regs[r])
                     });
+                    let started = jit::profile::start();
                     let outcome = self.hle.call(addr, &mut env);
+                    jit::profile::add_host(addr, started);
                     if let Some(a) = args {
                         let name = self.hle.describe(addr).unwrap_or_else(|| format!("{addr:#x}"));
                         let mut log = CALL_LOG.lock().unwrap_or_else(|e| e.into_inner());

@@ -26,6 +26,8 @@ trace off                   stop tracing
 calls PATH [FILTER]         append every host call (whose name contains FILTER) to PATH
 calls off                   stop logging calls
 shot PATH                   write the screen as PPM
+profile on|off              start a fresh profile window, or stop profiling
+profile [N]                 report the window so far (top N rows, default 20)
 gputrace N                  trace every draw of the next N frames on stderr (decimal)
 targets DIR                 write every render target and texture as PPM (needs PS5SLOP_DUMP_TARGETS)
 press BUTTONS [MS]          hold pad buttons (cross+up, ...) for MS ms (default 400, decimal)
@@ -250,6 +252,20 @@ fn run(kernel: &Kernel, line: &str) -> String {
             }
             _ => "usage: press BUTTONS [MS]".into(),
         },
+        "profile" => match it.next() {
+            Some("on") => {
+                jit::profile::set(true);
+                "profiling".into()
+            }
+            Some("off") => {
+                jit::profile::set(false);
+                "profiling off".into()
+            }
+            n => match jit::profile::report() {
+                Some(r) => profile_report(kernel, &r, n.and_then(|n| n.parse().ok()).unwrap_or(20)),
+                None => "profiling is off (profile on)".into(),
+            },
+        },
         "quit" => {
             kernel.exit(Ok(0));
             "ok".into()
@@ -361,6 +377,63 @@ fn hits(kernel: &Kernel, last: usize, (lo, hi): (u64, u64)) -> String {
                 h.thread
             ));
         }
+    }
+    out.join("\n")
+}
+
+fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> String {
+    let ms = |ns: u64| ns as f64 / 1e6;
+    let names: std::collections::HashMap<String, String> = kernel
+        .threads()
+        .into_iter()
+        .filter_map(|t| Some((format!("guest {:#x}", t.tcb), t.name?)))
+        .collect();
+    let mut out = vec![format!(
+        "{:.1} s; {} translations, {} segments evicted",
+        r.seconds, r.translations, r.evictions
+    )];
+    out.push("threads (ms in translated code, interpreter, translating, host functions):".into());
+    for (thread, t) in r.threads.iter().take(top) {
+        let name = names.get(thread).map_or(thread.as_str(), String::as_str);
+        out.push(format!(
+            "  {:<28} {:>9.0} {:>9.0} {:>9.0} {:>9.0}",
+            name,
+            ms(t[0]),
+            ms(t[1]),
+            ms(t[2]),
+            ms(t[3])
+        ));
+    }
+    out.push(format!(
+        "hottest guest code ({} samples, {} in runtime code):",
+        r.total_samples, r.runtime_samples
+    ));
+    for (rip, n) in r.samples.iter().take(top) {
+        out.push(format!(
+            "  {:>6} {:>5.1}%  {}",
+            n,
+            *n as f64 * 100.0 / r.total_samples.max(1) as f64,
+            sym(kernel, *rip)
+        ));
+    }
+    out.push("host functions (ms, calls):".into());
+    for (addr, calls, ns) in r.host.iter().take(top) {
+        let name = kernel.hle.describe(*addr).unwrap_or_else(|| format!("{addr:#x}"));
+        out.push(format!("  {:>9.1} {:>9}  {}", ms(*ns), calls, name.trim_start_matches("the stub of ")));
+    }
+    let (ops, rips, exits) = jit::interpreted(top);
+    out.push(format!(
+        "exits: misses {}, untranslated {}, host calls {}, faults {}, cancels {}",
+        exits[0], exits[1], exits[2], exits[3], exits[4]
+    ));
+    out.push("interpreted opcodes (map, opcode, /ext):".into());
+    for ((map, op, ext), n) in ops {
+        let ext = if ext == 0xff { String::new() } else { format!(" /{ext}") };
+        out.push(format!("  {n:>10}  map {map} {op:02x}{ext}"));
+    }
+    out.push("interpreted addresses:".into());
+    for (rip, n) in rips {
+        out.push(format!("  {n:>10}  {}", sym(kernel, rip)));
     }
     out.join("\n")
 }
