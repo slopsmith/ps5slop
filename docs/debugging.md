@@ -20,6 +20,8 @@ The protocol is the one 86slopper uses: one command per line, and each answer en
 | `trace PATH [SITE...]` / `trace off` | Appends every watched write (from the given sites only) to a text file |
 | `unwatch` | Ends all watches and clears the log |
 | `calls PATH [FILTER]` / `calls off` | Appends every host call whose description contains FILTER to a file: thread, name, first six arguments, result, caller |
+| `gputrace N` | Traces every draw and dispatch of the next N frames on stderr, as `PS5SLOP_GPU_TRACE` does (N decimal) |
+| `targets DIR` | Writes every render target, depth target and sampled texture as `ADDR.ppm` (the low hex digit says which: 1 texture, 2 colour target, 4 depth); needs `PS5SLOP_DUMP_TARGETS=1` |
 | `press BUTTONS [MS]` | Holds pad buttons (`cross`, `up+cross`, ...) for MS milliseconds (default 150) |
 | `shot PATH` | Writes the screen as PPM; with `press`, this drives menus step by step |
 | `quit` | Ends the guest |
@@ -51,4 +53,6 @@ We observed only addresses and values here; we did not disassemble the game.
 ## Pitfalls
 
 - Debug binaries need the hypervisor entitlement. `cargo run` signs through `scripts/hv-run.sh`; a binary started directly after `cargo build` must be signed first (`codesign -s - -f --entitlements scripts/hypervisor.entitlements target/release/ps5slop`), or the JIT is unavailable and everything runs in the interpreter.
+- The guest polls the pad once a frame and frames can be slow, so a short `press` can be missed; 250 to 400 ms works for Minecraft, and much longer holds repeat.
+- Runs that share the default data folder change each other's remembered menu state and saves. Give each run its own `--data DIR`.
 - Kill earlier runs before reusing a log file: an older process still writes into a truncated file.

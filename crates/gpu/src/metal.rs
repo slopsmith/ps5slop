@@ -47,6 +47,9 @@ fn frames() -> &'static Mutex<HashMap<u64, SharedTexture>> {
     FRAMES.get_or_init(Default::default)
 }
 
+/// Frames still to trace, from the next one on (the control socket's `gputrace`).
+pub static TRACE_NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// The texture the GPU rendered at guest address `address`, if any.
 pub fn frame(address: u64) -> Option<SharedTexture> {
     frames().lock().ok()?.get(&address).cloned()
@@ -1455,6 +1458,16 @@ impl Metal {
         let vertex = self.typed_program(host, state, Stage::Vertex, vs_addr, vs_users, ngg, 0, vs_data).ok_or("vertex program")?;
         let pixel = self.typed_program(host, state, Stage::Pixel, ps_addr, ps_users, false, col_format, ps_data).ok_or("pixel program")?;
         self.note(|| format!("vertex {vs_addr:#x} pixel {ps_addr:#x} col_format {:#x}", c[context::SPI_SHADER_COL_FORMAT]));
+        self.note(|| format!("vertex user {:x?}", &vs_data[..vs_users as usize]));
+        self.note(|| {
+            format!(
+                "{:?} scissor {:?} clip_cntl {:#x} vte_cntl {:#x}",
+                Viewport::read(c),
+                regs::scissor(c),
+                c[context::PA_CL_CLIP_CNTL],
+                c[context::PA_CL_VTE_CNTL]
+            )
+        });
         let rect = u[uconfig::VGT_PRIMITIVE_TYPE] == 7;
         let gl_clip = c[context::PA_CL_CLIP_CNTL] & (1 << 19) == 0;
         let vertex_function = self.vertex_function(&vertex, &pixel, rect, gl_clip).ok_or("vertex program variant")?;
@@ -1713,6 +1726,10 @@ impl Backend for Metal {
             eprintln!("ps5slop: trace: frame {} done, showing {shown:x?}", self.epoch);
         }
         self.epoch += 1;
+        let n = TRACE_NEXT.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if n > 0 {
+            self.trace_frames = Some((self.epoch, self.epoch + n - 1));
+        }
     }
 }
 

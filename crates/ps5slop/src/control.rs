@@ -26,6 +26,8 @@ trace off                   stop tracing
 calls PATH [FILTER]         append every host call (whose name contains FILTER) to PATH
 calls off                   stop logging calls
 shot PATH                   write the screen as PPM
+gputrace N                  trace every draw of the next N frames on stderr (decimal)
+targets DIR                 write every render target and texture as PPM (needs PS5SLOP_DUMP_TARGETS)
 press BUTTONS [MS]          hold pad buttons (cross+up, ...) for MS ms (default 150, decimal)
 quit                        end the guest
 Numbers are hex; a 0x prefix is optional.";
@@ -212,6 +214,31 @@ fn run(kernel: &Kernel, line: &str) -> String {
                 Err(e) => e,
             },
             None => "usage: shot PATH".into(),
+        },
+        #[cfg(target_os = "macos")]
+        "gputrace" => match it.next().and_then(|n| n.parse().ok()) {
+            Some(n) => {
+                hle::gpu::metal::TRACE_NEXT.store(n, std::sync::atomic::Ordering::Relaxed);
+                "ok".into()
+            }
+            None => "usage: gputrace N".into(),
+        },
+        #[cfg(target_os = "macos")]
+        "targets" => match it.next() {
+            Some(dir) => {
+                let mut n = 0;
+                for (addr, t) in hle::gpu::metal::all_frames() {
+                    if let Some((w, h, px)) = hle::gpu::metal::read_rgba(&t) {
+                        let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
+                        ppm.extend(px.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]));
+                        if std::fs::write(Path::new(dir).join(format!("{addr:x}.ppm")), ppm).is_ok() {
+                            n += 1;
+                        }
+                    }
+                }
+                format!("{n} written")
+            }
+            None => "usage: targets DIR".into(),
         },
         "press" => match it.next().map(crate::pad_buttons) {
             Some(buttons) if buttons != 0 => {
