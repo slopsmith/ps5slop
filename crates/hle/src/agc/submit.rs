@@ -98,6 +98,10 @@ impl gpu::Host for Host {
     fn generation(&self) -> u64 {
         self.mem.generation()
     }
+
+    fn replaced_since(&self, since: u64) -> (u64, Option<Vec<(u64, u64)>>) {
+        self.mem.replaced_since(since)
+    }
 }
 
 fn gpu_thread(host: Host, jobs: Receiver<Job>, stats: Arc<Mutex<gpu::Stats>>) {
@@ -108,13 +112,17 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>, stats: Arc<Mutex<gpu::Stats>>) {
     }
     let report = std::env::var_os("PS5SLOP_GPU_STATS").is_some();
     let mut last_report = std::time::Instant::now();
-    while let Ok(job) = jobs.recv() {
+    loop {
+        let idle = gpu::timing::start();
+        let Ok(job) = jobs.recv() else { break };
+        gpu::timing::add(gpu::timing::Part::Idle, idle);
         gpu::with_pool(|| {
             for (addr, dwords) in job.buffers {
                 if let Err(e) = processor.run(&host, addr, dwords) {
                     eprintln!("ps5slop: GPU: {e}");
                 }
             }
+            processor.drain(&host);
         });
         // Unverified: the driver signals each submission's completion; Minecraft
         // waits for it when its label poll loses the race.
@@ -124,8 +132,8 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>, stats: Arc<Mutex<gpu::Stats>>) {
             last_report = std::time::Instant::now();
             let s = &processor.stats;
             eprintln!(
-                "ps5slop: GPU: {} submissions, {} packets, {} draws, {} dispatches, {} flips, {} interrupts, {} wait timeouts",
-                s.submissions, s.packets, s.draws, s.dispatches, s.flips, s.interrupts, s.timeouts
+                "ps5slop: GPU: {} submissions, {} packets, {} draws, {} dispatches, {} flips, {} interrupts, {} wait timeouts, {} waits met by pending releases",
+                s.submissions, s.packets, s.draws, s.dispatches, s.flips, s.interrupts, s.timeouts, s.deferred_waits
             );
             if let Some(b) = &processor.backend {
                 eprintln!("ps5slop: GPU: Metal: {}", b.summary());

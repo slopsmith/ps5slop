@@ -192,7 +192,16 @@ struct PipelineKey {
 pub struct Metal {
     device: Retained<Device>,
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    /// Keeps the guest memory windows resident between command buffers.
+    resident: Option<Retained<ProtocolObject<dyn MTLResidencySet>>>,
     command: Option<Retained<CommandBuffer>>,
+    /// Committed command buffers not waited for yet, with their commit time.
+    inflight: Vec<(Retained<CommandBuffer>, f64)>,
+    /// Texture uploads for the work in `command`, committed just before it
+    /// so they do not split its render passes.
+    upload: Option<Retained<CommandBuffer>>,
+    /// Where this backend is in the log of replaced guest pages.
+    replaced_mark: u64,
     pass: Option<(Retained<RenderEncoder>, Vec<u64>)>,
     depths: HashMap<u64, Retained<Texture>>,
     shown: HashMap<u64, Retained<Texture>>,
@@ -314,10 +323,20 @@ impl Metal {
     pub fn new() -> Option<Self> {
         let device = MTLCreateSystemDefaultDevice()?;
         let queue = device.newCommandQueue()?;
+        let resident = std::env::var_os("PS5SLOP_GPU_RESIDENCY_SET").is_some()
+            .then(|| device.newResidencySetWithDescriptor_error(&MTLResidencySetDescriptor::new()).ok())
+            .flatten();
+        if let Some(r) = &resident {
+            queue.addResidencySet(r);
+        }
         Some(Self {
             device,
             queue,
+            resident,
             command: None,
+            inflight: Vec::new(),
+            upload: None,
+            replaced_mark: 0,
             pass: None,
             depths: HashMap::new(),
             shown: HashMap::new(),
@@ -371,6 +390,19 @@ impl Metal {
         self.command.clone().expect("Metal hands out command buffers")
     }
 
+    /// The command buffer for a texture upload the next draw needs.
+    fn upload_command(&mut self) -> Retained<CommandBuffer> {
+        static INLINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *INLINE.get_or_init(|| std::env::var_os("PS5SLOP_GPU_INLINE_UPLOADS").is_some()) {
+            self.end_pass();
+            return self.command();
+        }
+        if self.upload.is_none() {
+            self.upload = self.queue.commandBuffer();
+        }
+        self.upload.clone().expect("Metal hands out command buffers")
+    }
+
     fn end_pass(&mut self) {
         if let Some((enc, _)) = self.pass.take() {
             enc.endEncoding();
@@ -381,9 +413,30 @@ impl Metal {
     fn window(&mut self, host: &dyn Host, addr: u64, len: u64) -> Option<(Retained<Buffer>, usize)> {
         let generation = host.generation();
         if generation != self.generation {
-            self.flush_and_wait();
-            self.windows.clear();
             self.generation = generation;
+            let (next, replaced) = host.replaced_since(self.replaced_mark);
+            self.replaced_mark = next;
+            let dropped: Vec<Window> = match replaced {
+                Some(ranges) => {
+                    let (gone, kept) = std::mem::take(&mut self.windows)
+                        .into_iter()
+                        .partition(|w| ranges.iter().any(|&(s, e)| s < w.end && w.start < e));
+                    self.windows = kept;
+                    gone
+                }
+                None => {
+                    self.flush_and_wait();
+                    std::mem::take(&mut self.windows)
+                }
+            };
+            if let Some(r) = &self.resident
+                && !dropped.is_empty()
+            {
+                for w in &dropped {
+                    r.removeAllocation(ProtocolObject::from_ref(&*w.buffer));
+                }
+                r.commit();
+            }
         }
         let end = addr.checked_add(len.max(1))?;
         if let Some(w) = self.windows.iter().find(|w| w.start <= addr && end <= w.end) {
@@ -406,6 +459,10 @@ impl Metal {
                 None,
             )
         }?;
+        if let Some(r) = &self.resident {
+            r.addAllocation(ProtocolObject::from_ref(&*buffer));
+            r.commit();
+        }
         self.windows.push(Window {
             start,
             end: stop,
@@ -485,9 +542,11 @@ impl Metal {
             )
         };
         let Some(raw) = raw else { return false };
-        self.end_pass();
-        let command = self.command();
+        let command = self.upload_command();
         let Some(enc) = command.computeCommandEncoder() else { return false };
+        if crate::timing::labels() {
+            enc.setLabel(Some(&NSString::from_str(&format!("detile {address:#x} {}x{}", layout.width, layout.height))));
+        }
         let params = [layout.width, layout.height, layout.pitch, 0];
         enc.setComputePipelineState(&pipeline);
         unsafe {
@@ -566,8 +625,7 @@ impl Metal {
         let Some(staging) = self.device.newBufferWithLength_options(len, MTLResourceOptions::StorageModePrivate) else {
             return false;
         };
-        self.end_pass();
-        let command = self.command();
+        let command = self.upload_command();
         let Some(enc) = command.computeCommandEncoder() else { return false };
         let params = [layout.width, layout.height, layout.pitch, 0];
         enc.setComputePipelineState(&pipeline);
@@ -1131,6 +1189,10 @@ impl Metal {
             }
         }
         let enc = command.renderCommandEncoderWithDescriptor(&pass)?;
+        if crate::timing::labels() {
+            let what: Vec<String> = addresses.iter().map(|a| format!("{a:#x}")).collect();
+            enc.setLabel(Some(&NSString::from_str(&format!("pass {}", what.join(" ")))));
+        }
         self.pass = Some((enc.clone(), addresses));
         Some(enc)
     }
@@ -1539,6 +1601,9 @@ impl Metal {
         self.end_pass();
         let command = self.command();
         let enc = command.computeCommandEncoder().ok_or("compute encoder")?;
+        if crate::timing::labels() {
+            enc.setLabel(Some(&NSString::from_str(&format!("dispatch {:#x} {groups:?}", program.address))));
+        }
         enc.setComputePipelineState(&pipeline);
         if let Some(b) = &bound {
             Self::apply(Slot::Compute(&enc), b, user);
@@ -1770,14 +1835,35 @@ impl Metal {
         }
     }
 
-    fn flush_and_wait(&mut self) {
+    fn commit(&mut self) {
         self.end_pass();
+        let now = crate::timing::host_seconds();
+        if let Some(cb) = self.upload.take() {
+            cb.commit();
+            self.inflight.push((cb, now));
+        }
         if let Some(cb) = self.command.take() {
             cb.commit();
+            self.inflight.push((cb, now));
+        }
+    }
+
+    fn flush_and_wait(&mut self) {
+        self.commit();
+        for (cb, committed) in std::mem::take(&mut self.inflight) {
             cb.waitUntilCompleted();
+            let woken = crate::timing::host_seconds();
+            let ns = |s: f64| (s.max(0.0) * 1e9) as u64;
+            crate::timing::add_raw(crate::timing::Part::Submission, ns(cb.kernelStartTime() - committed));
+            crate::timing::add_raw(crate::timing::Part::WakeUp, ns(woken - cb.GPUEndTime()));
             if let Some(e) = cb.error() {
                 self.report(format!("command buffer failed: {}", e.localizedDescription()));
             }
+            let busy = cb.GPUEndTime() - cb.GPUStartTime();
+            let scheduled = cb.GPUStartTime() - cb.kernelStartTime();
+            crate::timing::add_raw(crate::timing::Part::Scheduling, (scheduled.max(0.0) * 1e9) as u64);
+            crate::timing::add_raw(crate::timing::Part::GpuBusy, (busy * 1e9) as u64);
+            crate::timing::add_raw(crate::timing::Part::Syncs, 1_000_000);
         }
     }
 }
@@ -1811,6 +1897,10 @@ impl Backend for Metal {
 
     fn sync(&mut self) {
         self.flush_and_wait();
+    }
+
+    fn flush(&mut self) {
+        self.commit();
     }
 
     fn summary(&self) -> String {

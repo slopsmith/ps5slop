@@ -10,6 +10,7 @@ pub mod metal;
 mod pm4;
 pub mod regs;
 pub mod tiling;
+pub mod timing;
 
 pub use pm4::{Processor, Stats};
 
@@ -34,6 +35,10 @@ pub trait Backend: Send {
     fn dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]);
     /// Finishes GPU work recorded so far, before the CPU may observe its results.
     fn sync(&mut self);
+    /// Starts the GPU on the work recorded so far without waiting for it.
+    fn flush(&mut self) {
+        self.sync();
+    }
     /// As [`Backend::sync`], at a flip that puts the buffer at guest address
     /// `shown` on screen.
     fn frame_done(&mut self, shown: Option<u64>);
@@ -82,6 +87,11 @@ pub trait Host {
     /// A number that changes whenever guest mappings change.
     fn generation(&self) -> u64 {
         0
+    }
+    /// Ranges given new host pages since mark `since`, and the next mark;
+    /// `None` means anything may have changed.
+    fn replaced_since(&self, _since: u64) -> (u64, Option<Vec<(u64, u64)>>) {
+        (0, None)
     }
 }
 

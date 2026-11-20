@@ -59,6 +59,24 @@ const NATIVE_SELF: usize = layout::CODE + 0x900;
 const NATIVE_END: usize = layout::CODE + 0x980;
 const TEST_CODE: usize = layout::CODE + 0x1000;
 
+/// What lies at runtime offset `off`, for the profiler.
+fn runtime_part(off: usize) -> &'static str {
+    match off {
+        _ if off < ENTRY_FLUSH => "vectors",
+        _ if off < RESUME_FLUSH => "entry",
+        _ if off < DISPATCH => "resume",
+        _ if off < VERIFY_EXIT => "dispatcher",
+        _ if off < NATIVE_MEMSET => "exit stubs",
+        _ if off < NATIVE_MEMMOVE => "native memset",
+        _ if off < NATIVE_SPECIFIC => "native memmove",
+        _ if off < NATIVE_END => "native thread functions",
+        _ if off < layout::CODE_END => "other runtime code",
+        _ if off < layout::CODE_CACHE => "tables and state",
+        _ if off < layout::CODE_CACHE_END => "code cache, no guest RIP",
+        _ => "lookup table",
+    }
+}
+
 /// Library functions with a native version inside the VM, which guest calls
 /// reach without leaving it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

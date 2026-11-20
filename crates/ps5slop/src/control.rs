@@ -255,10 +255,12 @@ fn run(kernel: &Kernel, line: &str) -> String {
         "profile" => match it.next() {
             Some("on") => {
                 jit::profile::set(true);
+                hle::gpu::timing::set(true);
                 "profiling".into()
             }
             Some("off") => {
                 jit::profile::set(false);
+                hle::gpu::timing::set(false);
                 "profiling off".into()
             }
             n => match jit::profile::report() {
@@ -404,10 +406,18 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
             ms(t[3])
         ));
     }
+    let gpu: Vec<String> = hle::gpu::timing::NAMES
+        .iter()
+        .zip(hle::gpu::timing::totals())
+        .map(|(n, ns)| format!("{n} {:.0}", ms(ns)))
+        .collect();
+    out.push(format!("GPU thread (ms): {}", gpu.join(", ")));
     out.push(format!(
         "hottest guest code ({} samples, {} in runtime code):",
         r.total_samples, r.runtime_samples
     ));
+    let parts: Vec<String> = r.runtime.iter().map(|(k, n)| format!("{k} {n}")).collect();
+    out.push(format!("  runtime samples: {}", parts.join(", ")));
     for (rip, n) in r.samples.iter().take(top) {
         out.push(format!(
             "  {:>6} {:>5.1}%  {}",
@@ -420,6 +430,12 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
     for (addr, calls, ns) in r.host.iter().take(top) {
         let name = kernel.hle.describe(*addr).unwrap_or_else(|| format!("{addr:#x}"));
         out.push(format!("  {:>9.1} {:>9}  {}", ms(*ns), calls, name.trim_start_matches("the stub of ")));
+    }
+    out.push("host functions by thread (ms, calls):".into());
+    for (thread, addr, calls, ns) in r.host_by_thread.iter().take(top) {
+        let name = kernel.hle.describe(*addr).unwrap_or_else(|| format!("{addr:#x}"));
+        let t = names.get(thread).map_or(thread.as_str(), String::as_str);
+        out.push(format!("  {:>9.1} {:>9}  {:<24} {}", ms(*ns), calls, t, name.trim_start_matches("the stub of ")));
     }
     let (ops, rips, exits) = jit::interpreted(top);
     out.push(format!(

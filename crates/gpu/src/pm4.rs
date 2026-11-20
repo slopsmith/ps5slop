@@ -69,6 +69,8 @@ pub struct Stats {
     pub interrupts: u64,
     /// Waits that gave up after [`WAIT_LIMIT`].
     pub timeouts: u64,
+    /// Waits a pending release satisfied without waiting for the GPU.
+    pub deferred_waits: u64,
     /// Packets by opcode (and NOP code, as `0x100 | code`).
     pub opcodes: BTreeMap<u32, u64>,
 }
@@ -83,6 +85,9 @@ pub struct Processor {
     index_base: u64,
     instances: u32,
     last_flip: Option<Instant>,
+    /// Releases whose GPU work is committed but not known to be done:
+    /// (data select, interrupt select, destination, value, context).
+    pending: Vec<(u32, u32, u64, u64, u32)>,
 }
 
 impl Default for Processor {
@@ -95,6 +100,7 @@ impl Default for Processor {
             backend: None,
             index_base: 0,
             instances: 1,
+            pending: Vec::new(),
             last_flip: None,
         }
     }
@@ -258,7 +264,9 @@ impl Processor {
                 self.stats.dispatches += 1;
                 if let Some(b) = self.backend.as_mut() {
                     let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig };
+                    let t = crate::timing::start();
                     b.dispatch(host, &state, [p[0], p[1], p[2]]);
+                    crate::timing::add(crate::timing::Part::Dispatch, t);
                 }
             }
             IT_DISPATCH_INDIRECT => self.stats.dispatches += 1,
@@ -272,13 +280,17 @@ impl Processor {
         self.dump_draw(op, p);
         if let Some(b) = self.backend.as_mut() {
             let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig };
+            let t = crate::timing::start();
             b.draw(host, &state, draw);
+            crate::timing::add(crate::timing::Part::Draw, t);
         }
     }
 
     fn sync(&mut self) {
         if let Some(b) = self.backend.as_mut() {
+            let t = crate::timing::start();
             b.sync();
+            crate::timing::add(crate::timing::Part::Sync, t);
         }
     }
 
@@ -392,13 +404,16 @@ impl Processor {
     }
 
     fn flip(&mut self, host: &dyn Host, flip: Flip) {
+        self.drain(host);
         if let Some(b) = self.backend.as_mut() {
             b.frame_done(host.display_buffer(flip.index));
         }
         if let Some(last) = self.last_flip
             && let Some(wait) = (last + VBLANK).checked_duration_since(Instant::now())
         {
+            let t = crate::timing::start();
             std::thread::sleep(wait);
+            crate::timing::add(crate::timing::Part::Pacing, t);
         }
         self.last_flip = Some(Instant::now());
         self.stats.flips += 1;
@@ -417,7 +432,29 @@ impl Processor {
     // Selectors 5 and 6 write nothing and interrupt only while the label at
     // `dest` is at or below `value` (SharpEmu-mac's `InterruptDecision`).
     fn release(&mut self, host: &dyn Host, data: u32, interrupt: u32, dest: u64, value: u64, context: u32) {
+        static SYNCHRONOUS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let synchronous = *SYNCHRONOUS.get_or_init(|| std::env::var_os("PS5SLOP_GPU_SYNC_RELEASES").is_some());
+        if self.backend.is_some() && !synchronous {
+            self.pending.push((data, interrupt, dest, value, context));
+        } else {
+            self.sync();
+            self.apply_release(host, data, interrupt, dest, value, context);
+        }
+    }
+
+    /// Waits for the GPU work behind pending releases, then makes them take
+    /// effect in order. Called before anything that could observe them.
+    pub fn drain(&mut self, host: &dyn Host) {
+        if self.pending.is_empty() {
+            return;
+        }
         self.sync();
+        for (data, interrupt, dest, value, context) in std::mem::take(&mut self.pending) {
+            self.apply_release(host, data, interrupt, dest, value, context);
+        }
+    }
+
+    fn apply_release(&mut self, host: &dyn Host, data: u32, interrupt: u32, dest: u64, value: u64, context: u32) {
         let raise = match interrupt {
             1 | 2 | 4 => true,
             5 => dest != 0 && (read_u64(host, dest) as u32) <= value as u32,
@@ -450,6 +487,17 @@ impl Processor {
     /// Polls guest memory until the masked value passes the comparison in
     /// `control`, the process exits, or [`WAIT_LIMIT`] passes.
     fn wait(&mut self, host: &dyn Host, control: u32, address: u64, reference: u64, mask: u64, wide: bool) {
+        // GPU work runs in order, so a wait on a label that a pending release
+        // will satisfy passes without waiting for the GPU.
+        let satisfied = self.pending.iter().rev().find(|p| p.2 == address && matches!(p.0, 1 | 2)).is_some_and(|p| {
+            let value = if p.0 == 1 || !wide { p.3 & 0xFFFF_FFFF } else { p.3 };
+            compare(control, value & mask, reference)
+        });
+        if satisfied {
+            self.stats.deferred_waits += 1;
+            return;
+        }
+        self.drain(host);
         let start = Instant::now();
         loop {
             let value = if wide {
@@ -466,7 +514,9 @@ impl Processor {
                 self.stats.timeouts += 1;
                 return;
             }
+            let t = crate::timing::start();
             std::thread::sleep(Duration::from_micros(200));
+            crate::timing::add(crate::timing::Part::WaitMemory, t);
         }
     }
 }

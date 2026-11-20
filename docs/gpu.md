@@ -106,6 +106,16 @@ Swizzle modes: linear, `SW_64KB_S` (0x09) and the PS5's render-target mode 0x1B 
 
 What Balatro draws (2026-11-20): an NGG vertex program in the ES slot (`VGT_SHADER_STAGES_EN` 0x2002000) for every draw; clears as 3-vertex rectangle lists (primitive type 7) with a pixel shader writing a colour from user SGPRs; then its scene into a 1920x1080 BGRA8 canvas in mode 0x1B, which a final textured draw (T# in s0..s7, S# in s8..s11) puts on the display buffer.
 
+## Renderer performance (2026-11-20)
+
+Measured on Minecraft's main menu with the control socket's `profile` (which now reports the GPU thread: encoding, waiting for Metal, GPU busy time from each command buffer's `GPUStartTime`/`GPUEndTime`, commit-to-scheduled and done-to-woken latencies), host `sample`, and a Metal System Trace with labelled encoders (`PS5SLOP_GPU_LABELS=1`; see [debugging.md](debugging.md)). The menu went from about 10 to about 16 flips a second. In order:
+
+- **Deferred releases.** Every end-of-pipe release (a label write or an interrupt) committed and waited for the command buffer: about 450 round trips a second, 45 per frame, each about 1.4 ms. Releases now queue their writes and interrupts; the queue is drained, after one wait, before a `WAIT_REG_MEM`, a flip, and at the end of each submission. A `WAIT_REG_MEM` that a queued release will satisfy passes at once, since GPU work runs in order (about 57 per frame on the menu). `PS5SLOP_GPU_SYNC_RELEASES=1` restores the old behaviour.
+- **Uploads in their own command buffer.** Each texture detile ended the render pass to start a compute encoder, so passes with three 1080p colour targets and a depth target were stored and reloaded several times a frame. Detiles now go into an upload command buffer committed just before the main one (`PS5SLOP_GPU_INLINE_UPLOADS=1` restores the old way).
+- **Guest memory windows.** Any change to the guest's mappings (Minecraft maps and unmaps direct memory several times a second) flushed and waited for the GPU and dropped every no-copy window. Now only windows over ranges whose host pages were replaced are dropped (`Memory::replaced_since`), without waiting.
+
+What is left: the Metal System Trace shows the GPU executing encoders for only about 17% of the time (about 17 ms of work per frame), while each command buffer spans about 3 times that. The difference is spent before the GPU starts work, very likely making the many no-copy windows resident, which also have to be recreated whenever guest mappings change. A residency set that keeps the windows resident (`PS5SLOP_GPU_RESIDENCY_SET=1`) cut GPU time by two thirds but moved the cost into synchronous IOKit calls on the GPU thread, and was slower overall, so it is off. Images read from guest memory are still detiled again every frame.
+
 ## Open questions
 
 - Which AGC functions a GameMaker or LÖVE title calls, and how much of their meaning we can infer from the PM4 they leave behind.

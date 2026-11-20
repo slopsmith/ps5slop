@@ -30,8 +30,10 @@ struct State {
     /// Samples by guest RIP, and samples in runtime code.
     samples: HashMap<u64, u64>,
     runtime_samples: u64,
-    /// Host functions by trap address: calls and nanoseconds.
-    host: HashMap<u64, (u64, u64)>,
+    /// Samples in runtime code by what is there.
+    runtime: HashMap<&'static str, u64>,
+    /// Host functions by thread name and trap address: calls and nanoseconds.
+    host: HashMap<(String, u64), (u64, u64)>,
     translations_at_start: u64,
     evictions_at_start: u64,
 }
@@ -46,8 +48,12 @@ pub struct Report {
     pub samples: Vec<(u64, u64)>,
     pub total_samples: u64,
     pub runtime_samples: u64,
+    /// Runtime samples by where they fell, most first.
+    pub runtime: Vec<(&'static str, u64)>,
     /// Host functions by trap address, by time: calls and nanoseconds.
     pub host: Vec<(u64, u64, u64)>,
+    /// The same per thread: thread name, trap address, calls, nanoseconds.
+    pub host_by_thread: Vec<(String, u64, u64, u64)>,
     pub translations: u64,
     pub evictions: u64,
 }
@@ -67,6 +73,7 @@ pub fn set(enable: bool) {
         threads: HashMap::new(),
         samples: HashMap::new(),
         runtime_samples: 0,
+        runtime: HashMap::new(),
         host: HashMap::new(),
         translations_at_start: TRANSLATIONS.load(Ordering::Relaxed),
         evictions_at_start: crate::cache::evictions(),
@@ -95,8 +102,8 @@ pub fn add_host(addr: u64, since: Option<Instant>) {
     let ns = t.elapsed().as_nanos() as u64;
     let name = std::thread::current().name().unwrap_or("?").to_owned();
     if let Some(s) = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-        s.threads.entry(name).or_default()[Kind::Host as usize] += ns;
-        let e = s.host.entry(addr).or_default();
+        s.threads.entry(name.clone()).or_default()[Kind::Host as usize] += ns;
+        let e = s.host.entry((name, addr)).or_default();
         e.0 += 1;
         e.1 += ns;
     }
@@ -111,7 +118,10 @@ pub(crate) fn sample(pc: u64) {
     if let Some(s) = STATE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
         match rip {
             Some(r) => *s.samples.entry(r).or_default() += 1,
-            None if pc >= layout::RUNTIME_VA => s.runtime_samples += 1,
+            None if pc >= layout::RUNTIME_VA => {
+                s.runtime_samples += 1;
+                *s.runtime.entry(crate::runtime_part((pc - layout::RUNTIME_VA) as usize)).or_default() += 1;
+            }
             None => {}
         }
     }
@@ -126,15 +136,27 @@ pub fn report() -> Option<Report> {
     let mut samples: Vec<_> = s.samples.iter().map(|(&r, &n)| (r, n)).collect();
     samples.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
     let total_samples = samples.iter().map(|s| s.1).sum::<u64>() + s.runtime_samples;
-    let mut host: Vec<_> = s.host.iter().map(|(&a, &(c, ns))| (a, c, ns)).collect();
+    let mut runtime: Vec<_> = s.runtime.iter().map(|(&k, &n)| (k, n)).collect();
+    runtime.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+    let mut totals: HashMap<u64, (u64, u64)> = HashMap::new();
+    for (&(_, a), &(c, ns)) in &s.host {
+        let t = totals.entry(a).or_default();
+        t.0 += c;
+        t.1 += ns;
+    }
+    let mut host: Vec<_> = totals.iter().map(|(&a, &(c, ns))| (a, c, ns)).collect();
     host.sort_by_key(|&(_, _, ns)| std::cmp::Reverse(ns));
+    let mut host_by_thread: Vec<_> = s.host.iter().map(|((t, a), &(c, ns))| (t.clone(), *a, c, ns)).collect();
+    host_by_thread.sort_by_key(|h| std::cmp::Reverse(h.3));
     Some(Report {
         seconds: s.started.elapsed().as_secs_f64(),
         threads,
         samples,
         total_samples,
         runtime_samples: s.runtime_samples,
+        runtime,
         host,
+        host_by_thread,
         translations: TRANSLATIONS.load(Ordering::Relaxed) - s.translations_at_start,
         evictions: crate::cache::evictions() - s.evictions_at_start,
     })
