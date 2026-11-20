@@ -810,8 +810,11 @@ impl Metal {
             if tex.width() as u32 == image.width && tex.height() as u32 == image.height {
                 let found = if t.pixel_format == format {
                     Some(tex.clone())
-                } else {
+                } else if view_compatible(t.pixel_format, format) {
                     tex.newTextureViewWithPixelFormat(format)
+                } else {
+                    self.report(format!("render target at {:#x} ({:?}) cannot be viewed as {format:?}", image.address, t.pixel_format));
+                    None
                 };
                 self.note(|| format!("      {:#x} from a render target", image.address));
                 return found;
@@ -1439,7 +1442,15 @@ impl Metal {
             && t.texture.width() as u32 == image.width
             && t.texture.height() as u32 == image.height
         {
-            return if t.pixel_format == format { Some(t.texture.clone()) } else { t.texture.newTextureViewWithPixelFormat(format) };
+            if t.pixel_format == format {
+                return Some(t.texture.clone());
+            }
+            if view_compatible(t.pixel_format, format) {
+                return t.texture.newTextureViewWithPixelFormat(format);
+            }
+            let have = t.pixel_format;
+            self.report(format!("image at {:#x} ({have:?}) cannot be viewed as {format:?}", image.address));
+            return None;
         }
         let texture = self.new_texture(format, image.width, image.height, true)?;
         if let Some(mode) = image.tile
@@ -2233,6 +2244,39 @@ fn color_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
         (16, 0) => P::B5G6R5Unorm,
         _ => return None,
     })
+}
+
+// Metal allows views of the same bytes per pixel; packed float formats
+// only as 32-bit integers.
+fn view_compatible(from: MTLPixelFormat, to: MTLPixelFormat) -> bool {
+    use MTLPixelFormat as P;
+    let bytes = |f: MTLPixelFormat| -> Option<u32> {
+        Some(match f {
+            P::R8Unorm | P::R8Snorm | P::R8Uint | P::R8Sint => 1,
+            P::R16Unorm | P::R16Snorm | P::R16Uint | P::R16Sint | P::R16Float | P::RG8Unorm | P::RG8Snorm | P::RG8Uint | P::RG8Sint => 2,
+            P::R32Uint | P::R32Sint | P::R32Float | P::RG16Unorm | P::RG16Snorm | P::RG16Uint | P::RG16Sint | P::RG16Float => 4,
+            P::RGBA8Unorm | P::RGBA8Unorm_sRGB | P::RGBA8Snorm | P::RGBA8Uint | P::RGBA8Sint | P::BGRA8Unorm | P::BGRA8Unorm_sRGB => 4,
+            P::RGB10A2Unorm | P::RG11B10Float | P::RGB9E5Float => 4,
+            P::RG32Uint | P::RG32Sint | P::RG32Float | P::RGBA16Unorm | P::RGBA16Snorm | P::RGBA16Uint | P::RGBA16Sint | P::RGBA16Float => 8,
+            P::RGBA32Uint | P::RGBA32Sint | P::RGBA32Float => 16,
+            _ => return None,
+        })
+    };
+    let packed = |f: MTLPixelFormat| matches!(f, P::RG11B10Float | P::RGB9E5Float);
+    if from == to {
+        return true;
+    }
+    match (bytes(from), bytes(to)) {
+        (Some(a), Some(b)) if a == b => {
+            if packed(from) || packed(to) {
+                let other = if packed(from) { to } else { from };
+                matches!(other, P::R32Uint | P::R32Sint)
+            } else {
+                true
+            }
+        }
+        _ => false,
+    }
 }
 
 /// The Metal format and bytes per element of a GFX10 image format.

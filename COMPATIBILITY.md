@@ -24,6 +24,6 @@ What each title does under ps5slop, from our own runs on an Apple Silicon Mac.
 | --- | --- | --- | --- |
 | PPSA21402 | Balatro | ⭐ Perfect | 01.015.000: plays normally with sound. |
 | PPSA17221 | Minecraft | 🟡 Ingame | v26.10: menus work, a world loads in about 25 s and renders at 10 to 16 fps, but block textures have wrong colours and some menu letters go missing. |
-| PPSA21564 | Astro Bot | ⚫ Nothing | v1.019 (.pkg): loads, runs its frame loop and submits GPU work; Metal aborts on an RG11B10Float texture view. Needs `scripts/fetch-fonts`. |
+| PPSA21564 | Astro Bot | ⚫ Nothing | v1.019 (.pkg): loads and starts flipping (with `PS5SLOP_UNIMPLEMENTED_ZERO=1`; otherwise stops at a libSceAudioPropagation call); most compute programs do not translate yet. Needs `scripts/fetch-fonts`. |
 | CUSA52463 | Deltarune (PS4) | ⚫ Nothing | v1.12 (patch over base .pkg): game loop runs at about 30 fps; nothing drawn yet (no Gnm renderer). |
 | PPSA06084 | Superliminal | ⚫ Nothing | 01.010 (.pkg): loads and runs its frame loop, screen stays black (unsupported image formats, an MSL error). |
