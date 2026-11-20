@@ -302,6 +302,8 @@ pub struct Image {
     pub last_level: u32,
     /// Array slices (`DEPTH` + 1), or the depth of a 3D image.
     pub depth: u32,
+    /// The first array slice the descriptor shows (`BASE_ARRAY`).
+    pub base_array: u32,
 }
 
 impl Image {
@@ -320,6 +322,7 @@ impl Image {
             base_level: (d[3] >> 12) & 0xF,
             last_level: (d[3] >> 16) & 0xF,
             depth: d.get(4).map_or(0, |w| w & 0x1FFF) + 1,
+            base_array: d.get(4).map_or(0, |w| (w >> 16) & 0x1FFF),
         }
     }
 }

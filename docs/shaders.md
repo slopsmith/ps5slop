@@ -74,6 +74,8 @@ pub struct Request<'a> {
     pub col_format: u32,         // SPI_SHADER_COL_FORMAT
     pub compute_rsrc2: u32,      // COMPUTE_PGM_RSRC2
     pub threads: [u32; 3],       // COMPUTE_NUM_THREAD_X/Y/Z
+    pub uint_textures: u32,      // texture slots with UINT formats, bit n for slot n
+    pub sint_textures: u32,      // texture slots with SINT formats
 }
 pub struct Translated { msl, entry, resources, vertex_outputs, color_outputs, writes_depth, guest_memory, writes_memory, lds_bytes }
 pub enum Resource { Texture { slot, source, kind, access }, Sampler { slot, source } }
@@ -90,7 +92,7 @@ Bindings in the generated MSL:
 | `constant uint* user [[buffer(0)]]` | All user SGPR values, as dwords, in order |
 | `constant ulong& mem_base [[buffer(28)]]` | Guest address of byte 0 of the memory buffer, when `guest_memory` |
 | `device const uchar* mem [[buffer(29)]]` | Guest memory, when `guest_memory` (`device uchar*` when `writes_memory`) |
-| `[[texture(slot)]]` | `texture2d<float>` (or `texture2d_array`, `texture3d`, `texturecube`) per `Resource::Texture`, with `access::write` or `access::read_write` for images the program stores to |
+| `[[texture(slot)]]` | `texture2d<float>` (or `texture2d_array`, `texture3d`, `texturecube`) per `Resource::Texture`, `<uint>` or `<int>` for the slots `uint_textures`/`sint_textures` name, with `access::write` or `access::read_write` for images the program stores to |
 | `[[sampler(slot)]]` | per `Resource::Sampler` |
 | `[[vertex_id]]`, `[[instance_id]]` | vertex stage |
 | `[[thread_position_in_threadgroup]]`, `[[threadgroup_position_in_grid]]` | compute stage |
@@ -101,13 +103,13 @@ The vertex body is also a plain function, `VsOut gen5_vs_body(uint vid, uint iid
 
 - All 42 Balatro shaders translate, and the MSL compiles with Metal's runtime compiler (`MTLDevice newLibraryWithSource`) in `tests/msl.rs`. The offline compiler (`xcrun metal`) is not installed on vic's machine (Xcode asks for `xcodebuild -downloadComponent MetalToolchain`), so the test uses the runtime compiler instead.
 - `tests/unit.rs` translates hand-written programs, assembled with llvm-mc for gfx1013, and compiles each result with Metal: a constant colour and a textured pixel shader; a compute program with workgroup ids, LDS, a barrier, a buffer store and an atomic; descriptors loaded through a pointer table; `image_load`/`image_store`/`image_get_resinfo`; carry arithmetic, DPP quad broadcasts, cube-map ops, `v_med3_i32`, `v_mul_hi_i32`; `image_gather4_lz` on an array; integer colour exports.
+- Integer textures: a texture slot named in `uint_textures` or `sint_textures` is declared `<uint>` or `<int>`, its reads and gathers go to VGPRs as raw integers and its stores take them as integers. Slot numbers are the same whatever the masks, so the renderer can translate a program once, read the descriptors, and translate again with the masks. Captures (version 2) record the masks; version 1 files load with none.
 - Minecraft: all 49 programs it runs up to its main menu (11 compute, the rest vertex and pixel) translate and compile. `PS5SLOP_SHADER_DUMP=dir` saves each program the renderer translates with its register state (`capture.rs`), and `cargo run -p gfx10 --example captures -- dir [name]` translates and compiles a directory of them offline, or prints one program's disassembly and MSL. The captures are game data and stay outside the repo.
 
-Checked by drawing: Balatro's title screen and Minecraft's main-menu UI (logo, buttons, text) render through it. Not verified: that compute programs compute the right values (nothing checks their output yet). Known approximations: integer image formats are read and written through `float` textures; `image_store` writes 0 to the components `dmask` leaves out; compute SIMD groups (32 lanes) stand in for wave64 when branching; `v_cvt_pkrtz_f16_f32` rounds to nearest instead of toward zero; denormal and NaN handling follows Metal's defaults; `v_mac_f32` and friends may be fused by the Metal compiler; buffer formats cover the common ones (32-bit floats and ints in 1 to 4 components, 8- and 16-bit UNORM, SNORM, UINT and FLOAT); out-of-range buffer reads return 0 but are only checked against `num_records`.
+Checked by drawing: Balatro's title screen and Minecraft's main-menu UI (logo, buttons, text) render through it. Not verified: that compute programs compute the right values (nothing checks their output yet). Known approximations: integer textures (`uint_textures`, `sint_textures`) are sampled with the sampler like float ones, which Metal allows only unfiltered; `image_store` writes 0 to the components `dmask` leaves out; compute SIMD groups (32 lanes) stand in for wave64 when branching; `v_cvt_pkrtz_f16_f32` rounds to nearest instead of toward zero; denormal and NaN handling follows Metal's defaults; `v_mac_f32` and friends may be fused by the Metal compiler; buffer formats cover the common ones (32-bit floats and ints in 1 to 4 components, 8- and 16-bit UNORM, SNORM, UINT and FLOAT); out-of-range buffer reads return 0 but are only checked against `num_records`.
 
 ## Open questions
 
 - The renderer asked for buffers at `[[buffer(1 + slot)]]` with their V#s at `[[buffer(30)]]`. Balatro's vertex programs build their V#s at run time, so the translator reads guest memory instead; static buffer slots could come back as an optimisation where a V# provably sits in user SGPRs.
 - Wave-level operations beyond quad broadcasts (other DPP, `readlane`, ballots, `ds_swizzle`, `ds_permute`), scratch, GDS, image atomics, `buffer_store_format_*` and 64-bit atomics are not translated yet.
-- Integer image formats: the shader declares every texture as `float`, so `image_load` of a `UINT`/`SINT` image and sampling one would need the format at translation time (it is in the descriptor, which the renderer sees per draw).
 - How AGC programs reach the GPU: the header's program-address registers are patched by `sceAgcCreateShader`, and the renderer finds the code through `SPI_SHADER_PGM_LO_*`; the `.ags` parsing here is only for tests.

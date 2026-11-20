@@ -224,3 +224,10 @@ Reason: vic does not want GPL-3.0 code in this GPL-2.0-or-later project, and loa
 `crates/pkg` reads a PS5 package's Kraken-compressed `pfs_image.dat` in place: a read decodes only the 256 KiB blocks it touches, through the NAPS layout, and keeps the last 16 decoded blocks. The decoder implements only what Superliminal and Astro Bot use (stored and three-stream Huffman arrays, code descriptions `00` and `01`, LZ chunks with raw or delta literals); anything else fails as unsupported.
 
 Reason: vic asked for a decoder scoped to the packages we have, and running in place matches the earlier decision for PS4 packages (Astro Bot unpacks to 149 GB). The format and the source of each rule are in [packages.md](packages.md).
+
+## 2026-11-20: integer textures by per-descriptor variants; GPU-written arrays and depth stay on the GPU
+
+The translator does not guess whether a texture holds integers. The renderer reads the bound T#s per draw and translates the program again with masks of the integer slots (`uint_textures`, `sint_textures`), caching each variant. Exports to integer targets are made integer the same way, by changing the `SPI_SHADER_COL_FORMAT` the translator sees. Images programs write as 2D arrays or 3D, and depth targets, stay in Metal textures keyed by guest address and are sampled from there; nothing is written back to guest memory, and depth layouts are not detiled.
+
+Reason: the format is only in the descriptor, which can differ between draws of one program, while the instruction alone cannot tell UINT from float data. A variant per descriptor combination is exact and costs one more translation per combination (Minecraft has a handful). Keeping GPU-written images on the GPU avoids read-backs and needs no equation for the depth swizzle modes, which no source we may use describes. The cost: a CPU read of such memory, or a T# that reads it through a layout we do not track, sees stale or zero data.
+

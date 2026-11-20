@@ -44,6 +44,11 @@ pub struct Request<'a> {
     pub compute_rsrc2: u32,
     /// Compute stage: `COMPUTE_NUM_THREAD_X/Y/Z`, the threadgroup size.
     pub threads: [u32; 3],
+    /// Texture slots (bit n for slot n of [`Translated::resources`]) whose image
+    /// format is unsigned or signed integer, declared `<uint>` or `<int>`.
+    /// Slot numbers do not depend on these masks.
+    pub uint_textures: u32,
+    pub sint_textures: u32,
 }
 
 /// Where a descriptor's dwords come from.
@@ -1792,6 +1797,17 @@ impl<'a> Tx<'a> {
         before
     }
 
+    // The element type of texture slot `t` and how a component of it becomes a VGPR value.
+    fn texel(&self, t: usize) -> (&'static str, &'static str) {
+        if self.req.uint_textures >> t & 1 != 0 {
+            ("uint", "")
+        } else if self.req.sint_textures >> t & 1 != 0 {
+            ("int", "uint")
+        } else {
+            ("float", "U")
+        }
+    }
+
     // The texture slot for the T# at `srsrc`, merging how it is accessed.
     fn texture_slot(
         &mut self,
@@ -1879,25 +1895,20 @@ impl<'a> Tx<'a> {
             (None, Stage::Pixel) => String::new(),
             (None, _) => ", level(0.0f)".into(),
         };
-        let mut s = format!("float4 r = t{t}.sample(smp{sm}, {coord}{level});");
+        let (elem, conv) = self.texel(t);
+        let mut s = format!("{elem}4 r = t{t}.sample(smp{sm}, {coord}{level});");
         if gather {
             if !matches!(kind, TextureKind::Tex2d | TextureKind::Tex2dArray) || !matches!(variant, "" | "_lz") || m.dmask.count_ones() != 1 {
                 return Err(err(pc, format!("unsupported form of {name}")));
             }
             let c = ["x", "y", "z", "w"][m.dmask.trailing_zeros() as usize];
-            s = format!("float4 r = t{t}.gather(smp{sm}, {coord}, int2(0), component::{c});");
+            s = format!("{elem}4 r = t{t}.gather(smp{sm}, {coord}, int2(0), component::{c});");
         }
         let mut d = m.vdata as u16;
         for i in 0..4 {
-            if gather {
+            if gather || m.dmask >> i & 1 != 0 {
                 let r = self.v(d);
-                write!(s, " {r} = U(r[{i}]);").unwrap();
-                d += 1;
-                continue;
-            }
-            if m.dmask >> i & 1 != 0 {
-                let r = self.v(d);
-                write!(s, " {r} = U(r[{i}]);").unwrap();
+                write!(s, " {r} = {conv}(r[{i}]);").unwrap();
                 d += 1;
             }
         }
@@ -1931,23 +1942,29 @@ impl<'a> Tx<'a> {
             _ => level(3),
         };
         let mut d = m.vdata as u16;
+        let (elem, conv) = self.texel(t);
         if store {
             let mut comps = Vec::new();
             for i in 0..4 {
                 if m.dmask >> i & 1 != 0 {
-                    comps.push(format!("F({})", self.v(d)));
+                    let v = self.v(d);
+                    comps.push(match elem {
+                        "float" => format!("F({v})"),
+                        "int" => format!("int({v})"),
+                        _ => v,
+                    });
                     d += 1;
                 } else {
-                    comps.push("0.0f".into());
+                    comps.push(if elem == "float" { "0.0f".into() } else { "0".into() });
                 }
             }
-            self.guard(&format!("t{t}.write(float4({}), {coord}, {lvl});", comps.join(", ")));
+            self.guard(&format!("t{t}.write({elem}4({}), {coord}, {lvl});", comps.join(", ")));
         } else {
-            let mut s = format!("float4 r = t{t}.read({coord}, {lvl});");
+            let mut s = format!("{elem}4 r = t{t}.read({coord}, {lvl});");
             for i in 0..4 {
                 if m.dmask >> i & 1 != 0 {
                     let r = self.v(d);
-                    write!(s, " {r} = U(r[{i}]);").unwrap();
+                    write!(s, " {r} = {conv}(r[{i}]);").unwrap();
                     d += 1;
                 }
             }
@@ -2061,10 +2078,11 @@ impl<'a> Tx<'a> {
                 TextureKind::Tex3d => "texture3d",
                 TextureKind::Cube => "texturecube",
             };
+            let elem = self.texel(i).0;
             let ty = match access {
-                Access::Sample => format!("{base}<float>"),
-                Access::Write => format!("{base}<float, access::write>"),
-                Access::ReadWrite => format!("{base}<float, access::read_write>"),
+                Access::Sample => format!("{base}<{elem}>"),
+                Access::Write => format!("{base}<{elem}, access::write>"),
+                Access::ReadWrite => format!("{base}<{elem}, access::read_write>"),
             };
             params.push(format!("{ty} t{i}"));
             args.push(format!("t{i}"));

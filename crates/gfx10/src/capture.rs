@@ -3,13 +3,14 @@
 //!
 //! The file is little-endian dwords: magic, version, stage, user SGPR count,
 //! NGG flag, `SPI_PS_INPUT_ENA`, `SPI_PS_INPUT_ADDR`, `SPI_SHADER_COL_FORMAT`,
-//! `COMPUTE_PGM_RSRC2`, the three thread counts, the number of
-//! `SPI_PS_INPUT_CNTL` values and those values, then the code.
+//! `COMPUTE_PGM_RSRC2`, the three thread counts, the unsigned and signed
+//! integer texture masks, the number of `SPI_PS_INPUT_CNTL` values and those
+//! values, then the code. Version 1 files have no texture masks.
 
 use crate::translate::{Request, Stage, program};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"g10c");
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// A request with its own storage.
 #[derive(Clone, Debug)]
@@ -23,6 +24,8 @@ pub struct Capture {
     pub col_format: u32,
     pub compute_rsrc2: u32,
     pub threads: [u32; 3],
+    pub uint_textures: u32,
+    pub sint_textures: u32,
     pub code: Vec<u32>,
 }
 
@@ -43,6 +46,8 @@ impl Capture {
             col_format: req.col_format,
             compute_rsrc2: req.compute_rsrc2,
             threads: req.threads,
+            uint_textures: req.uint_textures,
+            sint_textures: req.sint_textures,
             code: req.code[..len.min(req.code.len())].to_vec(),
         }
     }
@@ -59,6 +64,8 @@ impl Capture {
             col_format: self.col_format,
             compute_rsrc2: self.compute_rsrc2,
             threads: self.threads,
+            uint_textures: self.uint_textures,
+            sint_textures: self.sint_textures,
         }
     }
 
@@ -81,6 +88,8 @@ impl Capture {
             self.threads[0],
             self.threads[1],
             self.threads[2],
+            self.uint_textures,
+            self.sint_textures,
             self.ps_input_cntl.len() as u32,
         ];
         w.extend_from_slice(&self.ps_input_cntl);
@@ -95,7 +104,7 @@ impl Capture {
             .iter()
             .map(|c| u32::from_le_bytes(*c))
             .collect();
-        if w.len() < 13 || w[0] != MAGIC || w[1] != VERSION {
+        if w.len() < 13 || w[0] != MAGIC || !(1..=VERSION).contains(&w[1]) {
             return None;
         }
         let stage = match w[2] {
@@ -104,8 +113,9 @@ impl Capture {
             2 => Stage::Compute,
             _ => return None,
         };
-        let n = w[12] as usize;
-        let cntl = w.get(13..13 + n)?.to_vec();
+        let (masks, at) = if w[1] >= 2 { ([*w.get(12)?, *w.get(13)?], 14) } else { ([0, 0], 12) };
+        let n = *w.get(at)? as usize;
+        let cntl = w.get(at + 1..at + 1 + n)?.to_vec();
         Some(Capture {
             stage,
             user_sgprs: w[3],
@@ -115,8 +125,10 @@ impl Capture {
             col_format: w[7],
             compute_rsrc2: w[8],
             threads: [w[9], w[10], w[11]],
+            uint_textures: masks[0],
+            sint_textures: masks[1],
             ps_input_cntl: cntl,
-            code: w[13 + n..].to_vec(),
+            code: w[at + 1 + n..].to_vec(),
         })
     }
 }

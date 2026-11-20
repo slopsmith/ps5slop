@@ -57,14 +57,15 @@ pub fn all_frames() -> Vec<(u64, SharedTexture)> {
     frames().lock().map(|f| f.iter().map(|(a, t)| (*a, t.clone())).collect()).unwrap_or_default()
 }
 
-/// `texture`'s pixels as RGBA8, read back for screenshots.
+/// `texture`'s pixels as RGBA8, read back for screenshots. Other 2D formats
+/// are converted on the GPU, clamped to [0, 1] (integers scaled from 16 bits).
 pub fn read_rgba(texture: &SharedTexture) -> Option<(u32, u32, Vec<u8>)> {
     let t = &texture.0;
     let (w, h) = (t.width(), t.height());
     let format = t.pixelFormat();
     let bgra = matches!(format, MTLPixelFormat::BGRA8Unorm | MTLPixelFormat::BGRA8Unorm_sRGB);
     if !bgra && !matches!(format, MTLPixelFormat::RGBA8Unorm | MTLPixelFormat::RGBA8Unorm_sRGB) {
-        return None;
+        return read_converted(t);
     }
     let device = t.device();
     let queue = device.newCommandQueue()?;
@@ -93,6 +94,40 @@ pub fn read_rgba(texture: &SharedTexture) -> Option<(u32, u32, Vec<u8>)> {
             p.swap(0, 2);
         }
     }
+    Some((w as u32, h as u32, px))
+}
+
+fn read_converted(t: &Texture) -> Option<(u32, u32, Vec<u8>)> {
+    if t.textureType() != MTLTextureType::Type2D || is_compressed(t.pixelFormat()) {
+        return None;
+    }
+    let (w, h) = (t.width(), t.height());
+    let (elem, scale) = match number(t.pixelFormat()) {
+        Number::Float => ("float", "1.0"),
+        Number::Uint => ("uint", "1.0 / 65535.0"),
+        Number::Sint => ("int", "1.0 / 32767.0"),
+    };
+    let msl = format!(
+        "#include <metal_stdlib>\nusing namespace metal;\nkernel void convert(texture2d<{elem}, access::read> src [[texture(0)]], device uchar4* dst [[buffer(0)]], uint2 id [[thread_position_in_grid]]) {{\n    if (id.x >= src.get_width() || id.y >= src.get_height()) return;\n    float4 v = clamp(float4(src.read(id)) * {scale}, 0.0, 1.0);\n    dst[id.y * src.get_width() + id.x] = uchar4(v * 255.0 + 0.5);\n}}\n"
+    );
+    let device = t.device();
+    let lib = device.newLibraryWithSource_options_error(&NSString::from_str(&msl), None).ok()?;
+    let f = lib.newFunctionWithName(&NSString::from_str("convert"))?;
+    let pipeline = device.newComputePipelineStateWithFunction_error(&f).ok()?;
+    let queue = device.newCommandQueue()?;
+    let buffer = device.newBufferWithLength_options(w * h * 4, MTLResourceOptions::StorageModeShared)?;
+    let cb = queue.commandBuffer()?;
+    let enc = cb.computeCommandEncoder()?;
+    enc.setComputePipelineState(&pipeline);
+    unsafe {
+        enc.setTexture_atIndex(Some(t), 0);
+        enc.setBuffer_offset_atIndex(Some(&buffer), 0, 0);
+    }
+    enc.dispatchThreads_threadsPerThreadgroup(MTLSize { width: w, height: h, depth: 1 }, MTLSize { width: 16, height: 16, depth: 1 });
+    enc.endEncoding();
+    cb.commit();
+    cb.waitUntilCompleted();
+    let px = unsafe { std::slice::from_raw_parts(buffer.contents().as_ptr() as *const u8, w * h * 4) }.to_vec();
     Some((w as u32, h as u32, px))
 }
 
@@ -127,6 +162,15 @@ struct Program {
     translated: Translated,
 }
 
+/// What a program is translated for besides its code and registers.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct Variant {
+    /// `SPI_SHADER_COL_FORMAT`, with integer targets' exports made integer.
+    col_format: u32,
+    uint_textures: u32,
+    sint_textures: u32,
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct PipelineKey {
     vertex: u64,
@@ -152,6 +196,10 @@ pub struct Metal {
     generation: u64,
     targets: HashMap<u64, Target>,
     images: HashMap<(Image, TextureKind), (u64, Retained<Texture>)>,
+    /// 2D-array and 3D images programs write, by guest address.
+    volumes: HashMap<u64, Retained<Texture>>,
+    /// Zero-filled stand-ins for depth-layout images no depth target backs.
+    blank: HashMap<(Image, TextureKind), Retained<Texture>>,
     epoch: u64,
     detilers: HashMap<(TileMode, u32, bool), Retained<ComputePipeline>>,
     programs: HashMap<(u64, u64), Option<Arc<Program>>>,
@@ -165,6 +213,10 @@ pub struct Metal {
     pub dispatches: u64,
     pub skipped: u64,
     reasons: HashMap<&'static str, u64>,
+    /// The frames `PS5SLOP_GPU_TRACE` names (`n` or `first-last`), and the
+    /// trace lines of the current draw.
+    trace_frames: Option<(u64, u64)>,
+    trace: Option<Vec<String>>,
 }
 
 /// Where a program's resources are bound: one stage of an encoder.
@@ -239,6 +291,8 @@ impl Metal {
             generation: 0,
             targets: HashMap::new(),
             images: HashMap::new(),
+            volumes: HashMap::new(),
+            blank: HashMap::new(),
             epoch: 0,
             detilers: HashMap::new(),
             programs: HashMap::new(),
@@ -252,7 +306,18 @@ impl Metal {
             dispatches: 0,
             skipped: 0,
             reasons: HashMap::new(),
+            trace_frames: std::env::var("PS5SLOP_GPU_TRACE").ok().and_then(|v| match v.split_once('-') {
+                Some((a, b)) => Some((a.parse().ok()?, b.parse().ok()?)),
+                None => v.parse().ok().map(|n| (n, n)),
+            }),
+            trace: None,
         })
+    }
+
+    fn note(&mut self, what: impl FnOnce() -> String) {
+        if let Some(t) = &mut self.trace {
+            t.push(what());
+        }
     }
 
     fn report(&mut self, what: String) {
@@ -532,10 +597,24 @@ impl Metal {
     /// target at that address, or a copy of guest memory refreshed once per frame.
     fn image(&mut self, host: &dyn Host, image: Image, kind: TextureKind) -> Option<Retained<Texture>> {
         let (format, bpe) = image_format(image.format)?;
+        if kind == TextureKind::Tex2d
+            && let Some(d) = self.depths.get(&image.address)
+            && d.width() as u32 == image.width
+            && d.height() as u32 == image.height
+        {
+            return Some(d.clone());
+        }
+        if let Some(v) = self.volume(image, kind, format) {
+            return Some(v);
+        }
+        if image.tile.is_none() && is_depth_layout(image.raw_tile) && kind == TextureKind::Tex2d {
+            return self.blank_texture(image, kind, format);
+        }
         let slices = match kind {
             TextureKind::Tex2d => 1,
             TextureKind::Cube => 6,
             TextureKind::Tex2dArray => image.depth as usize,
+            TextureKind::Tex3d if image.kind != 10 => return self.flat_volume(host, image, format),
             TextureKind::Tex3d => return None,
         };
         if kind == TextureKind::Tex2d
@@ -568,7 +647,8 @@ impl Metal {
             None => self.new_layered_texture(format, image.width, image.height, kind, slices)?,
         };
         let base = image.address + layout.mip0_offset(image.last_level + 1);
-        let stride = layout.size().next_multiple_of(64 << 10);
+        // A 2D image bound where a cube is read shows its one slice on every face.
+        let stride = if kind == TextureKind::Cube && image.kind != 11 { 0 } else { layout.size().next_multiple_of(64 << 10) };
         for slice in 0..slices {
             let at = base + slice as u64 * stride;
             let filled = if compressed {
@@ -589,9 +669,55 @@ impl Metal {
         Some(tex)
     }
 
+    /// A 2D image bound where a 3D texture is read, as a one-slice 3D texture.
+    fn flat_volume(&mut self, host: &dyn Host, image: Image, format: MTLPixelFormat) -> Option<Retained<Texture>> {
+        if let Some((epoch, tex)) = self.images.get(&(image, TextureKind::Tex3d))
+            && *epoch == self.epoch
+        {
+            return Some(tex.clone());
+        }
+        let flat = self.image(host, image, TextureKind::Tex2d)?;
+        let volume = match self.images.get(&(image, TextureKind::Tex3d)) {
+            Some((_, t)) => t.clone(),
+            None => {
+                let desc = MTLTextureDescriptor::new();
+                desc.setPixelFormat(format);
+                desc.setTextureType(MTLTextureType::Type3D);
+                unsafe {
+                    desc.setWidth(image.width as usize);
+                    desc.setHeight(image.height as usize);
+                    desc.setDepth(1);
+                }
+                desc.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::PixelFormatView);
+                desc.setStorageMode(MTLStorageMode::Private);
+                self.device.newTextureWithDescriptor(&desc)?
+            }
+        };
+        self.end_pass();
+        let command = self.command();
+        let blit = command.blitCommandEncoder()?;
+        unsafe {
+            blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
+                &flat,
+                0,
+                0,
+                MTLOrigin { x: 0, y: 0, z: 0 },
+                MTLSize { width: image.width as usize, height: image.height as usize, depth: 1 },
+                &volume,
+                0,
+                0,
+                MTLOrigin { x: 0, y: 0, z: 0 },
+            );
+        }
+        blit.endEncoding();
+        self.images.insert((image, TextureKind::Tex3d), (self.epoch, volume.clone()));
+        Some(volume)
+    }
+
     /// `tex` with an image descriptor's channel selects (`DST_SEL_X..W`) applied.
     fn swizzled(&mut self, tex: Retained<Texture>, sel: [u8; 4]) -> Option<Retained<Texture>> {
-        if sel == [4, 5, 6, 7] {
+        // Depth textures cannot be viewed; their descriptors select only x.
+        if sel == [4, 5, 6, 7] || is_depth_format(tex.pixelFormat()) {
             return Some(tex);
         }
         let key = (Retained::as_ptr(&tex) as usize, sel);
@@ -707,16 +833,52 @@ impl Metal {
         Some(state)
     }
 
+    /// The program at `address` as the bound descriptors need it: translated
+    /// again with integer texture types when a T# has an integer format.
+    #[allow(clippy::too_many_arguments)]
+    fn typed_program(
+        &mut self,
+        host: &dyn Host,
+        state: &State,
+        stage: Stage,
+        address: u64,
+        user_sgprs: u32,
+        ngg: bool,
+        col_format: u32,
+        user: &[u32],
+    ) -> Option<Arc<Program>> {
+        let base = Variant { col_format, uint_textures: 0, sint_textures: 0 };
+        let program = self.program(host, state, stage, address, user_sgprs, ngg, base)?;
+        let mut variant = base;
+        for r in &program.translated.resources {
+            if let Resource::Texture { slot, ref source, .. } = *r
+                && let Some(d) = self.descriptor(host, user, source, 8)
+            {
+                let image = Image::read(&d);
+                if image.address == 0 || image.kind < 8 || self.depths.contains_key(&image.address) {
+                    continue;
+                }
+                match image_format(image.format).map(|f| number(f.0)) {
+                    Some(Number::Uint) => variant.uint_textures |= 1 << slot,
+                    Some(Number::Sint) => variant.sint_textures |= 1 << slot,
+                    _ => {}
+                }
+            }
+        }
+        if variant == base { Some(program) } else { self.program(host, state, stage, address, user_sgprs, ngg, variant) }
+    }
+
     /// The translated program at `address`, translated on first use.
-    fn program(&mut self, host: &dyn Host, state: &State, stage: Stage, address: u64, user_sgprs: u32, ngg: bool) -> Option<Arc<Program>> {
+    #[allow(clippy::too_many_arguments)]
+    fn program(&mut self, host: &dyn Host, state: &State, stage: Stage, address: u64, user_sgprs: u32, ngg: bool, variant: Variant) -> Option<Arc<Program>> {
         let c = state.context;
         let cntl = &c[context::SPI_PS_INPUT_CNTL_0..context::SPI_PS_INPUT_CNTL_0 + 32];
         let key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            (stage as u8, user_sgprs, ngg).hash(&mut h);
+            (stage as u8, user_sgprs, ngg, variant).hash(&mut h);
             if stage == Stage::Pixel {
-                (cntl, c[context::SPI_PS_INPUT_ENA], c[context::SPI_PS_INPUT_ADDR], c[context::SPI_SHADER_COL_FORMAT]).hash(&mut h);
+                (cntl, c[context::SPI_PS_INPUT_ENA], c[context::SPI_PS_INPUT_ADDR]).hash(&mut h);
             }
             if stage == Stage::Compute {
                 let s = &state.sh;
@@ -744,9 +906,11 @@ impl Metal {
                 ps_input_ena: c[context::SPI_PS_INPUT_ENA],
                 ps_input_addr: c[context::SPI_PS_INPUT_ADDR],
                 ps_input_cntl: cntl,
-                col_format: c[context::SPI_SHADER_COL_FORMAT],
+                col_format: variant.col_format,
                 compute_rsrc2: state.sh[sh::COMPUTE_PGM_RSRC2],
                 threads: [0, 1, 2].map(|i| (state.sh[sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1)),
+                uint_textures: variant.uint_textures,
+                sint_textures: variant.sint_textures,
             };
             if let Some(dir) = std::env::var_os("PS5SLOP_SHADER_DUMP") {
                 let path = std::path::Path::new(&dir).join(format!("{stage:?}-{address:x}-{key:016x}.bin"));
@@ -933,6 +1097,11 @@ impl Metal {
         desc.setStorageMode(MTLStorageMode::Private);
         let t = self.device.newTextureWithDescriptor(&desc)?;
         self.depths.insert(d.address, t.clone());
+        if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some()
+            && let Ok(mut f) = frames().lock()
+        {
+            f.insert(d.address | 4, SharedTexture(t.clone()));
+        }
         Some((t, format, true))
     }
 
@@ -988,10 +1157,42 @@ impl Metal {
 
     /// The texture a program writes for image descriptor `image`: kept like a
     /// render target, so later reads of that address see what was written.
-    fn storage_image(&mut self, host: &dyn Host, image: Image) -> Option<Retained<Texture>> {
+    fn storage_image(&mut self, host: &dyn Host, image: Image, kind: TextureKind) -> Option<Retained<Texture>> {
         let (format, bpe) = image_format(image.format)?;
         if is_compressed(format) {
             return None;
+        }
+        let layered = matches!(image.kind, 11 | 13) || self.volumes.contains_key(&image.address);
+        match kind {
+            TextureKind::Tex2d if !layered => {}
+            TextureKind::Cube => return None,
+            _ => {
+                if let Some(v) = self.volume(image, kind, format) {
+                    return Some(v);
+                }
+                let slices = image.depth.max(image.base_array + 1);
+                let old = self.volumes.get(&image.address).cloned();
+                let texture = self.new_volume(format, image, if kind == TextureKind::Tex3d { kind } else { TextureKind::Tex2dArray }, slices)?;
+                if let Some(old) = old
+                    && old.textureType() == MTLTextureType::Type2DArray
+                    && texture.textureType() == MTLTextureType::Type2DArray
+                    && (old.width(), old.height(), old.pixelFormat()) == (texture.width(), texture.height(), texture.pixelFormat())
+                {
+                    self.end_pass();
+                    let command = self.command();
+                    let blit = command.blitCommandEncoder()?;
+                    for slice in 0..old.arrayLength().min(texture.arrayLength()) {
+                        unsafe {
+                            blit.copyFromTexture_sourceSlice_sourceLevel_toTexture_destinationSlice_destinationLevel_sliceCount_levelCount(
+                                &old, slice, 0, &texture, slice, 0, 1, 1,
+                            );
+                        }
+                    }
+                    blit.endEncoding();
+                }
+                self.volumes.insert(image.address, texture);
+                return self.volume(image, kind, format);
+            }
         }
         if let Some(t) = self.targets.get(&image.address)
             && t.texture.width() as u32 == image.width
@@ -1014,6 +1215,98 @@ impl Metal {
         Some(texture)
     }
 
+    /// The 2D-array or 3D image programs wrote at `image`'s address, viewed as
+    /// `kind` from slice `BASE_ARRAY` on, if it has that shape.
+    fn volume(&self, image: Image, kind: TextureKind, format: MTLPixelFormat) -> Option<Retained<Texture>> {
+        let v = self.volumes.get(&image.address)?;
+        if v.width() as u32 != image.width || v.height() as u32 != image.height {
+            return None;
+        }
+        let (base, have) = (image.base_array as usize, v.arrayLength());
+        let (ty, first, count) = match (kind, v.textureType()) {
+            (TextureKind::Tex3d, MTLTextureType::Type3D) if v.depth() as u32 == image.depth => (MTLTextureType::Type3D, 0, 1),
+            (TextureKind::Tex2d, MTLTextureType::Type2DArray) if base < have => (MTLTextureType::Type2D, base, 1),
+            (TextureKind::Tex2dArray, MTLTextureType::Type2DArray) if (image.depth as usize) <= have && base < image.depth as usize => {
+                (MTLTextureType::Type2DArray, base, image.depth as usize - base)
+            }
+            (TextureKind::Cube, MTLTextureType::Type2DArray) if base + 6 <= have => (MTLTextureType::TypeCube, base, 6),
+            _ => return None,
+        };
+        unsafe {
+            v.newTextureViewWithPixelFormat_textureType_levels_slices(
+                format,
+                ty,
+                objc2_foundation::NSRange::new(0, 1),
+                objc2_foundation::NSRange::new(first, count),
+            )
+        }
+    }
+
+    /// A zero-filled 2D-array (`slices` slices) or 3D image for a program to write.
+    fn new_volume(&self, format: MTLPixelFormat, image: Image, kind: TextureKind, slices: u32) -> Option<Retained<Texture>> {
+        let desc = MTLTextureDescriptor::new();
+        desc.setPixelFormat(format);
+        let (w, h, d) = (image.width as usize, image.height as usize, slices.max(1) as usize);
+        unsafe {
+            desc.setWidth(w);
+            desc.setHeight(h);
+            if kind == TextureKind::Tex3d {
+                desc.setTextureType(MTLTextureType::Type3D);
+                desc.setDepth(d);
+            } else {
+                desc.setTextureType(MTLTextureType::Type2DArray);
+                desc.setArrayLength(d);
+            }
+        }
+        desc.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::ShaderWrite | MTLTextureUsage::PixelFormatView);
+        desc.setStorageMode(MTLStorageMode::Shared);
+        let t = self.device.newTextureWithDescriptor(&desc)?;
+        let row = w * texel_bytes(format)?;
+        let zero = vec![0u8; row * h * if kind == TextureKind::Tex3d { d } else { 1 }];
+        let (depth, slices) = if kind == TextureKind::Tex3d { (d, 1) } else { (1, d) };
+        for slice in 0..slices {
+            unsafe {
+                t.replaceRegion_mipmapLevel_slice_withBytes_bytesPerRow_bytesPerImage(
+                    MTLRegion { origin: MTLOrigin { x: 0, y: 0, z: 0 }, size: MTLSize { width: w, height: h, depth } },
+                    0,
+                    slice,
+                    NonNull::new(zero.as_ptr() as *mut u8)?.cast(),
+                    row,
+                    row * h,
+                );
+            }
+        }
+        Some(t)
+    }
+
+    /// A zero-filled texture shaped like `image`, cached.
+    fn blank_texture(&mut self, image: Image, kind: TextureKind, format: MTLPixelFormat) -> Option<Retained<Texture>> {
+        if let Some(t) = self.blank.get(&(image, kind)) {
+            return Some(t.clone());
+        }
+        let desc = unsafe {
+            MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(format, image.width as usize, image.height as usize, false)
+        };
+        desc.setUsage(MTLTextureUsage::ShaderRead);
+        desc.setStorageMode(MTLStorageMode::Shared);
+        let t = self.device.newTextureWithDescriptor(&desc)?;
+        let row = image.width as usize * texel_bytes(format)?;
+        let zero = vec![0u8; row * image.height as usize];
+        unsafe {
+            t.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
+                MTLRegion {
+                    origin: MTLOrigin { x: 0, y: 0, z: 0 },
+                    size: MTLSize { width: image.width as usize, height: image.height as usize, depth: 1 },
+                },
+                0,
+                NonNull::new(zero.as_ptr() as *mut u8)?.cast(),
+                row,
+            );
+        }
+        self.blank.insert((image, kind), t.clone());
+        Some(t)
+    }
+
     /// The resources `program` binds, made ready before any encoder opens
     /// (uploads end the open pass).
     fn resolve(&mut self, host: &dyn Host, program: &Program, user: &[u32]) -> Option<Bound> {
@@ -1028,14 +1321,15 @@ impl Metal {
         for r in &program.translated.resources {
             match *r {
                 Resource::Texture { slot, ref source, kind, access } => {
-                    if kind == TextureKind::Tex3d || (kind != TextureKind::Tex2d && access != Access::Sample) {
+                    let d = self.descriptor(host, user, source, 8)?;
+                    let image = Image::read(&d);
+                    self.note(|| format!("program {:#x} t{slot} {kind:?} {access:?} {image:x?}", program.address));
+                    if kind == TextureKind::Cube && access != Access::Sample {
                         self.report(format!("{kind:?} textures with {access:?} access not supported"));
                         return None;
                     }
-                    let d = self.descriptor(host, user, source, 8)?;
-                    let image = Image::read(&d);
                     let tex = if access != Access::Sample {
-                        if image.address == 0 || image.kind < 8 { None } else { self.storage_image(host, image) }
+                        if image.address == 0 || image.kind < 8 { None } else { self.storage_image(host, image, kind) }
                     } else if image.address == 0 || image.kind < 8 {
                         self.null_texture(kind)
                     } else {
@@ -1097,7 +1391,9 @@ impl Metal {
             return Err("no compute program");
         }
         let users = (s[sh::COMPUTE_PGM_RSRC2] >> 1) & 0x1F;
-        let program = self.program(host, state, Stage::Compute, address, users, false).ok_or("compute program")?;
+        let user = &s[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + sh::COMPUTE_USER_DATA_COUNT];
+        let program = self.typed_program(host, state, Stage::Compute, address, users, false, 0, user).ok_or("compute program")?;
+        self.note(|| format!("compute {address:#x}"));
         let id = Arc::as_ptr(&program) as u64;
         let pipeline = match self.computes.get(&id) {
             Some(p) => p.clone(),
@@ -1112,7 +1408,6 @@ impl Metal {
         if threads.iter().product::<usize>() > pipeline.maxTotalThreadsPerThreadgroup() {
             return Err("threadgroup too large");
         }
-        let user = &s[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + sh::COMPUTE_USER_DATA_COUNT];
         let bound = self.resolve(host, &program, user);
         self.end_pass();
         let command = self.command();
@@ -1154,8 +1449,12 @@ impl Metal {
         }
         let vs_users = user_count(s[vs_rsrc2]);
         let ps_users = user_count(s[sh::SPI_SHADER_PGM_RSRC2_PS]);
-        let vertex = self.program(host, state, Stage::Vertex, vs_addr, vs_users, ngg).ok_or("vertex program")?;
-        let pixel = self.program(host, state, Stage::Pixel, ps_addr, ps_users, false).ok_or("pixel program")?;
+        let vs_data = &s[vs_user..vs_user + sh::USER_DATA_COUNT];
+        let ps_data = &s[sh::SPI_SHADER_USER_DATA_PS_0..sh::SPI_SHADER_USER_DATA_PS_0 + sh::USER_DATA_COUNT];
+        let col_format = export_formats(c);
+        let vertex = self.typed_program(host, state, Stage::Vertex, vs_addr, vs_users, ngg, 0, vs_data).ok_or("vertex program")?;
+        let pixel = self.typed_program(host, state, Stage::Pixel, ps_addr, ps_users, false, col_format, ps_data).ok_or("pixel program")?;
+        self.note(|| format!("vertex {vs_addr:#x} pixel {ps_addr:#x} col_format {:#x}", c[context::SPI_SHADER_COL_FORMAT]));
         let rect = u[uconfig::VGT_PRIMITIVE_TYPE] == 7;
         let gl_clip = c[context::PA_CL_CLIP_CNTL] & (1 << 19) == 0;
         let vertex_function = self.vertex_function(&vertex, &pixel, rect, gl_clip).ok_or("vertex program variant")?;
@@ -1177,6 +1476,7 @@ impl Metal {
                 continue;
             }
             let Some(t) = ColorTarget::read(c, n) else { continue };
+            self.note(|| format!("mrt{n} {t:x?}"));
             let (tex, format) = self.target(host, &t).ok_or("color target format")?;
             key.formats[targets.len()] = format.0;
             key.blends[targets.len()] = (Blend::read(c, n), write_mask(write, t.format.swap) as u8);
@@ -1190,6 +1490,7 @@ impl Metal {
         if let Some(d) = DepthTarget::read(c)
             && (wants_depth || c[context::DB_RENDER_CONTROL] & 3 != 0)
         {
+            self.note(|| format!("depth {d:x?} test {wants_depth}"));
             let (dw, dh) = size.unwrap_or((d.width, d.height));
             if let Some((tex, format, fresh)) = self.depth(&d, dw, dh) {
                 key.depth = format.0;
@@ -1212,8 +1513,6 @@ impl Metal {
             (None, Some((_, t, _))) => (t.width() as f64, t.height() as f64),
             _ => return Err("no target size"),
         };
-        let vs_data = &s[vs_user..vs_user + sh::USER_DATA_COUNT];
-        let ps_data = &s[sh::SPI_SHADER_USER_DATA_PS_0..sh::SPI_SHADER_USER_DATA_PS_0 + sh::USER_DATA_COUNT];
         let vs_bound = self.resolve(host, &vertex, vs_data).ok_or("resources")?;
         let ps_bound = self.resolve(host, &pixel, ps_data).ok_or("resources")?;
         let index = match draw {
@@ -1321,18 +1620,37 @@ impl Metal {
         Ok(())
     }
 
+    fn tracing(&self) -> bool {
+        self.trace_frames.is_some_and(|(a, b)| (a..=b).contains(&self.epoch))
+    }
+
+    fn end_trace(&mut self, what: String, result: Result<(), &'static str>) {
+        if let Some(lines) = self.trace.take() {
+            eprintln!("ps5slop: trace: {what} -> {result:?}");
+            for l in lines {
+                eprintln!("ps5slop: trace:     {l}");
+            }
+        }
+    }
+
     fn flush_and_wait(&mut self) {
         self.end_pass();
         if let Some(cb) = self.command.take() {
             cb.commit();
             cb.waitUntilCompleted();
+            if let Some(e) = cb.error() {
+                self.report(format!("command buffer failed: {}", e.localizedDescription()));
+            }
         }
     }
 }
 
 impl Backend for Metal {
     fn draw(&mut self, host: &dyn Host, state: &State, draw: Draw) {
-        match self.try_draw(host, state, draw) {
+        self.trace = self.tracing().then(Vec::new);
+        let result = self.try_draw(host, state, draw);
+        self.end_trace(format!("draw {draw:?}"), result);
+        match result {
             Ok(()) => self.draws += 1,
             Err(why) => {
                 self.skipped += 1;
@@ -1342,7 +1660,10 @@ impl Backend for Metal {
     }
 
     fn dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]) {
-        match self.try_dispatch(host, state, groups) {
+        self.trace = self.tracing().then(Vec::new);
+        let result = self.try_dispatch(host, state, groups);
+        self.end_trace(format!("dispatch {groups:?}"), result);
+        match result {
             Ok(()) => self.dispatches += 1,
             Err(why) => {
                 self.skipped += 1;
@@ -1388,6 +1709,9 @@ impl Backend for Metal {
         } else {
             self.flush_and_wait();
         }
+        if self.tracing() {
+            eprintln!("ps5slop: trace: frame {} done, showing {shown:x?}", self.epoch);
+        }
         self.epoch += 1;
     }
 }
@@ -1426,6 +1750,45 @@ fn gl_clip_space(msl: &str) -> String {
     }
     out.push_str(rest);
     out.replacen("struct VsOut {", "static inline float4 gl_z(float4 p) { p.z = (p.z + p.w) * 0.5; return p; }\n\nstruct VsOut {", 1)
+}
+
+/// `SPI_SHADER_COL_FORMAT` with each integer target's export made the
+/// matching 16-bit integer format, so the bits the CB receives reach it as
+/// they are (Metal rejects float outputs to integer attachments).
+fn export_formats(c: &[u32]) -> u32 {
+    let mut formats = c[context::SPI_SHADER_COL_FORMAT];
+    for n in 0..8 {
+        let Some(t) = ColorTarget::read(c, n) else { continue };
+        let export = formats >> (4 * n) & 0xF;
+        let want = match t.format.number {
+            4 => 7,
+            5 => 8,
+            _ => continue,
+        };
+        if export != 0 && export != want {
+            formats = formats & !(0xF << (4 * n)) | want << (4 * n);
+        }
+    }
+    formats
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Number {
+    Float,
+    Uint,
+    Sint,
+}
+
+/// Whether Metal format `f` holds floats (including normalised) or integers.
+fn number(f: MTLPixelFormat) -> Number {
+    use MTLPixelFormat as P;
+    if [P::R8Uint, P::R16Uint, P::RG8Uint, P::R32Uint, P::RG16Uint, P::RGBA8Uint, P::RGB10A2Uint, P::RG32Uint, P::RGBA16Uint, P::RGBA32Uint].contains(&f) {
+        Number::Uint
+    } else if [P::R8Sint, P::R16Sint, P::RG8Sint, P::R32Sint, P::RG16Sint, P::RGBA8Sint, P::RG32Sint, P::RGBA16Sint, P::RGBA32Sint].contains(&f) {
+        Number::Sint
+    } else {
+        Number::Float
+    }
 }
 
 fn write_mask(bits: u32, swap: u32) -> usize {
@@ -1480,22 +1843,42 @@ fn image_format(format: u32) -> Option<(MTLPixelFormat, u32)> {
     use MTLPixelFormat as P;
     Some(match format {
         1 => (P::R8Unorm, 1),
+        2 => (P::R8Snorm, 1),
         5 => (P::R8Uint, 1),
+        6 => (P::R8Sint, 1),
         7 => (P::R16Unorm, 2),
+        8 => (P::R16Snorm, 2),
+        11 => (P::R16Uint, 2),
+        12 => (P::R16Sint, 2),
         13 => (P::R16Float, 2),
         14 => (P::RG8Unorm, 2),
+        15 => (P::RG8Snorm, 2),
+        18 => (P::RG8Uint, 2),
+        19 => (P::RG8Sint, 2),
         20 => (P::R32Uint, 4),
+        21 => (P::R32Sint, 4),
         22 => (P::R32Float, 4),
         23 => (P::RG16Unorm, 4),
+        24 => (P::RG16Snorm, 4),
+        27 => (P::RG16Uint, 4),
+        28 => (P::RG16Sint, 4),
         29 => (P::RG16Float, 4),
         36 | 43 => (P::RG11B10Float, 4),
         44 | 50 => (P::RGB10A2Unorm, 4),
         56 => (P::RGBA8Unorm, 4),
         57 => (P::RGBA8Snorm, 4),
         60 => (P::RGBA8Uint, 4),
+        61 => (P::RGBA8Sint, 4),
+        62 => (P::RG32Uint, 8),
+        63 => (P::RG32Sint, 8),
         64 => (P::RG32Float, 8),
         65 => (P::RGBA16Unorm, 8),
+        66 => (P::RGBA16Snorm, 8),
+        69 => (P::RGBA16Uint, 8),
+        70 => (P::RGBA16Sint, 8),
         71 => (P::RGBA16Float, 8),
+        75 => (P::RGBA32Uint, 16),
+        76 => (P::RGBA32Sint, 16),
         77 => (P::RGBA32Float, 16),
         128 => (P::R8Unorm_sRGB, 1),
         130 => (P::RGBA8Unorm_sRGB, 4),
@@ -1515,6 +1898,21 @@ fn image_format(format: u32) -> Option<(MTLPixelFormat, u32)> {
         182 => (P::BC7_RGBAUnorm_sRGB, 16),
         _ => return None,
     })
+}
+
+fn is_depth_format(f: MTLPixelFormat) -> bool {
+    matches!(f, MTLPixelFormat::Depth32Float | MTLPixelFormat::Depth16Unorm | MTLPixelFormat::Depth32Float_Stencil8)
+}
+
+/// Whether swizzle mode `raw` is one of the `_Z` (depth) modes: 4 KiB and
+/// 64 KiB, plain, `_T` and `_X`.
+fn is_depth_layout(raw: u32) -> bool {
+    matches!(raw, 0x04 | 0x08 | 0x10 | 0x14 | 0x18)
+}
+
+/// Bytes per texel of an uncompressed format, from the image format table.
+fn texel_bytes(f: MTLPixelFormat) -> Option<usize> {
+    (0..256).find_map(|n| image_format(n).filter(|(m, _)| *m == f).map(|(_, b)| b as usize))
 }
 
 fn is_compressed(f: MTLPixelFormat) -> bool {
@@ -1635,6 +2033,17 @@ mod tests {
             // SAFETY: inside the mapping.
             Some(unsafe { self.base.add(addr as usize) })
         }
+    }
+
+    #[test]
+    fn integer_targets_take_integer_exports() {
+        let mut c = vec![0u32; 0x400];
+        for (n, number) in [(0, 4), (1, 7)] {
+            c[context::CB_COLOR0_BASE + n * context::CB_COLOR_STRIDE] = 0x1000 * (n as u32 + 1);
+            c[context::CB_COLOR0_INFO + n * context::CB_COLOR_STRIDE] = 12 << 2 | number << 8;
+        }
+        c[context::SPI_SHADER_COL_FORMAT] = 0x944;
+        assert_eq!(export_formats(&c), 0x947);
     }
 
     #[test]

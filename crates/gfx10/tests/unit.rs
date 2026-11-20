@@ -41,6 +41,8 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
         col_format: 9,
         compute_rsrc2: 0,
         threads: [1, 1, 1],
+        uint_textures: 0,
+        sint_textures: 0,
     })
     .unwrap()
 }
@@ -100,6 +102,8 @@ fn compute(code: &[u32], user_sgprs: u32, rsrc2: u32) -> gfx10::Translated {
         col_format: 0,
         compute_rsrc2: rsrc2,
         threads: [64, 1, 1],
+        uint_textures: 0,
+        sint_textures: 0,
     })
     .unwrap()
 }
@@ -237,6 +241,8 @@ fn integer_colour_formats_export_integers() {
         col_format: 7,
         compute_rsrc2: 0,
         threads: [1, 1, 1],
+        uint_textures: 0,
+        sint_textures: 0,
     };
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("uint4 c0 [[color(0)]]"));
@@ -245,4 +251,46 @@ fn integer_colour_formats_export_integers() {
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("int4 c0 [[color(0)]]"));
     compile(&t.msl);
+}
+
+#[test]
+fn integer_texture_slots_read_and_write_integers() {
+    let code = [
+        0xF000_0F08, 0x0000_0200, // image_load v[2:5], v[0:1], s[0:7] dmask:0xf dim:2D
+        0xBF8C_3F70, // s_waitcnt vmcnt(0)
+        0xF020_0F08, 0x0002_0200, // image_store v[2:5], v[0:1], s[8:15] dmask:0xf dim:2D
+        0xBF81_0000, // s_endpgm
+    ];
+    let request = |uint_textures, sint_textures| Request {
+        stage: Stage::Compute,
+        code: &code,
+        user_sgprs: 16,
+        ngg: false,
+        ps_input_ena: 0,
+        ps_input_addr: 0,
+        ps_input_cntl: &[],
+        col_format: 0,
+        compute_rsrc2: 16 << 1,
+        threads: [64, 1, 1],
+        uint_textures,
+        sint_textures,
+    };
+    let float = translate(&request(0, 0)).unwrap();
+    let typed = translate(&request(1, 2)).unwrap();
+    assert_eq!(float.resources, typed.resources);
+    assert!(typed.msl.contains("texture2d<uint> t0"));
+    assert!(typed.msl.contains("texture2d<int, access::write> t1"));
+    compile(&typed.msl);
+}
+
+#[test]
+fn version_1_captures_still_load() {
+    let code = [0xBF81_0000u32];
+    let mut words = vec![u32::from_le_bytes(*b"g10c"), 1, 2, 0, 0, 0, 0, 0, 0, 64, 1, 1, 0];
+    words.extend_from_slice(&code);
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let c = gfx10::capture::Capture::from_bytes(&bytes).unwrap();
+    assert_eq!((c.threads, c.uint_textures, c.code.as_slice()), ([64, 1, 1], 0, &code[..]));
+    let again = gfx10::capture::Capture::from_bytes(&c.to_bytes()).unwrap();
+    assert_eq!((again.threads, again.code), (c.threads, c.code));
 }
