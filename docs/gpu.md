@@ -111,3 +111,6 @@ What Balatro draws (2026-11-20): an NGG vertex program in the ES slot (`VGT_SHAD
 - Which AGC functions a GameMaker or LÖVE title calls, and how much of their meaning we can infer from the PM4 they leave behind.
 - How games compile shaders: precompiled in the package (likely), or built at run time.
 - How tiling (RDNA swizzle modes) maps onto what Metal can sample or render to without copies.
+
+Status, 2026-11-20, Minecraft in a world (after the SDWA and depth-slice fixes): every draw and dispatch of a traced frame reaches Metal. The presented frame shows the sky with clouds, the block-selection outline and the HUD (hotbar, hearts, hunger, button hints), but no terrain. Target dumps show the terrain and entities in the G-buffer, in the HDR scene target and in the tonemapped output, so they are lost in a later pass; the terrain also has wrong colours there (a blue, white and black checker), so its texture atlas is likely read wrongly. Two pixel programs are not translated yet (`v_writelane_b32`, and a descriptor whose source the translator cannot trace). After a `targets` dump the run presented only black frames; whether the dump causes this is not checked.
+

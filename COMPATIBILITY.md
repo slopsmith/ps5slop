@@ -23,6 +23,6 @@ What each title does under ps5slop, from our own runs on an Apple Silicon Mac.
 | Title ID | Name | Status | Notes |
 | --- | --- | --- | --- |
 | PPSA21402 | Balatro | ⭐ Perfect | 01.015.000: plays normally with sound. |
-| PPSA17221 | Minecraft | 🟡 Ingame | v26.10: menus, world creation and loading work; in the world only the sky is drawn. Slow. |
+| PPSA17221 | Minecraft | 🟡 Ingame | v26.10: menus and world loading work; in the world the sky and HUD draw, terrain does not reach the screen. Slow. |
 | PPSA21564 | Astro Bot | ⚫ Nothing | v1.019 (.pkg): stops at unimplemented libkernel NID `4oXYe9Xmk0Q`. |
 | PPSA06084 | Superliminal | ⚫ Nothing | 01.010 (.pkg): stops at unimplemented `sceKernelSetVirtualRangeName`. |
