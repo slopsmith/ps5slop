@@ -32,8 +32,8 @@ enum Command {
         /// Runs guest code in the interpreter instead of the JIT.
         #[arg(long)]
         interpreter: bool,
-        /// The host folder the guest sees as `/data` (default: a folder per
-        /// title under ~/Library/Application Support/ps5slop).
+        /// The host folder the guest sees as `/data`, with saves next to it
+        /// (default: one per title in ~/Library/Application Support/ps5slop).
         #[arg(long, value_name = "DIR")]
         data: Option<PathBuf>,
         /// A fake-signed PS4 package's 32-character passcode (all zeros by
@@ -106,8 +106,8 @@ fn main() -> ExitCode {
         }
     }
     let data = data.or_else(|| default_data(&title));
-    let temp = data.as_ref().map(|d| d.with_file_name("temp"));
-    let saves = data.as_ref().map(|d| d.with_file_name("savedata"));
+    let temp = data.as_ref().map(|d| beside(d, "temp"));
+    let saves = data.as_ref().map(|d| beside(d, "savedata"));
     for d in data.iter().chain(&temp).chain(&saves) {
         if let Err(e) = std::fs::create_dir_all(d) {
             eprintln!("ps5slop: cannot make {}: {e}", d.display());
@@ -215,6 +215,15 @@ fn play_input(kernel: std::sync::Arc<hle::Kernel>, script: String) {
 fn write_frame(kernel: &hle::Kernel, out: &std::path::Path) {
     if let Err(e) = ps5slop::write_frame(kernel, out) {
         eprintln!("ps5slop: {e}");
+    }
+}
+
+// `<data>.<what>` unless the folder is named `data`, so that two data
+// folders side by side never share saves.
+fn beside(data: &std::path::Path, what: &str) -> PathBuf {
+    match data.file_name().and_then(|n| n.to_str()) {
+        Some("data") | None => data.with_file_name(what),
+        Some(name) => data.with_file_name(format!("{name}.{what}")),
     }
 }
 
