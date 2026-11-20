@@ -118,6 +118,8 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelCheckedReleaseDirectMemory", checked_release),
     f("sceKernelMapDirectMemory", map),
     f("sceKernelMapNamedDirectMemory", map),
+    f("sceKernelMapFlexibleMemory", map_flexible),
+    f("sceKernelMapNamedFlexibleMemory", map_flexible),
     f("sceKernelReserveVirtualRange", reserve),
     f("sceKernelVirtualQuery", virtual_query),
     f("sceKernelSetVirtualRangeName", set_range_name),
@@ -219,9 +221,37 @@ fn map(env: &mut Env) -> Result<Outcome, CallError> {
     let exec = prot & PROT_CPU_EXEC != 0;
     let prot = Prot::new(read, write, exec);
     let mapped = if flags & MAP_FIXED != 0 {
-        env.mem.map_over(wanted, len, prot, "direct memory").map(|()| wanted)
+        env.mem
+            .map_over(wanted, len, prot, "direct memory")
+            .map(|()| wanted)
     } else {
-        env.mem.map_free(wanted.max(MAP_AREA), len, align, prot, "direct memory")
+        env.mem
+            .map_free(wanted.max(MAP_AREA), len, align, prot, "direct memory")
+    };
+    let Ok(at) = mapped else {
+        return ret(sce_error(errno::ENOMEM));
+    };
+    env.mem.write_u64(addr_at, at)?;
+    ret(0)
+}
+
+/// `sceKernelMapFlexibleMemory(*addr, len, prot, flags)`, and the named
+/// form with a fifth argument, the name: zeroed memory with no direct range
+/// behind it, kept as an `mmap` region so `sceKernelVirtualQuery` reports it
+/// as flexible.
+fn map_flexible(env: &mut Env) -> Result<Outcome, CallError> {
+    let (addr_at, len, prot, flags) = (env.arg(0), env.arg(1), env.arg(2), env.arg(3));
+    if !valid(len, 0) {
+        return ret(sce_error(errno::EINVAL));
+    }
+    let wanted = env.mem.read_u64(addr_at)?;
+    let read = prot & (PROT_CPU_READ | PROT_CPU_WRITE) != 0;
+    let prot = Prot::new(read, prot & PROT_CPU_WRITE != 0, prot & PROT_CPU_EXEC != 0);
+    let mapped = if flags & MAP_FIXED != 0 {
+        env.mem.map_over(wanted, len, prot, "mmap").map(|()| wanted)
+    } else {
+        env.mem
+            .map_free(wanted.max(MAP_AREA), len, PAGE_SIZE, prot, "mmap")
     };
     let Ok(at) = mapped else {
         return ret(sce_error(errno::ENOMEM));
@@ -239,9 +269,12 @@ fn reserve(env: &mut Env) -> Result<Outcome, CallError> {
     }
     let wanted = env.mem.read_u64(addr_at)?;
     let reserved = if flags & MAP_FIXED != 0 {
-        env.mem.map_over(wanted, len, Prot::NONE, "reserved").map(|()| wanted)
+        env.mem
+            .map_over(wanted, len, Prot::NONE, "reserved")
+            .map(|()| wanted)
     } else {
-        env.mem.map_free(wanted.max(MAP_AREA), len, align, Prot::NONE, "reserved")
+        env.mem
+            .map_free(wanted.max(MAP_AREA), len, align, Prot::NONE, "reserved")
     };
     let Ok(at) = reserved else {
         return ret(sce_error(errno::ENOMEM));
