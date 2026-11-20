@@ -155,16 +155,6 @@ pub static STUBS: &[Function] = &[
         func: unsupported,
     },
     Function {
-        library: "libSceNpCppWebApi",
-        name: "#Y295ygEccqk",
-        func: unsupported,
-    },
-    Function {
-        library: "libSceNpCppWebApi",
-        name: "#UYPxv8MIzGo",
-        func: unsupported,
-    },
-    Function {
         library: "libSceTextToSpeech2",
         name: "#08JSg9p6bgQ",
         func: unsupported,
@@ -313,6 +303,8 @@ pub static STUBS: &[Function] = &[
         name: "scePlayGoGetToDoList",
         func: write_zero_u32::<3>,
     },
+    zero("libSceGameUpdate", "sceGameUpdateInitialize"),
+    zero("libSceGameUpdate", "sceGameUpdateTerminate"),
     zero("libScePlayGo", "scePlayGoClose"),
     zero("libScePlayGo", "scePlayGoTerminate"),
     zero("libSceSaveData_native", "sceSaveDataSetupSaveDataMemory2"),
@@ -451,6 +443,16 @@ pub static STUBS: &[Function] = &[
         "libSceNpUniversalDataSystem",
         "sceNpUniversalDataSystemEventPropertyArraySetString",
     ),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemCreateEventPropertyObject",
+    ),
+    zero(
+        "libSceNpUniversalDataSystem",
+        "sceNpUniversalDataSystemDestroyEventPropertyObject",
+    ),
+    zero("libSceNpTrophy2", "sceNpTrophy2RegisterUnlockCallback"),
+    zero("libSceNpSessionSignaling", "sceNpSessionSignalingInitialize"),
     zero("libSceNpGameIntent", "sceNpGameIntentInitialize"),
     zero("libSceNpGameIntent", "sceNpGameIntentTerminate"),
     out_id::<0>("libSceNpTrophy2", "sceNpTrophy2CreateContext"),
@@ -490,6 +492,8 @@ pub static STUBS: &[Function] = &[
     zero("libSceAjm", "sceAjmModuleRegister"),
     zero("libSceNpCppWebApi", "#8x++mBOUeso"),
     zero("libSceNpCppWebApi", "#52AlYvq+dmk"),
+    zero("libSceNpCppWebApi", "#Y295ygEccqk"),
+    zero("libSceNpCppWebApi", "#UYPxv8MIzGo"),
     zero("libSceJson2", "_ZN3sce4Json11InitializerC1Ev"),
     zero("libSceJson2", "_ZN3sce4Json14InitParameter2C1Ev"),
     zero(
@@ -506,7 +510,7 @@ pub static STUBS: &[Function] = &[
     Function {
         library: "libSceJson2",
         name: "_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E",
-        func: unsupported,
+        func: ok,
     },
     out_id::<3>("libSceAjm", "sceAjmInstanceCreate"),
     Function {
@@ -549,26 +553,6 @@ pub static STUBS: &[Function] = &[
     Function {
         library: "libSceNpTrophy2",
         name: "sceNpTrophy2GetTrophyInfo",
-        func: unsupported,
-    },
-    Function {
-        library: "libSceNpCppWebApi",
-        name: "#Y295ygEccqk",
-        func: unsupported,
-    },
-    Function {
-        library: "libSceNpCppWebApi",
-        name: "#52AlYvq+dmk",
-        func: unsupported,
-    },
-    Function {
-        library: "libSceNpCppWebApi",
-        name: "#UYPxv8MIzGo",
-        func: unsupported,
-    },
-    Function {
-        library: "libSceNpCppWebApi",
-        name: "#8x++mBOUeso",
         func: unsupported,
     },
 ];

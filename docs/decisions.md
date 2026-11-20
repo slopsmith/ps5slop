@@ -368,3 +368,9 @@ The main thread's stack grew from 1 MiB to 8 MiB ([memory.md](memory.md)). Minec
 
 Reason: the console's default main-thread stack size is unknown. The process parameters (`PT_SCE_PROCPARAM`) of Minecraft, Balatro and Isaac all leave the main-thread stack-size pointer null, so there is no per-title value to honour; 8 MiB is FreeBSD's default stack limit and costs only address space, since host pages are committed on first touch. Reading the field when a title does set it is left until one does.
 
+
+## 2026-11-21: Unity's PSN plugin initialises (placeholders succeed)
+
+The libSceNpCppWebApi initialisation (`#UYPxv8MIzGo`) and `sce::Json::Initializer::initialize(InitParameter2)` now succeed and do nothing, where they used to fail so that Superliminal's PSN plugin would run "offline". The PSN library placeholders it calls next (GameIntent, EntitlementAccess, GameUpdate, SessionSignaling, Trophy2, UDS) succeed too.
+
+Reason: offline was not a state the title handles. Its PSN plugin's `PrxInitialize` stops at the first failure, the title's `PS5Manager` never leaves its initialising state, and the loading screen waits for that state before it activates the menu scene ([hle-kernel.md](hle-kernel.md)). With success it reaches its menu and first level. Nothing goes to the network: the calls do nothing. If a title later depends on results these calls should have produced (trophy data, web API responses), that will show as missing data rather than a stall.

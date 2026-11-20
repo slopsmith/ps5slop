@@ -21,6 +21,10 @@ const fn f(name: &'static str, func: crate::HostFn) -> Function {
 pub static STUBS: &[Function] = &[
     f("sceAvPlayerInit", init),
     f("sceAvPlayerPostInit", ok),
+    f("sceAvPlayerSetLogCallback", ok),
+    f("sceAvPlayerInitEx", ok),
+    f("sceAvPlayerAddSourceEx", ok),
+    f("sceAvPlayerCurrentTime", ok),
     f("sceAvPlayerAddSource", add_source),
     f("sceAvPlayerStart", start),
     f("sceAvPlayerStop", ok),
