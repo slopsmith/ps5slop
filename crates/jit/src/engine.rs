@@ -468,7 +468,7 @@ impl Engine {
                     note_block(rip);
                     count_exit(Count::Miss);
                     if is_trap(mem, rip) {
-                        if machine()?.reenter_native(rip) {
+                        if crate::has_native(rip) && machine()?.reenter_native(rip) {
                             continue;
                         }
                         count_exit(Count::HostCall);

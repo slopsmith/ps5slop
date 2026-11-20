@@ -113,6 +113,15 @@ pub struct RegionInfo {
     pub name: String,
 }
 
+/// A mapped region without its name, as listed by [`Memory::region_spans`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegionSpan {
+    pub start: u64,
+    pub end: u64,
+    pub prot: Prot,
+    pub trap: bool,
+}
+
 /// Past this many unread fresh ranges, everything counts as fresh.
 const FRESH_LIMIT: usize = 4096;
 
@@ -449,6 +458,19 @@ impl Memory {
             candidate = candidate.max(r.end);
         }
         (candidate.checked_add(len)? <= self.shared.size).then_some(candidate)
+    }
+
+    /// The mapped regions, like [`Memory::regions`] without their names.
+    pub fn region_spans(&self) -> Vec<RegionSpan> {
+        self.regions_read()
+            .iter()
+            .map(|(&start, r)| RegionSpan {
+                start,
+                end: r.end,
+                prot: r.prot,
+                trap: r.trap,
+            })
+            .collect()
     }
 
     pub fn regions(&self) -> Vec<RegionInfo> {

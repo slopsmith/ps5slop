@@ -37,11 +37,12 @@ pub const FPSR_KEPT: usize = 0x268;
 /// rebuilt while vCPUs still walk the other.
 pub const TABLES: [(usize, usize); 2] = [(0x10_0000, 0x90_0000), (0x90_0000, 0x110_0000)];
 /// Guest RIP to translated code: `LOOKUP_ENTRIES` of (RIP, address).
-pub const LOOKUP: usize = 0x120_0000;
-pub const LOOKUP_BITS: u32 = 16;
+pub const LOOKUP: usize = RUNTIME_SIZE - LOOKUP_ENTRIES * 16;
+pub const LOOKUP_BITS: u32 = 20;
 pub const LOOKUP_ENTRIES: usize = 1 << LOOKUP_BITS;
-pub const CODE_CACHE: usize = 0x140_0000;
-pub const CODE_CACHE_END: usize = RUNTIME_SIZE;
+pub const CODE_CACHE: usize = 0x120_0000;
+/// Blocks branch to the dispatcher (at `CODE`) with B, which reaches 128 MiB.
+pub const CODE_CACHE_END: usize = 0x800_0000;
 
 pub const fn va(offset: usize) -> u64 {
     RUNTIME_VA + offset as u64
@@ -54,4 +55,5 @@ pub const fn ipa(offset: usize) -> u64 {
 const _: () = assert!(STACKS + MAX_VCPUS * STACK_SIZE <= CONTEXTS);
 const _: () = assert!(FPSR_KEPT + 8 <= CONTEXT_SIZE);
 const _: () = assert!(CONTEXTS + MAX_VCPUS * CONTEXT_SIZE <= TABLES[0].0);
-const _: () = assert!(TABLES[1].1 <= LOOKUP && LOOKUP + LOOKUP_ENTRIES * 16 <= CODE_CACHE);
+const _: () = assert!(TABLES[1].1 <= CODE_CACHE && CODE_CACHE_END <= LOOKUP);
+const _: () = assert!(CODE_CACHE_END - CODE <= 1 << 27);

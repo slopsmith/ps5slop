@@ -74,6 +74,16 @@ pub enum Native {
     SelfThread,
 }
 
+/// Trap addresses with a native function, readable without the machine lock.
+static NATIVE_TRAPS: std::sync::RwLock<Vec<u64>> = std::sync::RwLock::new(Vec::new());
+
+fn has_native(addr: u64) -> bool {
+    NATIVE_TRAPS
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&addr)
+}
+
 /// Makes calls to the host function at trap address `addr` run `native`
 /// inside the VM (not in verify mode, which checks the host versions).
 pub fn set_native(addr: u64, native: Native) {
@@ -99,6 +109,10 @@ pub fn set_native(addr: u64, native: Native) {
         };
         m.natives.retain(|&(a, _)| a != addr);
         m.natives.push((addr, place));
+        NATIVE_TRAPS
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(addr);
         m.enter(addr, place);
     }
 }
@@ -300,7 +314,15 @@ impl Machine {
             self.forget_code();
         }
         self.fresh.extend(mem.take_fresh());
-        let regions: Vec<_> = mem.regions().into_iter().filter(|r| !r.trap).collect();
+        let regions: Vec<_> = mem
+            .region_spans()
+            .into_iter()
+            .filter(|r| {
+                !r.trap
+                    && (r.prot.allows(memory::Access::Read)
+                        || r.prot.allows(memory::Access::Write))
+            })
+            .collect();
         let access: Vec<(u64, u64, bool)> = regions
             .iter()
             .filter(|r| r.prot.allows(memory::Access::Read) || r.prot.allows(memory::Access::Write))
@@ -343,7 +365,7 @@ impl Machine {
 
     /// Brings the stage-2 mappings in line with `regions`, mapping again the
     /// ranges whose host pages were replaced.
-    fn map_stage2(&mut self, mem: &Memory, regions: &[memory::RegionInfo]) -> Result<(), Error> {
+    fn map_stage2(&mut self, mem: &Memory, regions: &[memory::RegionSpan]) -> Result<(), Error> {
         let wanted: Vec<(u64, u64)> = regions.iter().map(|r| (r.start, r.end)).collect();
         let fresh = std::mem::take(&mut self.fresh);
         let stale = |&(s, e): &(u64, u64)| fresh.iter().any(|&(fs, fe)| fs < e && s < fe);
@@ -370,9 +392,9 @@ impl Machine {
         Ok(())
     }
 
-    /// Whether an address the active tables give access to stays mapped in
-    /// `regions` with less; only then must vCPUs flush (see `docs/jit.md`).
-    fn reduces_access(&self, regions: &[memory::RegionInfo], access: &[(u64, u64, bool)]) -> bool {
+    /// Whether a writable address in the active tables stays mapped read-only
+    /// in `regions`; only then must vCPUs flush (see `docs/jit.md`).
+    fn reduces_access(&self, regions: &[memory::RegionSpan], access: &[(u64, u64, bool)]) -> bool {
         let new: HashSet<&(u64, u64, bool)> = access.iter().collect();
         let removed: Vec<_> = self.mirrored.iter().filter(|m| !new.contains(m)).collect();
         if removed.is_empty() {
@@ -381,9 +403,9 @@ impl Machine {
         regions.iter().any(|r| {
             let read = r.prot.allows(memory::Access::Read);
             let write = r.prot.allows(memory::Access::Write);
-            removed.iter().any(|&&(s, e, w)| {
-                s < r.end && r.start < e && (!(read || write) || (w && !write))
-            })
+            removed
+                .iter()
+                .any(|&&(s, e, w)| s < r.end && r.start < e && read && w && !write)
         })
     }
 
