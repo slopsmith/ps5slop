@@ -36,6 +36,10 @@ enum Command {
         /// (default: one per title in ~/Library/Application Support/ps5slop).
         #[arg(long, value_name = "DIR")]
         data: Option<PathBuf>,
+        /// A PS4 patch package to lay over the base package `PATH`. Not
+        /// needed when `PATH` is the patch and its base is in the same folder.
+        #[arg(long, value_name = "PKG")]
+        patch: Option<PathBuf>,
         /// A fake-signed PS4 package's 32-character passcode (all zeros by
         /// default).
         #[arg(long)]
@@ -55,6 +59,7 @@ fn main() -> ExitCode {
         after,
         interpreter,
         data,
+        patch,
         passcode,
         control,
     } = Cli::parse().command;
@@ -70,7 +75,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let title = match Title::open(&path, &passcode) {
+    let title = match Title::open(&path, patch.as_deref(), &passcode) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("ps5slop: {e}");

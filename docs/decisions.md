@@ -249,6 +249,12 @@ The code cache is split into 8 MiB segments; when it is full, the coldest segmen
 Reason: Minecraft filled the cache when creating a world, and from then on all new code ran in the interpreter. vic asked for eviction of the least used and oldest code, in chunks, rather than flushing the whole cache, which would stall every thread at once. Use is sampled by kicking vCPUs 100 times a second rather than counted per block, which would slow every block down.
 
 
+## 2026-11-20: PS4 patches run over their base package
+
+`ps5slop run` takes a PS4 patch package over its base (`--patch`), and given a patch alone finds the base beside it ([packages.md](packages.md)).
+
+Reason: vic's Deltarune download is a base package and a patch, and the link points at the patch, which holds no executable. The console mounts both as one `/app0`; extracting and merging them by hand would copy 1.3 GB.
+
 ## 2026-11-20: Small new mappings are zeroed in place
 
 A new guest mapping under 64 MiB over host pages that already exist is zeroed in place instead of getting fresh pages, and unmaps under 64 MiB leave the host pages alone ([memory.md](memory.md)).

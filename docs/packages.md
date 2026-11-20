@@ -76,6 +76,12 @@ Sources disagree on step 3: the psdevwiki PKG page (vic's saved copy) says the s
 
 **Checked on 2026-11-20** with vic's two OpenOrbis packages (`pkgstore.pkg`, and `example.pkg` from `funny-ps4-engine`): every file read through `/app0` matches an extraction of the same package byte for byte (the ignored test `title::tests::package_files_match_their_extraction`), and `ps5slop run --headless` on each package gets as far as on its extracted folder (both stop at the unimplemented `sceMsgDialogInitialize`). **Checked on 2026-11-20** with the two PS5 fake packages: `ps5slop run --headless` loads both straight from the `.pkg`. Superliminal stops at the unimplemented libkernel import with NID `DGMG3JshrZU`, exactly as its extracted folder does; Astro Bot stops at the unimplemented libkernel import `4oXYe9Xmk0Q` (1,292 imports not implemented yet). Format details: "The inner image" below.
 
+### Patches
+
+A PS4 update ships as its own package, a **patch**: `param.sfo`'s `CATEGORY` is `gp` (psdevwiki, "PARAM.SFO"; a base game is `gd`), and its image holds only the files the update changes. On the console the system mounts `/app0` with the patch's files over the base game's. We do the same: `ps5slop run BASE.pkg --patch PATCH.pkg` lays the patch's image over the base's (`Layered` in `crates/ps5slop/src/title.rs`): a path the patch holds comes from the patch, anything else from the base, and directory listings merge. Given a patch alone, `ps5slop run` looks for its base in the same folder, and beside the link's target when the path is a link: the first package by name with the same title id that is not a patch. Both open with the same passcode.
+
+**Checked on 2026-11-20** with Deltarune (`CUSA52463`): the v1.12 patch (`A0112`, 111 files, content flags `0x62300000`) holds new `game.win` files and a fifth chapter, but no `eboot.bin` and no `sce_module/`; those come from the base package (`A0100`, 402 files, flags `0x0A000000`) next to it. Both open with the all-zero passcode. `ps5slop run` on the patch finds the base, loads the base's `eboot.bin` and reads the patch's `game.win` files. Whether the console also takes the patch's `sce_sys` files (its `param.sfo` says 01.12) we assume, unverified.
+
 ## PS5
 
 Source: LibProsperoPKG's [ps5-pkg-format.md](https://github.com/SvenGDK/LibProsperoPKG/blob/main/docs/ps5-pkg-format.md) (GPL-3.0: read for facts only; unverified by us, no PS5 package tested yet).

@@ -1,5 +1,6 @@
 //! What `ps5slop run` was given: a lone executable, an app folder, or a
-//! package whose files are read in place (see `docs/packages.md`).
+//! package whose files are read in place, with a PS4 patch package over it
+//! (see `docs/packages.md`).
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -19,36 +20,85 @@ pub enum Title {
     Executable(PathBuf),
     /// A folder holding `eboot.bin` (an `app0` dump).
     Folder(PathBuf),
+    /// A base package, with its patch's files over it when there is one.
     Package {
         path: PathBuf,
-        fs: Arc<PackageFs>,
+        fs: Arc<dyn ImageFs>,
         id: Option<String>,
     },
 }
 
 impl Title {
     /// Opens `path`: a folder, a `.pkg` file (opened with `passcode` if it is
-    /// a PS4 package) or an executable.
-    pub fn open(path: &Path, passcode: &Passcode) -> Result<Self, String> {
+    /// a PS4 package) or an executable. `patch` is a PS4 patch package laid
+    /// over a base package. When `path` is itself a patch, its base is looked
+    /// for in the same folder.
+    pub fn open(path: &Path, patch: Option<&Path>, passcode: &Passcode) -> Result<Self, String> {
         if path.is_dir() {
-            return Ok(Title::Folder(path.to_path_buf()));
+            return Self::without_patch(patch, Title::Folder(path.to_path_buf()));
         }
         let is_pkg = path
             .extension()
             .is_some_and(|x| x.eq_ignore_ascii_case("pkg"));
         if !is_pkg {
-            return Ok(Title::Executable(path.to_path_buf()));
+            return Self::without_patch(patch, Title::Executable(path.to_path_buf()));
         }
-        let package =
-            Package::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        let package = open_package(path)?;
         let id = package.title_id();
-        let fs = PackageFs::new(package, passcode)
-            .map_err(|e| format!("cannot read the files in {}: {e}", path.display()))?;
+        let (base_path, base, patch) = if package.is_patch() {
+            if patch.is_some() {
+                return Err(format!("{} is a patch itself", path.display()));
+            }
+            let base_path = find_base(path, id.as_deref()).ok_or_else(|| {
+                format!(
+                    "{} is a patch; its base game package was not found in the same folder \
+                     (give the base package, and this one with --patch)",
+                    path.display()
+                )
+            })?;
+            eprintln!("ps5slop: base package {}", base_path.display());
+            let base = open_package(&base_path)?;
+            (base_path, base, Some((path.to_path_buf(), package)))
+        } else {
+            let patch = patch
+                .map(|p| open_package(p).map(|pkg| (p.to_path_buf(), pkg)))
+                .transpose()?;
+            (path.to_path_buf(), package, patch)
+        };
+        let id = base.title_id();
+        let mut fs: Arc<dyn ImageFs> = Arc::new(package_fs(&base_path, base, passcode)?);
+        if let Some((patch_path, patch)) = patch {
+            if !patch.is_patch() {
+                return Err(format!("{} is not a patch", patch_path.display()));
+            }
+            if patch.title_id() != id {
+                return Err(format!(
+                    "{} is a patch for another title ({:?}, not {:?})",
+                    patch_path.display(),
+                    patch.title_id(),
+                    id
+                ));
+            }
+            fs = Arc::new(Layered {
+                top: Arc::new(package_fs(&patch_path, patch, passcode)?),
+                base: fs,
+            });
+        }
         Ok(Title::Package {
-            path: path.to_path_buf(),
-            fs: Arc::new(fs),
+            path: base_path,
+            fs,
             id,
         })
+    }
+
+    fn without_patch(patch: Option<&Path>, title: Title) -> Result<Self, String> {
+        match patch {
+            Some(p) => Err(format!(
+                "{}: a patch goes with a base package only",
+                p.display()
+            )),
+            None => Ok(title),
+        }
     }
 
     /// The executable's bytes.
@@ -109,6 +159,71 @@ impl Title {
             Title::Executable(p) | Title::Package { path: p, .. } => p.file_stem().map(Into::into),
             Title::Folder(d) => d.file_name().map(Into::into),
         }
+    }
+}
+
+fn open_package(path: &Path) -> Result<Package, String> {
+    Package::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))
+}
+
+fn package_fs(path: &Path, package: Package, passcode: &Passcode) -> Result<PackageFs, String> {
+    PackageFs::new(package, passcode)
+        .map_err(|e| format!("cannot read the files in {}: {e}", path.display()))
+}
+
+/// The first package (by name) that has the same title id as `patch` and is
+/// not a patch, next to `patch` or, if it is a link, next to its target.
+fn find_base(patch: &Path, id: Option<&str>) -> Option<PathBuf> {
+    let real = std::fs::canonicalize(patch).ok()?;
+    let mut dirs = vec![match patch.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+        _ => PathBuf::from("."),
+    }];
+    dirs.extend(real.parent().map(Path::to_path_buf));
+    dirs.into_iter().find_map(|dir| {
+        let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("pkg")))
+            .filter(|p| std::fs::canonicalize(p).ok().as_ref() != Some(&real))
+            .collect();
+        found.sort();
+        found.into_iter().find(|p| {
+            Package::open(p).is_ok_and(|pkg| !pkg.is_patch() && pkg.title_id().as_deref() == id)
+        })
+    })
+}
+
+/// A patch's files over its base package's: a path the patch holds comes
+/// from the patch, anything else from the base.
+pub struct Layered {
+    top: Arc<dyn ImageFs>,
+    base: Arc<dyn ImageFs>,
+}
+
+impl ImageFs for Layered {
+    fn stat(&self, path: &str) -> Option<ImageStat> {
+        self.top.stat(path).or_else(|| self.base.stat(path))
+    }
+
+    fn list(&self, path: &str) -> Option<Vec<(String, bool)>> {
+        let top = self.top.list(path);
+        let base = self.base.list(path);
+        if top.is_none() && base.is_none() {
+            return None;
+        }
+        let mut out = top.unwrap_or_default();
+        for (name, is_dir) in base.unwrap_or_default() {
+            if !out.iter().any(|(n, _)| *n == name) {
+                out.push((name, is_dir));
+            }
+        }
+        Some(out)
+    }
+
+    fn open(&self, path: &str) -> Option<Arc<dyn ImageFile>> {
+        self.top.open(path).or_else(|| self.base.open(path))
     }
 }
 
@@ -322,6 +437,73 @@ impl Files for Image<'_> {
 mod tests {
     use super::*;
 
+    /// A tree of files, each holding its own path as bytes.
+    struct Tree(&'static [&'static str]);
+
+    impl ImageFs for Tree {
+        fn stat(&self, path: &str) -> Option<ImageStat> {
+            if self.0.contains(&path) {
+                return Some(ImageStat { dir: false, len: path.len() as u64 });
+            }
+            let dir = path.is_empty() || self.0.iter().any(|f| f.starts_with(&format!("{path}/")));
+            dir.then_some(ImageStat { dir: true, len: 0 })
+        }
+
+        fn list(&self, path: &str) -> Option<Vec<(String, bool)>> {
+            if !self.stat(path)?.dir {
+                return None;
+            }
+            let prefix = if path.is_empty() { String::new() } else { format!("{path}/") };
+            let mut out: Vec<(String, bool)> = Vec::new();
+            for f in self.0.iter().filter_map(|f| f.strip_prefix(&prefix)) {
+                let entry = match f.split_once('/') {
+                    Some((d, _)) => (d.to_owned(), true),
+                    None => (f.to_owned(), false),
+                };
+                if !out.contains(&entry) {
+                    out.push(entry);
+                }
+            }
+            Some(out)
+        }
+
+        fn open(&self, path: &str) -> Option<Arc<dyn ImageFile>> {
+            self.0.iter().find(|f| **f == path).map(|f| Arc::new(Bytes(f)) as Arc<dyn ImageFile>)
+        }
+    }
+
+    struct Bytes(&'static str);
+
+    impl ImageFile for Bytes {
+        fn len(&self) -> u64 {
+            self.0.len() as u64
+        }
+
+        fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+            let rest = self.0.as_bytes().get(offset as usize..).unwrap_or_default();
+            let n = rest.len().min(buf.len());
+            buf[..n].copy_from_slice(&rest[..n]);
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn a_patch_shows_its_files_over_the_base_and_the_base_fills_the_rest() {
+        let layered = Layered {
+            top: Arc::new(Tree(&["games/game.win", "games/new.ogg"])),
+            base: Arc::new(Tree(&["eboot.bin", "games/game.win", "games/old.ogg"])),
+        };
+        let mut games = layered.list("games").unwrap();
+        games.sort();
+        let names: Vec<&str> = games.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["game.win", "new.ogg", "old.ogg"]);
+        assert!(layered.list("").unwrap().contains(&("eboot.bin".to_owned(), false)));
+        assert!(layered.stat("eboot.bin").is_some());
+        assert!(layered.open("games/old.ogg").is_some());
+        assert!(layered.open("missing").is_none());
+        assert!(layered.list("missing").is_none());
+    }
+
     /// Reads every file of the package `PS5SLOP_TEST_PKG` names through the
     /// guest's file system and checks it against an extraction of the same
     /// package in `PS5SLOP_TEST_DIR`.
@@ -330,7 +512,7 @@ mod tests {
     fn package_files_match_their_extraction() {
         let pkg = PathBuf::from(std::env::var_os("PS5SLOP_TEST_PKG").unwrap());
         let dir = PathBuf::from(std::env::var_os("PS5SLOP_TEST_DIR").unwrap());
-        let title = Title::open(&pkg, &pkg::keys::DEFAULT_PASSCODE).unwrap();
+        let title = Title::open(&pkg, None, &pkg::keys::DEFAULT_PASSCODE).unwrap();
         let vfs = hle::Vfs::default();
         title.mount(&vfs);
         let mut pending = vec![String::new()];

@@ -13,11 +13,16 @@ pub fn from_param_json(json: &[u8]) -> Option<String> {
     is_title_id(id).then(|| id.to_owned())
 }
 
-/// The `TITLE_ID` string of a PS4 `param.sfo`: a header (magic `\0PSF`, key
-/// table offset at `0x08`, data table offset at `0x0C`, entry count at
-/// `0x10`) followed by 16-byte entries (key offset u16, format u16, length
-/// u32, maximum length u32, data offset u32), per psdevwiki's "PARAM.SFO".
+/// The `TITLE_ID` string of a PS4 `param.sfo`.
 pub fn from_param_sfo(sfo: &[u8]) -> Option<String> {
+    sfo_string(sfo, "TITLE_ID").filter(|id| is_title_id(id))
+}
+
+/// A string value of a PS4 `param.sfo`: a header (magic `\0PSF`, key table
+/// offset at `0x08`, data table offset at `0x0C`, entry count at `0x10`)
+/// followed by 16-byte entries (key offset u16, format u16, length u32,
+/// maximum length u32, data offset u32), per psdevwiki's "PARAM.SFO".
+pub fn sfo_string(sfo: &[u8], name: &str) -> Option<String> {
     if sfo.get(..4)? != b"\0PSF" || sfo.len() < 0x14 {
         return None;
     }
@@ -30,15 +35,14 @@ pub fn from_param_sfo(sfo: &[u8]) -> Option<String> {
         let key_at = keys + u16_le(entry, 0) as usize;
         let key = sfo.get(key_at..)?;
         let key = &key[..key.iter().position(|&c| c == 0)?];
-        if key != b"TITLE_ID" {
+        if key != name.as_bytes() {
             continue;
         }
         let len = u32_le(entry, 4) as usize;
         let value_at = data + u32_le(entry, 12) as usize;
         let value = sfo.get(value_at..value_at + len)?;
         let value = &value[..value.iter().position(|&c| c == 0).unwrap_or(len)];
-        let id = std::str::from_utf8(value).ok()?;
-        return is_title_id(id).then(|| id.to_owned());
+        return std::str::from_utf8(value).ok().map(str::to_owned);
     }
     None
 }
@@ -59,14 +63,24 @@ pub fn is_title_id(id: &str) -> bool {
 }
 
 impl Package {
+    fn clear_entry(&self, id: u32) -> Option<Vec<u8>> {
+        self.entry(id)
+            .filter(|e| !e.is_encrypted())
+            .and_then(|e| self.read_entry(e).ok())
+    }
+
+    /// Whether this is a PS4 patch: `param.sfo`'s `CATEGORY` is `gp`
+    /// (psdevwiki, "PARAM.SFO"). A patch holds only the files it changes.
+    pub fn is_patch(&self) -> bool {
+        self.clear_entry(entry_id::PARAM_SFO)
+            .and_then(|s| sfo_string(&s, "CATEGORY"))
+            .is_some_and(|c| c == "gp")
+    }
+
     /// The title id from `param.json` (PS5) or `param.sfo` (PS4) when they
     /// are stored in the clear, else from the content id.
     pub fn title_id(&self) -> Option<String> {
-        let clear = |id| {
-            self.entry(id)
-                .filter(|e| !e.is_encrypted())
-                .and_then(|e| self.read_entry(e).ok())
-        };
+        let clear = |id| self.clear_entry(id);
         clear(entry_id::PARAM_JSON)
             .and_then(|j| from_param_json(&j))
             .or_else(|| clear(entry_id::PARAM_SFO).and_then(|s| from_param_sfo(&s)))
@@ -124,6 +138,8 @@ mod tests {
         assert_eq!(from_param_sfo(&s).as_deref(), Some("CUSA00001"));
         assert_eq!(from_param_sfo(&sfo(&[("TITLE", "x")])), None);
         assert_eq!(from_param_sfo(b"junk"), None);
+        assert_eq!(sfo_string(&s, "CATEGORY").as_deref(), Some("gd"));
+        assert_eq!(sfo_string(&s, "APP_VER"), None);
     }
 
     #[test]
