@@ -2178,13 +2178,26 @@ impl<'a> Tx<'a> {
                 ));
             }
             Stage::Pixel => {
-                out.push_str("struct PsIn {\n    float4 pos [[position]];\n    bool front [[front_facing]];\n");
-                for (&a, &mode) in &self.attrs {
-                    let loc = self
-                        .req
+                let loc_of = |a: u8| {
+                    self.req
                         .ps_input_cntl
                         .get(a as usize)
-                        .map_or(a as u32, |c| c & 0x1F);
+                        .map_or(a as u32, |c| c & 0x1F)
+                };
+                let mut first = BTreeMap::new();
+                for &a in self.attrs.keys() {
+                    first.entry(loc_of(a)).or_insert(a);
+                }
+                // Inputs sharing a location read the same export; MSL wants
+                // each location once, so those are copied out of `raw`.
+                let shared = first.len() != self.attrs.len();
+                out.push_str(if shared { "struct PsInRaw {\n" } else { "struct PsIn {\n" });
+                out.push_str("    float4 pos [[position]];\n    bool front [[front_facing]];\n");
+                for (&a, &mode) in &self.attrs {
+                    let loc = loc_of(a);
+                    if first[&loc] != a {
+                        continue;
+                    }
                     let q = match mode {
                         Interp::Perspective => "center_perspective",
                         Interp::PerspectiveCentroid => "centroid_perspective",
@@ -2198,6 +2211,15 @@ impl<'a> Tx<'a> {
                     // varying may not keep; vertex variants export them as uint4.
                     let ty = if mode == Interp::Flat { "uint4" } else { "float4" };
                     out.push_str(&format!("    {ty} a{a} [[user(locn{loc}), {q}]];\n"));
+                }
+                if shared {
+                    out.push_str("};\n\nstruct PsIn {\n    float4 pos;\n    bool front;\n");
+                    let mut fill = String::from("    PsIn in = { raw.pos, raw.front");
+                    for &a in self.attrs.keys() {
+                        out.push_str(&format!("    float4 a{a};\n"));
+                        fill.push_str(&format!(", raw.a{}", first[&loc_of(a)]));
+                    }
+                    init.insert_str(0, &(fill + " };\n"));
                 }
                 out.push_str("};\n\nstruct PsOut {\n");
                 for i in 0..8 {
@@ -2234,7 +2256,8 @@ impl<'a> Tx<'a> {
                     tail = tail.replace("return o;", &probe);
                 }
                 out.push_str(&format!(
-                    "fragment PsOut gen5_ps(PsIn in [[stage_in]], {}) {{\n    PsOut o = {{}};\n    bool exported = false;\n{init}{}{tail}}}\n",
+                    "fragment PsOut gen5_ps({} [[stage_in]], {}) {{\n    PsOut o = {{}};\n    bool exported = false;\n{init}{}{tail}}}\n",
+                    if shared { "PsInRaw raw" } else { "PsIn in" },
                     entry_params.join(", "),
                     body
                 ));

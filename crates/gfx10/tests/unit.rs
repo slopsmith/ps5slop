@@ -90,6 +90,36 @@ fn textured_pixel_shader_binds_user_sgpr_descriptors() {
     assert!(t.msl.contains("[[user(locn0), center_perspective]]"));
 }
 
+#[test]
+fn pixel_inputs_sharing_a_location_read_one_interpolant() {
+    let code = [
+        0xC800_0200, // v_interp_p1_f32 v0, v0, attr0.x
+        0xC801_0201, // v_interp_p2_f32 v0, v1, attr0.x
+        0xC804_0600, // v_interp_p1_f32 v1, v0, attr1.x
+        0xC805_0601, // v_interp_p2_f32 v1, v1, attr1.x
+        0xF800_180F, // exp mrt0 v0, v1, v0, v1 done vm
+        0x0100_0100,
+        0xBF81_0000,
+    ];
+    let t = translate(&Request {
+        stage: Stage::Pixel,
+        code: &code,
+        user_sgprs: 0,
+        ngg: false,
+        ps_input_ena: 2,
+        ps_input_addr: 2,
+        ps_input_cntl: &[0, 0],
+        col_format: 9,
+        compute_rsrc2: 0,
+        threads: [1, 1, 1],
+        uint_textures: 0,
+        sint_textures: 0,
+    })
+    .unwrap();
+    assert_eq!(t.msl.matches("[[user(locn0)").count(), 1);
+    assert!(t.msl.contains("PsIn in = { raw.pos, raw.front, raw.a0, raw.a0 };"));
+}
+
 fn compute(code: &[u32], user_sgprs: u32, rsrc2: u32) -> gfx10::Translated {
     translate(&Request {
         stage: Stage::Compute,
