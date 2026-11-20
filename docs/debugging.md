@@ -78,6 +78,10 @@ The logo and font textures (RGBA8, Standard64K tiling) showed 16-pixel stripes: 
 
 We observed only addresses and values here; we did not disassemble the game.
 
+## Looking at a title's own code
+
+A title's own code may be disassembled locally to learn what it expects of us; Sony's code, including Sony libraries shipped with a title, may not, and nothing from either is committed ([legal.md](legal.md)). `ps5slop-elf segment FILE INDEX OUT` writes one segment of an executable (plain ELF or fake-signed SELF) to a file; `llvm-objcopy -I binary -O elf64-x86-64 --rename-section .data=.text,alloc,load,code,readonly OUT X.o` wraps it so `llvm-objdump -d --x86-asm-syntax=intel --start-address=A --stop-address=B X.o` disassembles it (addresses are segment offsets: subtract the load base, 0x400000 for an executable, from guest addresses). The control socket's `calls PATH FILTER` gives each host call's return address, the way in. Code segments are execute-only in the guest, so `dump` cannot read them. Astro Bot's movie player layouts were found this way (see [hle-kernel.md](hle-kernel.md#libsceavplayer)).
+
 ## Walking past unimplemented imports
 
 `PS5SLOP_UNIMPLEMENTED_ZERO=1` makes every unimplemented import return 0 and log `UNIMPLEMENTED (returning 0) LIBRARY NID NAME(args) from CALLER` instead of stopping. Names come from `PS5SLOP_NAMES` when given. A title then runs on until something actually depends on a missing result, so one run shows the next dozen imports a title needs and in what order, where stopping shows one. It is for exploring only: a 0 that should have been an output, a handle or an error can send the guest down paths it never takes on a console, so each import it passes over still needs a real (or a declared placeholder) implementation. Astro Bot's first run got from libc's start-up to its GPU set-up this way. With `PS5SLOP_UNIMPLEMENTED_ZERO=dump`, each such line is followed by the first 32 bytes behind every argument register (of six) that points at readable memory, which shows strings, output slots preset by the caller and structures without a second run.
