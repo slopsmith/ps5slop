@@ -198,6 +198,8 @@ impl Ags<'_> {
             ps_input_addr: reg(&cx, SPI_PS_INPUT_ADDR),
             ps_input_cntl: &[],
             col_format: reg(&cx, SPI_SHADER_COL_FORMAT),
+            compute_rsrc2: 0,
+            threads: [64, 1, 1],
         }
     }
 }

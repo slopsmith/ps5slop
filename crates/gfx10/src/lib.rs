@@ -3,6 +3,7 @@
 //! Metal Shading Language.
 
 pub mod ags;
+pub mod capture;
 pub mod decode;
 mod opcodes;
 pub mod opinfo;

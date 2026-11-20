@@ -44,17 +44,21 @@ Not checked: the 32-wave lane-mask printing beyond what the random tests cover, 
 A straight register model, not SSA. The "IR" is the decoded instruction list split into basic blocks at branch targets:
 
 - Each Metal thread is one lane. SGPRs, VGPRs, `vcc`, `exec`, `m0` and `scc` are local variables (`uint`, `scc` is `bool`); only the ones the program touches are declared.
-- A lane mask (exec, vcc, a VOPC result) holds this lane in bit 0 of its low half. VALU compares write 0 or 1; scalar arithmetic on masks is computed exactly on those values. Every vector instruction and export runs under `if (exec_lo & 1u)`. `s_cbranch_execz` and `vccz` therefore branch per lane, which is right for the usual "skip if no lane is active" use. Cross-lane operations (DPP, `readlane` of another lane, `ds_swizzle`, ballots) cannot be expressed and are rejected.
+- A lane mask (exec, vcc, a VOPC result, a carry out) holds this lane in bit 0 of its low half. VALU compares write 0 or 1; scalar arithmetic on masks is computed exactly on those values. Every vector instruction and export runs under `if (exec_lo & 1u)`.
+- `s_cbranch_execz`/`execnz`/`vccz`/`vccnz` test bit 0. In vertex and pixel programs they branch per lane, which is right for the usual "skip if no lane is active" use. In compute programs the condition is `simd_any` over the Metal SIMD group (32 threads on Apple GPUs), so a SIMD group branches as one, as a 32-lane slice of the wave would on hardware. That keeps `s_barrier` in control flow that is uniform per SIMD group (an execz skip around the work before a barrier is common), and loops that exit through `execz` still end.
+- Cross-lane operations: DPP16 quad permutations that read one lane of the quad (`quad_perm:[k,k,k,k]`, full row and bank masks) become `quad_broadcast` of src0, in any VOP1/VOP2/VOPC instruction. Other DPP forms, `readlane` of another lane, `ds_swizzle`, `ds_permute` and ballots are rejected. `v_readfirstlane` reads this lane.
 - Without branches the body is straight-line code. With branches it is `for (;;) switch (pc) { case ... }`; a branch sets `pc` and continues.
 - Scalar loads (`s_load_*`, `s_buffer_load_*`) and buffer loads read guest memory, through a buffer of all guest memory the host binds. V# fields (base, stride, `num_records`, format and destination swizzle in word 3) are decoded in the shader at run time, because Balatro's vertex programs build their V#s at run time: they load them from a table at a computed offset and rewrite word 3's format bits before `buffer_load_format`.
-- Images are Metal textures and samplers. Each distinct T# and S# register range gets a slot; the descriptor must sit in user SGPRs the program never writes.
+- Images are Metal textures and samplers. Each distinct T# (with its dimension) and S# gets a slot. Where a descriptor comes from is found by a first translation pass: a forward data-flow pass over the control-flow graph follows user SGPRs through `s_mov_b32`/`s_mov_b64` and `s_load_dword*` with an immediate offset (no `soffset`), so a descriptor may sit in user SGPRs or in memory reached by a chain of such loads (`Source::Memory`). A register whose origin differs between paths into a block, or that anything else wrote, is unknown, and an image instruction using it is rejected.
+- Stores and atomics write guest memory through the same buffer, which is then `device uchar*` (`writes_memory`). Buffer stores and atomics use the V#'s base, stride and `num_records` like loads; out-of-range stores are dropped and out-of-range atomics return 0.
+- LDS is `threadgroup uint lds[]` in compute programs, sized from `LDS_SIZE` of `COMPUTE_PGM_RSRC2` in 512-byte units (32 KiB when it is 0, Metal's limit). Out-of-range reads return 0 and writes are dropped. `s_barrier` is `threadgroup_barrier` on threadgroup and device memory.
 
 ### Stages
 
 - **Vertex, NGG** (`ngg: true`, Balatro's case: the program in the ES slot runs as the merged ES/GS program): user SGPRs start at s8, `s3` (merged wave info) is set so that the prologue's `s_lshr_b64 exec` arithmetic leaves this lane active, v5 is the vertex index and v8 the instance index (as SharpEmu-mac's `Gen5NggExports.cs` documents them). `s_sendmsg` (GS_ALLOC_REQ) and the primitive export are dropped: one vertex per thread, primitives assembled by Metal, as in the non-culling case. `pos0` becomes `[[position]]`, `paramN` becomes `float4 pN [[user(locnN)]]`.
 - **Vertex, legacy VS** (`ngg: false`): user SGPRs from s0, vertex index in v0, instance index in v3. Untested.
-- **Pixel**: user SGPRs from s0, the primitive mask in the next SGPR is 0. VGPRs are laid out by `SPI_PS_INPUT_ADDR`. `v_interp_p1`/`p2` become reads of a Metal-interpolated input `a{attr}` with `[[user(locn{OFFSET})]]` (from `SPI_PS_INPUT_CNTL_n`, or `n` if not given); the interpolation qualifier follows the i/j VGPRs the instruction reads (center, centroid or sample; perspective or linear). `v_interp_mov` gives a `flat` input. `exp mrtN` becomes `float4 cN [[color(N)]]`; compressed exports are unpacked according to `SPI_SHADER_COL_FORMAT` (FP16, UNORM16, SNORM16, UINT16, SINT16). `exp mrtz` writes depth. A lane whose exec bit is clear at the `done` export, or that reaches `s_endpgm` without exporting, is discarded.
-- **Compute**: an entry point is emitted, but there are no workgroup inputs or LDS yet.
+- **Pixel**: user SGPRs from s0, the primitive mask in the next SGPR is 0. VGPRs are laid out by `SPI_PS_INPUT_ADDR`. `v_interp_p1`/`p2` become reads of a Metal-interpolated input `a{attr}` with `[[user(locn{OFFSET})]]` (from `SPI_PS_INPUT_CNTL_n`, or `n` if not given); the interpolation qualifier follows the i/j VGPRs the instruction reads (center, centroid or sample; perspective or linear). `v_interp_mov` gives a `flat` input. `exp mrtN` becomes `float4 cN [[color(N)]]`; compressed exports are unpacked according to `SPI_SHADER_COL_FORMAT` (FP16, UNORM16, SNORM16, UINT16, SINT16). MRTs whose format is UINT16 or SINT16 are `uint4`/`int4` outputs, so they can target Metal integer formats. `exp mrtz` writes depth. A lane whose exec bit is clear at the `done` export, or that reaches `s_endpgm` without exporting, is discarded.
+- **Compute** (`gen5_cs`): user SGPRs from s0, then the workgroup ids X, Y, Z and the threadgroup size, each only when `COMPUTE_PGM_RSRC2` enables it (`TGID_X/Y/Z_EN`, bits 7 to 9; `TG_SIZE_EN`, bit 10, given the thread count as SharpEmu-mac does, which is not what hardware puts there). v0, v1 and v2 hold the thread id in the threadgroup, as many components as `TIDIG_COMP_CNT` says. The layout matches what the 11 compute programs Minecraft runs expect and SharpEmu-mac's `DecodeComputeSystemRegisters`. The renderer dispatches threadgroups of `COMPUTE_NUM_THREAD_X/Y/Z` threads, one Metal thread per lane, so a wave64 is two Metal SIMD groups. No other launch parameters are needed.
 
 ### Interface for the renderer
 
@@ -68,11 +72,16 @@ pub struct Request<'a> {
     pub ps_input_addr: u32,
     pub ps_input_cntl: &'a [u32],
     pub col_format: u32,         // SPI_SHADER_COL_FORMAT
+    pub compute_rsrc2: u32,      // COMPUTE_PGM_RSRC2
+    pub threads: [u32; 3],       // COMPUTE_NUM_THREAD_X/Y/Z
 }
-pub struct Translated { msl, entry, resources, vertex_outputs, color_outputs, writes_depth, guest_memory }
-pub enum Resource { Texture { slot, source, kind }, Sampler { slot, source } }
-pub enum Source { UserSgpr(u8), Memory { sgpr, offset } }
+pub struct Translated { msl, entry, resources, vertex_outputs, color_outputs, writes_depth, guest_memory, writes_memory, lds_bytes }
+pub enum Resource { Texture { slot, source, kind, access }, Sampler { slot, source } }
+pub enum Access { Sample, Write, ReadWrite }
+pub enum Source { UserSgpr(u8), Memory { pointer: Box<Source>, offset: u32 } }
 ```
+
+`Source::Memory` is resolved on the CPU per draw or dispatch: read two dwords at `pointer` (recursively), form a 64-bit address, and read the descriptor `offset` bytes past it.
 
 Bindings in the generated MSL:
 
@@ -80,23 +89,25 @@ Bindings in the generated MSL:
 | --- | --- |
 | `constant uint* user [[buffer(0)]]` | All user SGPR values, as dwords, in order |
 | `constant ulong& mem_base [[buffer(28)]]` | Guest address of byte 0 of the memory buffer, when `guest_memory` |
-| `device const uchar* mem [[buffer(29)]]` | Guest memory, when `guest_memory` |
-| `[[texture(slot)]]` | `texture2d<float>` (or `texture2d_array`, `texture3d`) per `Resource::Texture` |
+| `device const uchar* mem [[buffer(29)]]` | Guest memory, when `guest_memory` (`device uchar*` when `writes_memory`) |
+| `[[texture(slot)]]` | `texture2d<float>` (or `texture2d_array`, `texture3d`, `texturecube`) per `Resource::Texture`, with `access::write` or `access::read_write` for images the program stores to |
 | `[[sampler(slot)]]` | per `Resource::Sampler` |
 | `[[vertex_id]]`, `[[instance_id]]` | vertex stage |
+| `[[thread_position_in_threadgroup]]`, `[[threadgroup_position_in_grid]]` | compute stage |
 
 The vertex body is also a plain function, `VsOut gen5_vs_body(uint vid, uint iid, constant uint* user, ...)` with the same resource parameters, so the renderer can wrap it (for example for rectangle lists). Entry points are `gen5_vs`, `gen5_ps` and `gen5_cs`.
 
 ### Verified
 
 - All 42 Balatro shaders translate, and the MSL compiles with Metal's runtime compiler (`MTLDevice newLibraryWithSource`) in `tests/msl.rs`. The offline compiler (`xcrun metal`) is not installed on vic's machine (Xcode asks for `xcodebuild -downloadComponent MetalToolchain`), so the test uses the runtime compiler instead.
-- `tests/unit.rs` translates two hand-written pixel shaders (a constant colour from user SGPRs, a textured one with T# in s0..s7 and S# in s8..s11) and checks the bindings.
+- `tests/unit.rs` translates hand-written programs, assembled with llvm-mc for gfx1013, and compiles each result with Metal: a constant colour and a textured pixel shader; a compute program with workgroup ids, LDS, a barrier, a buffer store and an atomic; descriptors loaded through a pointer table; `image_load`/`image_store`/`image_get_resinfo`; carry arithmetic, DPP quad broadcasts, cube-map ops, `v_med3_i32`, `v_mul_hi_i32`; `image_gather4_lz` on an array; integer colour exports.
+- Minecraft: all 49 programs it runs up to its main menu (11 compute, the rest vertex and pixel) translate and compile. `PS5SLOP_SHADER_DUMP=dir` saves each program the renderer translates with its register state (`capture.rs`), and `cargo run -p gfx10 --example captures -- dir [name]` translates and compiles a directory of them offline, or prints one program's disassembly and MSL. The captures are game data and stay outside the repo.
 
-Not verified: that any of it computes the right values. Nothing has been drawn with it yet. Known approximations: `v_cvt_pkrtz_f16_f32` rounds to nearest instead of toward zero; denormal and NaN handling follows Metal's defaults; `v_mac_f32` and friends may be fused by the Metal compiler; buffer formats cover the common ones (32-bit floats and ints in 1 to 4 components, 8- and 16-bit UNORM, SNORM, UINT and FLOAT); out-of-range buffer reads return 0 but are only checked against `num_records`.
+Checked by drawing: Balatro's title screen and Minecraft's main-menu UI (logo, buttons, text) render through it. Not verified: that compute programs compute the right values (nothing checks their output yet). Known approximations: integer image formats are read and written through `float` textures; `image_store` writes 0 to the components `dmask` leaves out; compute SIMD groups (32 lanes) stand in for wave64 when branching; `v_cvt_pkrtz_f16_f32` rounds to nearest instead of toward zero; denormal and NaN handling follows Metal's defaults; `v_mac_f32` and friends may be fused by the Metal compiler; buffer formats cover the common ones (32-bit floats and ints in 1 to 4 components, 8- and 16-bit UNORM, SNORM, UINT and FLOAT); out-of-range buffer reads return 0 but are only checked against `num_records`.
 
 ## Open questions
 
 - The renderer asked for buffers at `[[buffer(1 + slot)]]` with their V#s at `[[buffer(30)]]`. Balatro's vertex programs build their V#s at run time, so the translator reads guest memory instead; static buffer slots could come back as an optimisation where a V# provably sits in user SGPRs.
-- Descriptors loaded from memory (`Source::Memory`) are not produced yet; such programs are rejected.
-- Wave-level operations, LDS, scratch, atomics, stores and image stores are not translated yet. Minecraft's shaders will need more of this.
+- Wave-level operations beyond quad broadcasts (other DPP, `readlane`, ballots, `ds_swizzle`, `ds_permute`), scratch, GDS, image atomics, `buffer_store_format_*` and 64-bit atomics are not translated yet.
+- Integer image formats: the shader declares every texture as `float`, so `image_load` of a `UINT`/`SINT` image and sampling one would need the format at translation time (it is in the descriptor, which the renderer sees per draw).
 - How AGC programs reach the GPU: the header's program-address registers are patched by `sceAgcCreateShader`, and the renderer finds the code through `SPI_SHADER_PGM_LO_*`; the `.ags` parsing here is only for tests.

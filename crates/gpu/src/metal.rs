@@ -14,7 +14,7 @@ use objc2_foundation::NSString;
 use objc2_metal::*;
 
 use crate::regs::{self, Blend, ColorTarget, DepthState, DepthTarget, Image, Sampler, Viewport, context, sh, uconfig};
-use gfx10::translate::{self as shader, Resource, Source, Stage, TextureKind, Translated, binding};
+use gfx10::translate::{self as shader, Access, Resource, Source, Stage, TextureKind, Translated, binding};
 use crate::tiling::{Layout, TileMode};
 use crate::{Backend, Draw, Host, State};
 
@@ -145,7 +145,7 @@ pub struct Metal {
     windows: Vec<Window>,
     generation: u64,
     targets: HashMap<u64, Target>,
-    images: HashMap<Image, (u64, Retained<Texture>)>,
+    images: HashMap<(Image, TextureKind), (u64, Retained<Texture>)>,
     epoch: u64,
     detilers: HashMap<(TileMode, u32, bool), Retained<ComputePipeline>>,
     programs: HashMap<(u64, u64), Option<Arc<Program>>>,
@@ -154,7 +154,7 @@ pub struct Metal {
     pipelines: HashMap<PipelineKey, Option<Retained<RenderPipeline>>>,
     samplers: HashMap<Sampler, Retained<ProtocolObject<dyn MTLSamplerState>>>,
     reports: u32,
-    null: Option<Retained<Texture>>,
+    null: HashMap<TextureKind, Retained<Texture>>,
     pub draws: u64,
     pub dispatches: u64,
     pub skipped: u64,
@@ -241,7 +241,7 @@ impl Metal {
             pipelines: HashMap::new(),
             samplers: HashMap::new(),
             reports: 0,
-            null: None,
+            null: HashMap::new(),
             draws: 0,
             dispatches: 0,
             skipped: 0,
@@ -294,7 +294,7 @@ impl Metal {
             self.device.newBufferWithBytesNoCopy_length_options_deallocator(
                 ptr.cast(),
                 (stop - start) as usize,
-                MTLResourceOptions::StorageModeShared | MTLResourceOptions::HazardTrackingModeUntracked,
+                MTLResourceOptions::StorageModeShared,
                 None,
             )
         }?;
@@ -354,8 +354,8 @@ impl Metal {
         }
     }
 
-    /// Copies a tiled guest surface into `texture` on the GPU.
-    fn detile_into(&mut self, host: &dyn Host, texture: &Texture, address: u64, layout: Layout) -> bool {
+    /// Copies a tiled guest surface into slice `slice` of `texture` on the GPU.
+    fn detile_into(&mut self, host: &dyn Host, texture: &Texture, slice: usize, address: u64, layout: Layout) -> bool {
         let Some(pipeline) = self.detiler(layout.mode, layout.bpe, false) else { return false };
         let Some((buffer, offset)) = self.window(host, address, layout.size()) else { return false };
         let raw_format = match layout.bpe {
@@ -365,7 +365,15 @@ impl Metal {
             8 => MTLPixelFormat::RG32Uint,
             _ => MTLPixelFormat::RGBA32Uint,
         };
-        let Some(raw) = texture.newTextureViewWithPixelFormat(raw_format) else { return false };
+        let raw = unsafe {
+            texture.newTextureViewWithPixelFormat_textureType_levels_slices(
+                raw_format,
+                MTLTextureType::Type2D,
+                objc2_foundation::NSRange::new(0, 1),
+                objc2_foundation::NSRange::new(slice, 1),
+            )
+        };
+        let Some(raw) = raw else { return false };
         self.end_pass();
         let command = self.command();
         let Some(enc) = command.computeCommandEncoder() else { return false };
@@ -392,6 +400,30 @@ impl Metal {
         true
     }
 
+    /// A 2D array or cube texture to fill from guest memory.
+    fn new_layered_texture(&self, format: MTLPixelFormat, width: u32, height: u32, kind: TextureKind, slices: usize) -> Option<Retained<Texture>> {
+        let desc = MTLTextureDescriptor::new();
+        desc.setPixelFormat(format);
+        unsafe {
+            desc.setWidth(width as usize);
+            desc.setHeight(height as usize);
+            if kind == TextureKind::Cube {
+                desc.setTextureType(MTLTextureType::TypeCube);
+            } else {
+                desc.setTextureType(MTLTextureType::Type2DArray);
+                desc.setArrayLength(slices.max(1));
+            }
+        }
+        let usage = if is_compressed(format) {
+            MTLTextureUsage::ShaderRead
+        } else {
+            MTLTextureUsage::ShaderRead | MTLTextureUsage::PixelFormatView
+        };
+        desc.setUsage(usage);
+        desc.setStorageMode(MTLStorageMode::Private);
+        self.device.newTextureWithDescriptor(&desc)
+    }
+
     fn new_texture(&self, format: MTLPixelFormat, width: u32, height: u32, target: bool) -> Option<Retained<Texture>> {
         let desc = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
@@ -415,7 +447,7 @@ impl Metal {
 
     /// Fills block-compressed `texture` from a tiled guest surface of 4x4
     /// blocks: detiled into a linear buffer, then blitted.
-    fn detile_blocks_into(&mut self, host: &dyn Host, texture: &Texture, address: u64, layout: Layout) -> bool {
+    fn detile_blocks_into(&mut self, host: &dyn Host, texture: &Texture, slice: usize, address: u64, layout: Layout) -> bool {
         let Some(pipeline) = self.detiler(layout.mode, layout.bpe, true) else { return false };
         let Some((buffer, offset)) = self.window(host, address, layout.size()) else { return false };
         let row = (layout.width * layout.bpe) as usize;
@@ -447,7 +479,7 @@ impl Metal {
                 len,
                 MTLSize { width: texture.width(), height: texture.height(), depth: 1 },
                 texture,
-                0,
+                slice,
                 0,
                 MTLOrigin { x: 0, y: 0, z: 0 },
             );
@@ -470,7 +502,7 @@ impl Metal {
         if let (Some(mode), Some(bpe)) = (t.tile, t.format.bytes())
             && let Some(layout) = Layout::new(mode, bpe, t.width, t.height)
         {
-            self.detile_into(host, &texture, t.address, layout);
+            self.detile_into(host, &texture, 0, t.address, layout);
         }
         self.targets.insert(
             t.address,
@@ -487,11 +519,19 @@ impl Metal {
         Some((texture, format))
     }
 
-    /// The texture for image descriptor `image`: a render target at that
-    /// address, or a copy of guest memory refreshed once per frame.
-    fn image(&mut self, host: &dyn Host, image: Image) -> Option<Retained<Texture>> {
+    /// The texture for image descriptor `image` read as `kind`: a render
+    /// target at that address, or a copy of guest memory refreshed once per frame.
+    fn image(&mut self, host: &dyn Host, image: Image, kind: TextureKind) -> Option<Retained<Texture>> {
         let (format, bpe) = image_format(image.format)?;
-        if let Some(t) = self.targets.get(&image.address) {
+        let slices = match kind {
+            TextureKind::Tex2d => 1,
+            TextureKind::Cube => 6,
+            TextureKind::Tex2dArray => image.depth as usize,
+            TextureKind::Tex3d => return None,
+        };
+        if kind == TextureKind::Tex2d
+            && let Some(t) = self.targets.get(&image.address)
+        {
             let tex = &t.texture;
             if tex.width() as u32 == image.width && tex.height() as u32 == image.height {
                 return if t.pixel_format == format {
@@ -501,7 +541,7 @@ impl Metal {
                 };
             }
         }
-        if let Some((epoch, tex)) = self.images.get(&image)
+        if let Some((epoch, tex)) = self.images.get(&(image, kind))
             && *epoch == self.epoch
         {
             return Some(tex.clone());
@@ -513,20 +553,25 @@ impl Metal {
             (image.width, image.height)
         };
         let layout = Layout::new(image.tile?, bpe, ew, eh)?;
-        let tex = match self.images.get(&image) {
+        let tex = match self.images.get(&(image, kind)) {
             Some((_, t)) => t.clone(),
-            None => self.new_texture(format, image.width, image.height, false)?,
+            None if kind == TextureKind::Tex2d => self.new_texture(format, image.width, image.height, false)?,
+            None => self.new_layered_texture(format, image.width, image.height, kind, slices)?,
         };
         let base = image.address + layout.mip0_offset(image.last_level + 1);
-        let filled = if compressed {
-            self.detile_blocks_into(host, &tex, base, layout)
-        } else {
-            self.detile_into(host, &tex, base, layout)
-        };
-        if !filled {
-            return None;
+        let stride = layout.size().next_multiple_of(64 << 10);
+        for slice in 0..slices {
+            let at = base + slice as u64 * stride;
+            let filled = if compressed {
+                self.detile_blocks_into(host, &tex, slice, at, layout)
+            } else {
+                self.detile_into(host, &tex, slice, at, layout)
+            };
+            if !filled {
+                return None;
+            }
         }
-        self.images.insert(image, (self.epoch, tex.clone()));
+        self.images.insert((image, kind), (self.epoch, tex.clone()));
         if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some()
             && let Ok(mut f) = frames().lock()
         {
@@ -563,7 +608,7 @@ impl Metal {
                 tex.pixelFormat(),
                 tex.textureType(),
                 objc2_foundation::NSRange::new(0, tex.mipmapLevelCount()),
-                objc2_foundation::NSRange::new(0, tex.arrayLength()),
+                objc2_foundation::NSRange::new(0, if tex.textureType() == MTLTextureType::TypeCube { 6 } else { tex.arrayLength() }),
                 swizzle,
             )
         }?;
@@ -574,26 +619,49 @@ impl Metal {
         Some(view)
     }
 
-    /// A 1x1 transparent black texture, for unbound image descriptors.
-    fn null_texture(&mut self) -> Option<Retained<Texture>> {
-        if self.null.is_none() {
-            let d = unsafe {
-                MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(MTLPixelFormat::RGBA8Unorm, 1, 1, false)
-            };
-            d.setStorageMode(MTLStorageMode::Shared);
-            let t = self.device.newTextureWithDescriptor(&d)?;
-            let zero = [0u8; 4];
+    /// A 1x1 transparent black texture of `kind`, for unbound image descriptors.
+    fn null_texture(&mut self, kind: TextureKind) -> Option<Retained<Texture>> {
+        if let Some(t) = self.null.get(&kind) {
+            return Some(t.clone());
+        }
+        let d = MTLTextureDescriptor::new();
+        d.setPixelFormat(MTLPixelFormat::RGBA8Unorm);
+        let slices = match kind {
+            TextureKind::Tex2d => 1,
+            TextureKind::Cube => {
+                d.setTextureType(MTLTextureType::TypeCube);
+                6
+            }
+            TextureKind::Tex2dArray => {
+                d.setTextureType(MTLTextureType::Type2DArray);
+                1
+            }
+            TextureKind::Tex3d => {
+                d.setTextureType(MTLTextureType::Type3D);
+                1
+            }
+        };
+        unsafe {
+            d.setWidth(1);
+            d.setHeight(1);
+        }
+        d.setStorageMode(MTLStorageMode::Shared);
+        let t = self.device.newTextureWithDescriptor(&d)?;
+        let zero = [0u8; 4];
+        for slice in 0..slices {
             unsafe {
-                t.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
+                t.replaceRegion_mipmapLevel_slice_withBytes_bytesPerRow_bytesPerImage(
                     MTLRegion { origin: MTLOrigin { x: 0, y: 0, z: 0 }, size: MTLSize { width: 1, height: 1, depth: 1 } },
                     0,
+                    slice,
                     NonNull::from(&zero).cast(),
+                    4,
                     4,
                 );
             }
-            self.null = Some(t);
         }
-        self.null.clone()
+        self.null.insert(kind, t.clone());
+        Some(t)
     }
 
     fn sampler(&mut self, s: Sampler) -> Option<Retained<ProtocolObject<dyn MTLSamplerState>>> {
@@ -641,6 +709,10 @@ impl Metal {
             if stage == Stage::Pixel {
                 (cntl, c[context::SPI_PS_INPUT_ENA], c[context::SPI_PS_INPUT_ADDR], c[context::SPI_SHADER_COL_FORMAT]).hash(&mut h);
             }
+            if stage == Stage::Compute {
+                let s = &state.sh;
+                (s[sh::COMPUTE_PGM_RSRC2], &s[sh::COMPUTE_NUM_THREAD_X..sh::COMPUTE_NUM_THREAD_X + 3]).hash(&mut h);
+            }
             h.finish()
         };
         if let Some(p) = self.programs.get(&(address, key)) {
@@ -660,7 +732,13 @@ impl Metal {
                 ps_input_addr: c[context::SPI_PS_INPUT_ADDR],
                 ps_input_cntl: cntl,
                 col_format: c[context::SPI_SHADER_COL_FORMAT],
+                compute_rsrc2: state.sh[sh::COMPUTE_PGM_RSRC2],
+                threads: [0, 1, 2].map(|i| (state.sh[sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1)),
             };
+            if let Some(dir) = std::env::var_os("PS5SLOP_SHADER_DUMP") {
+                let path = std::path::Path::new(&dir).join(format!("{stage:?}-{address:x}-{key:016x}.bin"));
+                let _ = std::fs::write(path, gfx10::capture::Capture::new(&request).to_bytes());
+            }
             match shader::translate(&request) {
                 Ok(translated) => {
                     if std::env::var_os("PS5SLOP_MSL_DUMP").is_some() {
@@ -875,17 +953,45 @@ impl Metal {
     }
 
     /// Descriptor dwords from user data or memory.
-    fn descriptor(&self, host: &dyn Host, user: &[u32], source: Source, n: usize) -> Option<Vec<u32>> {
+    fn descriptor(&self, host: &dyn Host, user: &[u32], source: &Source, n: usize) -> Option<Vec<u32>> {
         match source {
-            Source::UserSgpr(s) => user.get(s as usize..s as usize + n).map(<[u32]>::to_vec),
-            Source::Memory { sgpr, offset } => {
-                let s = sgpr as usize;
-                let ptr = *user.get(s)? as u64 | (*user.get(s + 1)? as u64) << 32;
+            Source::UserSgpr(s) => user.get(*s as usize..*s as usize + n).map(<[u32]>::to_vec),
+            Source::Memory { pointer, offset } => {
+                let p = self.descriptor(host, user, pointer, 2)?;
+                let ptr = p[0] as u64 | (p[1] as u64) << 32;
                 let mut b = vec![0u8; n * 4];
-                host.read(ptr + offset as u64, &mut b)
+                host.read(ptr.wrapping_add(*offset as u64), &mut b)
                     .then(|| b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect())
             }
         }
+    }
+
+    /// The texture a program writes for image descriptor `image`: kept like a
+    /// render target, so later reads of that address see what was written.
+    fn storage_image(&mut self, host: &dyn Host, image: Image) -> Option<Retained<Texture>> {
+        let (format, bpe) = image_format(image.format)?;
+        if is_compressed(format) {
+            return None;
+        }
+        if let Some(t) = self.targets.get(&image.address)
+            && t.texture.width() as u32 == image.width
+            && t.texture.height() as u32 == image.height
+        {
+            return if t.pixel_format == format { Some(t.texture.clone()) } else { t.texture.newTextureViewWithPixelFormat(format) };
+        }
+        let texture = self.new_texture(format, image.width, image.height, true)?;
+        if let Some(mode) = image.tile
+            && let Some(layout) = Layout::new(mode, bpe, image.width, image.height)
+        {
+            self.detile_into(host, &texture, 0, image.address, layout);
+        }
+        self.targets.insert(image.address, Target { texture: texture.clone(), pixel_format: format });
+        if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some()
+            && let Ok(mut f) = frames().lock()
+        {
+            f.insert(image.address | 2, SharedTexture(texture.clone()));
+        }
+        Some(texture)
     }
 
     /// The resources `program` binds, made ready before any encoder opens
@@ -901,17 +1007,19 @@ impl Metal {
         }
         for r in &program.translated.resources {
             match *r {
-                Resource::Texture { slot, source, kind } => {
-                    if kind != TextureKind::Tex2d {
-                        self.report(format!("{kind:?} textures not supported"));
+                Resource::Texture { slot, ref source, kind, access } => {
+                    if kind == TextureKind::Tex3d || (kind != TextureKind::Tex2d && access != Access::Sample) {
+                        self.report(format!("{kind:?} textures with {access:?} access not supported"));
                         return None;
                     }
                     let d = self.descriptor(host, user, source, 8)?;
                     let image = Image::read(&d);
-                    let tex = if image.address == 0 || image.kind < 8 {
-                        self.null_texture()
+                    let tex = if access != Access::Sample {
+                        if image.address == 0 || image.kind < 8 { None } else { self.storage_image(host, image) }
+                    } else if image.address == 0 || image.kind < 8 {
+                        self.null_texture(kind)
                     } else {
-                        self.image(host, image).and_then(|t| self.swizzled(t, image.swizzle))
+                        self.image(host, image, kind).and_then(|t| self.swizzled(t, image.swizzle))
                     };
                     let Some(tex) = tex else {
                         self.report(format!("image {image:x?} for the program at {:#x} not supported", program.address));
@@ -919,7 +1027,7 @@ impl Metal {
                     };
                     bound.textures.push((slot as usize, tex));
                 }
-                Resource::Sampler { slot, source } => {
+                Resource::Sampler { slot, ref source } => {
                     let d = self.descriptor(host, user, source, 4)?;
                     bound.samplers.push((slot as usize, self.sampler(Sampler::read(&d))?));
                 }
@@ -948,11 +1056,12 @@ impl Metal {
         let max = self.device.maxBufferLength() as u64;
         let mut best = host.extent(code);
         for pair in user.windows(2) {
-            let ptr = pair[0] as u64 | (pair[1] as u64) << 32;
-            if let Some((lo, hi)) = host.extent(ptr)
-                && best.is_none_or(|(l, h)| hi - lo > h - l)
-            {
-                best = Some((lo, hi));
+            for ptr in [pair[0] as u64 | (pair[1] as u64) << 32, pair[0] as u64 | ((pair[1] & 0xFFFF) as u64) << 32] {
+                if let Some((lo, hi)) = host.extent(ptr)
+                    && best.is_none_or(|(l, h)| hi - lo > h - l)
+                {
+                    best = Some((lo, hi));
+                }
             }
         }
         let (lo, hi) = best?;
@@ -969,16 +1078,20 @@ impl Metal {
         }
         let users = (s[sh::COMPUTE_PGM_RSRC2] >> 1) & 0x1F;
         let program = self.program(host, state, Stage::Compute, address, users, false).ok_or("compute program")?;
-        let pipeline = match self.computes.get(&address) {
+        let id = Arc::as_ptr(&program) as u64;
+        let pipeline = match self.computes.get(&id) {
             Some(p) => p.clone(),
             None => {
                 let p = self.device.newComputePipelineStateWithFunction_error(&program.function).ok();
-                self.computes.insert(address, p.clone());
+                self.computes.insert(id, p.clone());
                 p
             }
         }
         .ok_or("compute pipeline")?;
         let threads = [0, 1, 2].map(|i| (s[sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1) as usize);
+        if threads.iter().product::<usize>() > pipeline.maxTotalThreadsPerThreadgroup() {
+            return Err("threadgroup too large");
+        }
         let user = &s[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + sh::COMPUTE_USER_DATA_COUNT];
         let bound = self.resolve(host, &program, user);
         self.end_pass();
@@ -1490,7 +1603,7 @@ mod tests {
             }
         }
         let tex = metal.new_texture(MTLPixelFormat::R32Uint, w, h, false).unwrap();
-        assert!(metal.detile_into(&mem, &tex, 0, layout));
+        assert!(metal.detile_into(&mem, &tex, 0, 0, layout));
         let shared = {
             let d = unsafe { MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(MTLPixelFormat::R32Uint, w as usize, h as usize, false) };
             d.setStorageMode(MTLStorageMode::Shared);

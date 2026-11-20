@@ -1,6 +1,6 @@
 //! Self-contained checks on hand-written programs (no llvm-mc, no game files).
 
-use gfx10::translate::{Request, Resource, Source, Stage, TextureKind};
+use gfx10::translate::{Access, Request, Resource, Source, Stage, TextureKind};
 use gfx10::{Syntax, decode, print, translate};
 
 fn text(words: &[u32]) -> String {
@@ -16,6 +16,19 @@ fn prints_llvm_syntax() {
     assert_eq!(text(&[0xF800_180F, 0x0403_0201]), "exp mrt0 v1, v2, v3, v4 done vm");
 }
 
+#[cfg(target_os = "macos")]
+fn compile(msl: &str) {
+    use objc2_foundation::NSString;
+    use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice};
+    let Some(device) = MTLCreateSystemDefaultDevice() else { return };
+    if let Err(e) = device.newLibraryWithSource_options_error(&NSString::from_str(msl), None) {
+        panic!("Metal rejected the MSL: {}\n{msl}", e.localizedDescription());
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn compile(_: &str) {}
+
 fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
     translate(&Request {
         stage: Stage::Pixel,
@@ -26,6 +39,8 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
         ps_input_addr: 2,
         ps_input_cntl: &[],
         col_format: 9,
+        compute_rsrc2: 0,
+        threads: [1, 1, 1],
     })
     .unwrap()
 }
@@ -66,9 +81,168 @@ fn textured_pixel_shader_binds_user_sgpr_descriptors() {
     assert_eq!(
         t.resources,
         vec![
-            Resource::Texture { slot: 0, source: Source::UserSgpr(0), kind: TextureKind::Tex2d },
+            Resource::Texture { slot: 0, source: Source::UserSgpr(0), kind: TextureKind::Tex2d, access: Access::Sample },
             Resource::Sampler { slot: 0, source: Source::UserSgpr(8) },
         ]
     );
     assert!(t.msl.contains("[[user(locn0), center_perspective]]"));
+}
+
+fn compute(code: &[u32], user_sgprs: u32, rsrc2: u32) -> gfx10::Translated {
+    translate(&Request {
+        stage: Stage::Compute,
+        code,
+        user_sgprs,
+        ngg: false,
+        ps_input_ena: 0,
+        ps_input_addr: 0,
+        ps_input_cntl: &[],
+        col_format: 0,
+        compute_rsrc2: rsrc2,
+        threads: [64, 1, 1],
+    })
+    .unwrap()
+}
+
+#[test]
+fn compute_program_uses_group_ids_lds_barriers_stores_and_atomics() {
+    let code = [
+        0xD746_0002, 0x0401_0C04, // v_lshl_add_u32 v2, s4, 6, v0
+        0x3406_0082, // v_lshlrev_b32_e32 v3, 2, v0
+        0xD834_0000, 0x0000_0203, // ds_write_b32 v3, v2
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xBF8A_0000, // s_barrier
+        0xD8D8_0004, 0x0400_0003, // ds_read_b32 v4, v3 offset:4
+        0xD800_0000, 0x0000_0203, // ds_add_u32 v3, v2
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xE070_2000, 0x8000_0402, // buffer_store_dword v4, v2, s[0:3], 0 idxen
+        0xE0C8_6000, 0x8000_0402, // buffer_atomic_add v4, v2, s[0:3], 0 idxen glc
+        0xBF81_0000, // s_endpgm
+    ];
+    // Four user SGPRs, TGID_X_EN, LDS_SIZE of 2 (1 KiB).
+    let t = compute(&code, 4, 4 << 1 | 1 << 7 | 2 << 15);
+    assert!(t.guest_memory && t.writes_memory);
+    assert_eq!(t.lds_bytes, 1024);
+    assert!(t.msl.contains("s4 = gid.x;"));
+    assert!(t.msl.contains("v0 = lid.x;"));
+    assert!(t.msl.contains("threadgroup_barrier"));
+    assert!(t.msl.contains("device uchar* mem"));
+    compile(&t.msl);
+}
+
+#[test]
+fn descriptors_loaded_through_user_pointers_become_memory_sources() {
+    let code = [
+        0xF404_0101, 0xFA00_0010, // s_load_dwordx2 s[4:5], s[2:3], 0x10
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xF40C_0202, 0xFA00_0020, // s_load_dwordx8 s[8:15], s[4:5], 0x20
+        0xF408_0401, 0xFA00_0000, // s_load_dwordx4 s[16:19], s[2:3], 0x0
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xF080_0F08, 0x0082_0200, // image_sample v[2:5], v[0:1], s[8:15], s[16:19] dmask:0xf dim:2D
+        0xF038_0308, 0x0002_0600, // image_get_resinfo v[6:7], v0, s[8:15] dmask:0x3 dim:2D
+        0xBF8C_3F70, // s_waitcnt vmcnt(0)
+        0xF800_180F, 0x0504_0302, // exp mrt0 v2, v3, v4, v5 done vm
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = pixel(&code, 4);
+    let table = Source::Memory { pointer: Box::new(Source::UserSgpr(2)), offset: 0x10 };
+    assert_eq!(
+        t.resources,
+        vec![
+            Resource::Texture {
+                slot: 0,
+                source: Source::Memory { pointer: Box::new(table), offset: 0x20 },
+                kind: TextureKind::Tex2d,
+                access: Access::Sample,
+            },
+            Resource::Sampler { slot: 0, source: Source::Memory { pointer: Box::new(Source::UserSgpr(2)), offset: 0 } },
+        ]
+    );
+    assert!(t.msl.contains("get_width"));
+    compile(&t.msl);
+}
+
+#[test]
+fn image_load_and_store_bind_read_and_write_textures() {
+    let code = [
+        0xF000_0F08, 0x0000_0200, // image_load v[2:5], v[0:1], s[0:7] dmask:0xf dim:2D
+        0xBF8C_3F70, // s_waitcnt vmcnt(0)
+        0xF020_0F08, 0x0002_0200, // image_store v[2:5], v[0:1], s[8:15] dmask:0xf dim:2D
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 16, 16 << 1);
+    let access: Vec<_> = t
+        .resources
+        .iter()
+        .map(|r| match r {
+            Resource::Texture { access, .. } => *access,
+            _ => unreachable!(),
+        })
+        .collect();
+    assert_eq!(access, [Access::Sample, Access::Write]);
+    assert!(t.msl.contains("access::write"));
+    compile(&t.msl);
+}
+
+#[test]
+fn carry_arithmetic_quad_broadcasts_and_cube_ops_translate() {
+    let code = [
+        0xD70F_6A02, 0x0002_0300, // v_add_co_u32 v2, vcc, v0, v1
+        0xD528_0403, 0x01AA_0300, // v_add_co_ci_u32_e64 v3, s[4:5], v0, v1, vcc
+        0x5208_0300, // v_sub_co_ci_u32_e32 v4, vcc, v0, v1, vcc
+        0x7E0A_02FA, 0xFF08_5500, // v_mov_b32_dpp v5, v0 quad_perm:[1,1,1,1] row_mask:0xf bank_mask:0xf bound_ctrl:1
+        0x080C_02FA, 0xFF00_AA00, // v_sub_f32_dpp v6, v0, v1 quad_perm:[2,2,2,2] row_mask:0xf bank_mask:0xf
+        0xD547_0007, 0x040A_0300, // v_cubema_f32 v7, v0, v1, v2
+        0xD544_0008, 0x040A_0300, // v_cubeid_f32 v8, v0, v1, v2
+        0xD558_0009, 0x040A_0300, // v_med3_i32 v9, v0, v1, v2
+        0xD56C_000A, 0x0002_0300, // v_mul_hi_i32 v10, v0, v1
+        0xF800_180F, 0x0504_0302, // exp mrt0 v2, v3, v4, v5 done vm
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = pixel(&code, 0);
+    assert!(t.msl.contains("quad_broadcast(v0, 1u)"));
+    assert!(t.msl.contains("quad_broadcast(v0, 2u)"));
+    assert!(t.msl.contains("cube_ma("));
+    compile(&t.msl);
+}
+
+#[test]
+fn gather_from_a_texture_array() {
+    let code = [
+        0xF11C_0128, 0x0040_0200, // image_gather4_lz v[2:5], v[0:2], s[0:7], s[8:11] dmask:0x1 dim:2D_ARRAY
+        0xBF8C_3F70, // s_waitcnt vmcnt(0)
+        0xF800_180F, 0x0504_0302, // exp mrt0 v2, v3, v4, v5 done vm
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = pixel(&code, 12);
+    assert!(t.msl.contains(".gather(smp0"));
+    assert!(t.msl.contains("texture2d_array<float>"));
+    compile(&t.msl);
+}
+
+#[test]
+fn integer_colour_formats_export_integers() {
+    let code = [
+        0xF800_180F, 0x0302_0100, // exp mrt0 v0, v1, v2, v3 done vm
+        0xBF81_0000, // s_endpgm
+    ];
+    let mut req = Request {
+        stage: Stage::Pixel,
+        code: &code,
+        user_sgprs: 0,
+        ngg: false,
+        ps_input_ena: 2,
+        ps_input_addr: 2,
+        ps_input_cntl: &[],
+        col_format: 7,
+        compute_rsrc2: 0,
+        threads: [1, 1, 1],
+    };
+    let t = translate(&req).unwrap();
+    assert!(t.msl.contains("uint4 c0 [[color(0)]]"));
+    compile(&t.msl);
+    req.col_format = 8;
+    let t = translate(&req).unwrap();
+    assert!(t.msl.contains("int4 c0 [[color(0)]]"));
+    compile(&t.msl);
 }
