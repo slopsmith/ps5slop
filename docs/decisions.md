@@ -374,3 +374,10 @@ Reason: the console's default main-thread stack size is unknown. The process par
 The libSceNpCppWebApi initialisation (`#UYPxv8MIzGo`) and `sce::Json::Initializer::initialize(InitParameter2)` now succeed and do nothing, where they used to fail so that Superliminal's PSN plugin would run "offline". The PSN library placeholders it calls next (GameIntent, EntitlementAccess, GameUpdate, SessionSignaling, Trophy2, UDS) succeed too.
 
 Reason: offline was not a state the title handles. Its PSN plugin's `PrxInitialize` stops at the first failure, the title's `PS5Manager` never leaves its initialising state, and the loading screen waits for that state before it activates the menu scene ([hle-kernel.md](hle-kernel.md)). With success it reaches its menu and first level. Nothing goes to the network: the calls do nothing. If a title later depends on results these calls should have produced (trophy data, web API responses), that will show as missing data rather than a stall.
+
+## 2026-11-21: Middleware inside a game counts as game code
+
+Unity's PSN and SaveData plugins (`PSNCore.prx` and similar), FMOD and other middleware a game ships may be disassembled locally like the game's own code ([legal.md](legal.md#analysing-user-supplied-binaries)), even when they are built on Sony's libraries. The reading is about what the middleware expects from the system; it is never used to learn how Sony's own libraries work, and nothing from it is committed.
+
+Reason (vic): the middleware is not Sony's code and not part of the emulator, so it falls on the game side of the line drawn on 2026-11-20. Prompted by Superliminal, whose PSN plugin gave up silently on a failed `sce::Json` initialise.
+
