@@ -102,6 +102,14 @@ impl gpu::Host for Host {
     fn replaced_since(&self, since: u64) -> (u64, Option<Vec<(u64, u64)>>) {
         self.mem.replaced_since(since)
     }
+
+    fn gpu_area(&self) -> Option<(u64, u64)> {
+        Some(crate::dmem::GPU_AREA)
+    }
+
+    fn back(&self, start: u64, end: u64) -> bool {
+        self.mem.back(start, end).is_ok()
+    }
 }
 
 fn gpu_thread(host: Host, jobs: Receiver<Job>, stats: Arc<Mutex<gpu::Stats>>) {
@@ -132,8 +140,16 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>, stats: Arc<Mutex<gpu::Stats>>) {
             last_report = std::time::Instant::now();
             let s = &processor.stats;
             eprintln!(
-                "ps5slop: GPU: {} submissions, {} packets, {} draws, {} dispatches, {} flips, {} interrupts, {} wait timeouts, {} waits met by pending releases",
-                s.submissions, s.packets, s.draws, s.dispatches, s.flips, s.interrupts, s.timeouts, s.deferred_waits
+                "ps5slop: GPU: {} submissions, {} packets, {} draws, {} dispatches, {} flips, {} interrupts, {} wait timeouts, {} waits met by pending releases, {} memory writes",
+                s.submissions,
+                s.packets,
+                s.draws,
+                s.dispatches,
+                s.flips,
+                s.interrupts,
+                s.timeouts,
+                s.deferred_waits,
+                s.opcodes.get(&0x37).unwrap_or(&0) + s.opcodes.get(&0x115).unwrap_or(&0)
             );
             if let Some(b) = &processor.backend {
                 eprintln!("ps5slop: GPU: Metal: {}", b.summary());

@@ -214,6 +214,9 @@ struct Shared {
     /// The last region changes, for fault reports (see [`Memory::changes_near`]).
     history: Mutex<std::collections::VecDeque<Change>>,
     born: std::time::Instant,
+    /// Runs of adjacent non-trap regions merged into one range each, sorted,
+    /// and the generation they were computed for.
+    extents: Mutex<(u64, Vec<(u64, u64)>)>,
     /// Ranges with readable and writable host pages, merged, by start.
     backed: Mutex<BTreeMap<u64, u64>>,
     /// Shared memory standing in for physical memory (see
@@ -319,6 +322,7 @@ impl Memory {
                 replaced: Mutex::new(std::collections::VecDeque::new()),
                 replaced_next: AtomicU64::new(0),
                 backed: Mutex::new(BTreeMap::new()),
+                extents: Mutex::new((u64::MAX, Vec::new())),
                 history: Mutex::new(std::collections::VecDeque::new()),
                 born: std::time::Instant::now(),
                 physical: std::sync::OnceLock::new(),
@@ -447,9 +451,9 @@ impl Memory {
         self.host_replace(addr, len, None)
     }
 
-    /// Gives `[addr, addr + len)` new host pages: zeros, or the pages of
-    /// `source` (a descriptor and offset), shared with every other mapping of them.
-    fn host_replace(&self, addr: u64, len: u64, source: Option<(i32, u64)>) -> Result<(), MapError> {
+    // New host pages for `[addr, addr + len)`: zeros, or `source`'s (descriptor,
+    // offset); unlike `host_replace`, not logged as replaced.
+    fn host_map(&self, addr: u64, len: u64, source: Option<(i32, u64)>) -> Result<(), MapError> {
         let (flags, fd, offset) = match source {
             Some((fd, offset)) => (libc::MAP_SHARED | libc::MAP_FIXED, fd, offset as libc::off_t),
             None => (libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED, -1, 0),
@@ -483,6 +487,11 @@ impl Memory {
         }
         backed.insert(start, end);
         drop(backed);
+        Ok(())
+    }
+
+    fn host_replace(&self, addr: u64, len: u64, source: Option<(i32, u64)>) -> Result<(), MapError> {
+        self.host_map(addr, len, source)?;
         let mut fresh = self.shared.fresh.lock().unwrap_or_else(|e| e.into_inner());
         if fresh.len() >= FRESH_LIMIT {
             fresh.clear();
@@ -681,6 +690,39 @@ impl Memory {
         Ok(())
     }
 
+    /// Gives every page in `[start, end)` that has no host memory yet fresh
+    /// zero pages, readable and writable on the host; guest access is still
+    /// only what the region table allows.
+    pub fn back(&self, start: u64, end: u64) -> Result<(), MapError> {
+        if end <= start {
+            return Ok(());
+        }
+        self.check_range(start, end - start)?;
+        let _regions = self.regions_write();
+        let gaps: Vec<(u64, u64)> = {
+            let backed = self.shared.backed.lock().unwrap_or_else(|e| e.into_inner());
+            let mut gaps = Vec::new();
+            let mut at = start;
+            if let Some((_, &e)) = backed.range(..=start).next_back() {
+                at = at.max(e);
+            }
+            for (&s, &e) in backed.range(start..end) {
+                if s > at {
+                    gaps.push((at, s));
+                }
+                at = at.max(e);
+            }
+            if at < end {
+                gaps.push((at, end));
+            }
+            gaps
+        };
+        for (s, e) in gaps {
+            self.host_map(s, e - s, None)?;
+        }
+        Ok(())
+    }
+
     /// The lowest page-aligned free range of `len` bytes at or above `min`.
     pub fn find_free(&self, min: u64, len: u64) -> Option<u64> {
         free_range(&self.regions_read(), min, len, PAGE_SIZE, self.shared.size)
@@ -741,25 +783,21 @@ impl Memory {
     /// The host-backed range around `at`: adjacent mapped regions merged, as
     /// `(start, end)`. Host pages stay readable and writable once mapped.
     pub fn mapped_extent(&self, at: u64) -> Option<(u64, u64)> {
-        let regions = self.regions_read();
-        let (&start, r) = regions.range(..=at).next_back()?;
-        if at >= r.end || r.trap {
-            return None;
-        }
-        let (mut lo, mut hi) = (start, r.end);
-        for (&s, r) in regions.range(..start).rev() {
-            if r.end != lo || r.trap {
-                break;
+        let mut cache = self.shared.extents.lock().unwrap_or_else(|e| e.into_inner());
+        let generation = self.shared.generation.load(Ordering::Acquire);
+        if cache.0 != generation {
+            let regions = self.regions_read();
+            let mut merged: Vec<(u64, u64)> = Vec::new();
+            for (&s, r) in regions.iter().filter(|(_, r)| !r.trap) {
+                match merged.last_mut() {
+                    Some(last) if last.1 == s => last.1 = r.end,
+                    _ => merged.push((s, r.end)),
+                }
             }
-            lo = s;
+            *cache = (generation, merged);
         }
-        for (&s, r) in regions.range(hi..) {
-            if s != hi || r.trap {
-                break;
-            }
-            hi = r.end;
-        }
-        Some((lo, hi))
+        let i = cache.1.partition_point(|&(_, end)| end <= at);
+        cache.1.get(i).copied().filter(|&(start, _)| start <= at)
     }
 
     /// The region containing `at`, from this handle's cache when it is current.
@@ -1228,6 +1266,22 @@ mod tests {
         let distinct: std::collections::HashSet<_> = got.iter().collect();
         assert_eq!(distinct.len(), got.len());
         assert!(got.iter().all(|a| a.is_multiple_of(4 * PAGE_SIZE) && *a > 0x40_0000));
+    }
+
+    #[test]
+    fn extents_merge_adjacent_regions_and_stop_at_gaps_and_traps() {
+        let m = Memory::new(4 * GIB).unwrap();
+        let p = PAGE_SIZE;
+        m.map(0x40_0000, p, Prot::RW, "a").unwrap();
+        m.map(0x40_0000 + p, 2 * p, Prot::NONE, "b").unwrap();
+        m.map_trap(0x40_0000 + 3 * p, p, "t").unwrap();
+        m.map(0x40_0000 + 4 * p, p, Prot::RW, "c").unwrap();
+        assert_eq!(m.mapped_extent(0x40_0000 + p + 8), Some((0x40_0000, 0x40_0000 + 3 * p)));
+        assert_eq!(m.mapped_extent(0x40_0000 + 3 * p), None);
+        assert_eq!(m.mapped_extent(0x40_0000 + 4 * p), Some((0x40_0000 + 4 * p, 0x40_0000 + 5 * p)));
+        m.unmap(0x40_0000 + p).unwrap();
+        assert_eq!(m.mapped_extent(0x40_0000), Some((0x40_0000, 0x40_0000 + p)));
+        assert_eq!(m.mapped_extent(0x40_0000 + p), None);
     }
 
     #[test]

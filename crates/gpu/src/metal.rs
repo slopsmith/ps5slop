@@ -211,6 +211,17 @@ pub struct Metal {
     swizzles: HashMap<(usize, [u8; 4]), Retained<Texture>>,
     depth_states: HashMap<(DepthState, bool), Retained<ProtocolObject<dyn MTLDepthStencilState>>>,
     windows: Vec<Window>,
+    /// One window from the start of the host's GPU area (see
+    /// [`Host::gpu_area`]) up to what programs have pointed into so far.
+    area: Option<Window>,
+    /// Work encoded since the last wait writes guest memory, so the CPU must
+    /// wait for it before reading guest memory for later work (see `settle`).
+    wrote_memory: bool,
+    /// Shared memory handed out front to back for data copied for the GPU,
+    /// and how much of it is used; replaced when full.
+    scratch: Option<(Retained<Buffer>, usize)>,
+    /// Pixel inputs each (vertex, pixel) program pair lacks, by program ids.
+    missing_inputs: HashMap<(u64, u64), Vec<u32>>,
     generation: u64,
     targets: HashMap<u64, Target>,
     images: HashMap<(Image, TextureKind), (u64, Retained<Texture>)>,
@@ -258,13 +269,14 @@ fn guest_sum(host: &dyn Host, base: u64, len: u64) -> Option<u64> {
         return None;
     }
     let p = host.host_pointer(base)? as *const u64;
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    let (mut sum, mut xor) = (0u64, 0u64);
     for i in 0..(len / 8) as usize {
         // SAFETY: the range is mapped guest memory; the guest may write it concurrently.
         let w = unsafe { p.add(i).read_unaligned() };
-        h = (h ^ w).wrapping_mul(0x0000_0100_0000_01b3).rotate_left(29);
+        sum = sum.wrapping_add(w);
+        xor ^= w;
     }
-    Some(h)
+    Some(sum ^ xor.rotate_left(32))
 }
 
 /// Where a program's resources are bound: one stage of an encoder.
@@ -346,6 +358,10 @@ impl Metal {
             swizzles: HashMap::new(),
             depth_states: HashMap::new(),
             windows: Vec::new(),
+            area: None,
+            wrote_memory: false,
+            missing_inputs: HashMap::new(),
+            scratch: None,
             generation: 0,
             targets: HashMap::new(),
             images: HashMap::new(),
@@ -425,10 +441,14 @@ impl Metal {
                         .into_iter()
                         .partition(|w| ranges.iter().any(|&(s, e)| s < w.end && w.start < e));
                     self.windows = kept;
+                    if self.area.as_ref().is_some_and(|w| ranges.iter().any(|&(s, e)| s < w.end && w.start < e)) {
+                        self.area = None;
+                    }
                     gone
                 }
                 None => {
                     self.flush_and_wait();
+                    self.area = None;
                     std::mem::take(&mut self.windows)
                 }
             };
@@ -734,6 +754,7 @@ impl Metal {
         }
         self.refresh_volume(host, image.address, false);
         if let Some(v) = self.volume(image, kind, format) {
+            self.note(|| format!("      {:#x} from a 2D array or 3D image", image.address));
             return Some(v);
         }
         if image.tile.is_none() && is_depth_layout(image.raw_tile) && kind == TextureKind::Tex2d {
@@ -751,11 +772,13 @@ impl Metal {
         {
             let tex = &t.texture;
             if tex.width() as u32 == image.width && tex.height() as u32 == image.height {
-                return if t.pixel_format == format {
+                let found = if t.pixel_format == format {
                     Some(tex.clone())
                 } else {
                     tex.newTextureViewWithPixelFormat(format)
                 };
+                self.note(|| format!("      {:#x} from a render target", image.address));
+                return found;
             }
         }
         if let Some((epoch, tex)) = self.images.get(&(image, kind))
@@ -763,6 +786,7 @@ impl Metal {
         {
             return Some(tex.clone());
         }
+        self.note(|| format!("      {:#x} detiled from guest memory", image.address));
         let compressed = is_compressed(format);
         let (ew, eh) = if compressed {
             (image.width.div_ceil(4), image.height.div_ceil(4))
@@ -1086,8 +1110,15 @@ impl Metal {
             v.dedup();
             v
         };
-        let have = locations(&vertex.translated.msl);
-        let missing: Vec<u32> = locations(&pixel.translated.msl).into_iter().filter(|l| !have.contains(l)).collect();
+        let missing = match self.missing_inputs.get(&(vertex.id, pixel.id)) {
+            Some(m) => m.clone(),
+            None => {
+                let have = locations(&vertex.translated.msl);
+                let m: Vec<u32> = locations(&pixel.translated.msl).into_iter().filter(|l| !have.contains(l)).collect();
+                self.missing_inputs.insert((vertex.id, pixel.id), m.clone());
+                m
+            }
+        };
         if missing.is_empty() && !rect && !gl_clip {
             return Some(vertex.function.clone());
         }
@@ -1412,6 +1443,7 @@ impl Metal {
         if texture.arrayLength() < src.slices as usize {
             return;
         }
+        self.report(format!("reloading the 2D array at {address:#x}: guest memory changed"));
         if let Some(fresh) = self.fill_volume(host, &texture, src.image, src.bpe, src.slices) {
             self.volume_sources.insert(address, fresh);
         }
@@ -1509,6 +1541,29 @@ impl Metal {
         Some(t)
     }
 
+    /// `len` bytes of shared memory no GPU work uses yet, 4-byte aligned:
+    /// a buffer and an offset into it.
+    fn scratch(&mut self, len: usize) -> Option<(Retained<Buffer>, usize)> {
+        const SCRATCH: usize = 4 << 20;
+        let need = len.next_multiple_of(4);
+        if self.scratch.as_ref().is_none_or(|(b, used)| used + need > b.length()) {
+            let buffer = self.device.newBufferWithLength_options(SCRATCH.max(need), MTLResourceOptions::StorageModeShared)?;
+            self.scratch = Some((buffer, 0));
+        }
+        let (buffer, used) = self.scratch.as_mut()?;
+        let at = *used;
+        *used += need;
+        Some((buffer.clone(), at))
+    }
+
+    // Before the CPU reads guest memory: waits for encoded work that wrote it.
+    fn settle(&mut self) {
+        if self.wrote_memory {
+            self.wrote_memory = false;
+            self.flush_and_wait();
+        }
+    }
+
     /// The resources `program` binds, made ready before any encoder opens
     /// (uploads end the open pass).
     fn resolve(&mut self, host: &dyn Host, program: &Program, user: &[u32]) -> Option<Bound> {
@@ -1581,9 +1636,45 @@ impl Metal {
             }
         }
         let (lo, hi) = best?;
+        if let Some((start, end)) = host.gpu_area()
+            && start <= lo
+            && lo < end
+            && let Some(w) = self.area_window(host, start, end, hi)
+        {
+            return Some((w, start));
+        }
         let len = (hi - lo).min(max & !(PAGE - 1));
         let (buf, offset) = self.window(host, lo, len)?;
         Some((buf, lo - offset as u64))
+    }
+
+    /// The window over the GPU area `[start, end)` reaching at least `need`,
+    /// made again (in 1 GiB steps) when it does not reach that far.
+    fn area_window(&mut self, host: &dyn Host, start: u64, end: u64, need: u64) -> Option<Retained<Buffer>> {
+        if let Some(w) = &self.area
+            && need <= w.end
+        {
+            return Some(w.buffer.clone());
+        }
+        let max = self.device.maxBufferLength() as u64 & !(PAGE - 1);
+        let stop = need.next_multiple_of(1 << 30).min(end).min(start + max);
+        if need > stop || !host.back(start, stop) {
+            return None;
+        }
+        let ptr = NonNull::new(host.host_pointer(start)?)?;
+        // SAFETY: `back` gave every page host memory, which stays mapped; the
+        // window is dropped when pages under it are replaced.
+        let buffer = unsafe {
+            self.device.newBufferWithBytesNoCopy_length_options_deallocator(
+                ptr.cast(),
+                (stop - start) as usize,
+                MTLResourceOptions::StorageModeShared,
+                None,
+            )
+        }?;
+        self.report(format!("GPU area window of {} MiB at {start:#x}", (stop - start) >> 20));
+        self.area = Some(Window { start, end: stop, buffer: buffer.clone() });
+        Some(buffer)
     }
 
     fn try_dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]) -> Result<(), &'static str> {
@@ -1632,6 +1723,7 @@ impl Metal {
                     depth: threads[2],
                 },
             );
+            self.wrote_memory |= program.translated.writes_memory;
         }
         enc.endEncoding();
         if bound.is_some() { Ok(()) } else { Err("resources") }
@@ -1739,21 +1831,15 @@ impl Metal {
                     self.window(host, address, len).ok_or("index buffer")?
                 } else {
                     // Metal needs index buffer offsets to be multiples of 4.
-                    let mut b = vec![0u8; len.max(4) as usize];
+                    self.settle();
                     let (_, hi) = host.extent(address).ok_or("index buffer")?;
                     let src = host.host_pointer(address).ok_or("index buffer")?;
                     let n = (len as usize).min((hi - address) as usize);
-                    // SAFETY: `n` bytes from `address` lie in host-backed guest memory.
-                    unsafe { std::ptr::copy_nonoverlapping(src, b.as_mut_ptr(), n) };
-                    let buf = unsafe {
-                        self.device.newBufferWithBytes_length_options(
-                            NonNull::new(b.as_mut_ptr()).ok_or("index buffer")?.cast(),
-                            b.len(),
-                            MTLResourceOptions::StorageModeShared,
-                        )
-                    }
-                    .ok_or("index buffer")?;
-                    (buf, 0)
+                    let (buf, offset) = self.scratch(len.max(4) as usize).ok_or("index buffer")?;
+                    // SAFETY: `n` bytes from `address` lie in host-backed guest memory, and
+                    // the scratch range is fresh shared memory no GPU work uses yet.
+                    unsafe { std::ptr::copy_nonoverlapping(src, buf.contents().as_ptr().cast::<u8>().add(offset), n) };
+                    (buf, offset)
                 };
                 Some((bound, wide))
             }
@@ -1832,6 +1918,7 @@ impl Metal {
                 }
             }
         }
+        self.wrote_memory |= vertex.translated.writes_memory || pixel.translated.writes_memory;
         Ok(())
     }
 

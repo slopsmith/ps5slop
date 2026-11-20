@@ -260,3 +260,9 @@ Reason: every page replacement invalidates whatever maps those pages elsewhere. 
 With the JIT on, every change to guest memory syncs the VM's tables on the changing thread at once, and vCPUs enter without comparing the region generation ([jit.md](jit.md)).
 
 Reason: Minecraft changes its memory map about 450 times a second while loading, and every change made every running vCPU take the machine lock to sync, where they queued behind translations. World loading took 49 s with that and 30 s without it. A vCPU that races ahead of a sync sees what a vCPU already inside the VM always could: a fault on a range not mapped yet (interpreted by the host), or a range unmapped a moment ago.
+
+## 2026-11-20: Command-stream memory writes wait like releases
+
+`WRITE_DATA` to memory is queued with the deferred releases and applied, in order, after the GPU has finished the work before it ([gpu.md](gpu.md)).
+
+Reason: Minecraft's UI uses these writes as labels telling its CPU that earlier GPU work is done. Written when parsed, they ran ahead of draws still queued in Metal, and the game reused vertex data those draws had not read yet. Waiting for the GPU before each write fixed it too but cost 37% of menu frames.

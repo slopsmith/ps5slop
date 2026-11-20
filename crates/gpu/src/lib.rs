@@ -93,6 +93,15 @@ pub trait Host {
     fn replaced_since(&self, _since: u64) -> (u64, Option<Vec<(u64, u64)>>) {
         (0, None)
     }
+    /// The guest range where memory the GPU uses is mapped, as `(start, end)`.
+    fn gpu_area(&self) -> Option<(u64, u64)> {
+        None
+    }
+    /// Gives every page in `[start, end)` host memory (zeros where nothing
+    /// is mapped), so a window can span the holes; false if it cannot.
+    fn back(&self, _start: u64, _end: u64) -> bool {
+        false
+    }
 }
 
 /// A flip request from a command buffer.

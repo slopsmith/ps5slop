@@ -50,6 +50,13 @@ const MARKER_FLIP: u32 = 0x777;
 const MARKER_FLIP_WITH_LABEL: u32 = 0x778;
 const MARKER_FLIP_WITH_INTERRUPT: u32 = 0x781;
 
+/// Whether releases and memory writes wait for the GPU instead of being
+/// queued (`PS5SLOP_GPU_SYNC_RELEASES`).
+fn synchronous_releases() -> bool {
+    static SYNCHRONOUS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SYNCHRONOUS.get_or_init(|| std::env::var_os("PS5SLOP_GPU_SYNC_RELEASES").is_some())
+}
+
 /// Destination selects that mean memory in WRITE_DATA.
 const WRITE_DATA_MEMORY: [u32; 4] = [1, 2, 4, 5];
 const MAX_DEPTH: u32 = 8;
@@ -85,9 +92,33 @@ pub struct Processor {
     index_base: u64,
     instances: u32,
     last_flip: Option<Instant>,
-    /// Releases whose GPU work is committed but not known to be done:
-    /// (data select, interrupt select, destination, value, context).
-    pending: Vec<(u32, u32, u64, u64, u32)>,
+    /// Releases and memory writes whose earlier GPU work is committed but
+    /// not known to be done, in command order.
+    pending: Vec<Pending>,
+}
+
+enum Pending {
+    Release { data: u32, interrupt: u32, dest: u64, value: u64, context: u32 },
+    Write { dest: u64, values: Vec<u32>, fixed: bool },
+}
+
+impl Pending {
+    /// The 32-bit value this leaves at `address`, if it writes there.
+    fn word_at(&self, address: u64) -> Option<u32> {
+        match *self {
+            Pending::Release { data: 1 | 2, dest, value, .. } if dest == address => Some(value as u32),
+            Pending::Release { data: 2, dest, value, .. } if dest + 4 == address => Some((value >> 32) as u32),
+            Pending::Write { dest, ref values, fixed } => {
+                if fixed {
+                    values.last().copied().filter(|_| dest == address)
+                } else {
+                    let i = address.checked_sub(dest)?;
+                    (i % 4 == 0).then(|| values.get((i / 4) as usize).copied()).flatten()
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 impl Default for Processor {
@@ -420,7 +451,15 @@ impl Processor {
         host.flip(flip);
     }
 
-    fn write_values(&self, host: &dyn Host, dest: u64, values: &[u32], fixed: bool) {
+    fn write_values(&mut self, host: &dyn Host, dest: u64, values: &[u32], fixed: bool) {
+        if self.backend.is_some() && !synchronous_releases() {
+            self.pending.push(Pending::Write { dest, values: values.to_vec(), fixed });
+            return;
+        }
+        Self::apply_write(host, dest, values, fixed);
+    }
+
+    fn apply_write(host: &dyn Host, dest: u64, values: &[u32], fixed: bool) {
         for (i, v) in values.iter().enumerate() {
             let at = if fixed { dest } else { dest + 4 * i as u64 };
             host.write(at, &v.to_le_bytes());
@@ -432,10 +471,8 @@ impl Processor {
     // Selectors 5 and 6 write nothing and interrupt only while the label at
     // `dest` is at or below `value` (SharpEmu-mac's `InterruptDecision`).
     fn release(&mut self, host: &dyn Host, data: u32, interrupt: u32, dest: u64, value: u64, context: u32) {
-        static SYNCHRONOUS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        let synchronous = *SYNCHRONOUS.get_or_init(|| std::env::var_os("PS5SLOP_GPU_SYNC_RELEASES").is_some());
-        if self.backend.is_some() && !synchronous {
-            self.pending.push((data, interrupt, dest, value, context));
+        if self.backend.is_some() && !synchronous_releases() {
+            self.pending.push(Pending::Release { data, interrupt, dest, value, context });
         } else {
             self.sync();
             self.apply_release(host, data, interrupt, dest, value, context);
@@ -449,8 +486,13 @@ impl Processor {
             return;
         }
         self.sync();
-        for (data, interrupt, dest, value, context) in std::mem::take(&mut self.pending) {
-            self.apply_release(host, data, interrupt, dest, value, context);
+        for p in std::mem::take(&mut self.pending) {
+            match p {
+                Pending::Release { data, interrupt, dest, value, context } => {
+                    self.apply_release(host, data, interrupt, dest, value, context)
+                }
+                Pending::Write { dest, values, fixed } => Self::apply_write(host, dest, &values, fixed),
+            }
         }
     }
 
@@ -489,10 +531,13 @@ impl Processor {
     fn wait(&mut self, host: &dyn Host, control: u32, address: u64, reference: u64, mask: u64, wide: bool) {
         // GPU work runs in order, so a wait on a label that a pending release
         // will satisfy passes without waiting for the GPU.
-        let satisfied = self.pending.iter().rev().find(|p| p.2 == address && matches!(p.0, 1 | 2)).is_some_and(|p| {
-            let value = if p.0 == 1 || !wide { p.3 & 0xFFFF_FFFF } else { p.3 };
-            compare(control, value & mask, reference)
-        });
+        let word = |at: u64| self.pending.iter().rev().find_map(|p| p.word_at(at));
+        let value = match (word(address), wide) {
+            (Some(lo), false) => Some(lo as u64),
+            (Some(lo), true) => word(address + 4).map(|hi| lo as u64 | (hi as u64) << 32),
+            (None, _) => None,
+        };
+        let satisfied = value.is_some_and(|v| compare(control, v & mask, reference));
         if satisfied {
             self.stats.deferred_waits += 1;
             return;
@@ -574,6 +619,16 @@ mod tests {
 
     fn word(host: &Fake, at: usize) -> u32 {
         u32::from_le_bytes(host.mem.borrow()[at..at + 4].try_into().unwrap())
+    }
+
+    #[test]
+    fn queued_writes_and_releases_report_what_they_leave_in_memory() {
+        let w = Pending::Write { dest: 0x100, values: vec![1, 2, 3], fixed: false };
+        assert_eq!((w.word_at(0x104), w.word_at(0x10c), w.word_at(0x102)), (Some(2), None, None));
+        let f = Pending::Write { dest: 0x100, values: vec![1, 2, 3], fixed: true };
+        assert_eq!((f.word_at(0x100), f.word_at(0x104)), (Some(3), None));
+        let r = Pending::Release { data: 2, interrupt: 0, dest: 0x200, value: 0x5_0000_0007, context: 0 };
+        assert_eq!((r.word_at(0x200), r.word_at(0x204)), (Some(7), Some(5)));
     }
 
     #[test]

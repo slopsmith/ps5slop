@@ -16,6 +16,9 @@ use crate::{CallError, Env, Function, Outcome, errno};
 pub const DIRECT_MEMORY_SIZE: u64 = 12 << 30;
 /// Where maps without a fixed address go: the start of the user area.
 const MAP_AREA: u64 = 0x10_0000_0000;
+/// Where direct memory and `mmap` without a fixed address land (both search
+/// upward from `MAP_AREA`), for the GPU's guest memory window.
+pub(crate) const GPU_AREA: (u64, u64) = (MAP_AREA, MAP_AREA + (16 << 30));
 const MAP_FIXED: u64 = 0x10;
 const PROT_CPU_READ: u64 = 0x01;
 const PROT_CPU_WRITE: u64 = 0x02;
