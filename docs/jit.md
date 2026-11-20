@@ -166,3 +166,7 @@ D. **Speed:** block chaining, return prediction, in-VM paths for the hottest HLE
 ## Open questions
 
 - Self-modifying and generated code: pages holding translated code become read-only in TTBR0 and a write faults to the host. No PS5 title known to need it yet.
+
+## Ideas (not planned)
+
+- **A persistent translation cache** (vic, 2026-11-20), like Ryujinx's PPTC: save translated blocks to a file per module and load them on the next run, so launches after the first skip translation and evicted code is read back instead of translated again (28% of world-load translations were of evicted code). Saved profiles would let tier 2 recompile hot regions ahead of time instead of stalling a guest thread. It needs relocatable output (relocation records for every branch into the runtime and chain site), keys per module (a hash of its bytes, module-relative RIPs) and only file-backed code. Whole-file AOT like Android's ART is not the aim: finding all code in an x86 binary is undecidable, so cache what has run. The cache is derived from the game, so it lives in the user's data folder, never in the repo.
