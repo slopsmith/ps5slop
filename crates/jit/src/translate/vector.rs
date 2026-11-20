@@ -98,6 +98,11 @@ fn fma_scalar(op: u16) -> bool {
     matches!(op >> 4, 0x29..=0x2b) && matches!(op & 0xf, 0x9 | 0xb | 0xd | 0xf)
 }
 
+/// Packed FMA (the same families as [`fma_scalar`], on whole vectors).
+fn fma_packed(op: u16) -> bool {
+    matches!(op >> 4, 0x29..=0x2b) && matches!(op & 0xf, 0x8 | 0xa | 0xc | 0xe)
+}
+
 /// Whether the vector module handles `i`, and its flag use.
 pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
     let none = FlagUse {
@@ -125,7 +130,7 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x112 | 0x116 if p == Pfx::F3 => true,
         0x112 | 0x116 => !wide && (p == Pfx::None || p == Pfx::P66 && i.mem.is_some()),
         0x113 | 0x117 => !wide && matches!(p, Pfx::None | Pfx::P66) && i.mem.is_some(),
-        _ if fma_scalar(op) => i.vex.is_some() && p == Pfx::P66,
+        _ if fma_scalar(op) || fma_packed(op) => i.vex.is_some() && p == Pfx::P66,
         0x217 => p == Pfx::P66,
         0x2f6 => i.vex.is_some() && p == Pfx::F2,
         0x321 => p == Pfx::P66 && !wide,
@@ -161,7 +166,12 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x300 | 0x301 => wide && p == Pfx::P66 && i.rex_w(),
         0x302 => i.vex.is_some() && p == Pfx::P66 && !i.rex_w(),
         0x320 | 0x322 => p == Pfx::P66 && !wide,
-        0x220..=0x225 | 0x230..=0x235 => p == Pfx::P66 && !wide,
+        0x220..=0x225 | 0x230..=0x235 => p == Pfx::P66,
+        0x314..=0x317 => p == Pfx::P66 && !wide,
+        0x30e => p == Pfx::P66,
+        0x1c4 => p == Pfx::P66 && !wide,
+        0x21a | 0x25a => wide && p == Pfx::P66 && !i.rex_w() && i.mem.is_some(),
+        0x306 | 0x346 => wide && p == Pfx::P66,
         0x1c5 => p == Pfx::P66 && i.mem.is_none() && !wide,
         0x114 | 0x115 => matches!(p, Pfx::None | Pfx::P66),
         0x3f0 => i.vex.is_some() && p == Pfx::F2,
@@ -185,6 +195,10 @@ const SSHLL_2D: u32 = 0x0f20_a400;
 const SSHLL: u32 = 0x0f00_a400;
 const USHLL: u32 = 0x2f00_a400;
 const FCVTN: u32 = 0x0e61_6800;
+/// FMLA Vd.4S, Vn.4S, Vm.4S (bit 23 makes it FMLS, bit 22 .2D).
+const FMLA_V: u32 = 0x4e20_cc00;
+/// FNEG Vd.4S, Vn.4S (bit 22 makes it .2D).
+const FNEG_V: u32 = 0x6ea0_f800;
 
 fn vregs(d: V, n: V) -> u32 {
     (n.0 as u32) << 5 | d.0 as u32
@@ -291,19 +305,87 @@ impl Translator {
                     4 => (1, 3),
                     _ => (2, 3),
                 };
-                match i.mem {
-                    Some(_) => {
-                        let w = [Width::H, Width::W, Width::X][(3 - (to - from)) as usize];
-                        self.a.ldr(w, A, ADDR, 0);
-                        self.a.fmov_dx(XB, A);
-                    }
-                    None => self.a.ldr_q(XB, CTX, ymm(i.rm, 0)),
-                }
+                let steps = to - from;
+                let part = 8 >> (steps - 1);
                 let base = if op >= 0x230 { USHLL } else { SSHLL };
-                for size in from..to {
-                    self.a.emit(base | 1 << (19 + size) | vregs(XB, XB));
+                if i.mem.is_none() {
+                    self.a.ldr_q(XS, CTX, ymm(i.rm, 0));
                 }
-                self.a.str_q(XB, CTX, ymm(i.reg, 0));
+                for h in 0..halves {
+                    match i.mem {
+                        Some(_) => {
+                            let w = [Width::H, Width::W, Width::X][(3 - steps) as usize];
+                            self.a.ldr(w, A, ADDR, h as i32 * part);
+                            self.a.fmov_dx(XB, A);
+                        }
+                        None => self.a.ext(XB, XS, XS, h * part as u32),
+                    }
+                    for size in from..to {
+                        self.a.emit(base | 1 << (19 + size) | vregs(XB, XB));
+                    }
+                    self.a.str_q(XB, CTX, ymm(i.reg, h));
+                }
+            }
+            0x314..=0x317 => {
+                let (w, bytes, lane) = match op {
+                    0x314 => (Width::B, 1, i.imm as i32 & 15),
+                    0x315 => (Width::H, 2, i.imm as i32 & 7),
+                    0x316 if i.rex_w() => (Width::X, 8, i.imm as i32 & 1),
+                    _ => (Width::W, 4, i.imm as i32 & 3),
+                };
+                self.a.ldr(w, A, CTX, ymm(i.reg, 0) + bytes * lane);
+                match i.mem {
+                    Some(_) => self.a.str(w, A, ADDR, 0),
+                    None if w == Width::X => self.a.mov(Size::X, r(i.rm), A),
+                    None => self.a.mov(Size::W, r(i.rm), A),
+                }
+                return;
+            }
+            0x1c4 => {
+                match i.mem {
+                    Some(_) => self.a.ldr(Width::H, A, ADDR, 0),
+                    None => self.a.mov(Size::X, A, r(i.rm)),
+                }
+                self.a.ldr_q(XA, CTX, ymm(src1, 0));
+                self.a.str_q(XA, CTX, ymm(i.reg, 0));
+                self.a.str(Width::H, A, CTX, ymm(i.reg, 0) + 2 * (i.imm as i32 & 7));
+            }
+            0x30e => {
+                for h in 0..halves {
+                    self.a.ldr_q(XA, CTX, ymm(src1, h));
+                    self.rm_half(i, h, XB);
+                    for k in 0..8 {
+                        if i.imm as u32 >> k & 1 != 0 {
+                            self.a.ins(1, XA, k, XB, k);
+                        }
+                    }
+                    self.a.str_q(XA, CTX, ymm(i.reg, h));
+                }
+            }
+            0x21a | 0x25a => {
+                self.a.ldr_q(XA, ADDR, 0);
+                self.a.str_q(XA, CTX, ymm(i.reg, 0));
+                self.a.str_q(XA, CTX, ymm(i.reg, 1));
+                return;
+            }
+            0x306 | 0x346 => {
+                self.a.ldr_q(XA, CTX, ymm(src1, 0));
+                self.a.ldr_q(XB, CTX, ymm(src1, 1));
+                self.rm_half(i, 0, XT);
+                self.rm_half(i, 1, XS);
+                for h in 0..2 {
+                    let sel = (i.imm as u32 >> (4 * h)) & 0xf;
+                    let out = if h == 0 { XR } else { XU };
+                    if sel & 8 != 0 {
+                        self.a.vec3(true, true, 0, 0b00011, out, out, out);
+                    } else {
+                        let from = [XA, XB, XT, XS][(sel & 3) as usize];
+                        self.a.vec3(true, false, 2, 0b00011, out, from, from);
+                    }
+                }
+                self.a.str_q(XR, CTX, ymm(i.reg, 0));
+                self.a.str_q(XU, CTX, ymm(i.reg, 1));
+                return;
             }
             0x1c5 => {
                 self.a.ldr_q(XB, CTX, ymm(i.rm, 0));
@@ -355,6 +437,32 @@ impl Translator {
                 self.a.str_q(XR, CTX, ymm(i.reg, 0));
             }
             0x12c | 0x12d => return self.convert_to_int(i, op, p),
+            _ if fma_packed(op) => {
+                let double = i.rex_w();
+                for h in 0..halves {
+                    self.a.ldr_q(XA, CTX, ymm(i.reg, h));
+                    self.a.ldr_q(XB, CTX, ymm(src1, h));
+                    self.rm_half(i, h, XT);
+                    let (n, m, acc) = match op >> 4 {
+                        0x29 => (XA, XT, XB),
+                        0x2a => (XB, XA, XT),
+                        _ => (XB, XT, XA),
+                    };
+                    self.a.vec3(true, false, 2, 0b00011, XR, acc, acc);
+                    if matches!(op & 0xf, 0xa | 0xe) {
+                        self.a.emit(FNEG_V | (double as u32) << 22 | vregs(XR, XR));
+                    }
+                    let fmls = matches!(op & 0xf, 0xc | 0xe) as u32;
+                    self.a.emit(
+                        FMLA_V
+                            | fmls << 23
+                            | (double as u32) << 22
+                            | (m.0 as u32) << 16
+                            | vregs(XR, n),
+                    );
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
             _ if fma_scalar(op) => {
                 let double = i.rex_w();
                 self.a.ldr_q(XA, CTX, ymm(i.reg, 0));

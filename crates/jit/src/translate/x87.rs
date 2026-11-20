@@ -60,8 +60,8 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
             7 => r == 2 || r == 5,
             _ => false,
         },
-        (0xda, false) => ext <= 2,
-        (0xdb, false) => ext <= 2 || matches!(ext, 5 | 6),
+        (0xda, false) => ext <= 3,
+        (0xdb, false) => ext <= 3 || matches!(ext, 5 | 6),
         (0xdd, false) => matches!(ext, 2 | 3),
         (0xdf, false) => matches!(ext, 5 | 6) || (ext == 4 && r == 0),
         _ => false,
@@ -70,7 +70,7 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         return None;
     }
     let flags = match (i.op, i.mem.is_some(), ext) {
-        (0xda | 0xdb, false, 0..=2) => FlagUse {
+        (0xda | 0xdb, false, 0..=3) => FlagUse {
             reads: true,
             writes: false,
         },
@@ -362,6 +362,13 @@ impl Translator {
                 self.store_st(VR, 0);
             }
             (0xd9, 7) => self.fscale(),
+            (0xda | 0xdb, 3) => {
+                let skip = self.a.label();
+                self.parity_branch(0xa, op == 0xda, skip);
+                self.load_st(VA, r);
+                self.store_st(VA, 0);
+                self.a.bind(skip);
+            }
             (0xda | 0xdb, _) if ext <= 2 => {
                 let c = match ext {
                     0 => Cond::Lo,

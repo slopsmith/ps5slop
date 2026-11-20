@@ -141,9 +141,8 @@ static SHARED: Shared = Shared {
 };
 
 impl Shared {
-    /// Takes the active pool for an entry when the tables mirror `mem` and
-    /// were last flushed at `epoch`; `None` means the slow path under the
-    /// lock is needed. The caller gives the pool back with `users[pool]`.
+    /// Takes the active pool for an entry if the tables mirror `mem` and
+    /// were last flushed at `epoch`; `None` means take the locked path.
     fn try_use(&self, mem: &Memory, epoch: Option<u64>) -> Option<usize> {
         let sc = Ordering::SeqCst;
         if self.generation.load(sc) != mem.generation()
@@ -371,12 +370,8 @@ impl Machine {
         Ok(())
     }
 
-    /// Whether some address the active tables give access to stays mapped
-    /// in `regions` with less access. Other changes can be made to the tables
-    /// in place: stage 1 maps every guest address to itself, so a vCPU still
-    /// holding an old entry in its TLB reaches the same physical address,
-    /// which stage 2 (changed by HVF for every vCPU) maps to the current
-    /// pages or to nothing, a fault the host handles.
+    /// Whether an address the active tables give access to stays mapped in
+    /// `regions` with less; only then must vCPUs flush (see `docs/jit.md`).
     fn reduces_access(&self, regions: &[memory::RegionInfo], access: &[(u64, u64, bool)]) -> bool {
         let new: HashSet<&(u64, u64, bool)> = access.iter().collect();
         let removed: Vec<_> = self.mirrored.iter().filter(|m| !new.contains(m)).collect();

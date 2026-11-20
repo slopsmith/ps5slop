@@ -42,9 +42,8 @@ struct MutexState {
     count: u32,
     /// Threads blocked in `acquire`.
     waiters: u32,
-    /// Set when the mutex was released with waiters: only one of them may
-    /// take it, so a thread that unlocks and relocks in a loop cannot keep
-    /// it from them for good.
+    /// Released with waiters: only a waiter may take it, so a thread that
+    /// unlocks and relocks in a loop cannot starve them.
     handoff: bool,
 }
 

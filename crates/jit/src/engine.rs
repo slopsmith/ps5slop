@@ -289,9 +289,8 @@ impl Engine {
         if old.is_none_or(|o| o.fs_base != x.fs_base) {
             self.cpu.set_reg(FS_BASE.0, x.fs_base)?;
         }
-        // SAFETY: the vCPU's context block holds exactly the 16 YMM registers,
-        // as 64-bit lanes in little-endian order, and only this thread's
-        // vCPU uses it.
+        // SAFETY: the context block starts with the 16 YMM registers as
+        // little-endian lanes, and only this thread's vCPU uses it.
         unsafe {
             std::ptr::copy_nonoverlapping(
                 x.xmm.as_ptr().cast::<u8>(),
