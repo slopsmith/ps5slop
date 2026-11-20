@@ -231,7 +231,7 @@ pub struct Metal {
     /// Zero-filled stand-ins for depth-layout images no depth target backs.
     blank: HashMap<(Image, TextureKind), Retained<Texture>>,
     epoch: u64,
-    detilers: HashMap<(TileMode, u32, bool), Retained<ComputePipeline>>,
+    detilers: HashMap<(TileMode, u32, Detile), Retained<ComputePipeline>>,
     programs: HashMap<(u64, u64), Option<Arc<Program>>>,
     computes: HashMap<u64, Option<Retained<ComputePipeline>>>,
     variants: HashMap<VariantKey, Option<Retained<Function>>>,
@@ -249,34 +249,36 @@ pub struct Metal {
     trace: Option<Vec<String>>,
 }
 
+/// What a detile kernel writes.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Detile {
+    Texture,
+    Buffer,
+    /// Only the texels whose bytes differ from an older copy of the surface.
+    Changed,
+}
+
 /// The guest memory a 2D-array storage image was last loaded from.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct VolumeSource {
     image: Image,
     bpe: u32,
     slices: u32,
     base: u64,
     len: u64,
-    sum: Option<u64>,
+    shadow: Option<Arc<Vec<u8>>>,
     epoch: u64,
 }
 
-/// A checksum of guest memory `base..base + len`, if it is host-backed and
-/// at most 32 MiB.
-fn guest_sum(host: &dyn Host, base: u64, len: u64) -> Option<u64> {
+/// Guest memory `base..base + len` in place, if it is host-backed and at most 32 MiB.
+fn guest_bytes(host: &dyn Host, base: u64, len: u64) -> Option<&[u8]> {
     let (start, end) = host.extent(base)?;
     if base < start || base + len > end || len > 32 << 20 {
         return None;
     }
-    let p = host.host_pointer(base)? as *const u64;
-    let (mut sum, mut xor) = (0u64, 0u64);
-    for i in 0..(len / 8) as usize {
-        // SAFETY: the range is mapped guest memory; the guest may write it concurrently.
-        let w = unsafe { p.add(i).read_unaligned() };
-        sum = sum.wrapping_add(w);
-        xor ^= w;
-    }
-    Some(sum ^ xor.rotate_left(32))
+    let p = host.host_pointer(base)?;
+    // SAFETY: the range is mapped guest memory; the guest may write it concurrently.
+    Some(unsafe { std::slice::from_raw_parts(p, len as usize) })
 }
 
 /// The `user(locnN)` locations a pixel program reads flat (declared `uint4`).
@@ -540,8 +542,8 @@ impl Metal {
         Some((buffer, (addr - start) as usize))
     }
 
-    fn detiler(&mut self, mode: TileMode, bpe: u32, to_buffer: bool) -> Option<Retained<ComputePipeline>> {
-        if let Some(p) = self.detilers.get(&(mode, bpe, to_buffer)) {
+    fn detiler(&mut self, mode: TileMode, bpe: u32, output: Detile) -> Option<Retained<ComputePipeline>> {
+        if let Some(p) = self.detilers.get(&(mode, bpe, output)) {
             return Some(p.clone());
         }
         let layout = Layout::new(mode, bpe, 1, 1)?;
@@ -557,24 +559,22 @@ impl Metal {
             "uint2" => "uint4(v, 0, 0)",
             _ => "v",
         };
-        let (output, store) = if to_buffer {
-            (
-                format!("device {ty}* dst [[buffer(2)]]"),
-                "dst[id.y * p.x + id.x] = v;".to_string(),
-            )
-        } else {
-            (
-                "texture2d<uint, access::write> dst [[texture(0)]]".to_string(),
-                format!("dst.write({width}, id);"),
-            )
+        let same = if ty == "uint" { "v == w" } else { "all(v == w)" };
+        let (args, store) = match output {
+            Detile::Buffer => (format!("device {ty}* dst [[buffer(2)]]"), "dst[id.y * p.x + id.x] = v;".to_string()),
+            Detile::Texture => ("texture2d<uint, access::write> dst [[texture(0)]]".to_string(), format!("dst.write({width}, id);")),
+            Detile::Changed => (
+                "device const uchar* old [[buffer(2)]], texture2d<uint, access::write> dst [[texture(0)]]".to_string(),
+                format!("{ty} w = {};\n    if ({same}) return;\n    dst.write({width}, id);", load.replace("src", "old")),
+            ),
         };
         let msl = format!(
-            "#include <metal_stdlib>\nusing namespace metal;\n{}\nkernel void detile(device const uchar* src [[buffer(0)]], constant uint4& p [[buffer(1)]], {output}, uint2 id [[thread_position_in_grid]]) {{\n    if (id.x >= p.x || id.y >= p.y) return;\n    ulong o = surface_offset(id.x, id.y, p.z);\n    {ty} v = {load};\n    {store}\n}}\n",
+            "#include <metal_stdlib>\nusing namespace metal;\n{}\nkernel void detile(device const uchar* src [[buffer(0)]], constant uint4& p [[buffer(1)]], {args}, uint2 id [[thread_position_in_grid]]) {{\n    if (id.x >= p.x || id.y >= p.y) return;\n    ulong o = surface_offset(id.x, id.y, p.z);\n    {ty} v = {load};\n    {store}\n}}\n",
             layout.msl_offset()
         );
         let function = self.compile(&msl, "detile")?;
         let pipeline = self.device.newComputePipelineStateWithFunction_error(&function).ok()?;
-        self.detilers.insert((mode, bpe, to_buffer), pipeline.clone());
+        self.detilers.insert((mode, bpe, output), pipeline.clone());
         Some(pipeline)
     }
 
@@ -593,8 +593,24 @@ impl Metal {
 
     /// Copies a tiled guest surface into slice `slice` of `texture` on the GPU.
     fn detile_into(&mut self, host: &dyn Host, texture: &Texture, slice: usize, address: u64, layout: Layout) -> bool {
-        let Some(pipeline) = self.detiler(layout.mode, layout.bpe, false) else { return false };
         let Some((buffer, offset)) = self.window(host, address, layout.size()) else { return false };
+        self.encode_detile(texture, slice, layout, (&buffer, offset), None, address)
+    }
+
+    /// Copies into slice `slice` of `texture` only the texels whose bytes in
+    /// the tiled surface `new` differ from those in `old`.
+    fn detile_changes(&mut self, texture: &Texture, slice: usize, layout: Layout, new: &[u8], old: &[u8], address: u64) -> bool {
+        let bytes = |b: &[u8]| {
+            let ptr = NonNull::new(b.as_ptr() as *mut u8)?.cast();
+            unsafe { self.device.newBufferWithBytes_length_options(ptr, b.len(), MTLResourceOptions::StorageModeShared) }
+        };
+        let (Some(new), Some(old)) = (bytes(new), bytes(old)) else { return false };
+        self.encode_detile(texture, slice, layout, (&new, 0), Some(&old), address)
+    }
+
+    fn encode_detile(&mut self, texture: &Texture, slice: usize, layout: Layout, src: (&Buffer, usize), old: Option<&Buffer>, address: u64) -> bool {
+        let output = if old.is_some() { Detile::Changed } else { Detile::Texture };
+        let Some(pipeline) = self.detiler(layout.mode, layout.bpe, output) else { return false };
         let raw_format = match layout.bpe {
             1 => MTLPixelFormat::R8Uint,
             2 => MTLPixelFormat::R16Uint,
@@ -619,8 +635,11 @@ impl Metal {
         let params = [layout.width, layout.height, layout.pitch, 0];
         enc.setComputePipelineState(&pipeline);
         unsafe {
-            enc.setBuffer_offset_atIndex(Some(&buffer), offset, 0);
+            enc.setBuffer_offset_atIndex(Some(src.0), src.1, 0);
             enc.setBytes_length_atIndex(NonNull::from(&params).cast(), 16, 1);
+            if let Some(old) = old {
+                enc.setBuffer_offset_atIndex(Some(old), 0, 2);
+            }
             enc.setTexture_atIndex(Some(&raw), 0);
         }
         enc.dispatchThreads_threadsPerThreadgroup(
@@ -687,7 +706,7 @@ impl Metal {
     /// Fills block-compressed `texture` from a tiled guest surface of 4x4
     /// blocks: detiled into a linear buffer, then blitted.
     fn detile_blocks_into(&mut self, host: &dyn Host, texture: &Texture, slice: usize, address: u64, layout: Layout) -> bool {
-        let Some(pipeline) = self.detiler(layout.mode, layout.bpe, true) else { return false };
+        let Some(pipeline) = self.detiler(layout.mode, layout.bpe, Detile::Buffer) else { return false };
         let Some((buffer, offset)) = self.window(host, address, layout.size()) else { return false };
         let row = (layout.width * layout.bpe) as usize;
         let len = row * layout.height as usize;
@@ -1479,29 +1498,43 @@ impl Metal {
             self.detile_into(host, texture, slice as usize, base + slice as u64 * stride, layout);
         }
         let len = stride * slices as u64;
-        Some(VolumeSource { image, bpe, slices, base, len, sum: guest_sum(host, base, len), epoch: self.epoch })
+        let shadow = guest_bytes(host, base, len).map(|b| Arc::new(b.to_vec()));
+        Some(VolumeSource { image, bpe, slices, base, len, shadow, epoch: self.epoch })
     }
 
-    /// Reloads the 2D-array image at `address` from guest memory if the CPU
-    /// wrote there since it was loaded (checked on every write, once a frame for reads).
+    /// Copies into the 2D-array image at `address` the texels the CPU changed
+    /// in guest memory since the last look (on every write, once a frame for
+    /// reads). Texels the GPU wrote stay: those writes never reach guest memory.
     fn refresh_volume(&mut self, host: &dyn Host, address: u64, write: bool) {
         let Some(src) = self.volume_sources.get_mut(&address) else { return };
         if !write && src.epoch == self.epoch {
             return;
         }
         src.epoch = self.epoch;
-        let src = *src;
-        let sum = guest_sum(host, src.base, src.len);
-        if sum.is_none() || sum == src.sum {
+        let src = src.clone();
+        let Some(old) = src.shadow.as_deref() else { return };
+        let Some(new) = guest_bytes(host, src.base, src.len) else { return };
+        if new == old.as_slice() {
             return;
         }
+        let new = new.to_vec();
         let Some(texture) = self.volumes.get(&address).cloned() else { return };
+        let Some(layout) = src.image.tile.and_then(|t| Layout::new(t, src.bpe, src.image.width, src.image.height)) else { return };
         if texture.arrayLength() < src.slices as usize {
             return;
         }
-        self.report(format!("reloading the 2D array at {address:#x}: guest memory changed"));
-        if let Some(fresh) = self.fill_volume(host, &texture, src.image, src.bpe, src.slices) {
-            self.volume_sources.insert(address, fresh);
+        let changed = new.iter().zip(old).filter(|(a, b)| a != b).count();
+        self.report(format!("2D array at {address:#x}: {changed} bytes changed in guest memory, copying them in"));
+        let stride = (src.len / src.slices as u64) as usize;
+        let size = layout.size() as usize;
+        for slice in 0..src.slices as usize {
+            let range = slice * stride..slice * stride + size;
+            if new[range.clone()] != old[range.clone()] {
+                self.detile_changes(&texture, slice, layout, &new[range.clone()], &old[range], src.base + (slice * stride) as u64);
+            }
+        }
+        if let Some(s) = self.volume_sources.get_mut(&address) {
+            s.shadow = Some(Arc::new(new));
         }
     }
 
