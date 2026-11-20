@@ -116,6 +116,10 @@ pub struct ColorTarget {
     pub max_mip: u32,
     /// The level drawn to (`CB_COLOR_VIEW.MIP_LEVEL`).
     pub mip_level: u32,
+    /// The array slice drawn to (`CB_COLOR_VIEW.SLICE_START`).
+    pub slice: u32,
+    /// Array slices of the surface (`CB_COLOR_ATTRIB3.MIP0_DEPTH` + 1).
+    pub slices: u32,
 }
 
 impl ColorTarget {
@@ -146,6 +150,8 @@ impl ColorTarget {
             raw_tile,
             max_mip: attrib2 >> 28,
             mip_level: (r(CB_COLOR0_VIEW) >> 26) & 0xF,
+            slice: r(CB_COLOR0_VIEW) & 0x1FFF,
+            slices: (attrib3 & 0x1FFF) + 1,
         })
     }
 }

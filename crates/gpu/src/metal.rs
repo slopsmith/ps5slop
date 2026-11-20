@@ -45,6 +45,8 @@ static FRAMES: OnceLock<Mutex<HashMap<u64, SharedTexture>>> = OnceLock::new();
 
 /// Depth target array slices we keep at most (cascaded shadow maps use 4).
 const MAX_DEPTH_SLICES: usize = 16;
+/// Color target array slices we keep at most (cube maps use 6).
+const MAX_TARGET_SLICES: u32 = 16;
 
 fn frames() -> &'static Mutex<HashMap<u64, SharedTexture>> {
     FRAMES.get_or_init(Default::default)
@@ -590,9 +592,14 @@ impl Metal {
                 continue;
             }
             let Some(copy) = self.device.newTextureWithDescriptor(&copy_desc(t, t.pixelFormat())) else { continue };
-            unsafe { blit.copyFromTexture_toTexture(t, &copy) };
+            let slice = (addresses[i] >> 48) as usize;
+            unsafe {
+                blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
+                    t, slice, 0, MTLOrigin { x: 0, y: 0, z: 0 }, MTLSize { width: t.width(), height: t.height(), depth: 1 }, &copy, 0, 0, MTLOrigin { x: 0, y: 0, z: 0 },
+                );
+            }
             snap.bytes += size;
-            snap.copies.push((format!("{label}-mrt{i}-{:x}", addresses[i]), copy));
+            snap.copies.push((format!("{label}-mrt{i}-{:x}-s{slice}", addresses[i] & 0xFFFF_FFFF_FFFF), copy));
         }
         if let Some((t, slice)) = depth {
             let (w, h) = (t.width(), t.height());
@@ -876,6 +883,17 @@ impl Metal {
         self.device.newTextureWithDescriptor(&desc)
     }
 
+    /// A 2D-array render target of `slices` slices (cube maps the GPU renders face by face).
+    fn new_target_array(&self, format: MTLPixelFormat, width: u32, height: u32, slices: u32) -> Option<Retained<Texture>> {
+        let desc = unsafe { MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(format, width as usize, height as usize, false) };
+        desc.setTextureType(MTLTextureType::Type2DArray);
+        // SAFETY: at most MAX_TARGET_SLICES, below Metal's array limit.
+        unsafe { desc.setArrayLength(slices as usize) };
+        desc.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::ShaderWrite | MTLTextureUsage::PixelFormatView | MTLTextureUsage::RenderTarget);
+        desc.setStorageMode(MTLStorageMode::Private);
+        self.device.newTextureWithDescriptor(&desc)
+    }
+
     /// Fills block-compressed `texture` from a tiled guest surface of 4x4
     /// blocks: detiled into a linear buffer, then blitted.
     fn detile_blocks_into(&mut self, host: &dyn Host, texture: &Texture, slice: usize, address: u64, layout: Layout) -> bool {
@@ -921,20 +939,31 @@ impl Metal {
     /// The texture backing color target `t`, made (and filled from guest memory) on first use.
     fn target(&mut self, host: &dyn Host, t: &ColorTarget) -> Option<(Retained<Texture>, MTLPixelFormat)> {
         let format = color_format(t.format)?;
+        let slices = t.slices.max(t.slice + 1).min(MAX_TARGET_SLICES);
+        let layered = slices > 1;
         if let Some(existing) = self.targets.get(&t.address)
             && existing.pixel_format == format
             && existing.texture.width() == t.width as usize
             && existing.texture.height() == t.height as usize
+            && (existing.texture.textureType() == MTLTextureType::Type2DArray) == layered
+            && existing.texture.arrayLength() >= slices as usize
         {
             record(t.address | 2, &existing.texture, false);
             return Some((existing.texture.clone(), format));
         }
-        let texture = self.new_texture(format, t.width, t.height, true)?;
+        let texture = if layered {
+            self.new_target_array(format, t.width, t.height, slices)?
+        } else {
+            self.new_texture(format, t.width, t.height, true)?
+        };
         if let (Some(mode), Some(bpe)) = (t.tile, t.format.bytes())
             && let Some(layout) = Layout::new(mode, bpe, t.width, t.height)
         {
             let at = t.address + layout.mip0_offset(t.max_mip + 1);
-            self.detile_into(host, &texture, 0, at, layout);
+            let stride = layout.size().next_multiple_of(64 << 10);
+            for slice in 0..slices as usize {
+                self.detile_into(host, &texture, slice, at + slice as u64 * stride, layout);
+            }
         }
         self.targets.insert(
             t.address,
@@ -993,8 +1022,36 @@ impl Metal {
             TextureKind::Tex3d if image.kind != 10 => return self.flat_volume(host, image, format),
             TextureKind::Tex3d => return None,
         };
+        if let Some(t) = self.targets.get(&image.address)
+            && t.texture.textureType() == MTLTextureType::Type2DArray
+            && t.texture.width() as u32 == image.width
+            && t.texture.height() as u32 == image.height
+        {
+            let (tex, have) = (t.texture.clone(), t.pixel_format);
+            let (base, len) = (image.base_array as usize, tex.arrayLength());
+            let (ty, count) = match kind {
+                TextureKind::Tex2d if base < len => (MTLTextureType::Type2D, 1),
+                TextureKind::Tex2dArray if base < len => (MTLTextureType::Type2DArray, (image.depth as usize).clamp(1, len - base)),
+                TextureKind::Cube if base + 6 <= len => (MTLTextureType::TypeCube, 6),
+                _ => return None,
+            };
+            if have != format && !view_compatible(have, format) {
+                self.report(format!("render target at {:#x} ({have:?}) cannot be viewed as {format:?}", image.address));
+                return None;
+            }
+            self.note(|| format!("      {:#x} from a layered render target", image.address));
+            return unsafe {
+                tex.newTextureViewWithPixelFormat_textureType_levels_slices(
+                    format,
+                    ty,
+                    objc2_foundation::NSRange::new(0, 1),
+                    objc2_foundation::NSRange::new(base, count),
+                )
+            };
+        }
         if kind == TextureKind::Tex2d
             && let Some(t) = self.targets.get(&image.address)
+            && t.texture.textureType() == MTLTextureType::Type2D
         {
             let tex = &t.texture;
             if tex.width() as u32 == image.width && tex.height() as u32 == image.height {
@@ -1425,11 +1482,11 @@ impl Metal {
     /// The render encoder for color targets `targets`, reusing the open pass when it matches.
     fn pass(
         &mut self,
-        targets: &[(u64, Retained<Texture>)],
+        targets: &[(u64, Retained<Texture>, u32)],
         depth: Option<(u64, Retained<Texture>, bool, u32)>,
         clear: Option<(f32, u32)>,
     ) -> Option<Retained<RenderEncoder>> {
-        let mut addresses: Vec<u64> = targets.iter().map(|t| t.0).collect();
+        let mut addresses: Vec<u64> = targets.iter().map(|t| t.0 | (t.2 as u64) << 48).collect();
         addresses.push(depth.as_ref().map_or(0, |d| d.0 | (d.3 as u64) << 48));
         if let Some((enc, open, _, _)) = &self.pass
             && *open == addresses
@@ -1440,9 +1497,10 @@ impl Metal {
         self.end_pass();
         let command = self.command();
         let pass = MTLRenderPassDescriptor::new();
-        for (i, (_, tex)) in targets.iter().enumerate() {
+        for (i, (_, tex, slice)) in targets.iter().enumerate() {
             let att = unsafe { pass.colorAttachments().objectAtIndexedSubscript(i) };
             att.setTexture(Some(tex));
+            att.setSlice(*slice as usize);
             att.setLoadAction(MTLLoadAction::Load);
             att.setStoreAction(MTLStoreAction::Store);
         }
@@ -1671,6 +1729,7 @@ impl Metal {
             }
         }
         if let Some(t) = self.targets.get(&image.address)
+            && t.texture.textureType() == MTLTextureType::Type2D
             && t.texture.width() as u32 == image.width
             && t.texture.height() as u32 == image.height
         {
@@ -2152,7 +2211,8 @@ impl Metal {
             let (tex, format) = self.target(host, &t).ok_or("color target format")?;
             key.formats[targets.len()] = format.0;
             key.blends[targets.len()] = (Blend::read(c, n), write_mask(write, t.format.swap) as u8);
-            targets.push((t.address, tex));
+            let slice = if tex.textureType() == MTLTextureType::Type2DArray { t.slice } else { 0 };
+            targets.push((t.address, tex, slice));
         }
         let depth_state = DepthState::read(c);
         let wants_depth = depth_state.depth_test() || depth_state.stencil();
