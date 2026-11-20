@@ -36,6 +36,11 @@ enum Command {
         /// (default: one per title in ~/Library/Application Support/ps5slop).
         #[arg(long, value_name = "DIR")]
         data: Option<PathBuf>,
+        /// The folder with open-source stand-ins for system fonts, filled by
+        /// `scripts/fetch-fonts` (default: ~/Library/Application
+        /// Support/ps5slop/fonts).
+        #[arg(long, value_name = "DIR")]
+        fonts: Option<PathBuf>,
         /// A PS4 patch package to lay over the base package `PATH`. Not
         /// needed when `PATH` is the patch and its base is in the same folder.
         #[arg(long, value_name = "PKG")]
@@ -59,6 +64,7 @@ fn main() -> ExitCode {
         after,
         interpreter,
         data,
+        fonts,
         patch,
         passcode,
         control,
@@ -125,6 +131,9 @@ fn main() -> ExitCode {
     }
     if let Some(s) = saves {
         vfs.set_saves(s);
+    }
+    if let Some(f) = fonts.or_else(default_fonts) {
+        vfs.set_system_fonts(f);
     }
     let status = process
         .boot(
@@ -230,6 +239,12 @@ fn beside(data: &std::path::Path, what: &str) -> PathBuf {
         Some("data") | None => data.with_file_name(what),
         Some(name) => data.with_file_name(format!("{name}.{what}")),
     }
+}
+
+/// `~/Library/Application Support/ps5slop/fonts`.
+fn default_fonts() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join("Library/Application Support/ps5slop/fonts"))
 }
 
 /// `~/Library/Application Support/ps5slop/<title id or name>/data`, moving a

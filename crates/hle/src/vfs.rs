@@ -59,6 +59,13 @@ pub enum Target {
     Image(Arc<dyn ImageFs>, String),
 }
 
+fn exists(target: &Target) -> bool {
+    match target {
+        Target::Host(p, _) => p.exists(),
+        Target::Image(fs, p) => fs.stat(p).is_some(),
+    }
+}
+
 /// What `stat` reports about a file.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Meta {
@@ -194,6 +201,27 @@ pub struct Vfs {
     mounts: RwLock<Vec<Mount>>,
     /// Where save data lives on the host, one folder per save.
     pub(crate) saves: Option<PathBuf>,
+    /// Host folder with the open-source stand-ins for system fonts.
+    system_fonts: Option<PathBuf>,
+}
+
+/// System fonts titles name as if they were their own files, and the
+/// open-source stand-in for each (see `scripts/fetch-fonts`): file name
+/// prefix, stand-in.
+const SYSTEM_FONTS: &[(&str, &str)] = &[
+    ("SIE-ShinGo", "NotoSansJP[wght].ttf"),
+    ("HeiseiMaruGo", "MPLUSRounded1c-Bold.ttf"),
+    ("Mohr-", "Jost-Italic[wght].ttf"),
+    ("FuturaStd-", "Jost[wght].ttf"),
+    ("FuturaNowText-", "Jost[wght].ttf"),
+];
+
+/// The stand-in for a system font file named `name`.
+fn system_font(name: &str) -> Option<&'static str> {
+    SYSTEM_FONTS
+        .iter()
+        .find(|(prefix, _)| name.starts_with(prefix))
+        .map(|&(_, file)| file)
 }
 
 impl Vfs {
@@ -243,6 +271,12 @@ impl Vfs {
         mounts.iter().any(|m| m.guest == guest)
     }
 
+    /// Serves system fonts a title asks for under `/app0` from host folder
+    /// `fonts` when the title does not have the file itself.
+    pub fn set_system_fonts(&mut self, fonts: PathBuf) {
+        self.system_fonts = Some(fonts);
+    }
+
     /// Keeps save data in host folder `saves`.
     pub fn set_saves(&mut self, saves: PathBuf) {
         self.saves = Some(saves);
@@ -251,6 +285,19 @@ impl Vfs {
     /// Where guest path `path` leads; `None` outside every mount, or for
     /// paths that climb out with `..`.
     pub fn lookup(&self, path: &[u8]) -> Option<Target> {
+        let target = self.lookup_mounted(path)?;
+        let stand_in = std::str::from_utf8(path)
+            .ok()
+            .filter(|p| p.starts_with("/app0/"))
+            .and_then(|p| system_font(p.rsplit('/').next()?))
+            .zip(self.system_fonts.as_ref());
+        match stand_in {
+            Some((file, fonts)) if !exists(&target) => Some(Target::Host(fonts.join(file), false)),
+            _ => Some(target),
+        }
+    }
+
+    fn lookup_mounted(&self, path: &[u8]) -> Option<Target> {
         let path = std::str::from_utf8(path).ok()?;
         let mounts = self.mounts.read().unwrap_or_else(|e| e.into_inner());
         mounts.iter().find_map(|m| {

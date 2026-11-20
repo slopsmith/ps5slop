@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Fetches the open-source (SIL Open Font License) fonts that stand in for
+# the console's system fonts (see docs/hle-kernel.md, "System fonts") into
+# DIR (default: ~/Library/Application Support/ps5slop/fonts). They are
+# never committed.
+# Usage: scripts/fetch-fonts [DIR]
+set -euo pipefail
+
+dir=${1:-"$HOME/Library/Application Support/ps5slop/fonts"}
+commit=f391eb5d1f3c7d64eab1bf992b1aee045ac48ffb
+base="https://raw.githubusercontent.com/google/fonts/$commit/ofl"
+mkdir -p "$dir"
+for f in \
+	"jost/Jost[wght].ttf" \
+	"jost/Jost-Italic[wght].ttf" \
+	"jost/OFL.txt" \
+	"notosansjp/NotoSansJP[wght].ttf" \
+	"notosansjp/OFL.txt" \
+	"mplusrounded1c/MPLUSRounded1c-Bold.ttf"; do
+	out="$dir/$(basename "$f")"
+	[ "$(basename "$f")" = OFL.txt ] && out="$dir/OFL-$(dirname "$f").txt"
+	if [ ! -s "$out" ]; then
+		echo "fetching $f"
+		curl -fsSLg -o "$out" "$base/$f"
+	fi
+done
+echo "fonts in $dir"
