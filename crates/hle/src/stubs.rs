@@ -54,6 +54,29 @@ fn write_zero_u32<const N: usize>(env: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(0))
 }
 
+/// `sceVoiceGetBitRate(port, *rate)`: GTA V divides by the rate, so it
+/// must not be 0; 16000 bits a second is our choice.
+fn voice_bit_rate(env: &mut Env) -> Result<Outcome, CallError> {
+    if env.arg(1) != 0 {
+        env.mem.write(env.arg(1), &16000u32.to_le_bytes())?;
+    }
+    Ok(Outcome::Return(0))
+}
+
+/// `sceVoiceGetPortInfo(port, *info)`: 0x18 bytes, read off GTA V's use
+/// (it zeroes 32 bytes before one call): a state at 4 (3 lets it read data),
+/// bytes waiting at 0x10 (it drains until this is 0) and a frame size in bytes
+/// at 0x14 (it divides by it); we report no data and 20 ms frames at 16000
+/// bits a second.
+fn voice_port_info(env: &mut Env) -> Result<Outcome, CallError> {
+    if env.arg(1) != 0 {
+        let mut info = [0u8; 0x18];
+        info[0x14..].copy_from_slice(&40u32.to_le_bytes());
+        env.mem.write(env.arg(1), &info)?;
+    }
+    Ok(Outcome::Return(0))
+}
+
 fn unsupported(_: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(crate::dmem::sce_error(
         crate::errno::ENOSYS,
@@ -256,6 +279,37 @@ pub static STUBS: &[Function] = &[
     },
     zero("libkernel", "sceKernelGetGPI"),
     zero("libkernel", "#n1-v6FgU7MQ"),
+    zero("libSceVoice", "sceVoiceInit"),
+    zero("libSceVoice", "sceVoiceEnd"),
+    zero("libSceVoice", "sceVoiceStart"),
+    zero("libSceVoice", "sceVoiceStop"),
+    zero("libSceVoice", "sceVoiceSetThreadsParams"),
+    out_id::<0>("libSceVoice", "sceVoiceCreatePort"),
+    zero("libSceVoice", "sceVoiceDeletePort"),
+    zero("libSceVoice", "sceVoiceConnectIPortToOPort"),
+    zero("libSceVoice", "sceVoiceDisconnectIPortFromOPort"),
+    zero("libSceVoice", "sceVoiceSetVolume"),
+    zero("libSceVoice", "sceVoiceWriteToIPort"),
+    Function {
+        library: "libSceVoice",
+        name: "sceVoiceReadFromOPort",
+        func: write_zero_u32::<2>,
+    },
+    Function {
+        library: "libSceVoice",
+        name: "sceVoiceGetBitRate",
+        func: voice_bit_rate,
+    },
+    Function {
+        library: "libSceVoice",
+        name: "sceVoiceGetPortInfo",
+        func: voice_port_info,
+    },
+    Function {
+        library: "libSceVoice",
+        name: "sceVoiceGetPortAttr",
+        func: unsupported,
+    },
     zero("libSceRemoteplay", "sceRemoteplayInitialize"),
     zero("libSceRemoteplay", "sceRemoteplayTerminate"),
     Function {
