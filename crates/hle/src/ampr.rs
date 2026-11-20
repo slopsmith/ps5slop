@@ -54,6 +54,7 @@ enum Command {
 pub struct Apr {
     /// Resolved files; a file's id is its index.
     files: Mutex<Vec<Arc<AprFile>>>,
+    paths: Mutex<Vec<Vec<u8>>>,
     by_path: Mutex<HashMap<Vec<u8>, u32>>,
     /// Commands by command buffer address.
     buffers: Mutex<HashMap<u64, Vec<Command>>>,
@@ -143,6 +144,7 @@ fn resolve_paths(env: &Env, prefix: &[u8], [paths, count, ids, sizes, failed]: [
                 let mut files = lock(&env.kernel.apr.files);
                 let id = files.len() as u32;
                 files.push(Arc::new(file));
+                lock(&env.kernel.apr.paths).push(path.clone());
                 lock(&env.kernel.apr.by_path).insert(path.clone(), id);
                 (id, len)
             }),
@@ -263,6 +265,7 @@ fn submit(env: &mut Env) -> Result<Outcome, CallError> {
                 continue;
             }
         };
+        let id = file;
         let file = lock(&env.kernel.apr.files).get(file as usize).cloned();
         let Some(file) = file else {
             return ret(EINVAL);
@@ -275,6 +278,13 @@ fn submit(env: &mut Env) -> Result<Outcome, CallError> {
                 Ok(n) => done += n,
             }
         }
+        if trace_reads() {
+            let path = lock(&env.kernel.apr.paths)[id as usize].clone();
+            eprintln!(
+                "ps5slop: apr: read {} at {offset:#x} len {len:#x} ({done:#x} read) to {dest:#x}",
+                String::from_utf8_lossy(&path)
+            );
+        }
         env.mem.write(dest, &buf[..done])?;
     }
     let (result, id) = (env.arg(2), env.arg(3));
@@ -286,6 +296,12 @@ fn submit(env: &mut Env) -> Result<Outcome, CallError> {
         env.mem.write(id, &n.to_le_bytes())?;
     }
     ret(0)
+}
+
+/// `PS5SLOP_TRACE_APR=1` prints every read on stderr.
+fn trace_reads() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("PS5SLOP_TRACE_APR").is_some())
 }
 
 /// `sceKernelAprWaitCommandBuffer(...)`: submissions finish before they
