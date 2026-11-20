@@ -34,6 +34,7 @@ A DualShock 4, DualSense or other controller macOS knows (through its GameContro
 
 ## Docs
 
+- [Compatibility](COMPATIBILITY.md): what each title does so far
 - [Architecture](docs/architecture.md): overview, milestones and index of the other docs
 - [CPU](docs/cpu.md), [memory](docs/memory.md), [loader](docs/loader.md), [packages](docs/packages.md), [HLE](docs/hle-kernel.md), [JIT](docs/jit.md), [GPU](docs/gpu.md)
 - [Test targets and oracles](docs/test-targets.md)
