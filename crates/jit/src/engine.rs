@@ -625,6 +625,7 @@ impl Engine {
         SHARED.slots[slot].running.store(false, sc);
         let icount = self.cpu.reg(ICOUNT.0)?;
         TRANSLATED.fetch_add(icount.wrapping_sub(self.icount), Ordering::Relaxed);
+        crate::profile::add_instructions(icount.wrapping_sub(self.icount));
         self.icount = icount;
         exit
     }

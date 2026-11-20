@@ -403,12 +403,12 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
         r.evictions,
         r.live_blocks
     )];
-    out.push("threads (ms: translated code, interpreter, translating, host functions, waiting to translate, none of these, CPU used):".into());
+    out.push("threads (ms: translated code, interpreter, translating, host functions, waiting to translate, none of these, CPU used; guest MIPS in translated code):".into());
     for (thread, t) in r.threads.iter().take(top) {
         let name = names.get(thread).map_or(thread.as_str(), String::as_str);
         let other = t[6].saturating_sub(t[..5].iter().sum());
         out.push(format!(
-            "  {:<28} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0}",
+            "  {:<28} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>7.0}",
             name,
             ms(t[0]),
             ms(t[1]),
@@ -416,7 +416,8 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
             ms(t[3]),
             ms(t[4]),
             ms(other),
-            ms(t[5])
+            ms(t[5]),
+            t[7] as f64 * 1e3 / t[0].max(1) as f64
         ));
     }
     out.push("JIT lock by site (times, ms waited, ms held):".into());

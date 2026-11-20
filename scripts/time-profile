@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""Summarises an Instruments Time Profiler export by thread.
+
+    xcrun xctrace export --input X.trace \\
+        --xpath '/trace-toc/run[@number="1"]/data/table[@schema="time-profile"]' --output tp.xml
+    scripts/time-profile tp.xml [THREAD [N]]
+
+Prints the busiest threads (1 ms samples); with THREAD (a substring of a
+thread name), its top N functions by inclusive and by self samples.
+"""
+import collections
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+
+def main():
+    root = ET.parse(sys.argv[1]).getroot()
+    want = sys.argv[2] if len(sys.argv) > 2 else None
+    top = int(sys.argv[3]) if len(sys.argv) > 3 else 40
+    ids = {}
+
+    def resolve(e):
+        if e.get("ref") is not None:
+            return ids[e.get("ref")]
+        if e.get("id") is not None:
+            ids[e.get("id")] = e
+        for c in e:
+            resolve(c)
+        return e
+
+    def short(name):
+        parts = re.findall(r"\d+([A-Za-z_][A-Za-z0-9_]*)", name or "")
+        return "::".join(parts[-2:]) if name and name.startswith("_R") and parts else (name or "?")[:90]
+
+    threads = collections.Counter()
+    inclusive = collections.defaultdict(collections.Counter)
+    own = collections.defaultdict(collections.Counter)
+    for row in root.iter("row"):
+        thread = stack = None
+        for c in row:
+            c = resolve(c)
+            if c.tag == "thread":
+                thread = re.sub(r" \(0x[0-9a-f]+\).*", "", c.get("fmt", "?"))
+            elif c.tag in ("backtrace", "tagged-backtrace"):
+                stack = c
+        if thread is None or stack is None:
+            continue
+        threads[thread] += 1
+        frames = [short(resolve(f).get("name")) for f in stack if resolve(f).tag == "frame"]
+        for f in set(frames):
+            inclusive[thread][f] += 1
+        if frames:
+            own[thread][frames[0]] += 1
+    for t, n in threads.most_common(12):
+        print(f"{n:7} {t}")
+    for t in threads:
+        if want and want in t:
+            print(f"== {t}, inclusive")
+            for f, n in inclusive[t].most_common(top):
+                print(f"{n:7} {f}")
+            print(f"== {t}, self")
+            for f, n in own[t].most_common(top // 2):
+                print(f"{n:7} {f}")
+
+
+main()

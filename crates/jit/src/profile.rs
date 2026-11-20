@@ -30,6 +30,7 @@ struct Thread {
 struct Counts {
     window: u64,
     kinds: [u64; 5],
+    instructions: u64,
     cpu_at_start: u64,
     first: Instant,
     /// Host functions by trap address: calls and nanoseconds.
@@ -41,6 +42,7 @@ impl Counts {
         Counts {
             window,
             kinds: [0; 5],
+            instructions: 0,
             cpu_at_start: cpu_ns(port).unwrap_or(0),
             first: Instant::now(),
             host: HashMap::new(),
@@ -130,9 +132,10 @@ struct State {
 pub struct Report {
     pub seconds: f64,
     /// Thread name and nanoseconds in the VM, interpreter, translating,
-    /// host functions and waiting for the JIT's lock, then CPU time used and
-    /// wall time seen in the window, busiest first.
-    pub threads: Vec<(String, [u64; 7])>,
+    /// host functions and waiting for the JIT's lock, then CPU time used,
+    /// wall time seen in the window and guest instructions run in the VM,
+    /// busiest first.
+    pub threads: Vec<(String, [u64; 8])>,
     /// Guest RIPs by samples, most first, with the total.
     pub samples: Vec<(u64, u64)>,
     pub total_samples: u64,
@@ -197,6 +200,13 @@ pub fn add(kind: Kind, since: Option<Instant>) {
     let Some(t) = since else { return };
     let ns = t.elapsed().as_nanos() as u64;
     with_counts(|c| c.kinds[kind as usize] += ns);
+}
+
+/// Counts `n` guest instructions run in the VM by this thread.
+pub fn add_instructions(n: u64) {
+    if on() {
+        with_counts(|c| c.instructions += n);
+    }
 }
 
 /// Counts one call of the host function at `addr` that began at `since`.
@@ -278,7 +288,7 @@ pub fn report() -> Option<Report> {
         }
         let cpu = cpu_ns(t.port).map_or(0, |n| n.saturating_sub(c.cpu_at_start));
         let k = c.kinds;
-        threads.push((t.name.clone(), [k[0], k[1], k[2], k[3], k[4], cpu, c.first.elapsed().as_nanos() as u64]));
+        threads.push((t.name.clone(), [k[0], k[1], k[2], k[3], k[4], cpu, c.first.elapsed().as_nanos() as u64, c.instructions]));
         by_thread.extend(c.host.iter().map(|(&a, &(n, ns))| (t.name.clone(), a, n, ns)));
     }
     threads.sort_by_key(|(_, t)| std::cmp::Reverse(t[5]));
