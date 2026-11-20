@@ -24,6 +24,15 @@ enum Command {
         #[arg(long)]
         passcode: Option<String>,
     },
+    /// Writes one app file to stdout.
+    Cat {
+        package: PathBuf,
+        /// The file's path inside the app, as `ls` prints it.
+        path: String,
+        /// The package's 32-character passcode (all zeros by default).
+        #[arg(long)]
+        passcode: Option<String>,
+    },
     /// Prints the block map of a PS5 package's inner image.
     Naps { package: PathBuf },
     /// Extracts the app's files into a new folder.
@@ -85,6 +94,23 @@ fn run(cli: Cli) -> pkg::Result<()> {
                     app.inode(inode)?.size_compressed,
                     path.display()
                 );
+            }
+        }
+        Command::Cat {
+            package,
+            path,
+            passcode,
+        } => {
+            let app = Package::open(&package)?.app_pfs(&passcode_or_default(passcode)?)?;
+            let src = app.open_file(app.lookup(&path)?.inode)?;
+            let mut out = std::io::stdout().lock();
+            let mut buf = vec![0u8; 1 << 20];
+            let mut at = 0;
+            while at < src.len() {
+                let n = (src.len() - at).min(buf.len() as u64) as usize;
+                src.read_exact_at(at, &mut buf[..n])?;
+                std::io::Write::write_all(&mut out, &buf[..n])?;
+                at += n as u64;
             }
         }
         Command::Naps { package } => {

@@ -45,6 +45,8 @@ The outer image in vic's package is signed and encrypted with an all-zero seed; 
 
 ### Extraction
 
+`ps5slop-pkg cat PKG PATH` writes one app file (a path as `ls` prints it) to stdout, for looking at a title's data without extracting it all.
+
 `ps5slop-pkg extract PKG DIR [--passcode P]` writes the inner image's files, then the clear `sce_sys` entries (`param.sfo`, icons, PlayGo files) that the image does not already hold. It refuses to overwrite files.
 
 **Checked on 2026-11-19** against vic's `pkgstore.pkg`: every file in the image matches `ps4build/pkg_scratch/` (the folder it was packed from) byte for byte. The only differences are ones the packer makes: it adds `keystone` and the PlayGo files, adds `PUBTOOLINFO` and `PUBTOOLVER` to `param.sfo`, and does not pack the `project.gp4` build file. The package also carries `sce_sys/about/right.sprx` from OpenOrbis, whose origin is unknown.
