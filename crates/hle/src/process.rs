@@ -378,10 +378,7 @@ impl Kernel {
     pub fn new_tls(&self, mem: &Memory) -> Result<u64, ThreadError> {
         let offset = self.tls.span();
         let len = (offset + TCB_SIZE).next_multiple_of(PAGE_SIZE);
-        let at = mem
-            .find_free(TLS_AREA, len)
-            .ok_or(ThreadError::Map(MapError::OutOfRange))?;
-        mem.map(at, len, Prot::RW, "thread tls")?;
+        let at = mem.map_free(TLS_AREA, len, PAGE_SIZE, Prot::RW, "thread tls")?;
         let tcb = at + offset;
         for b in &self.tls.blocks {
             mem.write(tcb - b.offset, &b.init)
@@ -405,10 +402,7 @@ impl Kernel {
     /// Maps a stack of `size` bytes and returns its top.
     pub fn new_stack(&self, mem: &Memory, size: u64) -> Result<u64, ThreadError> {
         let size = size.next_multiple_of(PAGE_SIZE);
-        let at = mem
-            .find_free(STACK_AREA, size)
-            .ok_or(ThreadError::Map(MapError::OutOfRange))?;
-        mem.map(at, size, Prot::RW, "thread stack")?;
+        let at = mem.map_free(STACK_AREA, size, PAGE_SIZE, Prot::RW, "thread stack")?;
         Ok(at + size)
     }
 
@@ -537,6 +531,16 @@ impl Kernel {
                         CpuFault::Memory(f) => self.hle.describe(f.addr).or_else(bytes),
                         _ => bytes(),
                     };
+                    if let CpuFault::Memory(f) = kind {
+                        eprintln!(
+                            "ps5slop: fault at {:#x}: region {}",
+                            f.addr,
+                            mem.describe_region(f.addr).unwrap_or_else(|| "none".into())
+                        );
+                        for line in mem.changes_near(f.addr, 1 << 20) {
+                            eprintln!("  {line}");
+                        }
+                    }
                     let recent = jit::recent_blocks();
                     if std::env::var_os("PS5SLOP_JIT_TRACE").is_some() && !recent.is_empty() {
                         let list: Vec<String> = recent.iter().map(|r| format!("{r:#x}")).collect();

@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use memory::{Memory, PAGE_SIZE, Prot};
+use memory::{PAGE_SIZE, Prot};
 
 use crate::pthread::lock;
 use crate::{CallError, Env, Function, Outcome, errno};
@@ -148,18 +148,6 @@ fn release(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// A free, `align`-aligned range of `len` bytes at or above `min`.
-fn find_aligned(mem: &Memory, min: u64, len: u64, align: u64) -> Option<u64> {
-    let mut at = min.next_multiple_of(align);
-    loop {
-        let free = mem.find_free(at, len)?;
-        if free.is_multiple_of(align) {
-            return Some(free);
-        }
-        at = free.next_multiple_of(align);
-    }
-}
-
 /// `sceKernelMapDirectMemory(*addr, len, prot, flags, direct_start, align)`;
 /// GPU access is granted as CPU access.
 fn map(env: &mut Env) -> Result<Outcome, CallError> {
@@ -172,23 +160,15 @@ fn map(env: &mut Env) -> Result<Outcome, CallError> {
     let read = prot & (PROT_CPU_READ | PROT_CPU_WRITE | PROT_GPU_READ | PROT_GPU_WRITE) != 0;
     let write = prot & (PROT_CPU_WRITE | PROT_GPU_WRITE) != 0;
     let exec = prot & PROT_CPU_EXEC != 0;
-    let at = if flags & MAP_FIXED != 0 {
-        wanted
-    } else {
-        match find_aligned(env.mem, wanted.max(MAP_AREA), len, align.max(PAGE_SIZE)) {
-            Some(a) => a,
-            None => return ret(sce_error(errno::ENOMEM)),
-        }
-    };
     let prot = Prot::new(read, write, exec);
     let mapped = if flags & MAP_FIXED != 0 {
-        env.mem.map_over(at, len, prot, "direct memory")
+        env.mem.map_over(wanted, len, prot, "direct memory").map(|()| wanted)
     } else {
-        env.mem.map(at, len, prot, "direct memory")
+        env.mem.map_free(wanted.max(MAP_AREA), len, align, prot, "direct memory")
     };
-    if mapped.is_err() {
+    let Ok(at) = mapped else {
         return ret(sce_error(errno::ENOMEM));
-    }
+    };
     env.mem.write_u64(addr_at, at)?;
     ret(0)
 }
@@ -201,17 +181,14 @@ fn reserve(env: &mut Env) -> Result<Outcome, CallError> {
         return ret(sce_error(errno::EINVAL));
     }
     let wanted = env.mem.read_u64(addr_at)?;
-    let at = if flags & MAP_FIXED != 0 {
-        wanted
+    let reserved = if flags & MAP_FIXED != 0 {
+        env.mem.map_over(wanted, len, Prot::NONE, "reserved").map(|()| wanted)
     } else {
-        match find_aligned(env.mem, wanted.max(MAP_AREA), len, align.max(PAGE_SIZE)) {
-            Some(a) => a,
-            None => return ret(sce_error(errno::ENOMEM)),
-        }
+        env.mem.map_free(wanted.max(MAP_AREA), len, align, Prot::NONE, "reserved")
     };
-    if env.mem.map_over(at, len, Prot::NONE, "reserved").is_err() {
+    let Ok(at) = reserved else {
         return ret(sce_error(errno::ENOMEM));
-    }
+    };
     env.mem.write_u64(addr_at, at)?;
     ret(0)
 }

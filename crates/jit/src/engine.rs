@@ -134,8 +134,9 @@ impl Cause {
     }
 }
 
-/// Exits by cause: (cause, total, hottest (RIP, count))), largest first.
-pub type Causes = Vec<(Cause, u64, Vec<(u64, u64)>)>;
+/// Exits by cause: (cause, total, distinct RIPs, hottest (RIP, count)),
+/// largest first.
+pub type Causes = Vec<(Cause, u64, usize, Vec<(u64, u64)>)>;
 
 pub(crate) fn note_exit(cause: Cause, rip: u64) {
     with_stats(|s| *s.causes.entry((cause, rip)).or_default() += 1);
@@ -153,12 +154,13 @@ pub fn exit_causes(top: usize) -> Causes {
     let mut out: Causes = by
         .into_iter()
         .map(|(c, (total, mut rips))| {
+            let distinct = rips.len();
             rips.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
             rips.truncate(top);
-            (c, total, rips)
+            (c, total, distinct, rips)
         })
         .collect();
-    out.sort_by_key(|&(_, total, _)| std::cmp::Reverse(total));
+    out.sort_by_key(|&(_, total, _, _)| std::cmp::Reverse(total));
     out
 }
 
@@ -655,6 +657,8 @@ impl Engine {
                     }
                     let started = crate::profile::start();
                     let mut m = machine()?;
+                    crate::profile::add(crate::profile::Kind::Lock, started);
+                    let started = crate::profile::start();
                     let translated = m.translate(mem, rip);
                     crate::profile::add(crate::profile::Kind::Translate, started);
                     if translated {

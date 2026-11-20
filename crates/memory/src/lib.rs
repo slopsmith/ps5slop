@@ -157,6 +157,41 @@ pub fn on_change(f: fn(&Memory)) {
     let _ = ON_CHANGE.set(f);
 }
 
+const HISTORY: usize = 4096;
+
+/// The lowest `align`-aligned range of `len` bytes at or above `min` that no
+/// region overlaps and that fits in `size`.
+fn free_range(regions: &BTreeMap<u64, Region>, min: u64, len: u64, align: u64, size: u64) -> Option<u64> {
+    let len = len.next_multiple_of(PAGE_SIZE);
+    let mut candidate = min.next_multiple_of(align);
+    loop {
+        let before = candidate;
+        if let Some((_, r)) = regions.range(..=candidate).next_back() {
+            candidate = candidate.max(r.end);
+        }
+        for (&start, r) in regions.range(candidate..) {
+            if start >= candidate.checked_add(len)? {
+                break;
+            }
+            candidate = candidate.max(r.end);
+        }
+        candidate = candidate.next_multiple_of(align);
+        if candidate == before {
+            break;
+        }
+    }
+    (candidate.checked_add(len)? <= size).then_some(candidate)
+}
+
+struct Change {
+    what: &'static str,
+    addr: u64,
+    len: u64,
+    prot: Option<Prot>,
+    thread: String,
+    at: std::time::Duration,
+}
+
 /// Past this many unread fresh ranges, everything counts as fresh.
 const FRESH_LIMIT: usize = 4096;
 
@@ -176,6 +211,9 @@ struct Shared {
     /// [`Memory::replaced_since`]).
     replaced: Mutex<std::collections::VecDeque<(u64, u64, u64)>>,
     replaced_next: AtomicU64,
+    /// The last region changes, for fault reports (see [`Memory::changes_near`]).
+    history: Mutex<std::collections::VecDeque<Change>>,
+    born: std::time::Instant,
     /// Ranges with readable and writable host pages, merged, by start.
     backed: Mutex<BTreeMap<u64, u64>>,
     /// Shared memory standing in for physical memory (see
@@ -281,6 +319,8 @@ impl Memory {
                 replaced: Mutex::new(std::collections::VecDeque::new()),
                 replaced_next: AtomicU64::new(0),
                 backed: Mutex::new(BTreeMap::new()),
+                history: Mutex::new(std::collections::VecDeque::new()),
+                born: std::time::Instant::now(),
                 physical: std::sync::OnceLock::new(),
             }),
             last: Default::default(),
@@ -322,6 +362,43 @@ impl Memory {
             .regions
             .write()
             .unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn note(&self, what: &'static str, addr: u64, len: u64, prot: Option<Prot>) {
+        let c = Change {
+            what,
+            addr,
+            len,
+            prot,
+            thread: std::thread::current().name().unwrap_or("?").to_owned(),
+            at: self.shared.born.elapsed(),
+        };
+        let mut h = self.shared.history.lock().unwrap_or_else(|e| e.into_inner());
+        if h.len() == HISTORY {
+            h.pop_front();
+        }
+        h.push_back(c);
+    }
+
+    /// The remembered region changes overlapping `[addr - slack, addr + slack)`,
+    /// oldest first, one line each.
+    pub fn changes_near(&self, addr: u64, slack: u64) -> Vec<String> {
+        let (lo, hi) = (addr.saturating_sub(slack), addr.saturating_add(slack));
+        let h = self.shared.history.lock().unwrap_or_else(|e| e.into_inner());
+        h.iter()
+            .filter(|c| c.addr < hi && lo < c.addr + c.len.max(1))
+            .map(|c| {
+                let prot = c.prot.map_or(String::new(), |p| format!(" {p:?}"));
+                format!("{:.6} s {} {:#x}..{:#x}{prot} by {}", c.at.as_secs_f64(), c.what, c.addr, c.addr + c.len, c.thread)
+            })
+            .collect()
+    }
+
+    /// The region at `addr`, as `start..end prot name`.
+    pub fn describe_region(&self, addr: u64) -> Option<String> {
+        let regions = self.regions_read();
+        let (&start, r) = regions.range(..=addr).next_back()?;
+        (addr < r.end).then(|| format!("{start:#x}..{:#x} {:?} {}", r.end, r.prot, r.name))
     }
 
     fn changed(&self) {
@@ -479,6 +556,7 @@ impl Memory {
             },
         );
         drop(regions);
+        self.note("map", addr, len, Some(prot));
         self.changed();
         Ok(())
     }
@@ -501,6 +579,7 @@ impl Memory {
         );
         self.host_fresh(addr, len)?;
         drop(regions);
+        self.note("map over", addr, len, Some(prot));
         self.changed();
         Ok(())
     }
@@ -532,6 +611,7 @@ impl Memory {
         );
         self.host_replace(addr, len, Some((fd, offset)))?;
         drop(regions);
+        self.note("map physical", addr, len, Some(prot));
         self.changed();
         Ok(())
     }
@@ -544,6 +624,7 @@ impl Memory {
         carve(&mut regions, addr, addr + len)?;
         self.release(addr, len)?;
         drop(regions);
+        self.note("unmap", addr, len, None);
         self.changed();
         Ok(())
     }
@@ -568,6 +649,7 @@ impl Memory {
             regions.insert(from, Region { end: to, prot, ..r });
         }
         drop(regions);
+        self.note("protect", addr, len, Some(prot));
         self.changed();
         Ok(())
     }
@@ -576,8 +658,10 @@ impl Memory {
     pub fn unmap(&self, addr: u64) -> Result<(), MapError> {
         let mut regions = self.regions_write();
         let r = regions.remove(&addr).ok_or(MapError::OutOfRange)?;
-        self.release(addr, r.end - addr)?;
+        let len = r.end - addr;
+        self.release(addr, len)?;
         drop(regions);
+        self.note("unmap", addr, len, None);
         self.changed();
         Ok(())
     }
@@ -590,26 +674,42 @@ impl Memory {
             return Err(MapError::Overlaps);
         }
         r.prot = prot;
+        let len = r.end - addr;
         drop(regions);
+        self.note("protect", addr, len, Some(prot));
         self.changed();
         Ok(())
     }
 
     /// The lowest page-aligned free range of `len` bytes at or above `min`.
     pub fn find_free(&self, min: u64, len: u64) -> Option<u64> {
-        let regions = self.regions_read();
+        free_range(&self.regions_read(), min, len, PAGE_SIZE, self.shared.size)
+    }
+
+    /// Maps zero-filled memory at the lowest free `align`-aligned range of
+    /// `len` bytes at or above `min`, and returns its address. Finding and
+    /// mapping are one step, so two threads never get the same range.
+    pub fn map_free(&self, min: u64, len: u64, align: u64, prot: Prot, name: &str) -> Result<u64, MapError> {
         let len = len.next_multiple_of(PAGE_SIZE);
-        let mut candidate = min.next_multiple_of(PAGE_SIZE);
-        if let Some((_, r)) = regions.range(..=candidate).next_back() {
-            candidate = candidate.max(r.end);
+        if len == 0 {
+            return Err(MapError::Unaligned);
         }
-        for (&start, r) in regions.range(candidate..) {
-            if start >= candidate + len {
-                break;
-            }
-            candidate = candidate.max(r.end);
-        }
-        (candidate.checked_add(len)? <= self.shared.size).then_some(candidate)
+        let mut regions = self.regions_write();
+        let addr = free_range(&regions, min, len, align.max(PAGE_SIZE), self.shared.size).ok_or(MapError::OutOfRange)?;
+        self.host_fresh(addr, len)?;
+        regions.insert(
+            addr,
+            Region {
+                end: addr + len,
+                prot,
+                trap: false,
+                name: name.to_owned(),
+            },
+        );
+        drop(regions);
+        self.note("map", addr, len, Some(prot));
+        self.changed();
+        Ok(addr)
     }
 
     /// The mapped regions, like [`Memory::regions`] without their names.
@@ -1110,6 +1210,24 @@ mod tests {
         assert_eq!(ranges, Some(vec![(0x40_0000, 0x40_0000 + PAGE_SIZE)]));
         assert_eq!(m.replaced_since(next), (next, Some(vec![])));
         assert_eq!(m.replaced_since(0).1.map(|r| r.len()), Some(1));
+    }
+
+    #[test]
+    fn threads_mapping_free_memory_never_share_a_range() {
+        let m = Memory::new(4 * GIB).unwrap();
+        m.map(0x40_0000, PAGE_SIZE, Prot::RW, "taken").unwrap();
+        let got: Vec<u64> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    let m = m.clone();
+                    s.spawn(move || (0..32).map(|_| m.map_free(0x40_0000, PAGE_SIZE, 4 * PAGE_SIZE, Prot::RW, "t").unwrap()).collect::<Vec<_>>())
+                })
+                .collect();
+            handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+        });
+        let distinct: std::collections::HashSet<_> = got.iter().collect();
+        assert_eq!(distinct.len(), got.len());
+        assert!(got.iter().all(|a| a.is_multiple_of(4 * PAGE_SIZE) && *a > 0x40_0000));
     }
 
     #[test]

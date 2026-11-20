@@ -29,7 +29,7 @@ struct Thread {
 
 struct Counts {
     window: u64,
-    kinds: [u64; 4],
+    kinds: [u64; 5],
     cpu_at_start: u64,
     first: Instant,
     /// Host functions by trap address: calls and nanoseconds.
@@ -40,7 +40,7 @@ impl Counts {
     fn new(window: u64, port: u32) -> Self {
         Counts {
             window,
-            kinds: [0; 4],
+            kinds: [0; 5],
             cpu_at_start: cpu_ns(port).unwrap_or(0),
             first: Instant::now(),
             host: HashMap::new(),
@@ -109,6 +109,8 @@ pub enum Kind {
     Translate,
     /// In a host function (HLE), counted by the caller of [`add`].
     Host,
+    /// Waiting for the JIT's lock to translate.
+    Lock,
 }
 
 struct State {
@@ -125,10 +127,10 @@ struct State {
 /// What a profile window gathered.
 pub struct Report {
     pub seconds: f64,
-    /// Thread name and nanoseconds in the VM, interpreter, translating and
-    /// host functions, then CPU time used and wall time seen in the window,
-    /// busiest first.
-    pub threads: Vec<(String, [u64; 6])>,
+    /// Thread name and nanoseconds in the VM, interpreter, translating,
+    /// host functions and waiting for the JIT's lock, then CPU time used and
+    /// wall time seen in the window, busiest first.
+    pub threads: Vec<(String, [u64; 7])>,
     /// Guest RIPs by samples, most first, with the total.
     pub samples: Vec<(u64, u64)>,
     pub total_samples: u64,
@@ -221,10 +223,10 @@ pub fn report() -> Option<Report> {
         }
         let cpu = cpu_ns(t.port).map_or(0, |n| n.saturating_sub(c.cpu_at_start));
         let k = c.kinds;
-        threads.push((t.name.clone(), [k[0], k[1], k[2], k[3], cpu, c.first.elapsed().as_nanos() as u64]));
+        threads.push((t.name.clone(), [k[0], k[1], k[2], k[3], k[4], cpu, c.first.elapsed().as_nanos() as u64]));
         by_thread.extend(c.host.iter().map(|(&a, &(n, ns))| (t.name.clone(), a, n, ns)));
     }
-    threads.sort_by_key(|(_, t)| std::cmp::Reverse(t[4]));
+    threads.sort_by_key(|(_, t)| std::cmp::Reverse(t[5]));
     let mut samples: Vec<_> = s.samples.iter().map(|(&r, &n)| (r, n)).collect();
     samples.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
     let total_samples = samples.iter().map(|s| s.1).sum::<u64>() + s.runtime_samples;

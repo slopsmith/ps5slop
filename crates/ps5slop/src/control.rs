@@ -398,19 +398,20 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
         "{:.1} s; {} translations, {} segments evicted, {changes} memory map changes",
         r.seconds, r.translations, r.evictions
     )];
-    out.push("threads (ms: translated code, interpreter, translating, host functions, none of these, CPU used):".into());
+    out.push("threads (ms: translated code, interpreter, translating, host functions, waiting to translate, none of these, CPU used):".into());
     for (thread, t) in r.threads.iter().take(top) {
         let name = names.get(thread).map_or(thread.as_str(), String::as_str);
-        let other = t[5].saturating_sub(t[0] + t[1] + t[2] + t[3]);
+        let other = t[6].saturating_sub(t[..5].iter().sum());
         out.push(format!(
-            "  {:<28} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0}",
+            "  {:<28} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0} {:>9.0}",
             name,
             ms(t[0]),
             ms(t[1]),
             ms(t[2]),
             ms(t[3]),
+            ms(t[4]),
             ms(other),
-            ms(t[4])
+            ms(t[5])
         ));
     }
     let gpu: Vec<String> = hle::gpu::timing::NAMES
@@ -452,8 +453,8 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
     let causes = jit::exit_causes(top);
     let total: u64 = causes.iter().map(|c| c.1).sum();
     out.push(format!("VM exits by cause ({total}):"));
-    for (cause, n, rips) in &causes {
-        out.push(format!("  {:>10} {:>5.1}%  {}", n, *n as f64 * 100.0 / total.max(1) as f64, cause.name()));
+    for (cause, n, distinct, rips) in &causes {
+        out.push(format!("  {:>10} {:>5.1}%  {} ({distinct} addresses)", n, *n as f64 * 100.0 / total.max(1) as f64, cause.name()));
         if *cause == jit::Cause::Canceled {
             continue;
         }

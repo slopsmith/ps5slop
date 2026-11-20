@@ -119,24 +119,16 @@ fn mmap(env: &mut Env) -> Result<Outcome, CallError> {
         prot & PROT_WRITE != 0,
         prot & PROT_EXEC != 0,
     );
-    let at = if flags & MAP_FIXED != 0 {
+    let mapped = if flags & MAP_FIXED != 0 {
         if !addr.is_multiple_of(PAGE_SIZE) {
             return Ok(Outcome::Return(MAP_FAILED));
         }
-        addr
+        env.mem.map_over(addr, len, prot, "mmap").map(|()| addr)
     } else {
-        match env.mem.find_free(addr.max(USER_AREA), len) {
-            Some(a) => a,
-            None => return Ok(Outcome::Return(MAP_FAILED)),
-        }
-    };
-    let mapped = if flags & MAP_FIXED != 0 {
-        env.mem.map_over(at, len, prot, "mmap")
-    } else {
-        env.mem.map(at, len, prot, "mmap")
+        env.mem.map_free(addr.max(USER_AREA), len, PAGE_SIZE, prot, "mmap")
     };
     match mapped {
-        Ok(()) => Ok(Outcome::Return(at)),
+        Ok(at) => Ok(Outcome::Return(at)),
         Err(_) => Ok(Outcome::Return(MAP_FAILED)),
     }
 }
