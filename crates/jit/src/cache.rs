@@ -159,6 +159,7 @@ impl Machine {
             self.blocks.remove(&rip);
             self.forget_lookup(rip, place);
         }
+        crate::profile::LIVE_BLOCKS.store(self.blocks.len() as u64, std::sync::atomic::Ordering::Relaxed);
         let regions: Vec<(u64, usize)> = self
             .regions
             .iter()

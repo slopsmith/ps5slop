@@ -395,8 +395,13 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
         .collect();
     let changes = kernel.memory().generation() - PROFILE_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
     let mut out = vec![format!(
-        "{:.1} s; {} translations, {} segments evicted, {changes} memory map changes",
-        r.seconds, r.translations, r.evictions
+        "{:.1} s; {} translations ({} of code translated before, {} bytes each on average), {} segments evicted, {} blocks in the cache, {changes} memory map changes",
+        r.seconds,
+        r.translations,
+        r.retranslations,
+        r.emitted / r.translations.max(1),
+        r.evictions,
+        r.live_blocks
     )];
     out.push("threads (ms: translated code, interpreter, translating, host functions, waiting to translate, none of these, CPU used):".into());
     for (thread, t) in r.threads.iter().take(top) {

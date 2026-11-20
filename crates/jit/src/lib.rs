@@ -346,6 +346,8 @@ pub struct Machine {
     /// Patched sites by the code they branch to.
     chained_to: BTreeMap<usize, Vec<usize>>,
     segments: cache::Segments,
+    /// Every block start ever translated.
+    ever: std::collections::HashSet<u64>,
 }
 
 // SAFETY: the VM is process-wide and HVF's VM calls may come from any thread;
@@ -447,6 +449,7 @@ impl Machine {
             patched: HashMap::new(),
             chained_to: BTreeMap::new(),
             segments: cache::Segments::new(),
+            ever: std::collections::HashSet::new(),
         };
         for pool in 0..2 {
             let t = tables::Tables::new(m.runtime.as_mut_slice(), pool);
@@ -660,6 +663,9 @@ impl Machine {
             return false;
         };
         engine::note_exit(engine::Cause::NewBlock, rip);
+        if !self.ever.insert(rip) {
+            profile::RETRANSLATIONS.fetch_add(1, Ordering::Relaxed);
+        }
         let insns = block.insns.len();
         self.blocks.insert(
             rip,
@@ -670,6 +676,7 @@ impl Machine {
             },
         );
         self.by_place.insert(place, block.insns);
+        profile::LIVE_BLOCKS.store(self.blocks.len() as u64, Ordering::Relaxed);
         if !self.verify && !self.trace {
             self.link(rip, place, block.chains);
         }
@@ -787,6 +794,7 @@ impl Machine {
         }
         let len = block.code.len() * 4;
         profile::TRANSLATIONS.fetch_add(1, Ordering::Relaxed);
+        profile::EMITTED.fetch_add(len as u64, Ordering::Relaxed);
         self.runtime.write_words(place, &block.code);
         // SAFETY: the range was just written inside the runtime region.
         unsafe { sys_icache_invalidate(self.runtime.as_ptr().add(place).cast(), len) };

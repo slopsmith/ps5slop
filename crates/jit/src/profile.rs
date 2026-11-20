@@ -121,6 +121,8 @@ struct State {
     /// Samples in runtime code by what is there.
     runtime: HashMap<&'static str, u64>,
     translations_at_start: u64,
+    retranslations_at_start: u64,
+    emitted_at_start: u64,
     evictions_at_start: u64,
 }
 
@@ -142,10 +144,22 @@ pub struct Report {
     /// The same per thread: thread name, trap address, calls, nanoseconds.
     pub host_by_thread: Vec<(String, u64, u64, u64)>,
     pub translations: u64,
+    /// Of those, translations of block starts translated before.
+    pub retranslations: u64,
+    /// Bytes of code they emitted.
+    pub emitted: u64,
+    /// Blocks in the code cache at the report.
+    pub live_blocks: u64,
     pub evictions: u64,
 }
 
 pub static TRANSLATIONS: AtomicU64 = AtomicU64::new(0);
+/// Translations of a block start that was translated before (and evicted).
+pub static RETRANSLATIONS: AtomicU64 = AtomicU64::new(0);
+/// Bytes of code emitted by translations.
+pub static EMITTED: AtomicU64 = AtomicU64::new(0);
+/// Blocks in the code cache now.
+pub static LIVE_BLOCKS: AtomicU64 = AtomicU64::new(0);
 
 pub fn on() -> bool {
     ON.load(Ordering::Relaxed)
@@ -162,6 +176,8 @@ pub fn set(enable: bool) {
         runtime_samples: 0,
         runtime: HashMap::new(),
         translations_at_start: TRANSLATIONS.load(Ordering::Relaxed),
+        retranslations_at_start: RETRANSLATIONS.load(Ordering::Relaxed),
+        emitted_at_start: EMITTED.load(Ordering::Relaxed),
         evictions_at_start: crate::cache::evictions(),
     });
     ON.store(enable, Ordering::SeqCst);
@@ -252,6 +268,9 @@ pub fn report() -> Option<Report> {
         host,
         host_by_thread,
         translations: TRANSLATIONS.load(Ordering::Relaxed) - s.translations_at_start,
+        retranslations: RETRANSLATIONS.load(Ordering::Relaxed) - s.retranslations_at_start,
+        emitted: EMITTED.load(Ordering::Relaxed) - s.emitted_at_start,
+        live_blocks: LIVE_BLOCKS.load(Ordering::Relaxed),
         evictions: crate::cache::evictions() - s.evictions_at_start,
     })
 }
