@@ -255,6 +255,12 @@ Reason: Minecraft filled the cache when creating a world, and from then on all n
 
 Reason: vic's Deltarune download is a base package and a patch, and the link points at the patch, which holds no executable. The console mounts both as one `/app0`; extracting and merging them by hand would copy 1.3 GB.
 
+## 2026-11-20: PS4 GPU submissions run without drawing for now
+
+libSceGnmDriver submissions go through the command processor with no renderer, and the packet builders write NOPs ([gpu.md](gpu.md), "PS4 titles").
+
+Reason: drawing needs a GCN shader decoder, gfx7 state and GCN tiling, which is a large piece of work. Running the labels, interrupts and flips lets Deltarune's frame loop and game logic run now, so the CPU and system-library side can be worked on first.
+
 ## 2026-11-20: Small new mappings are zeroed in place
 
 A new guest mapping under 64 MiB over host pages that already exist is zeroed in place instead of getting fresh pages, and unmaps under 64 MiB leave the host pages alone ([memory.md](memory.md)).

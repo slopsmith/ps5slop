@@ -393,7 +393,8 @@ fn sce_attr_getschedparam(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// `scePthreadAttrGetaffinity(attr, mask)`: every CPU.
+/// `scePthreadAttrGetaffinity(attr, mask)` and `scePthreadGetaffinity(thread,
+/// mask)`: every CPU.
 fn sce_attr_getaffinity(env: &mut Env) -> Result<Outcome, CallError> {
     env.mem.write_u64(env.arg(1), ALL_CPUS)?;
     ret(0)
@@ -430,6 +431,7 @@ pub static SCE_FUNCTIONS: &[Function] = &[
     f("scePthreadGetname", sce_getname),
     f("scePthreadRename", set_name),
     f("scePthreadSetaffinity", sce_ok),
+    f("scePthreadGetaffinity", sce_attr_getaffinity),
     f("scePthreadSetprio", sce_ok),
     f("scePthreadAttrInit", sce_attr_init),
     f("scePthreadAttrDestroy", sce_attr_destroy),

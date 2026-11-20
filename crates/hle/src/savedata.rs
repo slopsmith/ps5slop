@@ -21,6 +21,8 @@ const ERROR_NOT_MOUNTED: u64 = 0x809F_0004;
 const PARAM_DIR_NAME: u64 = 8;
 const PARAM_BLOCKS: u64 = 16;
 const PARAM_MODE: u64 = 32;
+/// Where `sceSaveDataMount2` (PS4) keeps the mount mode.
+const PARAM2_MODE: u64 = 24;
 const RESULT_STATUS: usize = 28;
 
 /// `mountStatus` when the save was made by this mount.
@@ -42,6 +44,8 @@ struct Mounted {
 }
 
 pub static FUNCTIONS: &[Function] = &[
+    f("sceSaveDataInitialize3", accept),
+    f("sceSaveDataMount2", mount2),
     f("sceSaveDataMount3", mount3),
     f("sceSaveDataUmount", umount),
     f("sceSaveDataUmount2", umount2),
@@ -62,6 +66,7 @@ pub static STUBS: &[Function] = &[
     f("sceSaveDataCreateTransactionResource", create_transaction),
     f("sceSaveDataDeleteTransactionResource", accept),
     f("sceSaveDataPrepare", accept),
+    f("sceSaveDataTransferringMount", |_| ret(ERROR_NOT_FOUND)),
     f("sceSaveDataCommit", accept),
 ];
 
@@ -99,12 +104,22 @@ fn valid_dir_name(name: &[u8]) -> bool {
 
 /// `sceSaveDataMount3(param, result)`.
 fn mount3(env: &mut Env) -> Result<Outcome, CallError> {
+    mount(env, PARAM_MODE)
+}
+
+/// `sceSaveDataMount2(param, result)`, the PS4 call: the mode comes right
+/// after the block count.
+fn mount2(env: &mut Env) -> Result<Outcome, CallError> {
+    mount(env, PARAM2_MODE)
+}
+
+fn mount(env: &mut Env, mode_at: u64) -> Result<Outcome, CallError> {
     let (param, result) = (env.arg(0), env.arg(1));
     let name = env
         .mem
         .read_cstr(env.mem.read_u64(param + PARAM_DIR_NAME)?, DIR_NAME_MAX + 1)?;
     let mut mode = [0u8; 4];
-    env.mem.read(param + PARAM_MODE, &mut mode)?;
+    env.mem.read(param + mode_at, &mut mode)?;
     let mode = u32::from_le_bytes(mode);
     let Some(root) = env.kernel.vfs.saves.clone() else {
         return ret(ERROR_NOT_FOUND);

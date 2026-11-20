@@ -53,6 +53,9 @@ pub static FUNCTIONS: &[Function] = &[
     f("libSceSaveDataDialog.native", "sceSaveDataDialogGetStatus", |_| status(&SAVE)),
     f("libSceSaveDataDialog.native", "sceSaveDataDialogGetResult", |_| Ok(Outcome::Return(0))),
     f("libSceSaveDataDialog.native", "sceSaveDataDialogClose", |_| set(&SAVE, FINISHED)),
+    f("libSceSaveDataDialog.native", "sceSaveDataDialogProgressBarSetValue", |_| {
+        Ok(Outcome::Return(0))
+    }),
 ];
 
 fn set(state: &AtomicU32, to: u32) -> Result<Outcome, CallError> {

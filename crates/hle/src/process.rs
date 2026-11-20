@@ -201,6 +201,7 @@ pub struct Kernel {
     pub(crate) vfs: crate::Vfs,
     pub(crate) saves: crate::savedata::Saves,
     pub(crate) agc: crate::agc::Agc,
+    pub(crate) gnm: crate::gnm::Gnm,
     pub(crate) started: std::time::Instant,
     /// Every thread pointer `new_tls` handed out.
     pub(crate) tcbs: Mutex<Vec<u64>>,
@@ -284,6 +285,7 @@ impl Kernel {
             vfs,
             saves: Default::default(),
             agc: Default::default(),
+            gnm: Default::default(),
 
             started: std::time::Instant::now(),
             tcbs: Mutex::default(),

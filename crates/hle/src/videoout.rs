@@ -196,6 +196,10 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceVideoOutSetFlipRate", with_handle),
     f("sceVideoOutSetBufferAttribute2", set_buffer_attribute2),
     f("sceVideoOutRegisterBuffers2", register_buffers2),
+    f("sceVideoOutSetBufferAttribute", set_buffer_attribute),
+    f("sceVideoOutRegisterBuffers", register_buffers),
+    f("sceVideoOutGetVblankStatus", vblank_status),
+    f("sceVideoOutGetResolutionStatus", resolution_status),
     f("sceVideoOutSubmitFlip", submit_flip),
     f("sceVideoOutWaitVblank", wait_vblank),
     f("sceVideoOutAddFlipEvent", add_flip_event),
@@ -286,6 +290,26 @@ fn set_buffer_attribute2(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
+/// `sceVideoOutSetBufferAttribute(attr, format, tiling, aspect, width,
+/// height, pitch)`, the PS4 call. Our layout, as for the PS5 call.
+fn set_buffer_attribute(env: &mut Env) -> Result<Outcome, CallError> {
+    let (attr, format, tiling, width, height) = (
+        env.arg(0),
+        env.arg(1),
+        env.arg(2) as u32,
+        env.arg(4) as u32,
+        env.arg(5) as u32,
+    );
+    let mut b = [0u8; 32];
+    b[0..4].copy_from_slice(&ATTRIBUTE_TAG.to_le_bytes());
+    b[8..16].copy_from_slice(&format.to_le_bytes());
+    b[16..20].copy_from_slice(&tiling.to_le_bytes());
+    b[20..24].copy_from_slice(&width.to_le_bytes());
+    b[24..28].copy_from_slice(&height.to_le_bytes());
+    env.mem.write(attr, &b)?;
+    ret(0)
+}
+
 fn read_attribute(env: &Env, attr: u64) -> Result<Option<Layout>, CallError> {
     let mut b = [0u8; 32];
     env.mem.read(attr, &mut b)?;
@@ -310,6 +334,29 @@ fn register_buffers2(env: &mut Env) -> Result<Outcome, CallError> {
         env.arg(4) as usize,
         env.arg(5),
     );
+    register(env, first, list, BUFFER_ENTRY_SIZE, count, attr)
+}
+
+/// `sceVideoOutRegisterBuffers(handle, first, addresses, count, attr)`, the
+/// PS4 call, with a plain array of buffer addresses.
+fn register_buffers(env: &mut Env) -> Result<Outcome, CallError> {
+    let (first, list, count, attr) = (
+        env.arg(1) as usize,
+        env.arg(2),
+        env.arg(3) as usize,
+        env.arg(4),
+    );
+    register(env, first, list, 8, count, attr)
+}
+
+fn register(
+    env: &mut Env,
+    first: usize,
+    list: u64,
+    stride: u64,
+    count: usize,
+    attr: u64,
+) -> Result<Outcome, CallError> {
     if !is_open(env) {
         return ret(ERROR_INVALID_HANDLE);
     }
@@ -321,7 +368,7 @@ fn register_buffers2(env: &mut Env) -> Result<Outcome, CallError> {
     };
     let mut addrs = Vec::with_capacity(count);
     for i in 0..count as u64 {
-        addrs.push(env.mem.read_u64(list + i * BUFFER_ENTRY_SIZE)?);
+        addrs.push(env.mem.read_u64(list + i * stride)?);
     }
     let mut port = lock(&env.kernel.videoout.port);
     if port.buffers.len() < first + count {
@@ -383,6 +430,36 @@ fn wait_vblank(env: &mut Env) -> Result<Outcome, CallError> {
         }
         std::thread::sleep(left.min(POLL));
     }
+    ret(0)
+}
+
+/// `sceVideoOutGetVblankStatus(handle, status)`: the vblank count, then the
+/// time of the last one in microseconds (layout assumed).
+fn vblank_status(env: &mut Env) -> Result<Outcome, CallError> {
+    if !is_open(env) {
+        return ret(ERROR_INVALID_HANDLE);
+    }
+    let elapsed = env.kernel.videoout.start.elapsed();
+    let count = (elapsed.as_nanos() / VBLANK.as_nanos()) as u64;
+    let time = (VBLANK * count as u32).as_micros() as u64;
+    let mut b = [0u8; 24];
+    b[0..8].copy_from_slice(&count.to_le_bytes());
+    b[8..16].copy_from_slice(&time.to_le_bytes());
+    env.mem.write(env.arg(1), &b)?;
+    ret(0)
+}
+
+/// `sceVideoOutGetResolutionStatus(handle, status)`: 1920x1080 for the
+/// screen and the pane (layout assumed).
+fn resolution_status(env: &mut Env) -> Result<Outcome, CallError> {
+    if !is_open(env) {
+        return ret(ERROR_INVALID_HANDLE);
+    }
+    let mut b = [0u8; 16];
+    for (i, v) in [1920u32, 1080, 1920, 1080].into_iter().enumerate() {
+        b[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    env.mem.write(env.arg(1), &b)?;
     ret(0)
 }
 

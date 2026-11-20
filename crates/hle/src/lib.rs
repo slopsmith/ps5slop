@@ -25,6 +25,8 @@ mod exception;
 pub use gpu;
 pub mod errno;
 mod file;
+mod fios;
+mod gnm;
 mod heap;
 mod kernel;
 mod libc;
@@ -217,6 +219,14 @@ impl Env<'_> {
         const ORDER: [usize; 6] = [RDI, RSI, RDX, RCX, R8, R9];
         self.cpu.regs[ORDER[n]]
     }
+
+    /// Integer argument `n`, read from the stack past the sixth.
+    pub fn arg_n(&self, n: usize) -> Result<u64, CallError> {
+        if n < 6 {
+            return Ok(self.arg(n));
+        }
+        Ok(self.mem.read_u64(self.cpu.regs[RSP] + 8 * (n as u64 - 5))?)
+    }
 }
 
 pub type HostFn = fn(&mut Env) -> Result<Outcome, CallError>;
@@ -264,13 +274,28 @@ impl Default for Hle {
     }
 }
 
+/// PS4 libraries whose functions we provide under the PS5 library's name,
+/// as `(PS4, PS5)`: the same functions with the same NIDs and the PS4
+/// structure layouts.
+const PS4_TWINS: &[(&str, &str)] = &[
+    ("libSceSaveData", "libSceSaveData_native"),
+    ("libSceSaveDataDialog", "libSceSaveDataDialog.native"),
+    ("libSceMsgDialog", "libSceMsgDialog.native"),
+];
+
 impl Hle {
     pub fn new() -> Self {
         let by_nid = functions()
             .flat_map(|f| {
                 let posix = (f.library == "libkernel")
                     .then(|| ((function_nid(f.name), "libScePosix".to_owned()), f));
-                std::iter::once(((function_nid(f.name), f.library.to_owned()), f)).chain(posix)
+                let ps4 = PS4_TWINS
+                    .iter()
+                    .find(|(_, ps5)| *ps5 == f.library)
+                    .map(|(ps4, _)| ((function_nid(f.name), (*ps4).to_owned()), f));
+                std::iter::once(((function_nid(f.name), f.library.to_owned()), f))
+                    .chain(posix)
+                    .chain(ps4)
             })
             .collect();
         let variables = kernel::VARIABLES
@@ -477,6 +502,7 @@ fn placeholders() -> impl Iterator<Item = &'static Function> {
         .chain(services::STUBS)
         .chain(pad::STUBS)
         .chain(file::STUBS)
+        .chain(gnm::STUBS)
         .chain(videoout::STUBS)
         .chain(rtld::STUBS)
 }
@@ -496,6 +522,8 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(equeue::FUNCTIONS)
         .chain(posix::FUNCTIONS)
         .chain(file::FUNCTIONS)
+        .chain(fios::FUNCTIONS)
+        .chain(gnm::FUNCTIONS)
         .chain(libc::functions())
         .chain(services::FUNCTIONS)
         .chain(pad::FUNCTIONS)
@@ -507,6 +535,7 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(ngs2::FUNCTIONS)
         .chain(audio::FUNCTIONS)
         .chain(audio::OUT2_FUNCTIONS)
+        .chain(audio::INPUT_FUNCTIONS)
         .chain(dialog::FUNCTIONS)
         .chain(agc::functions())
         .chain(placeholders())
@@ -720,8 +749,13 @@ mod tests {
 
     /// Calls `name` with `args` as the thread whose pointer is `tcb`.
     fn libkernel(kernel: &Kernel, name: &str, tcb: u64, args: &[u64]) -> u64 {
+        call_in(kernel, "libkernel", name, tcb, args)
+    }
+
+    /// Calls `library`'s `name`, whose stub must exist, with `args`; its RAX.
+    fn call_in(kernel: &Kernel, library: &str, name: &str, tcb: u64, args: &[u64]) -> u64 {
         const ORDER: [usize; 6] = [RDI, RSI, RDX, RCX, R8, R9];
-        let stub = kernel.hle.stub_index[&(nid(name), "libkernel".to_owned())];
+        let stub = kernel.hle.stub_index[&(nid(name), library.to_owned())];
         let mut cpu = Cpu {
             fs_base: tcb,
             ..Cpu::default()
@@ -875,6 +909,62 @@ mod tests {
             0x8002_0000 + errno::ENOENT as u64
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ps4_library_names_bind_to_the_ps5_libraries_functions() {
+        let mut hle = Hle::new();
+        hle.stub_by_name("libSceSaveData", "sceSaveDataUmount");
+        hle.stub_by_name("libSceMsgDialog", "sceMsgDialogOpen");
+        assert_eq!(hle.unimplemented(), []);
+    }
+
+    #[test]
+    fn fios_handles_read_app0_files() {
+        let dir = std::env::temp_dir().join(format!("ps5slop-fios-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("label.txt"), b"hello").unwrap();
+        let mut hle = Hle::new();
+        for name in [
+            "sceFiosFHOpenWithModeSync",
+            "sceFiosFHSeek",
+            "sceFiosFHReadSync",
+            "sceFiosFHCloseSync",
+        ] {
+            hle.stub_by_name("libSceFios2", name);
+        }
+        let (k, cpu, _) = guest_in(hle, Some(dir.clone()));
+        let me = cpu.fs_base;
+        let mem = k.memory();
+        let fios = |name, args: &[u64]| call_in(&k, "libSceFios2", name, me, args);
+        let (path, out, buf) = (0x20_0000, 0x20_0080, 0x20_0100);
+        mem.write(path, b"/app0/label.txt\0").unwrap();
+        assert_eq!(fios("sceFiosFHOpenWithModeSync", &[0, out, path, 0, 0]), 0);
+        let mut fh = [0u8; 4];
+        mem.read(out, &mut fh).unwrap();
+        let fh = u32::from_le_bytes(fh) as u64;
+        assert_eq!(fios("sceFiosFHSeek", &[fh, 0, 2]), 5);
+        assert_eq!(fios("sceFiosFHSeek", &[fh, 1, 0]), 1);
+        assert_eq!(fios("sceFiosFHReadSync", &[0, fh, buf, 64]), 4);
+        assert_eq!(mem.read_cstr(buf, 4).unwrap(), b"ello");
+        assert_eq!(fios("sceFiosFHCloseSync", &[0, fh]), 0);
+        assert_ne!(fios("sceFiosFHCloseSync", &[0, fh]), 0);
+        mem.write(path, b"/app0/missing\0").unwrap();
+        assert_ne!(fios("sceFiosFHOpenWithModeSync", &[0, out, path, 0, 0]), 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn gnm_packet_builders_we_skip_leave_one_nop_over_their_space() {
+        let mut hle = Hle::new();
+        hle.stub_by_name("libSceGnmDriver", "sceGnmSetVsShader");
+        let (k, cpu, _) = guest(hle);
+        let buffer = 0x20_0000;
+        call_in(&k, "libSceGnmDriver", "sceGnmSetVsShader", cpu.fs_base, &[buffer, 0x1d, 0, 0]);
+        let mut header = [0u8; 4];
+        k.memory().read(buffer, &mut header).unwrap();
+        let header = u32::from_le_bytes(header);
+        assert_eq!((header >> 30, (header >> 16 & 0x3FFF) + 2, header >> 8 & 0xFF), (3, 0x1d, 0x10));
     }
 
     #[test]

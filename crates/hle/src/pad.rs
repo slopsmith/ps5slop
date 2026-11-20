@@ -89,6 +89,10 @@ pub static STUBS: &[Function] = &[
         "scePadDeviceClassGetExtendedInformation",
         device_class_information,
     ),
+    // Names unknown. Deltarune calls both every frame after
+    // scePadSetVibration, with the handle and a pointer to one byte.
+    f("#fCWdlnmB1Ks", with_handle),
+    f("#oARLr0ca9N8", with_handle),
 ];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {

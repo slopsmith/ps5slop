@@ -50,7 +50,19 @@ pub static FUNCTIONS: &[Function] = &[
     f("libSceUserService", "sceUserServiceGetEvent", user_event),
     f("libSceUserService", "sceUserServiceTerminate", ok),
     f("libSceRtc", "sceRtcGetCurrentTick", rtc_current_tick),
+    f(
+        "libSceSystemService",
+        "sceSystemServiceGetDisplaySafeAreaInfo",
+        safe_area,
+    ),
 ];
+
+/// `sceSystemServiceGetDisplaySafeAreaInfo(info)`: the whole screen is safe.
+/// The first field is taken to be the ratio as an `f32` (unverified).
+fn safe_area(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write(env.arg(0), &1.0f32.to_le_bytes())?;
+    Ok(Outcome::Return(0))
+}
 
 /// Placeholders: they answer without doing the real work, and say so on
 /// stderr when called.

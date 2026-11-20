@@ -7,6 +7,7 @@
 #[cfg(target_os = "macos")]
 mod coreaudio;
 mod out2;
+mod input;
 mod wav;
 
 use std::collections::{HashMap, VecDeque};
@@ -33,6 +34,8 @@ const QUEUED_FRAMES: usize = 2048;
 const DEVICE_STALL: Duration = Duration::from_millis(250);
 
 pub use out2::FUNCTIONS as OUT2_FUNCTIONS;
+
+pub use input::FUNCTIONS as INPUT_FUNCTIONS;
 
 pub static FUNCTIONS: &[Function] = &[
     f("sceAudioOutInit", ok),

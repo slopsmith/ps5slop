@@ -69,6 +69,22 @@ Register state reaches the processor mostly through register tables (`SET_CONTEX
 
 Known difference from the console: `sceAgcDcbResetQueue` writes a 2-dword marker where the console writes a longer, mode-dependent sequence (tags in the internal-data register `0x342`).
 
+## PS4 titles (Gnm)
+
+PS4 titles draw through libSceGnmDriver. Its packet builders write PM4 for the gfx7 (GCN) GPU into the title's command buffers; the title's own Gnm library writes the rest. `crates/hle/src/gnm.rs` has only what a frame loop needs, so nothing is drawn:
+
+- `sceGnmSubmitCommandBuffers(count, dcbs, dcb_byte_sizes, ccbs, ccb_byte_sizes)` and `sceGnmSubmitAndFlipCommandBuffers(..., video_out, index, flip_mode, flip_arg)` (arguments 7 to 9 on the stack) go to their own GPU thread, which runs the draw command buffers through `gpu::Processor` with no backend: labels, waits, `EVENT_WRITE_EOP` and its interrupt work as for AGC, register writes are recorded and draws skipped. The flip happens after the buffers. Constant command buffers are not run.
+- `sceGnmAddEqEvent(queue, id, udata)` registers an `EVFILT_GRAPHICS_CORE` event. Deltarune registers id `0x40` and waits for it after each submission; every end-of-pipe interrupt raises that id (which id the console raises for which interrupt is unknown).
+- The packet builders Deltarune calls (`sceGnmSetVsShader`, `SetPsShader350`, `UpdateVsShader`, `UpdatePsShader350`, `DrawIndex`, `InsertWaitFlipDone`) write one NOP over the dwords the title reserved for them, so the command processor never reads stale data. `sceGnmDrawInitDefaultHardwareState350` writes nothing and returns 0.
+
+**Checked on 2026-11-20** with Deltarune v1.12: about 30 submissions and flips a second, each command buffer about 1,460 dwords with four `sceGnmDrawIndex` calls (skipped), one `EVENT_WRITE_EOP` and no wait timeouts. The screen stays black.
+
+What drawing PS4 titles would take, roughly in order:
+
+1. The driver's packet builders for real: shader setup (the `VsShader`/`PsShader` structures titles pass), draws, the wait for a flip. About 30 to 40 functions for Deltarune (113 Gnm imports in all).
+2. A GCN (gfx7) decoder for the `gfx10` crate's translator. Most instructions mean the same thing, but encodings and opcode numbers differ (SMRD instead of SMEM, another VOP3 layout, no NGG: separate vertex and export stages). Mesa ACO's opcode table has the gfx7 numbers.
+3. gfx7 render state in the Metal backend: the separate VS stage, the shader registers that moved between gfx7 and gfx10, and GCN tiling (tile modes and macro-tile tables) for render targets, textures and the display buffers.
+
 ## Metal renderer (in progress)
 
 `crates/gpu/src/metal.rs`, structured after SharpEmu-mac's Metal backend (GPL-2.0-or-later; see its `docs/macos/metal-backend.md`):

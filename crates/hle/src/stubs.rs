@@ -64,6 +64,8 @@ fn new_id(_: &mut Env) -> Result<Outcome, CallError> {
 }
 
 pub static FUNCTIONS: &[Function] = &[
+    // We are a base PS4, not a PS4 Pro, to PS4 titles.
+    zero("libkernel", "sceKernelIsNeoMode"),
     Function {
         library: "libSceAppContent",
         name: "sceAppContentTemporaryDataMount2",
@@ -395,6 +397,13 @@ pub static STUBS: &[Function] = &[
     Function {
         library: "libSceLibcInternalExt",
         name: "#qBS714-Jr3g",
+        func: ok,
+    },
+    // Name unknown; Deltarune calls it once at start-up and carries on when
+    // it succeeds.
+    Function {
+        library: "libkernel_cpumode_platform",
+        name: "#mpxAdqW7dKY",
         func: ok,
     },
     Function {
