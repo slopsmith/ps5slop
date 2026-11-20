@@ -1861,7 +1861,12 @@ impl Metal {
                 key.stencil = d.stencil;
                 let clearing = c[context::DB_RENDER_CONTROL] & 3 != 0;
                 if clearing || fresh {
-                    let z = if clearing { f32::from_bits(c[context::DB_DEPTH_CLEAR]) } else { 1.0 };
+                    let z = if clearing {
+                        let (zs, zo) = regs::depth_range(c, gl_clip);
+                        (f32::from_bits(c[context::DB_DEPTH_CLEAR]) * zs + zo).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
                     clear = Some((z, c[context::DB_STENCIL_CLEAR] & 0xFF));
                 }
                 depth = Some((d.address, tex, d.stencil, d.slice));
@@ -1915,6 +1920,8 @@ impl Metal {
         } else {
             (vp.z_offset, vp.z_offset + vp.z_scale)
         };
+        let (zs, zo) = regs::depth_range(c, gl_clip);
+        let (znear, zfar) = (znear * zs + zo, zfar * zs + zo);
         enc.setViewport(MTLViewport {
             originX: (vp.x_offset - vp.x_scale) as f64,
             originY: (vp.y_offset - vp.y_scale.abs()) as f64,

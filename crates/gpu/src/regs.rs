@@ -30,6 +30,8 @@ pub mod context {
     pub const PA_SC_GENERIC_SCISSOR_BR: usize = 0x091;
     pub const PA_SC_VPORT_SCISSOR_0_TL: usize = 0x094;
     pub const PA_SC_VPORT_SCISSOR_0_BR: usize = 0x095;
+    pub const PA_SC_VPORT_ZMIN_0: usize = 0x0B4;
+    pub const PA_SC_VPORT_ZMAX_0: usize = 0x0B5;
     pub const CB_BLEND_RED: usize = 0x105;
     pub const PA_CL_VPORT_XSCALE: usize = 0x10F;
     pub const SPI_PS_INPUT_CNTL_0: usize = 0x191;
@@ -266,8 +268,38 @@ impl Viewport {
     }
 }
 
+/// How the depths a draw can produce land in Metal's `[0, 1]`, as
+/// `depth * scale + offset`. With z clipping, depth stays in the viewport's
+/// z range (`[offset - scale, offset + scale]` for GL clip space), clamped
+/// to `PA_SC_VPORT_ZMIN_0..ZMAX_0`. A float depth buffer keeps values outside
+/// `[0, 1]` (Isaac draws at -1..1 with a +-10000 clamp range) where Metal
+/// clamps them, so a range reaching outside `[0, 1]` is mapped onto it.
+/// Draws whose ranges differ map differently; no title seen so far mixes
+/// such ranges in one depth buffer.
+pub fn depth_range(c: &[u32], gl_clip: bool) -> (f32, f32) {
+    let vp = Viewport::read(c);
+    let near = if gl_clip { vp.z_offset - vp.z_scale } else { vp.z_offset };
+    let far = vp.z_offset + vp.z_scale;
+    let (mut lo, mut hi) = (near.min(far), near.max(far));
+    let (zmin, zmax) = (
+        f32::from_bits(c[context::PA_SC_VPORT_ZMIN_0]),
+        f32::from_bits(c[context::PA_SC_VPORT_ZMAX_0]),
+    );
+    if zmax > zmin {
+        (lo, hi) = (lo.max(zmin), hi.min(zmax));
+    }
+    let usable = hi > lo && (hi - lo).is_finite();
+    if !usable || (lo >= 0.0 && hi <= 1.0) {
+        return (1.0, 0.0);
+    }
+    (1.0 / (hi - lo), -lo / (hi - lo))
+}
+
 /// The scissor rectangle a draw is clipped to: the intersection of the
 /// screen, window, generic and viewport-0 scissors, as `(x0, y0, x1, y1)`.
+/// An empty one counts as unset: our register banks start at zero, while
+/// the hardware's reset values are full-screen, and titles that rely on
+/// those (Isaac) never write them.
 pub fn scissor(c: &[u32]) -> (u32, u32, u32, u32) {
     use context::*;
     let tl = |v: u32| (v & 0x7FFF, (v >> 16) & 0x7FFF);
@@ -279,8 +311,8 @@ pub fn scissor(c: &[u32]) -> (u32, u32, u32, u32) {
         r.2 = r.2.min(b.0 + offset.0);
         r.3 = r.3.min(b.1 + offset.1);
     };
-    clip(tl(c[PA_SC_SCREEN_SCISSOR_TL]), br(c[PA_SC_SCREEN_SCISSOR_BR]), (0, 0));
     for (t, b) in [
+        (PA_SC_SCREEN_SCISSOR_TL, PA_SC_SCREEN_SCISSOR_BR),
         (PA_SC_WINDOW_SCISSOR_TL, PA_SC_WINDOW_SCISSOR_BR),
         (PA_SC_GENERIC_SCISSOR_TL, PA_SC_GENERIC_SCISSOR_BR),
         (PA_SC_VPORT_SCISSOR_0_TL, PA_SC_VPORT_SCISSOR_0_BR),
