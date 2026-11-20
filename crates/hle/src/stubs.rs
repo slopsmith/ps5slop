@@ -205,8 +205,6 @@ pub static STUBS: &[Function] = &[
         func: unsupported,
     },
     zero("libSceCommonDialog", "sceCommonDialogInitialize"),
-    zero("libSceSaveDataDialog.native", "sceSaveDataDialogInitialize"),
-    zero("libSceSaveDataDialog.native", "sceSaveDataDialogTerminate"),
     zero("libSceWebBrowserDialog", "sceWebBrowserDialogInitialize"),
     zero("libSceWebBrowserDialog", "sceWebBrowserDialogTerminate"),
     zero("libSceNpCommerce", "sceNpCommerceDialogInitialize"),

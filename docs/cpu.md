@@ -128,3 +128,6 @@ The flags the SDM leaves undefined (after `imul`, shifts, `bsf`/`bsr`, `andn`, `
 - Legacy `cmpps`/`cmppd`/`cmpss`/`cmpsd` used five predicate bits instead of three.
 
 About 1,900 encodings that Rosetta rejects with `#UD` (wrong VEX.L or W for the instruction, mostly) run in our interpreter; games do not execute those, so this is left alone.
+
+**Added for Minecraft's world creation (2026-11-20), each checked with the fuzzer:** `haddps`/`haddpd`/`hsubps`/`hsubpd` (all forms), the VEX.256 forms of `movmskps`/`movmskpd`, `pmovmskb`, `cvtdq2pd`, `cvttpd2dq` and `cvtpd2dq`, and `rcpps`/`rcpss`/`rsqrtps`/`rsqrtss`. We compute `rcp` and `rsqrt` exactly and round to f32; hardware returns an approximation good to about 12 bits (Rosetta's results have the low mantissa bits cleared), so results differ in the low bits; denormal inputs count as zero, as on hardware. Scalar FMA and `roundss`/`roundsd` now ignore VEX.L, as the SDM says.
+

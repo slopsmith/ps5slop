@@ -28,7 +28,7 @@ calls off                   stop logging calls
 shot PATH                   write the screen as PPM
 gputrace N                  trace every draw of the next N frames on stderr (decimal)
 targets DIR                 write every render target and texture as PPM (needs PS5SLOP_DUMP_TARGETS)
-press BUTTONS [MS]          hold pad buttons (cross+up, ...) for MS ms (default 150, decimal)
+press BUTTONS [MS]          hold pad buttons (cross+up, ...) for MS ms (default 400, decimal)
 quit                        end the guest
 Numbers are hex; a 0x prefix is optional.";
 
@@ -242,7 +242,7 @@ fn run(kernel: &Kernel, line: &str) -> String {
         },
         "press" => match it.next().map(crate::pad_buttons) {
             Some(buttons) if buttons != 0 => {
-                let ms = it.next().and_then(|m| m.parse().ok()).unwrap_or(150);
+                let ms = it.next().and_then(|m| m.parse().ok()).unwrap_or(400);
                 kernel.set_pad_input(hle::PadInput { buttons, ..Default::default() });
                 std::thread::sleep(std::time::Duration::from_millis(ms));
                 kernel.set_pad_input(hle::PadInput::default());

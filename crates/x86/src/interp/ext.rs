@@ -236,7 +236,11 @@ impl Ctx<'_> {
         if self.cross_lane()? {
             return Ok(true);
         }
-        if self.wide256() {
+        let scalar = match i.map {
+            Map::M0F38 => (0x99..=0xbf).contains(&i.op) && i.op & 1 == 1 && i.op & 0xf >= 9,
+            _ => matches!(i.op, 0x0a | 0x0b),
+        };
+        if self.wide256() && !scalar {
             if !self.in_lane_ext() {
                 return none();
             }

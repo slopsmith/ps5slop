@@ -328,8 +328,33 @@ impl Ctx<'_> {
         if !vex.l || scalar(i.op, self.pfx()) {
             return self.sse_op();
         }
+        if i.op == 0xd7 && self.pfx() == Pfx::P66 {
+            let Loc::Reg(r) = self.rm() else {
+                return Err(CpuFault::InvalidOpcode);
+            };
+            let y = self.cpu.xmm[r as usize];
+            let m = (0..32).fold(0u64, |acc, k| acc | (y[k / 8] >> (8 * (k % 8) + 7) & 1) << k);
+            self.set(i.reg, 4, m);
+            return Ok(true);
+        }
+        if i.op == 0x50 && matches!(self.pfx(), Pfx::None | Pfx::P66) {
+            let Loc::Reg(r) = self.rm() else {
+                return Err(CpuFault::InvalidOpcode);
+            };
+            let y = self.cpu.xmm[r as usize];
+            let m = if self.pfx() == Pfx::None {
+                (0..8).fold(0, |acc, k| acc | (y[k / 2] >> (32 * (k % 2) + 31) & 1) << k)
+            } else {
+                (0..4).fold(0, |acc, k| acc | (y[k] >> 63) << k)
+            };
+            self.set(i.reg, 4, m);
+            return Ok(true);
+        }
         if i.op == 0x5a && matches!(self.pfx(), Pfx::None | Pfx::P66) {
             return self.convert_wide();
+        }
+        if i.op == 0xe6 && self.pfx() != Pfx::None {
+            return self.convert_int_wide();
         }
         if !in_lane(i.op, self.pfx()) {
             return Ok(false);
@@ -357,6 +382,32 @@ impl Ctx<'_> {
         };
         let r = src.map(f64_to_f32);
         self.cpu.xmm[d] = [r[0] as u64 | (r[1] as u64) << 32, r[2] as u64 | (r[3] as u64) << 32, 0, 0];
+        Ok(true)
+    }
+
+    /// VEX.256 `vcvtdq2pd ymm, xmm/m128`, and `vcvttpd2dq`/`vcvtpd2dq xmm,
+    /// ymm/m256`.
+    fn convert_int_wide(&mut self) -> Res<bool> {
+        let d = self.insn.reg as usize;
+        let p = self.pfx();
+        if p == Pfx::F3 {
+            let s = lanes::<4>(self.src128(false)?);
+            self.cpu.xmm[d] = s.map(|x| (sx(x, 32) as f64).to_bits());
+            return Ok(true);
+        }
+        let src = match self.rm() {
+            Loc::Reg(r) => self.cpu.xmm[r as usize],
+            Loc::Mem(a) => {
+                let mut v = [0u64; 4];
+                for (k, w) in v.iter_mut().enumerate() {
+                    *w = self.load(a + 8 * k as u64, 8)?;
+                }
+                v
+            }
+        };
+        let rc = (self.cpu.mxcsr >> 13) & 3;
+        let r = src.map(|x| to_int(f64::from_bits(x), rc, p == Pfx::P66, 32) & 0xffff_ffff);
+        self.cpu.xmm[d] = [r[0] | r[1] << 32, r[2] | r[3] << 32, 0, 0];
         Ok(true)
     }
 
@@ -579,6 +630,16 @@ impl Ctx<'_> {
                     join::<2>([f64op(la[0], lb[0], |x, y| x - y), f64op(la[1], lb[1], |x, y| x + y)])
                 };
                 self.xset(d, r);
+            }
+            (Pfx::None | Pfx::F3, 0x52 | 0x53) => {
+                let f = if op == 0x52 { rsqrt } else { rcp };
+                if p == Pfx::None {
+                    let r = map2::<4>(0, self.src128(true)?, |_, y| f(y as u32) as u64);
+                    self.xset(d, r);
+                } else {
+                    let r = f(self.src_low(4)? as u32);
+                    self.set_low(d, 4, r as u64);
+                }
             }
             (Pfx::P66 | Pfx::F2, 0x7c | 0x7d) => {
                 let (a, b) = (self.src1(), self.src128(true)?);
@@ -1172,12 +1233,40 @@ impl Ctx<'_> {
     }
 }
 
+/// `rcpps`: 1/x rounded to f32 (hardware approximates to 12 bits);
+/// denormals count as zero.
+fn rcp(x: u32) -> u32 {
+    let f = f32::from_bits(x);
+    if f.is_nan() {
+        return x | 0x0040_0000;
+    }
+    if x & 0x7f80_0000 == 0 {
+        return (x & 0x8000_0000) | 0x7f80_0000;
+    }
+    (1.0 / f).to_bits()
+}
+
+/// `rsqrtps`: 1/sqrt(x) rounded to f32, like [`rcp`].
+fn rsqrt(x: u32) -> u32 {
+    let f = f32::from_bits(x);
+    if f.is_nan() {
+        return x | 0x0040_0000;
+    }
+    if x & 0x7f80_0000 == 0 {
+        return (x & 0x8000_0000) | 0x7f80_0000;
+    }
+    if f < 0.0 {
+        return 0xffc0_0000;
+    }
+    (1.0 / f.sqrt()).to_bits()
+}
+
 /// Whether `0F op` is a scalar operation, for which VEX.L is ignored.
 fn scalar(op: u8, p: Pfx) -> bool {
     match p {
         Pfx::F3 | Pfx::F2 => matches!(
             op,
-            0x10 | 0x11 | 0x2a | 0x2c | 0x2d | 0x51 | 0x58 | 0x59 | 0x5a | 0x5c..=0x5f | 0xc2
+            0x10 | 0x11 | 0x2a | 0x2c | 0x2d | 0x51..=0x53 | 0x58 | 0x59 | 0x5a | 0x5c..=0x5f | 0xc2
         ),
         _ => matches!(op, 0x2e | 0x2f),
     }
@@ -1199,6 +1288,7 @@ fn in_lane(op: u8, p: Pfx) -> bool {
         | 0x5c..=0x5f
         | 0xc2
         | 0xc6 => packed,
+        0x52 | 0x53 => p == Pfx::None,
         0x12 | 0x16 => matches!(p, Pfx::F3 | Pfx::F2),
         0xd0 | 0x7c | 0x7d => matches!(p, Pfx::P66 | Pfx::F2),
         0x5b => p != Pfx::F2,

@@ -1,4 +1,4 @@
-//! System dialogs (libSceMsgDialog, libSceSigninDialog). We show nothing: an
+//! System dialogs (libSceMsgDialog, libSceSigninDialog, libSceSaveDataDialog). We show nothing: an
 //! opened dialog finishes at once, a message dialog as if the user pressed
 //! its first button, a sign-in dialog as if the user cancelled. Message texts
 //! go to stderr. Status values, results and the PS4 parameter layouts come
@@ -25,6 +25,7 @@ const MODE_USER_MSG: u32 = 1;
 static MSG: AtomicU32 = AtomicU32::new(NONE);
 static MSG_MODE: AtomicU32 = AtomicU32::new(0);
 static SIGNIN: AtomicU32 = AtomicU32::new(NONE);
+static SAVE: AtomicU32 = AtomicU32::new(NONE);
 
 const fn f(library: &'static str, name: &'static str, func: crate::HostFn) -> Function {
     Function { library, name, func }
@@ -45,6 +46,13 @@ pub static FUNCTIONS: &[Function] = &[
     f("libSceSigninDialog", "sceSigninDialogGetStatus", |_| status(&SIGNIN)),
     f("libSceSigninDialog", "sceSigninDialogGetResult", signin_result),
     f("libSceSigninDialog", "sceSigninDialogClose", |_| set(&SIGNIN, FINISHED)),
+    f("libSceSaveDataDialog.native", "sceSaveDataDialogInitialize", |_| set(&SAVE, INITIALIZED)),
+    f("libSceSaveDataDialog.native", "sceSaveDataDialogTerminate", |_| set(&SAVE, NONE)),
+    f("libSceSaveDataDialog.native", "sceSaveDataDialogOpen", save_open),
+    f("libSceSaveDataDialog.native", "sceSaveDataDialogUpdateStatus", |_| status(&SAVE)),
+    f("libSceSaveDataDialog.native", "sceSaveDataDialogGetStatus", |_| status(&SAVE)),
+    f("libSceSaveDataDialog.native", "sceSaveDataDialogGetResult", |_| Ok(Outcome::Return(0))),
+    f("libSceSaveDataDialog.native", "sceSaveDataDialogClose", |_| set(&SAVE, FINISHED)),
 ];
 
 fn set(state: &AtomicU32, to: u32) -> Result<Outcome, CallError> {
@@ -85,6 +93,13 @@ fn msg_result(env: &mut Env) -> Result<Outcome, CallError> {
     r[8..12].copy_from_slice(&BUTTON_OK.to_le_bytes());
     env.mem.write(env.arg(0), &r)?;
     Ok(Outcome::Return(0))
+}
+
+/// `sceSaveDataDialogOpen(param)`: its result is left as the caller
+/// initialised it, since we know no layout for it.
+fn save_open(_: &mut Env) -> Result<Outcome, CallError> {
+    eprintln!("ps5slop: save data dialog opened; finished at once");
+    set(&SAVE, FINISHED)
 }
 
 /// `sceSigninDialogOpen(param)`.

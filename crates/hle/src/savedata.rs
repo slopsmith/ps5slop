@@ -49,6 +49,9 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceSaveDataSetParam", set_param),
     f("sceSaveDataGetParam", get_param),
     f("sceSaveDataDirNameSearch", dir_name_search),
+    f("sceSaveDataSaveIcon", save_icon),
+    f("sceSaveDataLoadIcon", load_icon),
+    f("sceSaveDataDelete", delete),
     // Name unknown; Minecraft passes it the same condition and result.
     f("#X4MYzukPc3g", dir_name_search),
 ];
@@ -86,12 +89,12 @@ fn create_transaction(_: &mut Env) -> Result<Outcome, CallError> {
     ret(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
 }
 
+// Minecraft's world saves contain `@`; the console's own rules are unknown.
 fn valid_dir_name(name: &[u8]) -> bool {
     !name.is_empty()
         && name.len() <= DIR_NAME_MAX
-        && name
-            .iter()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
+        && name[0] != b'.'
+        && name.iter().all(|&c| c.is_ascii_graphic() && c != b'/' && c != b'\\')
 }
 
 /// `sceSaveDataMount3(param, result)`.
@@ -133,6 +136,11 @@ fn mount3(env: &mut Env) -> Result<Outcome, CallError> {
     let point = format!("/savedata{slot}");
     env.kernel.vfs.mount(&point, host.clone(), true);
     let blocks = env.mem.read_u64(param + PARAM_BLOCKS)?;
+    let record = host.join("sce_sys").join(BLOCKS_FILE);
+    if status == STATUS_CREATED || !record.exists() {
+        let _ = std::fs::create_dir_all(host.join("sce_sys"));
+        let _ = std::fs::write(&record, blocks.to_string());
+    }
     mounted[slot] = Some(Mounted { name, host, blocks });
     drop(mounted);
     let mut out = [0u8; 32];
@@ -176,6 +184,19 @@ fn umount2(env: &mut Env) -> Result<Outcome, CallError> {
 
 /// Bytes in one save data block.
 const BLOCK_SIZE: u64 = 32 * 1024;
+/// Where a save folder keeps the size (in blocks) it was made with, our own
+/// file next to the param files.
+const BLOCKS_FILE: &str = "blocks";
+/// The size of a save made before we recorded sizes: 1 GiB.
+const DEFAULT_BLOCKS: u64 = (1 << 30) / BLOCK_SIZE;
+
+/// The size a save folder was made with, in blocks.
+fn save_blocks(dir: &std::path::Path) -> u64 {
+    std::fs::read_to_string(dir.join("sce_sys").join(BLOCKS_FILE))
+        .ok()
+        .and_then(|t| t.trim().parse().ok())
+        .unwrap_or(DEFAULT_BLOCKS)
+}
 
 fn used_bytes(dir: &std::path::Path) -> u64 {
     std::fs::read_dir(dir)
@@ -229,6 +250,12 @@ const RESULT_HITS: u64 = 0;
 const RESULT_DIR_NAMES: u64 = 8;
 const RESULT_DIR_NAMES_NUM: u64 = 16;
 const RESULT_SET: u64 = 20;
+const RESULT_PARAMS: u64 = 24;
+const RESULT_INFOS: u64 = 32;
+/// `OrbisSaveDataSearchInfo` (blocks, free blocks, reserved) and
+/// `OrbisSaveDataParam` (title, subtitle, details, user parameter, mtime).
+const INFO_SIZE: u64 = 48;
+const PARAM_SIZE: usize = 1328;
 const DIR_NAME_SIZE: u64 = 32;
 
 fn read_u32(env: &Env, at: u64) -> Result<u32, CallError> {
@@ -252,7 +279,7 @@ fn dir_name_search(env: &mut Env) -> Result<Outcome, CallError> {
     let Some(root) = env.kernel.vfs.saves.clone() else {
         return ret(ERROR_NOT_FOUND);
     };
-    let mut found: Vec<(std::time::SystemTime, String)> = std::fs::read_dir(root)
+    let mut found: Vec<(std::time::SystemTime, String)> = std::fs::read_dir(&root)
         .into_iter()
         .flatten()
         .flatten()
@@ -275,10 +302,28 @@ fn dir_name_search(env: &mut Env) -> Result<Outcome, CallError> {
     let names = env.mem.read_u64(result + RESULT_DIR_NAMES)?;
     let room = read_u32(env, result + RESULT_DIR_NAMES_NUM)? as usize;
     let set = if names == 0 { 0 } else { found.len().min(room) };
+    let (params, infos) = (
+        env.mem.read_u64(result + RESULT_PARAMS)?,
+        env.mem.read_u64(result + RESULT_INFOS)?,
+    );
     for (i, (_, name)) in found.iter().take(set).enumerate() {
         let mut entry = [0u8; DIR_NAME_SIZE as usize];
         entry[..name.len()].copy_from_slice(name.as_bytes());
         env.mem.write(names + i as u64 * DIR_NAME_SIZE, &entry)?;
+        let dir = root.join(name);
+        if infos != 0 {
+            let blocks = save_blocks(&dir);
+            let used = used_bytes(&dir).div_ceil(BLOCK_SIZE);
+            let mut info = [0u8; INFO_SIZE as usize];
+            info[..8].copy_from_slice(&blocks.to_le_bytes());
+            info[8..16].copy_from_slice(&blocks.saturating_sub(used).to_le_bytes());
+            env.mem.write(infos + i as u64 * INFO_SIZE, &info)?;
+        }
+        if params != 0 {
+            let mut p = std::fs::read(dir.join("sce_sys").join("param0.bin")).unwrap_or_default();
+            p.resize(PARAM_SIZE, 0);
+            env.mem.write(params + (i * PARAM_SIZE) as u64, &p)?;
+        }
     }
     env.mem
         .write(result + RESULT_HITS, &(found.len() as u32).to_le_bytes())?;
@@ -329,9 +374,83 @@ fn get_param(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
+/// `OrbisSaveDataIcon`: buffer, its size and the data size in it.
+const ICON_BUF: u64 = 0;
+const ICON_BUF_SIZE: u64 = 8;
+const ICON_DATA_SIZE: u64 = 16;
+/// `OrbisSaveDataDelete`: the folder name.
+const DELETE_DIR_NAME: u64 = 16;
+
+/// The icon file of the save mounted at the mount point named at `at`.
+fn icon_file(env: &Env, at: u64) -> Result<Option<std::path::PathBuf>, CallError> {
+    let Some((_, slot)) = mount_point(env, at)? else {
+        return Ok(None);
+    };
+    let mounted = lock(&env.kernel.saves.mounted);
+    Ok(mounted[slot].as_ref().map(|m| m.host.join("sce_sys").join("icon0.png")))
+}
+
+/// `sceSaveDataSaveIcon(mount_point, icon)`.
+fn save_icon(env: &mut Env) -> Result<Outcome, CallError> {
+    let Some(file) = icon_file(env, env.arg(0))? else {
+        return ret(ERROR_NOT_MOUNTED);
+    };
+    let icon = env.arg(1);
+    let size = env.mem.read_u64(icon + ICON_DATA_SIZE)?.min(16 << 20) as usize;
+    let mut data = vec![0u8; size];
+    env.mem.read(env.mem.read_u64(icon + ICON_BUF)?, &mut data)?;
+    let _ = file.parent().map(std::fs::create_dir_all);
+    std::fs::write(file, data).map_err(|_| CallError::Abort("cannot write a save icon"))?;
+    ret(0)
+}
+
+/// `sceSaveDataLoadIcon(mount_point, icon)`.
+fn load_icon(env: &mut Env) -> Result<Outcome, CallError> {
+    let Some(file) = icon_file(env, env.arg(0))? else {
+        return ret(ERROR_NOT_MOUNTED);
+    };
+    let Ok(mut data) = std::fs::read(file) else {
+        return ret(ERROR_NOT_FOUND);
+    };
+    let icon = env.arg(1);
+    data.truncate(env.mem.read_u64(icon + ICON_BUF_SIZE)? as usize);
+    env.mem.write(env.mem.read_u64(icon + ICON_BUF)?, &data)?;
+    env.mem.write_u64(icon + ICON_DATA_SIZE, data.len() as u64)?;
+    ret(0)
+}
+
+/// `sceSaveDataDelete(del)`: removes an unmounted save folder.
+fn delete(env: &mut Env) -> Result<Outcome, CallError> {
+    let name = env
+        .mem
+        .read_cstr(env.mem.read_u64(env.arg(0) + DELETE_DIR_NAME)?, DIR_NAME_MAX + 1)?;
+    if !valid_dir_name(&name) {
+        return ret(ERROR_PARAMETER);
+    }
+    let name = String::from_utf8_lossy(&name).into_owned();
+    let Some(root) = env.kernel.vfs.saves.clone() else {
+        return ret(ERROR_NOT_FOUND);
+    };
+    if lock(&env.kernel.saves.mounted).iter().flatten().any(|m| m.name == name) {
+        return ret(ERROR_BUSY);
+    }
+    match std::fs::remove_dir_all(root.join(&name)) {
+        Ok(()) => ret(0),
+        Err(_) => ret(ERROR_NOT_FOUND),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::matches;
+    use super::{matches, valid_dir_name};
+
+    #[test]
+    fn save_names_may_hold_at_signs_but_not_paths() {
+        assert!(valid_dir_name(b"BedrockWorld2QAAC4ePE14@P1"));
+        assert!(!valid_dir_name(b"a/b"));
+        assert!(!valid_dir_name(b".."));
+        assert!(!valid_dir_name(b"with space"));
+    }
 
     #[test]
     fn search_patterns_use_percent_and_underscore_wildcards() {

@@ -543,3 +543,37 @@ fn horizontal_add_sums_neighbouring_lanes_of_each_source() {
     steps(&mut cpu, &mem, 1);
     assert_eq!(cpu.xmm[2], ps([3.0, 7.0, 3.0, 7.0]));
 }
+
+#[test]
+fn wide_move_mask_takes_the_sign_of_all_four_doubles() {
+    let (mut cpu, mem) = machine("vmovmskpd eax, ymm0", &[0xc5, 0xfd, 0x50, 0xc0]);
+    cpu.xmm[0] = [1 << 63, 0, 1 << 63, 1 << 63];
+    steps(&mut cpu, &mem, 1);
+    assert_eq!(cpu.regs[RAX], 0b1101);
+}
+
+#[test]
+fn reciprocal_square_root_handles_zero_and_negative_inputs() {
+    let (mut cpu, mem) = machine("rsqrtps xmm0, xmm1", &[0x0f, 0x52, 0xc1]);
+    cpu.xmm[1] = [4.0f32.to_bits() as u64 | ((-1.0f32).to_bits() as u64) << 32, 0x8000_0000, 0, 0];
+    steps(&mut cpu, &mem, 1);
+    assert_eq!(cpu.xmm[0][0], 0.5f32.to_bits() as u64 | 0xffc0_0000u64 << 32);
+    assert_eq!(cpu.xmm[0][1], 0xff80_0000 | (f32::INFINITY.to_bits() as u64) << 32);
+}
+
+#[test]
+fn wide_byte_mask_takes_the_sign_of_all_32_bytes() {
+    let (mut cpu, mem) = machine("vpmovmskb edx, ymm0", &[0xc5, 0xfd, 0xd7, 0xd0]);
+    cpu.xmm[0] = [0x80, 0, 0, 0x8000_0000_0000_0000];
+    cpu.regs[RDX] = u64::MAX;
+    steps(&mut cpu, &mem, 1);
+    assert_eq!(cpu.regs[RDX], 0x8000_0001);
+}
+
+#[test]
+fn wide_int_to_double_conversion_widens_four_lanes() {
+    let (mut cpu, mem) = machine("vcvtdq2pd ymm12, xmm10", &[0xc4, 0x41, 0x7e, 0xe6, 0xe2]);
+    cpu.xmm[10] = [1 | (u32::MAX as u64) << 32, 7 | (0x8000_0000u64 << 32), 9, 9];
+    steps(&mut cpu, &mem, 1);
+    assert_eq!(cpu.xmm[12], [1.0f64, -1.0, 7.0, -2147483648.0].map(f64::to_bits));
+}

@@ -22,7 +22,7 @@ The protocol is the one 86slopper uses: one command per line, and each answer en
 | `calls PATH [FILTER]` / `calls off` | Appends every host call whose description contains FILTER to a file: thread, name, first six arguments, result, caller |
 | `gputrace N` | Traces every draw and dispatch of the next N frames on stderr, as `PS5SLOP_GPU_TRACE` does (N decimal) |
 | `targets DIR` | Writes every render target, depth target and sampled texture as `ADDR.ppm` (the low hex digit says which: 1 texture, 2 colour target, 4 depth); needs `PS5SLOP_DUMP_TARGETS=1` |
-| `press BUTTONS [MS]` | Holds pad buttons (`cross`, `up+cross`, ...) for MS milliseconds (default 150) |
+| `press BUTTONS [MS]` | Holds pad buttons (`cross`, `up+cross`, ...) for MS milliseconds (default 400: games read the pad once per frame, and our frames can be slow) |
 | `shot PATH` | Writes the screen as PPM; with `press`, this drives menus step by step |
 | `quit` | Ends the guest |
 
