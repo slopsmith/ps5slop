@@ -124,6 +124,27 @@ pub struct RegionSpan {
     pub trap: bool,
 }
 
+/// An unlinked POSIX shared memory object of `size` bytes, or -1.
+fn make_physical(size: u64) -> i32 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let name = format!("/ps5slop.{}.{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
+    let Ok(name) = std::ffi::CString::new(name) else { return -1 };
+    // SAFETY: plain libc calls on a name we own; the object is unlinked at once,
+    // so it lives exactly as long as the descriptor.
+    unsafe {
+        let fd = libc::shm_open(name.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_EXCL, 0o600 as libc::c_uint);
+        if fd < 0 {
+            return -1;
+        }
+        libc::shm_unlink(name.as_ptr());
+        if libc::ftruncate(fd, size as libc::off_t) != 0 {
+            libc::close(fd);
+            return -1;
+        }
+        fd
+    }
+}
+
 /// Past this many unread fresh ranges, everything counts as fresh.
 const FRESH_LIMIT: usize = 4096;
 
@@ -139,6 +160,13 @@ struct Shared {
     misaligned_atomics: Mutex<()>,
     /// Ranges whose host pages were replaced since the last [`Memory::take_fresh`].
     fresh: Mutex<Vec<(u64, u64)>>,
+    /// The same, numbered, for readers that keep their own place (see
+    /// [`Memory::replaced_since`]).
+    replaced: Mutex<std::collections::VecDeque<(u64, u64, u64)>>,
+    replaced_next: AtomicU64,
+    /// Shared memory standing in for physical memory (see
+    /// [`Memory::map_physical`]): its descriptor, or -1 if it could not be made.
+    physical: std::sync::OnceLock<i32>,
 }
 
 // The reservation is owned by `Shared` and only reached through `Memory` handles,
@@ -230,6 +258,9 @@ impl Memory {
                 generation: AtomicU64::new(0),
                 misaligned_atomics: Mutex::new(()),
                 fresh: Mutex::new(Vec::new()),
+                replaced: Mutex::new(std::collections::VecDeque::new()),
+                replaced_next: AtomicU64::new(0),
+                physical: std::sync::OnceLock::new(),
             }),
             last: Cell::new(None),
             journal: RefCell::new(None),
@@ -291,15 +322,25 @@ impl Memory {
     // Mapped host pages never become inaccessible again: a thread racing
     // with an unmap reads zeros instead of crashing the host.
     fn host_fresh(&self, addr: u64, len: u64) -> Result<(), MapError> {
+        self.host_replace(addr, len, None)
+    }
+
+    /// Gives `[addr, addr + len)` new host pages: zeros, or the pages of
+    /// `source` (a descriptor and offset), shared with every other mapping of them.
+    fn host_replace(&self, addr: u64, len: u64, source: Option<(i32, u64)>) -> Result<(), MapError> {
+        let (flags, fd, offset) = match source {
+            Some((fd, offset)) => (libc::MAP_SHARED | libc::MAP_FIXED, fd, offset as libc::off_t),
+            None => (libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED, -1, 0),
+        };
         // SAFETY: the range was checked to lie inside our reservation; MAP_FIXED replaces it.
         let p = unsafe {
             libc::mmap(
                 self.host(addr).cast(),
                 len as usize,
                 libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED,
-                -1,
-                0,
+                flags,
+                fd,
+                offset,
             )
         };
         if p == libc::MAP_FAILED {
@@ -311,7 +352,25 @@ impl Memory {
             fresh.push((0, u64::MAX));
         }
         fresh.push((addr, addr + len));
+        drop(fresh);
+        let mut log = self.shared.replaced.lock().unwrap_or_else(|e| e.into_inner());
+        if log.len() == FRESH_LIMIT {
+            log.pop_front();
+        }
+        let n = self.shared.replaced_next.fetch_add(1, Ordering::SeqCst);
+        log.push_back((n, addr, addr + len));
         Ok(())
+    }
+
+    /// The ranges given new host pages since mark `since`, and the mark to
+    /// pass next time; `None` when the log no longer reaches back that far.
+    pub fn replaced_since(&self, since: u64) -> (u64, Option<Vec<(u64, u64)>>) {
+        let log = self.shared.replaced.lock().unwrap_or_else(|e| e.into_inner());
+        let next = self.shared.replaced_next.load(Ordering::SeqCst);
+        if since < next && log.front().is_none_or(|f| f.0 > since) {
+            return (next, None);
+        }
+        (next, Some(log.iter().filter(|e| e.0 >= since).map(|e| (e.1, e.2)).collect()))
     }
 
     /// The ranges given new host pages since the last call. Anything that
@@ -381,6 +440,37 @@ impl Memory {
             },
         );
         self.host_fresh(addr, len)?;
+        drop(regions);
+        self.changed();
+        Ok(())
+    }
+
+    /// Maps `[addr, addr + len)` over whatever is there (as
+    /// [`Memory::map_over`]) to the "physical" memory at `offset`: every
+    /// mapping of the same physical range shows the same bytes, as direct
+    /// memory does on the console. Physical memory is `size` bytes, fixed by
+    /// the first call.
+    pub fn map_physical(&self, addr: u64, len: u64, prot: Prot, name: &str, offset: u64, size: u64) -> Result<(), MapError> {
+        self.check_range(addr, len)?;
+        if offset.checked_add(len).is_none_or(|end| end > size) || !offset.is_multiple_of(PAGE_SIZE) {
+            return Err(MapError::OutOfRange);
+        }
+        let fd = *self.shared.physical.get_or_init(|| make_physical(size));
+        if fd < 0 {
+            return Err(MapError::Host(io::Error::other("no shared memory for physical memory")));
+        }
+        let mut regions = self.regions_write();
+        carve(&mut regions, addr, addr + len)?;
+        regions.insert(
+            addr,
+            Region {
+                end: addr + len,
+                prot,
+                trap: false,
+                name: name.to_owned(),
+            },
+        );
+        self.host_replace(addr, len, Some((fd, offset)))?;
         drop(regions);
         self.changed();
         Ok(())
@@ -931,6 +1021,31 @@ mod tests {
         let mut b = [0u8; 4];
         m.read(0x40_0013, &mut b).unwrap();
         assert_eq!(u32::from_le_bytes(b), 40_000);
+    }
+
+    #[test]
+    fn two_mappings_of_the_same_physical_range_share_their_bytes() {
+        let m = Memory::new(4 * GIB).unwrap();
+        let rw = Prot::new(true, true, false);
+        m.map_physical(0x40_0000, PAGE_SIZE, rw, "a", 2 * PAGE_SIZE, 16 * PAGE_SIZE).unwrap();
+        m.map_physical(0x80_0000, 2 * PAGE_SIZE, rw, "b", PAGE_SIZE, 16 * PAGE_SIZE).unwrap();
+        m.write_u64(0x40_0010, 0x1234).unwrap();
+        assert_eq!(m.read_u64(0x80_0000 + PAGE_SIZE + 0x10).unwrap(), 0x1234);
+        m.unmap_range(0x40_0000, PAGE_SIZE).unwrap();
+        m.map_physical(0x40_0000, PAGE_SIZE, rw, "a", 2 * PAGE_SIZE, 16 * PAGE_SIZE).unwrap();
+        assert_eq!(m.read_u64(0x40_0010).unwrap(), 0x1234);
+        assert!(m.map_physical(0x40_0000, PAGE_SIZE, rw, "a", 16 * PAGE_SIZE, 16 * PAGE_SIZE).is_err());
+    }
+
+    #[test]
+    fn replaced_pages_are_listed_from_a_mark_on() {
+        let m = Memory::new(4 * GIB).unwrap();
+        let (mark, _) = m.replaced_since(u64::MAX);
+        m.map(0x40_0000, PAGE_SIZE, Prot::new(true, true, false), "a").unwrap();
+        let (next, ranges) = m.replaced_since(mark);
+        assert_eq!(ranges, Some(vec![(0x40_0000, 0x40_0000 + PAGE_SIZE)]));
+        assert_eq!(m.replaced_since(next), (next, Some(vec![])));
+        assert_eq!(m.replaced_since(0).1.map(|r| r.len()), Some(1));
     }
 
     #[test]

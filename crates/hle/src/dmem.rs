@@ -52,8 +52,25 @@ impl DirectMemory {
         Some(at)
     }
 
+    /// Frees `[start, start + len)`, keeping what allocations around it
+    /// stick out on either side.
     fn release(&self, start: u64, len: u64) {
-        lock(&self.allocated).retain(|&a, &mut l| a + l <= start || a >= start + len);
+        let end = start + len;
+        let mut allocated = lock(&self.allocated);
+        let hit: Vec<(u64, u64)> = allocated
+            .range(..end)
+            .map(|(&a, &l)| (a, l))
+            .filter(|&(a, l)| a + l > start)
+            .collect();
+        for (a, l) in hit {
+            allocated.remove(&a);
+            if a < start {
+                allocated.insert(a, start - a);
+            }
+            if a + l > end {
+                allocated.insert(end, a + l - end);
+            }
+        }
     }
 }
 
@@ -143,8 +160,8 @@ fn find_aligned(mem: &Memory, min: u64, len: u64, align: u64) -> Option<u64> {
     }
 }
 
-/// `sceKernelMapDirectMemory(*addr, len, prot, flags, direct_start, align)`.
-/// GPU access is granted as CPU access, as the GPU reads through the same map.
+/// `sceKernelMapDirectMemory(*addr, len, prot, flags, direct_start, align)`;
+/// GPU access is granted as CPU access.
 fn map(env: &mut Env) -> Result<Outcome, CallError> {
     let (addr_at, len, prot, flags, align) =
         (env.arg(0), env.arg(1), env.arg(2), env.arg(3), env.arg(5));
@@ -163,12 +180,11 @@ fn map(env: &mut Env) -> Result<Outcome, CallError> {
             None => return ret(sce_error(errno::ENOMEM)),
         }
     };
+    let prot = Prot::new(read, write, exec);
     let mapped = if flags & MAP_FIXED != 0 {
-        env.mem
-            .map_over(at, len, Prot::new(read, write, exec), "direct memory")
+        env.mem.map_over(at, len, prot, "direct memory")
     } else {
-        env.mem
-            .map(at, len, Prot::new(read, write, exec), "direct memory")
+        env.mem.map(at, len, prot, "direct memory")
     };
     if mapped.is_err() {
         return ret(sce_error(errno::ENOMEM));
@@ -246,5 +262,14 @@ mod tests {
         assert_eq!(d.allocate(0, 0x8000, 0x8000, 0x4000), None);
         d.release(a, 0x4000);
         assert_eq!(d.allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x4000), Some(0));
+    }
+
+    #[test]
+    fn releasing_part_of_an_allocation_frees_only_that_part() {
+        let d = DirectMemory::default();
+        assert_eq!(d.allocate(0, 1 << 30, 0x200_0000, 0x1_0000), Some(0));
+        d.release(0x4d_0000, 0x3_0000);
+        assert_eq!(d.allocate(0, 1 << 30, 0x1_0000, 0x1_0000), Some(0x4d_0000));
+        assert_eq!(d.allocate(0, 1 << 30, 0x3_0000, 0x1_0000), Some(0x200_0000));
     }
 }
