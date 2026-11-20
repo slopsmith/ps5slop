@@ -30,6 +30,9 @@ shot PATH                   write the screen as PPM
 profile on|off              start a fresh profile window, or stop profiling
 profile [N]                 report the window so far (top N rows, default 20)
 gputrace N                  trace every draw of the next N frames on stderr (decimal)
+gpusnap DIR [FIRST]         write every render pass attachment of the next frame (from pass FIRST, decimal) as PPM
+gpureload                   translate every program again (and read PS5SLOP_MSL_OVERRIDE files again)
+gpuskip [ADDR...]           skip draws and dispatches using these programs (none: skip nothing)
 targets DIR                 write every render target and texture as PPM (the first call starts recording)
 press BUTTONS [MS]          hold pad buttons (cross+up, ...) for MS ms (default 400, decimal);
                             also l2, r2 and stick pushes lup, ldown, lleft, lright, rup, ...
@@ -228,6 +231,27 @@ fn run(kernel: &Kernel, line: &str) -> String {
             }
             None => "usage: gputrace N".into(),
         },
+        #[cfg(target_os = "macos")]
+        "gpusnap" => match it.next() {
+            Some(dir) => {
+                let from = it.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+                *hle::gpu::metal::SNAP.lock().unwrap_or_else(|e| e.into_inner()) = Some((dir.into(), from));
+                "snapping the next frame's render passes".into()
+            }
+            None => "usage: gpusnap DIR [FIRST_PASS]".into(),
+        },
+        #[cfg(target_os = "macos")]
+        "gpureload" => {
+            hle::gpu::metal::RELOAD.store(true, std::sync::atomic::Ordering::Relaxed);
+            "translating programs again from the next frame".into()
+        }
+        #[cfg(target_os = "macos")]
+        "gpuskip" => {
+            let addrs: Vec<u64> = it.filter_map(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok()).collect();
+            let mut skip = hle::gpu::metal::SKIP.lock().unwrap_or_else(|e| e.into_inner());
+            *skip = addrs;
+            format!("skipping {:x?}", *skip)
+        }
         #[cfg(target_os = "macos")]
         "targets" => match it.next() {
             Some(_) if !hle::gpu::metal::DUMP_TARGETS.swap(true, std::sync::atomic::Ordering::Relaxed)

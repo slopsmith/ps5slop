@@ -73,6 +73,38 @@ fn record(key: u64, texture: &Retained<Texture>, replace: bool) {
     }
 }
 
+/// Where the next frame's render passes are written as images, one file per
+/// attachment as each pass ends (the control socket's `gpusnap`).
+/// Passes before the given index are counted but not copied.
+pub static SNAP: Mutex<Option<(std::path::PathBuf, u32)>> = Mutex::new(None);
+/// Bytes of attachment copies one `gpusnap` keeps at most.
+const SNAP_BYTES: u64 = 1 << 30;
+
+/// Copies of render pass attachments taken during one frame.
+struct Snap {
+    dir: std::path::PathBuf,
+    from: u32,
+    passes: u32,
+    bytes: u64,
+    /// File name and copy; depth copies are `R32Float`.
+    copies: Vec<(String, Retained<Texture>)>,
+    /// The programs of the open pass's draws, in order, without repeats.
+    programs: Vec<(u64, u64)>,
+    draws: u32,
+}
+
+/// Set by the control socket's `gpureload`: drop translated programs and
+/// pipelines at the end of the frame, so `PS5SLOP_MSL_OVERRIDE` files are read again.
+pub static RELOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Programs whose draws and dispatches are skipped, for finding the pass
+/// that causes a rendering bug (the control socket's `gpuskip`).
+pub static SKIP: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+
+fn skipped(address: u64) -> bool {
+    SKIP.lock().is_ok_and(|s| s.contains(&address))
+}
+
 /// The texture the GPU rendered at guest address `address`, if any.
 pub fn frame(address: u64) -> Option<SharedTexture> {
     frames().lock().ok()?.get(&address).cloned()
@@ -157,6 +189,36 @@ fn read_converted(t: &Texture) -> Option<(u32, u32, Vec<u8>)> {
     Some((w as u32, h as u32, px))
 }
 
+/// An `R32Float` depth copy as grey RGBA8, stretched from its nearest to
+/// its farthest depth below 1 (the cleared value) so near differences show.
+fn read_depth(t: &Texture) -> Option<(u32, u32, Vec<u8>)> {
+    let (w, h) = (t.width(), t.height());
+    let device = t.device();
+    let queue = device.newCommandQueue()?;
+    let buffer = device.newBufferWithLength_options(w * h * 4, MTLResourceOptions::StorageModeShared)?;
+    let cb = queue.commandBuffer()?;
+    let blit = cb.blitCommandEncoder()?;
+    unsafe {
+        blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage(
+            t, 0, 0, MTLOrigin { x: 0, y: 0, z: 0 }, MTLSize { width: w, height: h, depth: 1 }, &buffer, 0, w * 4, w * h * 4,
+        );
+    }
+    blit.endEncoding();
+    cb.commit();
+    cb.waitUntilCompleted();
+    let z = unsafe { std::slice::from_raw_parts(buffer.contents().as_ptr() as *const f32, w * h) };
+    let (lo, hi) = z.iter().filter(|v| **v < 1.0 && **v > 0.0).fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+    let scale = if hi > lo { 255.0 / (hi - lo) } else { 0.0 };
+    let px = z
+        .iter()
+        .flat_map(|v| {
+            let g = if *v >= 1.0 { 255 } else if *v <= 0.0 { 0 } else { ((v - lo) * scale).clamp(0.0, 254.0) as u8 };
+            [g, g, g, 255]
+        })
+        .collect();
+    Some((w as u32, h as u32, px))
+}
+
 /// Frames an image read from guest memory stays cached without being used.
 const IMAGE_LIFETIME: u64 = 300;
 
@@ -228,7 +290,10 @@ pub struct Metal {
     upload: Option<Retained<CommandBuffer>>,
     /// Where this backend is in the log of replaced guest pages.
     replaced_mark: u64,
-    pass: Option<(Retained<RenderEncoder>, Vec<u64>)>,
+    /// The open render pass, its attachment addresses, and its color
+    /// textures and depth texture and slice (for `gpusnap`).
+    pass: Option<(Retained<RenderEncoder>, Vec<u64>, Vec<Retained<Texture>>, Option<(Retained<Texture>, usize)>)>,
+    snap: Option<Snap>,
     depths: HashMap<u64, Retained<Texture>>,
     shown: HashMap<u64, Retained<Texture>>,
     swizzles: HashMap<(usize, [u8; 4]), Retained<Texture>>,
@@ -416,6 +481,7 @@ impl Metal {
             upload: None,
             replaced_mark: 0,
             pass: None,
+            snap: None,
             depths: HashMap::new(),
             shown: HashMap::new(),
             swizzles: HashMap::new(),
@@ -487,9 +553,86 @@ impl Metal {
     }
 
     fn end_pass(&mut self) {
-        if let Some((enc, _)) = self.pass.take() {
+        if let Some((enc, addresses, colors, depth)) = self.pass.take() {
             enc.endEncoding();
+            if self.snap.is_some() {
+                self.snap_pass(&addresses, &colors, depth);
+            }
         }
+    }
+
+    /// Copies the attachments of the pass that just ended for `gpusnap`.
+    fn snap_pass(&mut self, addresses: &[u64], colors: &[Retained<Texture>], depth: Option<(Retained<Texture>, usize)>) {
+        let Some(command) = self.command.clone() else { return };
+        let Some(snap) = self.snap.as_mut() else { return };
+        snap.passes += 1;
+        let programs: Vec<String> = snap.programs.iter().map(|(v, p)| format!("{v:x}-{p:x}")).collect();
+        let label = format!("{:03}-{}d-{}", snap.passes, snap.draws, programs.join("+"));
+        snap.programs.clear();
+        snap.draws = 0;
+        if snap.passes < snap.from {
+            return;
+        }
+        let Some(blit) = command.blitCommandEncoder() else { return };
+        let copy_desc = |t: &Texture, format: MTLPixelFormat| {
+            let d = unsafe { MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(format, t.width(), t.height(), false) };
+            d.setUsage(MTLTextureUsage::ShaderRead);
+            d.setStorageMode(MTLStorageMode::Private);
+            d
+        };
+        for (i, t) in colors.iter().enumerate() {
+            let size = (t.width() * t.height() * texel_bytes(t.pixelFormat()).unwrap_or(16)) as u64;
+            if snap.bytes + size > SNAP_BYTES || is_compressed(t.pixelFormat()) {
+                continue;
+            }
+            let Some(copy) = self.device.newTextureWithDescriptor(&copy_desc(t, t.pixelFormat())) else { continue };
+            unsafe { blit.copyFromTexture_toTexture(t, &copy) };
+            snap.bytes += size;
+            snap.copies.push((format!("{label}-mrt{i}-{:x}", addresses[i]), copy));
+        }
+        if let Some((t, slice)) = depth {
+            let (w, h) = (t.width(), t.height());
+            let size = (w * h * 4) as u64;
+            let staging = self.device.newBufferWithLength_options(w * h * 4, MTLResourceOptions::StorageModePrivate);
+            if let (true, Some(staging), Some(copy)) =
+                (snap.bytes + 2 * size <= SNAP_BYTES, staging, self.device.newTextureWithDescriptor(&copy_desc(&t, MTLPixelFormat::R32Float)))
+            {
+                let options = if t.pixelFormat() == MTLPixelFormat::Depth32Float_Stencil8 {
+                    MTLBlitOption::DepthFromDepthStencil
+                } else {
+                    MTLBlitOption::empty()
+                };
+                if t.pixelFormat() != MTLPixelFormat::Depth16Unorm {
+                    unsafe {
+                        blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage_options(
+                            &t, slice, 0, MTLOrigin { x: 0, y: 0, z: 0 }, MTLSize { width: w, height: h, depth: 1 }, &staging, 0, w * 4, w * h * 4, options,
+                        );
+                        blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
+                            &staging, 0, w * 4, w * h * 4, MTLSize { width: w, height: h, depth: 1 }, &copy, 0, 0, MTLOrigin { x: 0, y: 0, z: 0 },
+                        );
+                    }
+                    snap.bytes += 2 * size;
+                    let depth_address = addresses.last().copied().unwrap_or(0) & 0xFFFF_FFFF_FFFF;
+                    snap.copies.push((format!("{label}-depth{slice}-{depth_address:x}"), copy));
+                }
+            }
+        }
+        blit.endEncoding();
+    }
+
+    /// Writes what `gpusnap` copied during the frame that just finished.
+    fn write_snap(snap: Snap) {
+        let n = snap.copies.len();
+        for (name, t) in snap.copies {
+            let shared = SharedTexture(t);
+            let Some((w, h, px)) = (if shared.0.pixelFormat() == MTLPixelFormat::R32Float { read_depth(&shared.0) } else { read_rgba(&shared) }) else {
+                continue;
+            };
+            let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
+            ppm.extend(px.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]));
+            let _ = std::fs::write(snap.dir.join(format!("{name}.ppm")), ppm);
+        }
+        eprintln!("ps5slop: GPU: gpusnap wrote {n} attachments of {} passes to {}", snap.passes, snap.dir.display());
     }
 
     /// The no-copy buffer holding `[addr, addr + len)` and the offset of `addr` in it.
@@ -1150,7 +1293,13 @@ impl Metal {
                 let _ = std::fs::write(path, gfx10::capture::Capture::new(&request).to_bytes());
             }
             match shader::translate(&request) {
-                Ok(translated) => {
+                Ok(mut translated) => {
+                    if let Some(dir) = std::env::var_os("PS5SLOP_MSL_OVERRIDE")
+                        && let Ok(msl) = std::fs::read_to_string(std::path::Path::new(&dir).join(format!("{stage:?}-{address:x}.metal")))
+                    {
+                        eprintln!("ps5slop: GPU: {stage:?} program at {address:#x} replaced from {}", dir.to_string_lossy());
+                        translated.msl = msl;
+                    }
                     if std::env::var_os("PS5SLOP_MSL_DUMP").is_some() {
                         eprintln!("=== {stage:?} {address:#x}\n{}", translated.msl);
                     }
@@ -1278,7 +1427,7 @@ impl Metal {
     ) -> Option<Retained<RenderEncoder>> {
         let mut addresses: Vec<u64> = targets.iter().map(|t| t.0).collect();
         addresses.push(depth.as_ref().map_or(0, |d| d.0 | (d.3 as u64) << 48));
-        if let Some((enc, open)) = &self.pass
+        if let Some((enc, open, _, _)) = &self.pass
             && *open == addresses
             && clear.is_none()
         {
@@ -1324,7 +1473,9 @@ impl Metal {
             let what: Vec<String> = addresses.iter().map(|a| format!("{a:#x}")).collect();
             enc.setLabel(Some(&NSString::from_str(&format!("pass {}", what.join(" ")))));
         }
-        self.pass = Some((enc.clone(), addresses));
+        let colors = targets.iter().map(|t| t.1.clone()).collect();
+        let depth_texture = depth.as_ref().map(|(_, t, _, slice)| (t.clone(), *slice as usize));
+        self.pass = Some((enc.clone(), addresses, colors, depth_texture));
         Some(enc)
     }
 
@@ -1809,6 +1960,9 @@ impl Metal {
         if address == 0 {
             return Err("no compute program");
         }
+        if skipped(address) {
+            return Err("skipped by gpuskip");
+        }
         let users = (s[sh::COMPUTE_PGM_RSRC2] >> 1) & 0x1F;
         let user = &s[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + sh::COMPUTE_USER_DATA_COUNT];
         let program = self.typed_program(host, state, Stage::Compute, address, users, false, 0, user).ok_or("compute program")?;
@@ -1881,6 +2035,9 @@ impl Metal {
         let ps_addr = program_address(sh::SPI_SHADER_PGM_LO_PS);
         if vs_addr == 0 || ps_addr == 0 {
             return Err("no vertex or pixel program");
+        }
+        if skipped(vs_addr) || skipped(ps_addr) {
+            return Err("skipped by gpuskip");
         }
         let vs_users = user_count(s[vs_rsrc2]);
         let ps_users = user_count(s[sh::SPI_SHADER_PGM_RSRC2_PS]);
@@ -2003,6 +2160,15 @@ impl Metal {
             _ => None,
         };
         let enc = self.pass(&targets, depth, clear).ok_or("render pass")?;
+        if let Some(snap) = self.snap.as_mut() {
+            snap.draws += 1;
+            if snap.programs.last() != Some(&(vs_addr, ps_addr)) {
+                snap.programs.push((vs_addr, ps_addr));
+                if snap.programs.len() > 4 {
+                    snap.programs.remove(1);
+                }
+            }
+        }
         enc.setRenderPipelineState(&pipeline);
         if depth_bound {
             let ds = self.depth_state(depth_state, true).ok_or("depth state")?;
@@ -2079,6 +2245,21 @@ impl Metal {
         }
         self.wrote_memory |= vertex.translated.writes_memory || pixel.translated.writes_memory;
         Ok(())
+    }
+
+    /// Starts what `gpusnap` asked for the next frame.
+    fn frame_tools(&mut self) {
+        if RELOAD.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            self.programs.clear();
+            self.computes.clear();
+            self.variants.clear();
+            self.pipelines.clear();
+            self.missing_inputs.clear();
+        }
+        if let Some((dir, from)) = SNAP.lock().ok().and_then(|mut s| s.take()) {
+            let _ = std::fs::create_dir_all(&dir);
+            self.snap = Some(Snap { dir, from, passes: 0, bytes: 0, copies: Vec::new(), programs: Vec::new(), draws: 0 });
+        }
     }
 
     fn tracing(&self) -> bool {
@@ -2223,6 +2404,10 @@ impl Backend for Metal {
         } else {
             self.flush_and_wait();
         }
+        if let Some(snap) = self.snap.take() {
+            Self::write_snap(snap);
+        }
+        self.frame_tools();
         if self.tracing() {
             eprintln!("ps5slop: trace: frame {} done, showing {shown:x?}", self.epoch);
         }
