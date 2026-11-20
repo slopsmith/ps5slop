@@ -331,3 +331,9 @@ Reason: GameController already gives us input from the same controllers, needs n
 While GTA V failed, its blocks seemed to hold tANS and run-length arrays. Decoders for both were written (from kraken-decode's and lztans's MIT-licensed descriptions and code), then removed: the real fault was the stored offset of blocks past 64 GiB, and with that fixed GTA V uses only the array types the decoder already had ([packages.md](packages.md)).
 
 Reason: code for a feature no package uses cannot be checked against real data or an oracle here (building lztans to run it was blocked), so it would be unverified code on the path every read takes. The guards that turn malformed Huffman descriptions into errors instead of panics stay.
+
+## 2026-11-20: Direct memory still not shared between mappings, for GTA V too
+
+GTA V's streamers map 64 KiB pages of direct memory with `sceKernelBatchMap`, read files into them and unmap them, which looks like it relies on two mappings of one direct range sharing bytes. Our maps still get fresh pages each ([hle-kernel.md](hle-kernel.md)).
+
+Reason: a throwaway build that shared pages by direct offset (`Memory::map_physical`) stopped GTA V at the same assert, so it is not shown to be needed yet, and sharing broke Minecraft before ([jit.md](jit.md)). Whether and how to model physical memory is vic's call; change `uukyvrwo` also reworks `dmem.rs`.

@@ -236,6 +236,14 @@ pub static STUBS: &[Function] = &[
     },
     zero("libkernel", "sceKernelGetGPI"),
     zero("libkernel", "#n1-v6FgU7MQ"),
+    zero("libSceRemoteplay", "sceRemoteplayInitialize"),
+    zero("libSceRemoteplay", "sceRemoteplayTerminate"),
+    Function {
+        library: "libSceRemoteplay",
+        name: "sceRemoteplayGetConnectionStatus",
+        func: write_zero_u32::<1>,
+    },
+    zero("libkernel", "sceKernelAprGetFileStat"),
     zero(
         "libSceSystemService",
         "sceSystemServiceGetHdrToneMapLuminance",
@@ -409,6 +417,9 @@ pub static STUBS: &[Function] = &[
         "sceNpUniversalDataSystemCreateEvent",
     ),
     zero("libSceNpTrophy2", "sceNpTrophy2DestroyHandle"),
+    zero("libSceNpTrophy2", "sceNpTrophy2AbortHandle"),
+    zero("libSceJson2", "_ZN3sce4Json11Initializer9terminateEv"),
+    zero("libSceSystemService", "#8Lo6Zv94aho"),
     zero("libSceNpTrophy2", "sceNpTrophy2DestroyContext"),
     zero(
         "libSceNpEntitlementAccess",

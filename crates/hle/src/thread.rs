@@ -411,7 +411,8 @@ fn sce_attr_getdetachstate(env: &mut Env) -> Result<Outcome, CallError> {
 
 
 
-/// `scePthreadAttrGetschedparam(attr, param)`: the default priority.
+/// `scePthreadAttrGetschedparam(attr, param)`, `scePthreadGetprio(thread,
+/// prio)`: the default priority; set priorities are not kept.
 fn sce_attr_getschedparam(env: &mut Env) -> Result<Outcome, CallError> {
     env.mem.write(env.arg(1), &PRIORITY_DEFAULT.to_le_bytes())?;
     ret(0)
@@ -457,6 +458,7 @@ pub static SCE_FUNCTIONS: &[Function] = &[
     f("scePthreadSetaffinity", sce_ok),
     f("scePthreadGetaffinity", sce_attr_getaffinity),
     f("scePthreadSetprio", sce_ok),
+    f("scePthreadGetprio", sce_attr_getschedparam),
     f("scePthreadAttrInit", sce_attr_init),
     f("scePthreadAttrDestroy", sce_attr_destroy),
     f("scePthreadAttrSetdetachstate", sce_attr_setdetachstate),

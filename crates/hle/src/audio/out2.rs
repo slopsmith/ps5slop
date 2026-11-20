@@ -71,6 +71,10 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceAudioOut2ContextGetQueueLevel", queue_level),
     f("sceAudioOut2PortGetState", port_get_state),
     f("sceAudioOut2GetSpeakerInfo", speaker_info),
+    f("sceAudioOut2GetSpeakerArrayMemorySize", speaker_array_size),
+    f("sceAudioOut2SpeakerArrayCreate", speaker_array_create),
+    f("sceAudioOut2SpeakerArrayDestroy", ok),
+    f("sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients", ambisonics_coefficients),
 ];
 
 const PORT_STATE_SIZE: usize = 0x40;
@@ -262,6 +266,60 @@ fn speaker_info(env: &mut Env) -> Result<Outcome, CallError> {
     info[SPEAKER_ANGLES..SPEAKER_ANGLES + 2].copy_from_slice(&(-30i16).to_le_bytes());
     info[SPEAKER_ANGLES + 4..SPEAKER_ANGLES + 6].copy_from_slice(&30i16.to_le_bytes());
     env.mem.write(out, &info)?;
+    ret(0)
+}
+
+const SPEAKER_ARRAY_HEADER: u64 = 0x40;
+const SPEAKER_ARRAY_ENTRY: u64 = 0x100;
+const SPEAKER_ARRAY_SCRATCH: u64 = 0x400;
+const SPEAKER_ARRAY_MAX: u32 = 32;
+const SPEAKER_ARRAY_DEFAULT: u32 = 8;
+
+fn speaker_count(n: u32) -> u32 {
+    if (1..=SPEAKER_ARRAY_MAX).contains(&n) { n } else { SPEAKER_ARRAY_DEFAULT }
+}
+
+fn speaker_array_bytes(speakers: u32) -> u64 {
+    SPEAKER_ARRAY_HEADER + speakers as u64 * SPEAKER_ARRAY_ENTRY + SPEAKER_ARRAY_SCRATCH
+}
+
+/// `(speakers, is_3d, is_ambisonics)`, returning the size. The layout is
+/// not public; the size is SharpEmu-mac's choice.
+fn speaker_array_size(env: &mut Env) -> Result<Outcome, CallError> {
+    ret(speaker_array_bytes(speaker_count(env.arg(0) as u32)))
+}
+
+/// `(*handle, vbap_param, ambisonics_param)`: the handle is the caller's
+/// buffer, with SharpEmu-mac's header (GTA V reads 0x34).
+fn speaker_array_create(env: &mut Env) -> Result<Outcome, CallError> {
+    let (out, param) = (env.arg(0), env.arg(1));
+    if out == 0 || param == 0 {
+        return ret(ERROR_INVALID_POINTER);
+    }
+    let mut p = [0u8; 0x20];
+    env.mem.read(param, &mut p)?;
+    let speakers = speaker_count(u32::from_le_bytes(p[8..12].try_into().unwrap()));
+    let buffer = u64::from_le_bytes(p[16..24].try_into().unwrap());
+    let size = u64::from_le_bytes(p[24..32].try_into().unwrap());
+    if buffer == 0 || size < speaker_array_bytes(speakers) {
+        return ret(ERROR_INVALID_PARAM);
+    }
+    let mut header = [0u8; SPEAKER_ARRAY_HEADER as usize];
+    header[0..4].copy_from_slice(&(SPEAKER_ARRAY_HEADER as u32).to_le_bytes());
+    header[4..8].copy_from_slice(&speakers.to_le_bytes());
+    header[0x34..0x38].copy_from_slice(&1u32.to_le_bytes());
+    env.mem.write(buffer, &header)?;
+    env.mem.write_u64(out, buffer)?;
+    ret(0)
+}
+
+/// `(handle, channel, *coefficients, count)`: all zero, nothing is decoded.
+fn ambisonics_coefficients(env: &mut Env) -> Result<Outcome, CallError> {
+    let (out, count) = (env.arg(2), env.arg(3).min(1024));
+    if out == 0 {
+        return ret(ERROR_INVALID_POINTER);
+    }
+    env.mem.write(out, &vec![0u8; 4 * count as usize])?;
     ret(0)
 }
 

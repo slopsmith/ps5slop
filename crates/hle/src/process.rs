@@ -601,6 +601,16 @@ impl Kernel {
                         let list: Vec<String> = recent.iter().map(|r| format!("{r:#x}")).collect();
                         note = Some(format!("{}; blocks before: {}", note.unwrap_or_default(), list.join(" ")));
                     }
+                    if std::env::var_os("PS5SLOP_HOLD_ON_FAULT").is_some() {
+                        eprintln!(
+                            "ps5slop: fault {kind:?} at {:#x} held (PS5SLOP_HOLD_ON_FAULT); `quit` ends it\n{}",
+                            cpu.rip,
+                            dump(&cpu)
+                        );
+                        while !self.has_exited() {
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
+                    }
                     self.exit(Err(ThreadError::Guest {
                         fault: kind,
                         cpu: Box::new(cpu.clone()),

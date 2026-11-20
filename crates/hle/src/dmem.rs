@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use memory::{PAGE_SIZE, Prot};
+use memory::{Access, PAGE_SIZE, Prot};
 
 use crate::pthread::lock;
 use crate::{CallError, Env, Function, Outcome, errno};
@@ -304,6 +304,9 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelVirtualQuery", virtual_query),
     f("sceKernelSetVirtualRangeName", set_range_name),
     f("sceKernelDirectMemoryQuery", query),
+    f("sceKernelQueryMemoryProtection", query_protection),
+    f("sceKernelBatchMap", batch_map),
+    f("sceKernelBatchMap2", batch_map2),
 ];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
@@ -413,14 +416,27 @@ fn release_and_unmap(env: &Env, start: u64, len: u64) {
 fn map(env: &mut Env) -> Result<Outcome, CallError> {
     let (addr_at, len, prot, flags, offset, align) =
         (env.arg(0), env.arg(1), env.arg(2), env.arg(3), env.arg(4), env.arg(5));
-    if !valid(len, align) {
-        return ret(sce_error(errno::EINVAL));
-    }
     let wanted = env.mem.read_u64(addr_at)?;
+    match map_direct(env, wanted, len, prot, flags, offset, align) {
+        Ok(at) => {
+            env.mem.write_u64(addr_at, at)?;
+            ret(0)
+        }
+        Err(e) => ret(sce_error(e)),
+    }
+}
+
+fn gpu_as_cpu(prot: u64) -> Prot {
     let read = prot & (PROT_CPU_READ | PROT_CPU_WRITE | PROT_GPU_READ | PROT_GPU_WRITE) != 0;
     let write = prot & (PROT_CPU_WRITE | PROT_GPU_WRITE) != 0;
-    let exec = prot & PROT_CPU_EXEC != 0;
-    let prot = Prot::new(read, write, exec);
+    Prot::new(read, write, prot & PROT_CPU_EXEC != 0)
+}
+
+fn map_direct(env: &Env, wanted: u64, len: u64, prot: u64, flags: u64, offset: u64, align: u64) -> Result<u64, i32> {
+    if !valid(len, align) {
+        return Err(errno::EINVAL);
+    }
+    let prot = gpu_as_cpu(prot);
     let mapped = if flags & MAP_FIXED != 0 {
         env.mem
             .map_over(wanted, len, prot, "direct memory")
@@ -433,15 +449,101 @@ fn map(env: &mut Env) -> Result<Outcome, CallError> {
         Ok(at) => at,
         Err(e) => {
             failure(env, "direct memory map failed", format_args!("{len:#x} bytes at {wanted:#x}, flags {flags:#x}, alignment {align:#x}: {e:?}"));
-            return ret(sce_error(errno::ENOMEM));
+            return Err(errno::ENOMEM);
         }
     };
     if !env.kernel.dmem.covers(offset, len) {
         failure(env, "map of unallocated direct memory", format_args!("{len:#x} bytes at {offset:#x} to {at:#x}"));
     }
     env.kernel.dmem.note_map(at, len, offset);
-    env.mem.write_u64(addr_at, at)?;
+    Ok(at)
+}
+
+/// `(addr, *start, *end, *prot)`; GPU bits mirror the CPU ones, since GPU
+/// access is mapped as CPU access. `EACCES` when unmapped is a guess.
+fn query_protection(env: &mut Env) -> Result<Outcome, CallError> {
+    let (addr, start, end, prot) = (env.arg(0), env.arg(1), env.arg(2), env.arg(3));
+    let found = env
+        .mem
+        .regions()
+        .into_iter()
+        .find(|r| !r.trap && r.start <= addr && r.end > addr);
+    let Some(r) = found else {
+        return ret(sce_error(errno::EACCES));
+    };
+    let mut bits = 0u32;
+    if r.prot.allows(Access::Read) {
+        bits |= (PROT_CPU_READ | PROT_GPU_READ) as u32;
+    }
+    if r.prot.allows(Access::Write) {
+        bits |= (PROT_CPU_WRITE | PROT_GPU_WRITE) as u32;
+    }
+    if r.prot.allows(Access::Execute) {
+        bits |= PROT_CPU_EXEC as u32;
+    }
+    for (at, v) in [(start, r.start), (end, r.end)] {
+        if at != 0 {
+            env.mem.write_u64(at, v)?;
+        }
+    }
+    if prot != 0 {
+        env.mem.write(prot, &bits.to_le_bytes())?;
+    }
     ret(0)
+}
+
+/// `sceKernelBatchMap(entries, count, *done)`: `sceKernelBatchMap2` with
+/// `MAP_FIXED`.
+fn batch_map(env: &mut Env) -> Result<Outcome, CallError> {
+    let (entries, count, done) = (env.arg(0), env.arg(1), env.arg(2));
+    batch(env, entries, count, done, MAP_FIXED)
+}
+
+/// `sceKernelBatchMap2(entries, count, *done, flags)`.
+fn batch_map2(env: &mut Env) -> Result<Outcome, CallError> {
+    let (entries, count, done, flags) = (env.arg(0), env.arg(1), env.arg(2), env.arg(3));
+    batch(env, entries, count, done, flags)
+}
+
+/// Entries are shadPS4's PS4 `OrbisKernelBatchMapEntry`; operations 0 map
+/// direct, 1 unmap, 2 protect, 3 map flexible, 4 protect with type.
+fn batch(env: &Env, entries: u64, count: u64, done: u64, flags: u64) -> Result<Outcome, CallError> {
+    let mut result = 0;
+    let mut n = 0i32;
+    for k in 0..count {
+        let mut e = [0u8; 32];
+        env.mem.read(entries + 32 * k, &mut e)?;
+        let word = |at: usize| u64::from_le_bytes(e[at..at + 8].try_into().unwrap());
+        let (start, offset, len, prot) = (word(0), word(8), word(16), e[24] as u64);
+        let op = i32::from_le_bytes(e[28..32].try_into().unwrap());
+        let r = match op {
+            0 => map_direct(env, start, len, prot, flags | MAP_FIXED, offset, 0).map(drop),
+            1 => {
+                env.kernel.dmem.note_unmap(start, len);
+                env.mem.unmap_range(start, len).map_err(|_| errno::EINVAL)
+            }
+            2 | 4 => env.mem.protect_range(start, len, gpu_as_cpu(prot)).map_err(|_| errno::EINVAL),
+            3 => {
+                env.kernel.dmem.note_unmap(start, len);
+                env.mem
+                    .map_over(start, len, gpu_as_cpu(prot), "mmap")
+                    .map_err(|_| errno::ENOMEM)
+            }
+            _ => Err(errno::EINVAL),
+        };
+        if let Err(e) = r {
+            eprintln!(
+                "ps5slop: sceKernelBatchMap entry {k} (op {op}, {start:#x}+{len:#x}, prot {prot:#x}) failed with errno {e}"
+            );
+            result = sce_error(e);
+            break;
+        }
+        n += 1;
+    }
+    if done != 0 {
+        env.mem.write(done, &n.to_le_bytes())?;
+    }
+    ret(result)
 }
 
 /// `sceKernelMapFlexibleMemory(*addr, len, prot, flags)`, and the named

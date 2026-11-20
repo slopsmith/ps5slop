@@ -482,6 +482,15 @@ impl Hle {
             env.arg(2),
             env.arg(3),
         );
+        if std::env::var("PS5SLOP_UNIMPLEMENTED_ZERO").as_deref() == Ok("dump") {
+            for n in 0..6 {
+                let mut b = [0u8; 32];
+                if env.mem.read(env.arg(n), &mut b).is_ok() {
+                    let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
+                    eprintln!("  arg {n} -> {}", hex.join(" "));
+                }
+            }
+        }
         env.cpu.rip = ret;
         env.cpu.regs[RSP] = sp + 8;
         env.cpu.regs[RAX] = 0;
@@ -731,6 +740,53 @@ mod tests {
             (cpu.rip, cpu.regs[RAX], cpu.regs[RSP]),
             (0x40_1234, 3, 0x10_0000 + PAGE_SIZE)
         );
+    }
+
+    /// A 32-byte batch map entry: start, direct offset, length, protection,
+    /// operation.
+    fn batch_entry(start: u64, len: u64, prot: u8, op: i32) -> [u8; 32] {
+        let mut e = [0u8; 32];
+        e[0..8].copy_from_slice(&start.to_le_bytes());
+        e[16..24].copy_from_slice(&len.to_le_bytes());
+        e[24] = prot;
+        e[28..32].copy_from_slice(&op.to_le_bytes());
+        e
+    }
+
+    fn batch_map(entries: &[[u8; 32]]) -> (std::sync::Arc<Kernel>, u64, i32) {
+        let mut hle = Hle::new();
+        hle.stub_by_name("libkernel", "sceKernelBatchMap");
+        let (kernel, cpu, _) = guest(hle);
+        let mem = kernel.memory();
+        mem.write(0x20_0000, &entries.concat()).unwrap();
+        let args = [0x20_0000, entries.len() as u64, 0x20_0800];
+        let r = call_in(&kernel, "libkernel", "sceKernelBatchMap", cpu.fs_base, &args);
+        let mut done = [0u8; 4];
+        mem.read(0x20_0800, &mut done).unwrap();
+        (kernel, r, i32::from_le_bytes(done))
+    }
+
+    #[test]
+    fn batch_map_maps_and_unmaps_in_order() {
+        let (kernel, r, done) = batch_map(&[
+            batch_entry(0x40_0000, 2 * PAGE_SIZE, 0x33, 0),
+            batch_entry(0x40_0000, PAGE_SIZE, 0, 1),
+        ]);
+        let mem = kernel.memory();
+        assert_eq!((r, done), (0, 2));
+        assert!(mem.read_u64(0x40_0000).is_err());
+        mem.write_u64(0x40_0000 + PAGE_SIZE, 7).unwrap();
+    }
+
+    #[test]
+    fn batch_map_stops_at_a_failing_entry() {
+        let (kernel, r, done) = batch_map(&[
+            batch_entry(0x40_0000, PAGE_SIZE, 0x33, 0),
+            batch_entry(0x50_0000, 3, 0x33, 0),
+            batch_entry(0x60_0000, PAGE_SIZE, 0x33, 0),
+        ]);
+        assert_eq!((r, done), (crate::dmem::sce_error(errno::EINVAL), 1));
+        assert!(kernel.memory().read_u64(0x60_0000).is_err());
     }
 
     #[test]

@@ -44,11 +44,10 @@ impl AprFile {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Read {
-    file: u32,
-    dest: u64,
-    len: u64,
-    offset: u64,
+enum Command {
+    Read { file: u32, dest: u64, len: u64, offset: u64 },
+    /// Writes `value` (64 bits) to `addr` once the commands before it ran.
+    WriteAddress { addr: u64, value: u64 },
 }
 
 #[derive(Default)]
@@ -57,12 +56,13 @@ pub struct Apr {
     files: Mutex<Vec<Arc<AprFile>>>,
     by_path: Mutex<HashMap<Vec<u8>, u32>>,
     /// Commands by command buffer address.
-    buffers: Mutex<HashMap<u64, Vec<Read>>>,
+    buffers: Mutex<HashMap<u64, Vec<Command>>>,
     submissions: AtomicU64,
 }
 
 pub static FUNCTIONS: &[Function] = &[
     f("libkernel", "sceKernelAprResolveFilepathsToIdsAndFileSizes", resolve),
+    f("libkernel", "sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes", resolve_with_prefix),
     f("libkernel", "sceKernelAprSubmitCommandBufferAndGetResult", submit),
     f("libkernel", "sceKernelAprWaitCommandBuffer", wait),
     f("libSceAmpr", "sceAmprCommandBufferConstructor", construct),
@@ -70,6 +70,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("libSceAmpr", "sceAmprCommandBufferSetBuffer", set_buffer),
     f("libSceAmpr", "sceAmprCommandBufferReset", reset),
     f("libSceAmpr", "sceAmprAprCommandBufferReadFile", read_file),
+    f("libSceAmpr", "#j0+3uJMxYJY", write_address),
     f("libSceAmpr", "sceAmprCommandBufferDestructor", destruct),
     f("libSceAmpr", "sceAmprAprCommandBufferDestructor", destruct),
     f("libSceAmpr", "sceAmprCommandBufferClearBuffer", reset),
@@ -116,14 +117,24 @@ fn open(env: &Env, path: &[u8]) -> Option<AprFile> {
 /// `(paths, count, ids, sizes, failed)`: 32-bit ids, 64-bit sizes; the
 /// index of the first unresolved path goes to `failed`.
 fn resolve(env: &mut Env) -> Result<Outcome, CallError> {
-    let (paths, count, ids, sizes, failed) =
-        (env.arg(0), env.arg(1), env.arg(2), env.arg(3), env.arg(4));
+    resolve_paths(env, &[], [0, 1, 2, 3, 4].map(|n| env.arg(n)))
+}
+
+/// `(prefix, paths, count, ids, sizes, failed)`: as `resolve`, with
+/// `prefix` put in front of each path. GTA V passes an empty prefix.
+fn resolve_with_prefix(env: &mut Env) -> Result<Outcome, CallError> {
+    let prefix = crate::libc::cstr(env, env.arg(0))?;
+    resolve_paths(env, &prefix, [1, 2, 3, 4, 5].map(|n| env.arg(n)))
+}
+
+fn resolve_paths(env: &Env, prefix: &[u8], [paths, count, ids, sizes, failed]: [u64; 5]) -> Result<Outcome, CallError> {
     if count == 0 || count > RESOLVE_MAX {
         return ret(EINVAL);
     }
     let mut missing = None;
     for k in 0..count {
-        let path = crate::libc::cstr(env, env.mem.read_u64(paths + 8 * k)?)?;
+        let mut path = prefix.to_vec();
+        path.extend(crate::libc::cstr(env, env.mem.read_u64(paths + 8 * k)?)?);
         let known = lock(&env.kernel.apr.by_path).get(&path).copied();
         let found = match known {
             Some(id) => Some((id, lock(&env.kernel.apr.files)[id as usize].len())),
@@ -211,7 +222,7 @@ fn reset(env: &mut Env) -> Result<Outcome, CallError> {
 /// stack argument. What the second and third are is unknown.
 fn read_file(env: &mut Env) -> Result<Outcome, CallError> {
     let offset = env.mem.read_u64(env.cpu.regs[x86::cpu::reg::RSP] + 8)?;
-    let read = Read {
+    let read = Command::Read {
         file: env.arg(3) as u32,
         dest: env.arg(4),
         len: env.arg(5),
@@ -224,26 +235,47 @@ fn read_file(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
+/// `#j0+3uJMxYJY` (name unknown) `(buffer, addr, value, ?)`: inferred from
+/// GTA V's use, see docs/hle-kernel.md.
+fn write_address(env: &mut Env) -> Result<Outcome, CallError> {
+    let command = Command::WriteAddress {
+        addr: env.arg(1),
+        value: env.arg(2),
+    };
+    lock(&env.kernel.apr.buffers)
+        .entry(env.arg(0))
+        .or_default()
+        .push(command);
+    ret(0)
+}
+
 /// `(buffer, priority, result, id)`: runs the reads now, writes a zero
 /// result (status and error offset, 32 bits each) and a submission id.
 fn submit(env: &mut Env) -> Result<Outcome, CallError> {
-    let Some(reads) = lock(&env.kernel.apr.buffers).get(&env.arg(0)).cloned() else {
+    let Some(commands) = lock(&env.kernel.apr.buffers).get(&env.arg(0)).cloned() else {
         return ret(ESRCH);
     };
-    for r in reads {
-        let file = lock(&env.kernel.apr.files).get(r.file as usize).cloned();
+    for c in commands {
+        let (file, dest, len, offset) = match c {
+            Command::Read { file, dest, len, offset } => (file, dest, len, offset),
+            Command::WriteAddress { addr, value } => {
+                env.mem.write_u64(addr, value)?;
+                continue;
+            }
+        };
+        let file = lock(&env.kernel.apr.files).get(file as usize).cloned();
         let Some(file) = file else {
             return ret(EINVAL);
         };
-        let mut buf = vec![0u8; r.len as usize];
+        let mut buf = vec![0u8; len as usize];
         let mut done = 0;
         while done < buf.len() {
-            match file.read_at(r.offset + done as u64, &mut buf[done..]) {
+            match file.read_at(offset + done as u64, &mut buf[done..]) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => done += n,
             }
         }
-        env.mem.write(r.dest, &buf[..done])?;
+        env.mem.write(dest, &buf[..done])?;
     }
     let (result, id) = (env.arg(2), env.arg(3));
     if result != 0 {
