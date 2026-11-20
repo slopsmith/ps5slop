@@ -520,6 +520,7 @@ pub static STUBS: &[Function] = &[
     zero("libSceNpTrophy2", "sceNpTrophy2AbortHandle"),
     zero("libSceJson2", "_ZN3sce4Json11Initializer9terminateEv"),
     zero("libSceSystemService", "#8Lo6Zv94aho"),
+    zero("libSceSystemService", "#Q3utJvma4Mo"),
     zero("libSceNpTrophy2", "sceNpTrophy2DestroyContext"),
     zero(
         "libSceNpEntitlementAccess",
