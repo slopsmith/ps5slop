@@ -41,6 +41,9 @@ pub struct DirectMemory {
     /// Direct memory mappings: virtual start to end and the direct offset
     /// minus the virtual address, so pieces of a split mapping keep it.
     mapped: Mutex<BTreeMap<u64, (u64, u64)>>,
+    /// Protection bits as the guest last gave them for a range: start to
+    /// end and bits, all of them, also those we do not map.
+    prot: Mutex<BTreeMap<u64, (u64, u64)>>,
 }
 
 /// What direct memory looks like: bytes allocated, allocations, bytes free
@@ -135,6 +138,21 @@ impl DirectMemory {
     /// Forgets the direct memory behind `[addr, addr + len)`.
     pub(crate) fn note_unmap(&self, addr: u64, len: u64) {
         cut(&mut lock(&self.mapped), addr, addr.saturating_add(len));
+        cut(&mut lock(&self.prot), addr, addr.saturating_add(len));
+    }
+
+    /// Records the protection bits the guest gave `[addr, addr + len)`.
+    pub(crate) fn note_prot(&self, addr: u64, len: u64, prot: u64) {
+        let mut ranges = lock(&self.prot);
+        cut(&mut ranges, addr, addr + len);
+        ranges.insert(addr, (addr + len, prot));
+    }
+
+    /// The protection bits the guest last gave the page at `addr`.
+    fn prot_at(&self, addr: u64) -> Option<u64> {
+        let ranges = lock(&self.prot);
+        let (_, &(end, prot)) = ranges.range(..=addr).next_back()?;
+        (addr < end).then_some(prot)
     }
 
     /// Forgets and returns the virtual ranges that map any of the direct
@@ -152,6 +170,7 @@ impl DirectMemory {
             .collect();
         for &(v, v_end) in &hits {
             cut(&mut mapped, v, v_end);
+            cut(&mut lock(&self.prot), v, v_end);
         }
         hits
     }
@@ -437,6 +456,7 @@ fn map_direct(env: &Env, wanted: u64, len: u64, prot: u64, flags: u64, offset: u
     if !valid(len, align) {
         return Err(errno::EINVAL);
     }
+    let bits = prot;
     let prot = gpu_as_cpu(prot);
     let mapped = if flags & MAP_FIXED != 0 {
         env.mem
@@ -457,11 +477,13 @@ fn map_direct(env: &Env, wanted: u64, len: u64, prot: u64, flags: u64, offset: u
         failure(env, "map of unallocated direct memory", format_args!("{len:#x} bytes at {offset:#x} to {at:#x}"));
     }
     env.kernel.dmem.note_map(at, len, offset);
+    env.kernel.dmem.note_prot(at, len, bits);
     Ok(at)
 }
 
-/// `(addr, *start, *end, *prot)`; GPU bits mirror the CPU ones, since GPU
-/// access is mapped as CPU access. `EACCES` when unmapped is a guess.
+/// `(addr, *start, *end, *prot)`: the bits the guest mapped or protected
+/// the page with, or, where it gave none, the CPU bits with GPU bits
+/// mirroring them. GTA V checks bit `0x80`. `EACCES` when unmapped is a guess.
 fn query_protection(env: &mut Env) -> Result<Outcome, CallError> {
     let (addr, start, end, prot) = (env.arg(0), env.arg(1), env.arg(2), env.arg(3));
     let found = env
@@ -486,6 +508,9 @@ fn query_protection(env: &mut Env) -> Result<Outcome, CallError> {
         if at != 0 {
             env.mem.write_u64(at, v)?;
         }
+    }
+    if let Some(given) = env.kernel.dmem.prot_at(addr) {
+        bits = given as u32;
     }
     if prot != 0 {
         env.mem.write(prot, &bits.to_le_bytes())?;
@@ -523,7 +548,11 @@ fn batch(env: &Env, entries: u64, count: u64, done: u64, flags: u64) -> Result<O
                 env.kernel.dmem.note_unmap(start, len);
                 env.mem.unmap_range(start, len).map_err(|_| errno::EINVAL)
             }
-            2 | 4 => env.mem.protect_range(start, len, gpu_as_cpu(prot)).map_err(|_| errno::EINVAL),
+            2 | 4 => env
+                .mem
+                .protect_range(start, len, gpu_as_cpu(prot))
+                .map(|()| env.kernel.dmem.note_prot(start, len, prot))
+                .map_err(|_| errno::EINVAL),
             3 => {
                 env.kernel.dmem.note_unmap(start, len);
                 env.mem
@@ -717,6 +746,19 @@ mod tests {
         d.note_unmap(0x10_0000_0000, 0x1_0000);
         assert_eq!(d.offset_at(0x10_0000_0000), None);
         assert_eq!(d.offset_at(0x10_0004_0000), None);
+    }
+
+    #[test]
+    fn protection_bits_are_kept_as_given_and_forgotten_on_unmap() {
+        let d = DirectMemory::default();
+        d.note_prot(0x10_0000_0000, 0x4_0000, 0xf3);
+        d.note_prot(0x10_0001_0000, 0x1_0000, 0x13);
+        assert_eq!(d.prot_at(0x10_0000_0000), Some(0xf3));
+        assert_eq!(d.prot_at(0x10_0001_8000), Some(0x13));
+        assert_eq!(d.prot_at(0x10_0002_0000), Some(0xf3));
+        d.note_unmap(0x10_0002_0000, 0x2_0000);
+        assert_eq!(d.prot_at(0x10_0003_0000), None);
+        assert_eq!(d.prot_at(0x10_0000_0000), Some(0xf3));
     }
 
     #[test]

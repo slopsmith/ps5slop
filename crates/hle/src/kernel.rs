@@ -185,7 +185,9 @@ fn protect(env: &Env) -> Result<(), memory::MapError> {
         p & PROT_WRITE != 0 || p & 0x20 != 0,
         p & PROT_EXEC != 0,
     );
-    env.mem.protect_range(addr, len, prot)
+    env.mem.protect_range(addr, len, prot)?;
+    env.kernel.dmem.note_prot(addr, len, p);
+    Ok(())
 }
 
 /// `__error()`: the address of the calling thread's errno.
