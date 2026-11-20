@@ -28,6 +28,7 @@ The device opens with the first port when the window is shown. `--headless` runs
 - `SystemRender`: each playing sampler voice reads its blocks from guest memory (PCM 8, 16, 24, 32-bit and float, either byte order), is resampled to the system rate by linear interpolation at `rate / system rate * pitch`, and follows its patches (submixers pass the signal on unchanged) to a mastering voice, which adds it times its gain to its render buffer (S16 or float, 1 to 8 channels). Block callbacks are called as guest functions after the render, with SharpEmu-mac's 64-byte info block.
 - `VoiceGetState`, `VoiceGetStateFlags`: in use, playing, paused, stopped, error, out of blocks; decoded sample and byte counts; the current block.
 - `ParseWaveformData`, `ParseWaveformFile`: RIFF WAVE images (PCM and float, including `WAVE_FORMAT_EXTENSIBLE`) to `SceNgs2WaveformInfo` with one block covering the data.
+- `CalcWaveformBlock(&format, sample_pos, samples, &block)`: the byte range of `samples` frames from `sample_pos`, for PCM formats only (SharpEmu-mac also handles ATRAC9 and VAG, which we cannot play). Isaac calls it; whether its sounds then play correctly is not checked yet.
 
 Two choices differ from SharpEmu-mac, both forced by Balatro:
 

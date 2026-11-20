@@ -309,3 +309,14 @@ Reason: Astro Bot loads every font its settings name, and the system ones are no
 libSceFont measures and renders glyphs with FreeType (`freetype-rs`, bundled build), and shaping for the text layout calls is to come from HarfBuzz ([hle-kernel.md](hle-kernel.md#libscefont)).
 
 Reason: vic's call. Font loading, hinting and rasterising are large and well solved; both libraries are compatible with GPL-2.0-or-later (FreeType under its GPLv2 option, HarfBuzz under MIT). The bundled build needs no change to the Nix shell and no library at run time.
+
+## 2026-11-20: Depth ranges outside 0..1 are mapped onto Metal's range
+
+Draws whose depth can leave `[0, 1]` (a float depth buffer with `PA_SC_VPORT_ZMIN_0`/`ZMAX_0` wider than that) get their possible depth range mapped onto `[0, 1]` ([gpu.md](gpu.md)).
+
+Reason: Metal clamps depth to `[0, 1]`, and Isaac draws its layers at -1 to 1 and depth-tests them against each other, so nothing after its first layer drew. Mapping keeps the order depth tests see. The alternative, writing depth from every pixel program, would cost early depth testing in every title.
+
+## 2026-11-20: Unnamed imports a title only calls in passing fail as ENOSYS
+
+Isaac's four libSceNpCppWebApi calls have no public names, so they are bound by NID as placeholders that fail with `ENOSYS`, as earlier unnamed ones were. Loading the title's own `libSceNpCppWebApi.prx` instead was not tried: it is a Sony system module outside the allowlist ([loader.md](loader.md#modules)), and the shipped file has a segment we cannot read.
+
