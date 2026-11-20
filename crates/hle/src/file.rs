@@ -38,6 +38,8 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelTruncate", sce_truncate),
     f("getdents", getdents),
     f("sceKernelGetdents", sce_getdents),
+    f("getdirentries", getdirentries),
+    f("sceKernelGetdirentries", sce_getdirentries),
 ];
 
 /// Placeholders: they answer without doing the real work, and say so on
@@ -348,10 +350,12 @@ const DT_DIR: u8 = 4;
 const DT_REG: u8 = 8;
 
 /// `getdents(fd, buf, len)` with FreeBSD's pre-12 `struct dirent`; 0 at
-/// the end.
-fn read_directory(env: &Env) -> Result<Result<u64, i32>, CallError> {
+/// the end. `getdirentries` also stores the position read from at `*basep`.
+fn read_directory(env: &Env) -> Result<Result<(u64, u64), i32>, CallError> {
     let (fd, buf, len) = (env.arg(0) as i32, env.arg(1), env.arg(2) as usize);
+    let mut base = 0;
     let out = env.kernel.libc.files.with_directory(fd, |dir, pos| {
+        base = *pos as u64;
         let mut names: Vec<(String, u8)> = dir
             .names()
             .into_iter()
@@ -380,15 +384,39 @@ fn read_directory(env: &Env) -> Result<Result<u64, i32>, CallError> {
         return Ok(Err(errno::EBADF));
     };
     env.mem.write(buf, &records)?;
-    Ok(Ok(records.len() as u64))
+    Ok(Ok((records.len() as u64, base)))
 }
 
 fn getdents(env: &mut Env) -> Result<Outcome, CallError> {
-    let r = read_directory(env)?;
+    let r = read_directory(env)?.map(|(n, _)| n);
     finish(env, Style::Posix, r)
 }
 
 fn sce_getdents(env: &mut Env) -> Result<Outcome, CallError> {
-    let r = read_directory(env)?;
+    let r = read_directory(env)?.map(|(n, _)| n);
+    finish(env, Style::Sce, r)
+}
+
+/// `getdirentries(fd, buf, len, *basep)`.
+fn read_directory_entries(env: &Env) -> Result<Result<u64, i32>, CallError> {
+    let basep = env.arg(3);
+    Ok(match read_directory(env)? {
+        Ok((n, base)) => {
+            if basep != 0 {
+                env.mem.write_u64(basep, base)?;
+            }
+            Ok(n)
+        }
+        Err(e) => Err(e),
+    })
+}
+
+fn getdirentries(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = read_directory_entries(env)?;
+    finish(env, Style::Posix, r)
+}
+
+fn sce_getdirentries(env: &mut Env) -> Result<Outcome, CallError> {
+    let r = read_directory_entries(env)?;
     finish(env, Style::Sce, r)
 }

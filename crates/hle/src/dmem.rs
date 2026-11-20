@@ -120,6 +120,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelMapNamedDirectMemory", map),
     f("sceKernelMapFlexibleMemory", map_flexible),
     f("sceKernelMapNamedFlexibleMemory", map_flexible),
+    f("sceKernelMapNamedFlexibleMemoryInternal", map_flexible),
     f("sceKernelReserveVirtualRange", reserve),
     f("sceKernelVirtualQuery", virtual_query),
     f("sceKernelSetVirtualRangeName", set_range_name),
@@ -236,7 +237,8 @@ fn map(env: &mut Env) -> Result<Outcome, CallError> {
 }
 
 /// `sceKernelMapFlexibleMemory(*addr, len, prot, flags)`, and the named
-/// form with a fifth argument, the name: zeroed memory with no direct range
+/// forms with a fifth argument, the name (GTA V's libc calls the `Internal`
+/// one with flags 0x8000, whose meaning we do not know): zeroed memory with no direct range
 /// behind it, kept as an `mmap` region so `sceKernelVirtualQuery` reports it
 /// as flexible.
 fn map_flexible(env: &mut Env) -> Result<Outcome, CallError> {

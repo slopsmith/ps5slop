@@ -176,6 +176,18 @@ Unity's PSN plugin runs offline: libSceNpCppWebApi and libSceJson2 placeholders 
 
 Where it stops: it loads, runs its garbage collector, plays (silent, see [audio.md](audio.md)) FMOD output, submits about 50 GPU command buffers a second and keeps running for minutes, but the screen stays black. Its draws hit GPU gaps: images of formats 0x1, 0xae and 0xb6 with linear tiling (mode 5) are not supported, one fragment program's MSL does not compile (two inputs named `locn0`), and a compute program uses `buffer_store_format_x`. See [gpu.md](gpu.md).
 
+## What Grand Theft Auto V needs (2026-11-20)
+
+PPSA04263 EU v1.011.001, a 103.6 GB fake package; RAGE engine, with its own `libc.prx`, `libSceJobManager.prx` and `libSceNpCppWebApi.prx` in `sce_module/`. 714 imports are not implemented at start (432 of them in libSceNpCppWebApi). In the order the blockers came:
+
+- libc's start-up maps its heap with `sceKernelMapNamedFlexibleMemoryInternal` (`#4h6F1LLbTiw`, name confirmed by hashing; flags `0x8000`, meaning unknown), now the same as `sceKernelMapNamedFlexibleMemory`.
+- `scePthreadAttrSetguardsize` is accepted and ignored.
+- The game walks all of `/app0` with `sceKernelGetdirentries(fd, buf, len, *basep)`, now implemented: `getdents` plus the read position (the entry index, which is what our `getdents` keeps) stored at `*basep`. What a console stores there is unverified.
+
+Imports it calls in passing, without a name (returning 0 with `PS5SLOP_UNIMPLEMENTED_ZERO=1`, which does not stop it): libkernel `#w5fcCG+t31g` and `#ApkYaHb8Sek` (once per directory entry during the walk; the second gets `-1` first), libSceSystemService `#8Lo6Zv94aho` `(pointer, 3, 0, pointer)`. Hashing guesses found no names.
+
+Where it stops: without `PS5SLOP_UNIMPLEMENTED_ZERO=1`, at `#8Lo6Zv94aho`. With it, right after the walk, a worker thread executes `int 0x41` in the game's code, the first time just after the game looked up the string `memory` (a device name, it seems) in a table of its own and got `-1`. Our CPU treats `int 0x41` as unimplemented. Letting it continue (a throwaway experiment) only moved the crash: a call through a null object pointer soon after. So the lookup failing is the real problem, probably because an earlier call we pass over left something unset; which one is not known yet. What `int 0x41` does on a console is unknown (no public source found).
+
 ## The guest file system
 
 Guest paths resolve through a small mount table (`crates/hle/src/vfs.rs`): `/app0` is the title, read-only: a host folder, or a package's image served through the `ImageFs` trait (see [packages.md](packages.md)); `/data` is a writable per-title folder on the host, by default `~/Library/Application Support/ps5slop/<title id>/data`, or the folder's name when there is no title id (`--data DIR` picks another). Saves (`savedata`) and `/temp0` (`temp`) sit next to the data folder: as siblings with those names when the folder is called `data`, as `DIR.savedata` and `DIR.temp` otherwise, so data folders side by side never share saves. Descriptors and FILEs hold a `GuestFile`, a host file or a file in an image, so reads, seeks, `fstat` and `getdents` work on both. `sceNgs2ParseWaveformFile` still uses host paths (`Vfs::resolve`), so it cannot read files from a package yet. Anything else does not exist, and paths that climb out of a mount with `..` are refused. What a real PS5 title sees under `/data`, and which other mounts it expects (`/savedata0`, `/temp0`, `/hostapp`), is unverified.

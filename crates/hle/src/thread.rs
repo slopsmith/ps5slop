@@ -469,5 +469,6 @@ pub static SCE_FUNCTIONS: &[Function] = &[
     f("scePthreadAttrSetschedparam", sce_ok),
     f("scePthreadAttrGetschedparam", sce_attr_getschedparam),
     f("scePthreadAttrSetinheritsched", sce_ok),
+    f("scePthreadAttrSetguardsize", sce_ok),
     f("scePthreadAttrGet", sce_attr_get),
 ];
