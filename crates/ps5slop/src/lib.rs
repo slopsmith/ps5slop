@@ -305,3 +305,24 @@ pub fn write_frame(kernel: &Kernel, out: &std::path::Path) -> Result<(), String>
     ppm.extend(f.rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]));
     std::fs::write(out, ppm).map_err(|e| format!("cannot write {}: {e}", out.display()))
 }
+
+/// Pad buttons named in `keys`, joined by `+` (`cross+up`); unknown names
+/// count for nothing.
+pub fn pad_buttons(keys: &str) -> u32 {
+    keys.split('+').filter(|k| !k.is_empty()).fold(0, |b, k| {
+        b | match k {
+            "options" => 0x8,
+            "up" => 0x10,
+            "right" => 0x20,
+            "down" => 0x40,
+            "left" => 0x80,
+            "l1" => 0x400,
+            "r1" => 0x800,
+            "triangle" => 0x1000,
+            "circle" => 0x2000,
+            "cross" => 0x4000,
+            "square" => 0x8000,
+            _ => 0,
+        }
+    })
+}

@@ -23,7 +23,10 @@ hits [N [ADDR LEN]]         writers of watched ranges (or of ADDR..+LEN) and the
 unwatch                     end all watches and clear the log
 trace PATH [SITE...]        append watched writes (from SITEs only) to PATH
 trace off                   stop tracing
+calls PATH [FILTER]         append every host call (whose name contains FILTER) to PATH
+calls off                   stop logging calls
 shot PATH                   write the screen as PPM
+press BUTTONS [MS]          hold pad buttons (cross+up, ...) for MS ms (default 150, decimal)
 quit                        end the guest
 Numbers are hex; a 0x prefix is optional.";
 
@@ -181,6 +184,20 @@ fn run(kernel: &Kernel, line: &str) -> String {
             },
             None => "usage: trace PATH [SITE...] | trace off".into(),
         },
+        "calls" => match it.next() {
+            Some("off") => {
+                hle::trace_calls(None, String::new());
+                "ok".into()
+            }
+            Some(path) => match std::fs::File::create(path) {
+                Ok(f) => {
+                    hle::trace_calls(Some(f), it.collect::<Vec<_>>().join(" "));
+                    "ok".into()
+                }
+                Err(e) => format!("calls: {e}"),
+            },
+            None => "usage: calls PATH [FILTER] | calls off".into(),
+        },
         "hits" => {
             let last = num(it.next()).unwrap_or(0x10) as usize;
             let range = match (num(it.next()), num(it.next())) {
@@ -195,6 +212,16 @@ fn run(kernel: &Kernel, line: &str) -> String {
                 Err(e) => e,
             },
             None => "usage: shot PATH".into(),
+        },
+        "press" => match it.next().map(crate::pad_buttons) {
+            Some(buttons) if buttons != 0 => {
+                let ms = it.next().and_then(|m| m.parse().ok()).unwrap_or(150);
+                kernel.set_pad_input(hle::PadInput { buttons, ..Default::default() });
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+                kernel.set_pad_input(hle::PadInput::default());
+                "ok".into()
+            }
+            _ => "usage: press BUTTONS [MS]".into(),
         },
         "quit" => {
             kernel.exit(Ok(0));

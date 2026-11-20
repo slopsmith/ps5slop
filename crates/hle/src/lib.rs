@@ -15,6 +15,7 @@ use x86::cpu::reg::*;
 
 mod agc;
 mod audio;
+mod dialog;
 mod dmem;
 mod equeue;
 pub use gpu;
@@ -40,7 +41,7 @@ mod vfs;
 mod videoout;
 
 pub use pad::PadInput;
-pub use process::{Kernel, Thread, ThreadError, ThreadInfo, TlsBlock, TlsTemplate};
+pub use process::{Kernel, Thread, ThreadError, ThreadInfo, TlsBlock, TlsTemplate, trace_calls};
 pub use rtld::ModuleInfo;
 pub use vfs::{ImageFile, ImageFs, ImageStat, Target, Vfs};
 pub use videoout::Frame;
@@ -492,6 +493,7 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(savedata::FUNCTIONS)
         .chain(ngs2::FUNCTIONS)
         .chain(audio::FUNCTIONS)
+        .chain(dialog::FUNCTIONS)
         .chain(agc::functions())
         .chain(placeholders())
         .chain(pthread::SCE_FUNCTIONS)

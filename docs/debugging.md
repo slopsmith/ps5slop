@@ -19,7 +19,9 @@ The protocol is the one 86slopper uses: one command per line, and each answer en
 | `hits [N [ADDR LEN]]` | The writers of watched memory (or of one range) with counts and address spans, and the last N writes |
 | `trace PATH [SITE...]` / `trace off` | Appends every watched write (from the given sites only) to a text file |
 | `unwatch` | Ends all watches and clears the log |
-| `shot PATH` | Writes the screen as PPM |
+| `calls PATH [FILTER]` / `calls off` | Appends every host call whose description contains FILTER to a file: thread, name, first six arguments, result, caller |
+| `press BUTTONS [MS]` | Holds pad buttons (`cross`, `up+cross`, ...) for MS milliseconds (default 150) |
+| `shot PATH` | Writes the screen as PPM; with `press`, this drives menus step by step |
 | `quit` | Ends the guest |
 
 Thread names come from `scePthreadCreate`, `scePthreadRename` and `pthread_set_name_np`. Host threads are named `guest 0xTCB`.

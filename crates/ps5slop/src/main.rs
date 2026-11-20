@@ -198,22 +198,7 @@ fn play_input(kernel: std::sync::Arc<hle::Kernel>, script: String) {
         .split(',')
         .filter_map(|step| {
             let (t, keys) = step.split_once(':')?;
-            let buttons = keys.split('+').filter(|k| !k.is_empty()).fold(0, |b, k| {
-                b | match k {
-                    "options" => 0x8,
-                    "up" => 0x10,
-                    "right" => 0x20,
-                    "down" => 0x40,
-                    "left" => 0x80,
-                    "l1" => 0x400,
-                    "r1" => 0x800,
-                    "triangle" => 0x1000,
-                    "circle" => 0x2000,
-                    "cross" => 0x4000,
-                    "square" => 0x8000,
-                    _ => 0,
-                }
-            });
+            let buttons = ps5slop::pad_buttons(keys);
             Some((t.parse().ok()?, buttons))
         })
         .collect();

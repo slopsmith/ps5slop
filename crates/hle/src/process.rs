@@ -185,6 +185,21 @@ pub struct Kernel {
     running: Mutex<Vec<(u64, Arc<Whereabouts>)>>,
 }
 
+static TRACING: AtomicBool = AtomicBool::new(false);
+type CallLog = (std::io::BufWriter<std::fs::File>, String);
+static CALL_LOG: Mutex<Option<CallLog>> = Mutex::new(None);
+
+/// Writes every later host call whose description contains `filter` to
+/// `file`, one line each, or stops when `file` is `None`.
+pub fn trace_calls(file: Option<std::fs::File>, filter: String) {
+    let mut log = CALL_LOG.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((mut w, _)) = log.take() {
+        let _ = w.flush();
+    }
+    TRACING.store(file.is_some(), Ordering::SeqCst);
+    *log = file.map(|f| (std::io::BufWriter::new(f), filter));
+}
+
 /// The last host function a thread called, for [`Kernel::threads`].
 #[derive(Default)]
 struct Whereabouts {
@@ -469,7 +484,24 @@ impl Kernel {
                         kernel: self,
                         thread,
                     };
-                    match self.hle.call(addr, &mut env) {
+                    let args = TRACING.load(Ordering::Relaxed).then(|| {
+                        [RDI, RSI, RDX, RCX, R8, R9].map(|r| env.cpu.regs[r])
+                    });
+                    let outcome = self.hle.call(addr, &mut env);
+                    if let Some(a) = args {
+                        let name = self.hle.describe(addr).unwrap_or_else(|| format!("{addr:#x}"));
+                        let mut log = CALL_LOG.lock().unwrap_or_else(|e| e.into_inner());
+                        if let Some((w, filter)) = log.as_mut()
+                            && name.contains(filter.as_str())
+                        {
+                            let _ = writeln!(
+                                w,
+                                "{:#x} {name}({:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}) -> {:#x} from {caller:#x}",
+                                thread.tcb, a[0], a[1], a[2], a[3], a[4], a[5], cpu.regs[RAX]
+                            );
+                        }
+                    }
+                    match outcome {
                         Ok(Outcome::Return(_) | Outcome::Resume) => {}
                         Ok(Outcome::Exit(status)) => self.exit(Ok(status)),
                         Ok(Outcome::ThreadExit) => break,

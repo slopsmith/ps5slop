@@ -100,6 +100,61 @@ pub static FUNCTIONS: &[Function] = &[
 /// stderr when called.
 pub static STUBS: &[Function] = &[
     Function {
+        library: "libSceTextToSpeech2",
+        name: "#08JSg9p6bgQ",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpAuth",
+        name: "sceNpAuthGetAuthorizationCodeV3",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpAuth",
+        name: "#IDX0S5EsEh4",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpAuth",
+        name: "sceNpAuthDeleteRequest",
+        func: ok,
+    },
+    Function {
+        library: "libSceNpManager",
+        name: "sceNpDeleteRequest",
+        func: ok,
+    },
+    Function {
+        library: "libSceNpManager",
+        name: "sceNpUnregisterStateCallbackA",
+        func: ok,
+    },
+    Function {
+        library: "libSceNpManager",
+        name: "sceNpGetAccountIdA",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpManager",
+        name: "sceNpCheckPremium",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpManager",
+        name: "sceNpNotifyPremiumFeature",
+        func: ok,
+    },
+    Function {
+        library: "libSceNpManager",
+        name: "sceNpCheckNpReachability",
+        func: unsupported,
+    },
+    Function {
+        library: "libSceNpManager",
+        name: "sceNpGetNpReachabilityState",
+        func: unsupported,
+    },
+    Function {
         library: "libSceNpEntitlementAccess",
         name: "sceNpEntitlementAccessGetSkuFlag",
         func: sku_flag,
@@ -150,12 +205,8 @@ pub static STUBS: &[Function] = &[
         func: unsupported,
     },
     zero("libSceCommonDialog", "sceCommonDialogInitialize"),
-    zero("libSceMsgDialog.native", "sceMsgDialogInitialize"),
-    zero("libSceMsgDialog.native", "sceMsgDialogTerminate"),
     zero("libSceSaveDataDialog.native", "sceSaveDataDialogInitialize"),
     zero("libSceSaveDataDialog.native", "sceSaveDataDialogTerminate"),
-    zero("libSceSigninDialog", "sceSigninDialogInitialize"),
-    zero("libSceSigninDialog", "sceSigninDialogTerminate"),
     zero("libSceWebBrowserDialog", "sceWebBrowserDialogInitialize"),
     zero("libSceWebBrowserDialog", "sceWebBrowserDialogTerminate"),
     zero("libSceNpCommerce", "sceNpCommerceDialogInitialize"),
@@ -295,6 +346,11 @@ pub static STUBS: &[Function] = &[
         func: np_state,
     },
     Function {
+        library: "libSceNpManager",
+        name: "sceNpGetAccountCountryA",
+        func: np_account_country,
+    },
+    Function {
         library: "libSceNetCtl",
         name: "sceNetCtlGetState",
         func: netctl_state,
@@ -335,6 +391,13 @@ static NEXT_UUID: AtomicU64 = AtomicU64::new(1);
 /// `sceNpGetState(user, &state)`: signed out (state 1, unverified).
 fn np_state(env: &mut Env) -> Result<Outcome, CallError> {
     env.mem.write(env.arg(1), &1u32.to_le_bytes())?;
+    Ok(Outcome::Return(0))
+}
+
+/// `sceNpGetAccountCountryA(user, &country)`: "us", as an ISO 3166-1 code
+/// with a terminating NUL (layout and signed-out behaviour unverified).
+fn np_account_country(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write(env.arg(1), b"us\0\0")?;
     Ok(Outcome::Return(0))
 }
 
