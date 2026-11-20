@@ -355,3 +355,9 @@ Reason: their sources (GDS counters, memory) are written by the compute work jus
 Agents may disassemble or decompile a game's own code on vic's dumps to understand what it does and what it expects from the system, as long as nothing from it is committed ([legal.md](legal.md#analysing-user-supplied-binaries)). Sony's system code stays off limits.
 
 Reason (vic): Sony's code would shape the emulator itself, modelling what the real system does under the hood; a game's code only tells us how it uses the interface and what answers it needs, and is never part of the emulator. Prompted by GTA V's and Astro Bot's asserts, which registers and memory alone could not explain.
+
+## 2026-11-20: libSceAcm placeholders succeed
+
+`sceAcmContextCreate` and the three other Acm functions Minecraft's FMOD imports return 0 and write nothing, where the context create used to fail with `ENOSYS` like other unknown services.
+
+Reason: FMOD treats a failed context create as fatal for all output, so Minecraft was silent. With success it plays its music and sounds through AudioOut2 (verified against the game's own track, [audio.md](audio.md)). Nothing is known about what Acm computes; if FMOD starts batches in game and needs their results, that will show as missing or wrong effects rather than silence.

@@ -23,7 +23,7 @@ What each title does under ps5slop, from our own runs on an Apple Silicon Mac.
 | Title ID | Name | Status | Notes |
 | --- | --- | --- | --- |
 | PPSA21402 | Balatro | ⭐ Perfect | 01.015.000: plays normally with sound. |
-| PPSA17221 | Minecraft | 🟢 Playable | v26.10: worlds load in about 25 s and render correctly without Vibrant Visuals; with it, water is broken and it runs slower. Settings' left column is spaced too widely. Long sessions no longer run out of direct memory (it used to stop after about 13 minutes in a world). |
+| PPSA17221 | Minecraft | 🟢 Playable | v26.10: worlds load in about 25 s and render correctly without Vibrant Visuals; with it, water is broken and it runs slower. Settings' left column is spaced too widely. Long sessions no longer run out of direct memory (it used to stop after about 13 minutes in a world). Menu music and sounds play. |
 | PPSA03311 | The Binding of Isaac: Repentance | 🟢 Playable | 01.000: plays at about 55 fps. The screen filter setting needed `v_cvt_off_f32_i4` (now translated, not yet rechecked); pad vibration reaches the controller (felt on a DualShock 4, see [docs/input.md](docs/input.md)). Some rooms, including the starting room at times, render black (not yet investigated). |
 | PPSA06084 | Superliminal | 🔴 Boots | 01.010 (.pkg): draws its loading screen (logo, spinner, 3D room) and stays there; the stall is on the CPU side. Silent. |
 | PPSA21564 | Astro Bot | ⚫ Nothing | v1.019 (.pkg): frame loop at ~20 fps, loads very slowly; stuck in its logo movie level (no video decoding), screen black. Needs `scripts/fetch-fonts`. |

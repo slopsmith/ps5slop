@@ -99,6 +99,7 @@ Each thread's errno lives in its thread control block, at the thread pointer plu
 | libSceNet | `sceNetSocket`, `sceNetErrnoLoc` | No network: sockets fail with `0x80410100` + `ENETDOWN` (shadPS4's PS4 codes) | FMOD's profiler socket |
 | libSceUserService, libScePad, libSceVideoOut | Accessibility and age getters, `GetGamePresets`; `scePadSetVibrationMode`, `DeviceClassGetExtendedInformation`; `sceVideoOutIsFlipPending`, `ConfigureOutput`, `UnregisterBuffers` | Placeholders: settings read 0, a standard controller, no flip ever pending | Superliminal |
 | libSceAudioOut2, libSceAjm | See [audio.md](audio.md) | | Superliminal (FMOD) |
+| libSceAcm | `sceAcmContextCreate`, `ContextDestroy`, `BatchStartBuffers`, `BatchWait` (the last three named by hashing guesses) | Placeholders that succeed and write nothing, see [audio.md](audio.md) | Minecraft's FMOD starts |
 
 **Variables.** Some imports are data, not functions: libkernel's `__stack_chk_guard` is read through its GOT entry, although OpenOrbis's stub declares it a function. So the symbol type cannot be trusted; the HLE layer knows its variables by name and binds them to readable memory in a data region next to the trap region.
 

@@ -14,6 +14,7 @@ use x86::Cpu;
 use x86::cpu::reg::*;
 
 mod agc;
+mod acm;
 mod ajm;
 mod avplayer;
 mod ampr;
@@ -538,6 +539,7 @@ fn report_stub(
 fn placeholders() -> impl Iterator<Item = &'static Function> {
     stubs::STUBS
         .iter()
+        .chain(acm::STUBS)
         .chain(ajm::STUBS)
         .chain(ngs2::STUBS)
         .chain(agc::stubs())

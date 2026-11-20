@@ -225,11 +225,6 @@ pub static STUBS: &[Function] = &[
         func: sku_flag,
     },
     Function {
-        library: "libSceAcm",
-        name: "sceAcmContextCreate",
-        func: unsupported,
-    },
-    Function {
         library: "libSceTextToSpeech2",
         name: "sceTextToSpeech2Open",
         func: unsupported,

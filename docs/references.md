@@ -73,10 +73,10 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 | 2026-11-20 | OpenOrbis `include/orbis/libkernel.h`, `Rtc.h` (already fetched) | Prototypes of `sceKernelMapFlexibleMemory`, `sceKernelMapNamedFlexibleMemory`; names to hash for Isaac's unknown NIDs | Facts only |
 | 2026-11-20 | GitHub code search for one unknown NID (`Y295ygEccqk`) | Its name | Nothing: every hit was a NID-to-name list of unclear provenance (game ports, stub lists), which we do not use; none was opened |
 | 2026-11-20 | shadPS4 `src/core/libraries/kernel/memory.h` at `264d6b7` (GPL-2.0-or-later, SPDX header), read directly | The layout of `OrbisVirtualQueryInfo` (72 bytes: start, end, offset, protection, memory type, kind bits at 32, name at 33) | Fact only, in our own `sceKernelVirtualQuery` ([hle-kernel.md](hle-kernel.md)); PS4, unverified for the PS5. No code |
-
 | 2026-11-20 | SharpEmu-mac `src/SharpEmu.Libs/Audio/AudioOut2Exports.cs` at `5cb184e` (GPL-2.0-or-later), the speaker array functions and their comments | `sceAudioOut2GetSpeakerArrayMemorySize`, `SpeakerArrayCreate`, `GetSpeakerArrayAmbisonicsCoefficients`: prototypes, the parameter layout, its object size and the header field GTA V reads | Facts and the size formula, in our own code (`crates/hle/src/audio/out2.rs`); its allocation fallback was not taken |
 | 2026-11-20 | SharpProspero `docs/graphics-gpu.md` "Async memory paging (Ampr)" (GPL-3.0, prose only) | APR command names | Nothing: it names no commands |
 | 2026-11-20 | shadPS4 (from memory, not re-read) | `OrbisKernelBatchMapEntry` layout and operation numbers; `sceKernelBatchMap` as `BatchMap2` with `MAP_FIXED` | Facts only, PS4, unverified for the PS5; GTA V's entries fit ([hle-kernel.md](hle-kernel.md)) |
+| 2026-11-20 | A text search for `sceAcm` in our local copies of SharpEmu, SharpEmu-mac, SharpProspero, OpenOrbis, FEX, OpenAGC and prosper | Whether anyone implements libSceAcm | No hits; nothing read. The FSB5 codec numbers used to classify Minecraft's sound banks (2 PCM16, 15 Vorbis, 16 FMOD ADPCM) are from general knowledge of the format as vgmstream (ISC) describes it, not read this time and only used in [audio.md](audio.md) |
 
 Add a row whenever someone reads another project's source for this repo.
 

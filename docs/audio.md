@@ -1,6 +1,6 @@
 # Audio
 
-How titles make sound and how it reaches the Mac. `crates/hle/src/audio` (libSceAudioOut and the host side) and `crates/hle/src/ngs2` (libSceNgs2).
+How titles make sound and how it reaches the Mac. `crates/hle/src/audio` (libSceAudioOut, AudioOut2 and the host side), `crates/hle/src/ngs2` (libSceNgs2), `ajm.rs` and `acm.rs`.
 
 ## The two paths
 
@@ -43,9 +43,17 @@ A silent microphone (`audio/input.rs`): `sceAudioInOpen(user, type, index, grain
 
 **AudioOut2** (`audio/out2.rs`), the PS5's output library, which FMOD uses: a context owns ports; the title points each port at one grain of samples with `PortSetAttributes` (attribute 0, PCM: the value points at the grain's address; attribute 1, gain: a float) and plays the grain with `ContextAdvance` or `ContextPush`. Each grain is mixed to stereo (float or S16 ports, 1 to 16 channels; layouts other than mono, stereo and 8 channels keep their first two channels) and goes to the same host mixer and WAVE dump as AudioOut. A context has a clock of grains with the queue depth it asked for (default 4 grains of 256 frames); `Advance` plays a grain without waiting, `Push` plays one unless `Advance` already did and, if blocking, waits for a free slot (the device's pace when the device runs), and `GetQueueLevel` reports grains queued and slots left (32 bits each). `ResetParam` writes SharpEmu-mac's defaults and `QueryMemory` asks for its size; the context memory itself is not used. Structure layouts, attribute ids and error codes come from SharpEmu-mac's `AudioOut2Exports.cs`; the pacing is ours. Also `UserCreate`, `UserDestroy`, `PortCreate`, `PortDestroy`, `Initialize`.
 
+**Acm** (`acm.rs`), placeholders: `sceAcmContextCreate`, `sceAcmContextDestroy`, `sceAcmBatchStartBuffers` and `sceAcmBatchWait` return 0 and write nothing. Only the first name was known before; the other three were hashed from guesses (`scripts/nid-guess`). What the library does is unknown to us (no public description, and no emulator we checked implements it). Minecraft's FMOD calls `sceAcmContextCreate(0x8003ac1d0, stack pointer, 0, 0, 0x200000)` once while it starts, right after loading system module `0x10b`; when that fails (our earlier placeholder returned `ENOSYS`), FMOD sets up no output at all and the title is silent. With 0 it carries on, and no batch was started at the menu. One more libSceAcm import of Minecraft, `u70oWo92SYQ`, has no name and is not bound.
+
 **Ajm** (`ajm.rs`), placeholders: no codec is decoded. Batch jobs take their space in the title's batch buffer as the library would (`{ buffer, offset, size, last job, last job return address }`, job sizes 48, 64 and 32 bytes), a decode consumes all its input and writes silence, `GetCodecInfo` writes a zero result, and batches finish when they start. Layouts, sizes and error codes follow SharpEmu-mac's `AjmExports.cs`, which does the same for codecs it cannot decode. FMOD registers codec 3 (unknown to us) and so plays its compressed sounds as silence.
 
+## Minecraft
+
+Minecraft (PPSA17221 v26.10) plays through FMOD (`libfmod.prx`, shipped with the game) and AudioOut2: one context (queue depth 1, 256-frame grains), one 8-channel float port at 48 kHz; the music and effects land in front left and right only. Its sounds are FSB5 banks (4,356 FMOD ADPCM, 70 PCM16) and its music is Ogg Vorbis, so FMOD decodes everything itself and Ajm is only initialised. The one thing it needed was a successful `sceAcmContextCreate` (above).
+
 ## Verified, and how
+
+- **Minecraft, headless, WAVE dump (2026-11-20).** The menu music starts about 20 s in. Cross-correlating 2-second windows at 60 s and 75 s of the dump against the game's own `menu3.ogg` (decoded with ffmpeg to 48 kHz) gives correlation 1.0000 and a residual of 0.3 to 0.4 %, the windows sit exactly 15 s apart in the track, and the gain is 0.045 (-26.9 dB). That gain is the game's own: a fresh profile has `audio_main:0.5` and `audio_music:0.3` in `options.txt`, and `sound_definitions.json` plays the menu tracks at volume 0.3, and 0.5 × 0.3 × 0.3 = 0.045. So the music plays in real time at the level the game asks for; it only sounds quiet. vic listened to a dump and heard the music. Pad presses on the menu (one every 3 s) show up as peaks of about 1,400 every 3 s on top of the music: the menu's navigation sounds. In-game sound is not checked: a new world made through the first-run "Get started" flow faults on the main thread's stack, with or without audio.
 
 - **Balatro, headless, 60 s, WAVE dump.** 58 of 60 seconds carry sound (per-second RMS 170 to 1,940 of 32,768, peaks up to 8,543, nothing clipped); the first two seconds are silent while the title loads. Cross-correlating 2-second windows of the dump at 30 s and 45 s against the game's own `music1.wav` resampled by 0.7 gives correlation 1.0000, gain 0.300 and a residual of 0.1 to 0.2 % of the signal, and the two windows sit exactly 15 s apart in the track. So the music plays continuously, in real time, at the pitch and volume Balatro asks for. The pitch is Balatro's: `engine/sound_manager.lua` plays music with `per = 0.7`, and the volume 0.3 is the port volume it sets. Before the menu music, the dump holds the start-up sounds and a song that fades out by the game's own volume commands.
 - **Device path, 20 s** with `PS5SLOP_AUDIO=1`: the queue opens, and 19.7 s of audio pass in 20 s of wall time, so the device's clock paces the title. Nobody listened to it for this check.
@@ -53,9 +61,10 @@ A silent microphone (`audio/input.rs`): `sceAudioInOpen(user, type, index, grain
 
 ## Assumed, unknown
 
+- libSceAcm: what a context and a batch are, and whether FMOD needs real results from batches in game (reverb, for example), is unknown.
 - All NGS2 structure layouts, parameter and command ids, error codes and the waveform info layout come from SharpEmu-mac. Balatro's traced calls fit them (formats, block descriptors, patches and volumes decode to sensible values that reproduce the game's music exactly), but nothing was checked on a PS5. Only the parts Balatro uses are exercised.
 - What a real NGS2 voice does with an empty queue, and what the `samples` field of a streamed block means, is unknown; our rules are above.
 - No effects (reverb, EQ, filters, envelopes) and no compressed waveforms: VAG and ATRAC9 images are refused (`0x804A8431`), and Balatro has none. ATRAC9 would need a decoder (SharpEmu-mac ports one, LibAtrac9).
 - AudioOut ports are assumed to run at 48 kHz; other rates are written to the dump as declared but sent to the device unconverted. Port types (main, BGM, voice, pad speaker) are not told apart.
-- AudioOut2: only Superliminal's FMOD has used it, and nobody has listened to it yet; its compressed sounds are silent because Ajm decodes nothing. What codec 3 is, and real ATRAC9 or Opus decoding, are open (SharpEmu-mac decodes Opus and MP3 through FFmpeg).
+- AudioOut2: Minecraft's FMOD plays through it (above). Superliminal's FMOD opens a port and pushes grains in real time, but every grain is silence so far (90 s run, 2026-11-20); it submits no Ajm decode job and does not use Acm, and its screen is still black, so it has probably not started a sound yet. Its compressed sounds would be silent anyway if they went through Ajm, which decodes nothing. What codec 3 is, and real ATRAC9 or Opus decoding, are open (SharpEmu-mac decodes Opus and MP3 through FFmpeg).
 - The `sceAudioOutOutput` return value (the frame count) is SharpEmu-mac's; on a console it is unverified.
