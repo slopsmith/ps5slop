@@ -293,6 +293,16 @@ impl Files for Image<'_> {
             .collect()
     }
 
+    fn folders(&self, dir: &str) -> Vec<String> {
+        self.0
+            .list(dir)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, is_dir)| *is_dir)
+            .map(|(name, _)| name)
+            .collect()
+    }
+
     fn read(&self, path: &str) -> io::Result<Vec<u8>> {
         let f = self.0.open(path).ok_or(io::ErrorKind::NotFound)?;
         let len = usize::try_from(f.len()).map_err(io::Error::other)?;

@@ -22,6 +22,8 @@ pub const MODULE_AREA: u64 = 0x8_0000_0000;
 pub trait Files {
     /// The names of the files (not folders) in folder `dir`; `""` is the root.
     fn list(&self, dir: &str) -> Vec<String>;
+    /// The names of the folders in folder `dir`.
+    fn folders(&self, dir: &str) -> Vec<String>;
     /// The bytes of the file at `path`, relative to the root.
     fn read(&self, path: &str) -> std::io::Result<Vec<u8>>;
 }
@@ -34,6 +36,17 @@ impl Files for &Path {
         entries
             .flatten()
             .filter(|e| e.file_type().is_ok_and(|t| !t.is_dir()))
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect()
+    }
+
+    fn folders(&self, dir: &str) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(self.join(dir)) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
             .filter_map(|e| e.file_name().into_string().ok())
             .collect()
     }
@@ -51,31 +64,61 @@ pub struct Candidate {
     pub system: bool,
 }
 
-/// The module files at the root of `files` and in `sce_module`, by the
-/// module name their own tables give. Files that do not parse are skipped.
+/// How deep below the root modules are looked for (Unity titles keep theirs
+/// in `Media/Modules` and `Media/Plugins`).
+const MODULE_SEARCH_DEPTH: usize = 3;
+
+/// The module files in `files`, by the module name their own tables give,
+/// shallowest first: the root, `sce_module` (Sony's), then any other folder
+/// but `sce_sys`. Files that do not parse are skipped.
 pub fn candidates(files: &dyn Files) -> HashMap<String, Candidate> {
     let mut out = HashMap::new();
-    for (folder, system) in [("", false), ("sce_module", true)] {
-        for file in files.list(folder) {
-            let prx = Path::new(&file)
-                .extension()
-                .and_then(|x| x.to_str())
-                .is_some_and(|x| x.eq_ignore_ascii_case("prx") || x.eq_ignore_ascii_case("sprx"));
-            if !prx {
-                continue;
+    let mut level = vec![String::new()];
+    for depth in 0..=MODULE_SEARCH_DEPTH {
+        let mut next = Vec::new();
+        for folder in &level {
+            if depth < MODULE_SEARCH_DEPTH {
+                next.extend(
+                    files
+                        .folders(folder)
+                        .into_iter()
+                        .filter(|f| f != "sce_sys")
+                        .map(|f| if folder.is_empty() { f } else { format!("{folder}/{f}") }),
+                );
             }
-            let path = if folder.is_empty() {
-                file
-            } else {
-                format!("{folder}/{file}")
-            };
-            let Some(name) = module_name(files, &path) else {
-                continue;
-            };
-            out.entry(name).or_insert(Candidate { path, system });
+            let system = folder.split('/').any(|c| c == "sce_module");
+            add_candidates(files, folder, system, &mut out);
         }
+        next.sort_by_key(|f| !f.ends_with("sce_module"));
+        level = next;
     }
     out
+}
+
+fn add_candidates(
+    files: &dyn Files,
+    folder: &str,
+    system: bool,
+    out: &mut HashMap<String, Candidate>,
+) {
+    for file in files.list(folder) {
+        let prx = Path::new(&file)
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| x.eq_ignore_ascii_case("prx") || x.eq_ignore_ascii_case("sprx"));
+        if !prx {
+            continue;
+        }
+        let path = if folder.is_empty() {
+            file
+        } else {
+            format!("{folder}/{file}")
+        };
+        let Some(name) = module_name(files, &path) else {
+            continue;
+        };
+        out.entry(name).or_insert(Candidate { path, system });
+    }
 }
 
 fn module_name(files: &dyn Files, path: &str) -> Option<String> {
@@ -138,8 +181,9 @@ impl Unit {
     }
 }
 
-/// Chooses the modules to load for `main`: those it (or a loaded module)
-/// imports from, found in `found`, and allowed if they are system modules.
+/// Chooses the modules to load for `main`: every game module in `found`,
+/// and the system modules it (or a loaded module) imports from that are
+/// allowed.
 /// Returns them with their bytes, in the order they were found,
 /// dependencies after dependents.
 pub fn choose(
@@ -148,12 +192,10 @@ pub fn choose(
     files: &dyn Files,
 ) -> Vec<(String, String, Vec<u8>)> {
     let mut chosen: Vec<(String, String, Vec<u8>)> = Vec::new();
-    let mut queue: Vec<String> = main
-        .dynamic
-        .needed_modules
-        .iter()
-        .map(|m| m.name.clone())
-        .collect();
+    let mut games: Vec<&String> = found.iter().filter(|(_, c)| !c.system).map(|(n, _)| n).collect();
+    games.sort_by(|a, b| b.cmp(a));
+    let mut queue: Vec<String> = games.into_iter().cloned().collect();
+    queue.extend(main.dynamic.needed_modules.iter().map(|m| m.name.clone()));
     while let Some(name) = queue.pop() {
         if chosen.iter().any(|(n, _, _)| *n == name) {
             continue;
