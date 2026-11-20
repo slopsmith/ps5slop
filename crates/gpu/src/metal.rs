@@ -1781,7 +1781,9 @@ impl Metal {
             (sh::SPI_SHADER_PGM_LO_VS, sh::SPI_SHADER_PGM_RSRC2_VS, sh::SPI_SHADER_USER_DATA_VS_0)
         };
         let program_address = |lo: usize| ((s[lo] as u64) | (s[lo + 1] as u64) << 32) << 8;
-        let user_count = |rsrc2: u32| (rsrc2 >> 1) & 0x1F;
+        // USER_SGPR is 5 bits, with USER_SGPR_MSB at bit 27 for counts of 32
+        // (Mesa's gfx10.json); a count of 32 reads as 0 without it.
+        let user_count = |rsrc2: u32| ((rsrc2 >> 1) & 0x1F) | ((rsrc2 >> 27) & 1) << 5;
         let vs_addr = program_address(vs_lo);
         let ps_addr = program_address(sh::SPI_SHADER_PGM_LO_PS);
         if vs_addr == 0 || ps_addr == 0 {
@@ -1792,9 +1794,9 @@ impl Metal {
         let vs_data = &s[vs_user..vs_user + sh::USER_DATA_COUNT];
         let ps_data = &s[sh::SPI_SHADER_USER_DATA_PS_0..sh::SPI_SHADER_USER_DATA_PS_0 + sh::USER_DATA_COUNT];
         let col_format = export_formats(c);
+        self.note(|| format!("vertex {vs_addr:#x} pixel {ps_addr:#x} col_format {:#x}", c[context::SPI_SHADER_COL_FORMAT]));
         let vertex = self.typed_program(host, state, Stage::Vertex, vs_addr, vs_users, ngg, 0, vs_data).ok_or("vertex program")?;
         let pixel = self.typed_program(host, state, Stage::Pixel, ps_addr, ps_users, false, col_format, ps_data).ok_or("pixel program")?;
-        self.note(|| format!("vertex {vs_addr:#x} pixel {ps_addr:#x} col_format {:#x}", c[context::SPI_SHADER_COL_FORMAT]));
         self.note(|| format!("vertex user {:x?}", &vs_data[..vs_users as usize]));
         self.note(|| format!("pixel user {:x?}", &ps_data[..ps_users as usize]));
         self.note(|| {

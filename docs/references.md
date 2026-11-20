@@ -54,6 +54,7 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 | 2026-11-20 | ooz-wasm 2.0.0 (npm, GPL-3.0-or-later): `package.json` and `index.d.ts` only | Run as a black-box oracle outside the repo | Nothing taken; its JavaScript and WebAssembly were executed, never read (see [decisions.md](decisions.md)) |
 | 2026-11-20 | pkg-to-anyps5 at `2e9b122` (GPL-3.0), built from source in a scratch folder outside the repo and run as a black-box oracle on our two packages; its source was never opened | Known plaintext (its extracted files and listings) to check our PS5 inner-image reader against | Nothing: no code, and its outputs stayed outside the repo (see [decisions.md](decisions.md)) |
 | 2026-11-20 | Web search results only (vitasdk `libime.h` documentation, psdevwiki PS4 "Libraries" page, ps4sdk module list) | What `libSceIme`'s two function families are for: `sceIme*` the on-screen keyboard panel, `sceImeKeyboard*` physical keyboards | The libSceIme row in [hle-kernel.md](hle-kernel.md); no code read or taken |
+| 2026-11-20 | Mesa `src/amd/registers/gfx10.json` (MIT), main branch | `USER_SGPR_MSB` is bit 27 of the GFX10 `SPI_SHADER_PGM_RSRC2_*` registers | `user_count` in `gpu/src/metal.rs` ([shaders.md](shaders.md)) |
 
 Add a row whenever someone reads another project's source for this repo.
 
