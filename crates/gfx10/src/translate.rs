@@ -2474,39 +2474,56 @@ static inline uint fmt_sel(uint sel, uint4 v, uint one) {
     }
 }
 
+// One component of `bits` bits converted as `kind`: 0 UNORM, 1 SNORM, 2 USCALED,
+// 3 SSCALED, 4 UINT, 5 SINT, 6 FLOAT.
+static inline uint fmt_conv(uint v, uint bits, uint kind) {
+    uint m = bits == 32u ? 0xffffffffu : (1u << bits) - 1u;
+    v &= m;
+    int s = bits == 32u ? int(v) : int(v << (32u - bits)) >> (32u - bits);
+    switch (kind) {
+    case 0u: return as_type<uint>(float(v) / float(m));
+    case 1u: return as_type<uint>(max(float(s) / float(m >> 1), -1.0f));
+    case 2u: return as_type<uint>(float(v));
+    case 3u: return as_type<uint>(float(s));
+    case 4u: return v;
+    case 5u: return uint(s);
+    default: return bits == 16u ? as_type<uint>(float(as_type<half>(ushort(v)))) : v;
+    }
+}
+
+static inline uint ld_le(device const uchar* p, uint bytes) {
+    uint v = 0u;
+    for (uint i = 0u; i < bytes; i++) v |= uint(p[i]) << (8u * i);
+    return v;
+}
+
 // Buffer formats (GFX10 unified encoding, BUF_FMT_*), as raw result dwords.
 static inline uint4 buffer_load_format(device const uchar* mem, ulong mem_base, uint4 vs, uint index, uint offset, uint idxen) {
     long o = buffer_offset(mem_base, vs, index, offset, idxen);
     if (o < 0) return uint4(0u);
     device const uchar* p = mem + o;
     uint fmt = (vs.w >> 12) & 0x7fu;
-    uint one = 0x3f800000u;
+    uint n = 0u, bits = 0u, kind = 0u;
+    if (fmt >= 1u && fmt <= 6u) { n = 1u; bits = 8u; kind = fmt - 1u; }
+    else if (fmt >= 7u && fmt <= 13u) { n = 1u; bits = 16u; kind = fmt - 7u; }
+    else if (fmt >= 14u && fmt <= 19u) { n = 2u; bits = 8u; kind = fmt - 14u; }
+    else if (fmt >= 20u && fmt <= 22u) { n = 1u; bits = 32u; kind = fmt - 16u; }
+    else if (fmt >= 23u && fmt <= 29u) { n = 2u; bits = 16u; kind = fmt - 23u; }
+    else if (fmt >= 50u && fmt <= 55u) { n = 4u; bits = 10u; kind = fmt - 50u; }
+    else if (fmt >= 56u && fmt <= 61u) { n = 4u; bits = 8u; kind = fmt - 56u; }
+    else if (fmt >= 62u && fmt <= 64u) { n = 2u; bits = 32u; kind = fmt - 58u; }
+    else if (fmt >= 65u && fmt <= 71u) { n = 4u; bits = 16u; kind = fmt - 65u; }
+    else if (fmt >= 72u && fmt <= 74u) { n = 3u; bits = 32u; kind = fmt - 68u; }
+    else if (fmt >= 75u && fmt <= 77u) { n = 4u; bits = 32u; kind = fmt - 71u; }
     uint4 r = uint4(0u);
-    switch (fmt) {
-    case 20u: case 21u: one = 1u; r.x = *(device const uint*)p; break;
-    case 22u: r.x = *(device const uint*)p; break;
-    case 62u: case 63u: one = 1u; r.xy = *(device const packed_uint2*)p; break;
-    case 64u: r.xy = *(device const packed_uint2*)p; break;
-    case 72u: case 73u: one = 1u; r.xyz = *(device const packed_uint3*)p; break;
-    case 74u: r.xyz = *(device const packed_uint3*)p; break;
-    case 75u: case 76u: one = 1u; r = *(device const packed_uint4*)p; break;
-    case 77u: r = *(device const packed_uint4*)p; break;
-    case 1u: r.x = as_type<uint>(float(p[0]) / 255.0f); break;
-    case 14u: r.xy = as_type<uint2>(float2(p[0], p[1]) / 255.0f); break;
-    case 56u: r = as_type<uint4>(float4(p[0], p[1], p[2], p[3]) / 255.0f); break;
-    case 57u: r = as_type<uint4>(max(float4(char4(p[0], p[1], p[2], p[3])) / 127.0f, -1.0f)); break;
-    case 60u: one = 1u; r = uint4(p[0], p[1], p[2], p[3]); break;
-    case 5u: one = 1u; r.x = p[0]; break;
-    case 18u: one = 1u; r.xy = uint2(p[0], p[1]); break;
-    case 13u: r.x = as_type<uint>(float(*(device const half*)p)); break;
-    case 29u: r.xy = as_type<uint2>(float2(*(device const packed_half2*)p)); break;
-    case 71u: r = as_type<uint4>(float4(*(device const packed_half4*)p)); break;
-    case 23u: r.xy = as_type<uint2>(float2(*(device const packed_ushort2*)p) / 65535.0f); break;
-    case 65u: r = as_type<uint4>(float4(*(device const packed_ushort4*)p) / 65535.0f); break;
-    case 27u: one = 1u; r.xy = uint2(*(device const packed_ushort2*)p); break;
-    case 69u: one = 1u; r = uint4(*(device const packed_ushort4*)p); break;
-    default: break;
+    if (bits == 10u) {
+        uint w = ld_le(p, 4u);
+        r = uint4(fmt_conv(w, 10u, kind), fmt_conv(w >> 10, 10u, kind), fmt_conv(w >> 20, 10u, kind), fmt_conv(w >> 30, 2u, kind));
+    } else {
+        uint bytes = bits / 8u;
+        for (uint i = 0u; i < n; i++) r[i] = fmt_conv(ld_le(p + i * bytes, bytes), bits, kind);
     }
+    uint one = kind == 4u || kind == 5u ? 1u : 0x3f800000u;
     return uint4(fmt_sel(vs.w & 7u, r, one), fmt_sel((vs.w >> 3) & 7u, r, one),
                  fmt_sel((vs.w >> 6) & 7u, r, one), fmt_sel((vs.w >> 9) & 7u, r, one));
 }
