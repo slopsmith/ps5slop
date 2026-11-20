@@ -23,6 +23,8 @@ const RECORD_SIZE: usize = 9;
 /// Records start four bytes into the CblockInfo section.
 const RECORD_SKEW: usize = 4;
 const FILE_KIND_SPARSE: u8 = 0x40;
+/// Bits of an anchor's size field that hold stored offset bits 34 and up.
+const ANCHOR_HIGH_BITS: u32 = 0xff;
 
 const FLAG_LZ1: u32 = 0x4;
 const FLAG_SUB1: u32 = 0x2;
@@ -106,7 +108,11 @@ impl Layout {
             })
             .collect();
         let end = files.last().unwrap();
-        if end.kind != FILE_KIND_SPARSE || end.offset != logical_blocks * BLOCK_SIZE {
+        let last_block = logical_blocks.saturating_sub(1) * BLOCK_SIZE;
+        if end.kind != FILE_KIND_SPARSE
+            || end.offset <= last_block
+            || end.offset > logical_blocks * BLOCK_SIZE
+        {
             return Err(invalid(
                 "NAPS file-offset table does not end at the mount size",
             ));
@@ -160,9 +166,10 @@ impl Layout {
         self.header[3]
     }
 
-    /// The size of the logical image the files are laid out in.
+    /// The size of the logical image the files are laid out in. It need not
+    /// fill its last 256 KiB block.
     pub fn mount_size(&self) -> u64 {
-        self.logical_blocks * BLOCK_SIZE
+        self.files.last().unwrap().offset
     }
 
     /// The index of the first record of a logical block.
@@ -243,7 +250,9 @@ fn parse_records(b: &[u8], at: usize, count: usize) -> Vec<Record> {
         let flags = ((v >> 55) & 0x1_ffff) as u32;
         let anchor = nibble & 4 != 0;
         let offset = if anchor {
-            (u64::from(size_field & 3) << 34) | (u64::from(start) << 16) | u64::from(low16)
+            (u64::from(size_field & ANCHOR_HIGH_BITS) << 34)
+                | (u64::from(start) << 16)
+                | u64::from(low16)
         } else {
             let low = (u64::from(nibble & 3) << 16) | u64::from(low16);
             let base = reference.saturating_sub(0x10000);
@@ -352,7 +361,7 @@ mod tests {
                 value & 0xffff,
                 4,
                 (value >> 16) & 0x3_ffff,
-                (value >> 34) & 3,
+                (value >> 34) & u64::from(ANCHOR_HIGH_BITS),
             )
         } else {
             (
@@ -400,6 +409,30 @@ mod tests {
         assert_eq!(l.piece(0).map(|r| r.offset), Some(0x4_0001_2000));
         let kinds = Layout::chunk_kinds(&l.records[1]);
         assert_eq!(kinds, (ChunkKind::Lz { sub: false }, ChunkKind::Plain));
+    }
+
+    #[test]
+    fn reads_anchors_past_64_gib() {
+        let mut b = layout(&[0], 3, 0);
+        let table = b.len() - 9 * RECORD_SIZE;
+        put_record(&mut b, table, 0, record((true, 0x18_0a87_0000), 0, 1, 0));
+        put_record(&mut b, table, 1, record((false, 0x7_2000), 0, 0x100, 0x5));
+        let l = Layout::parse(&b).unwrap();
+        assert_eq!(l.records[0].offset, 0x18_0a87_0000);
+        assert_eq!(l.records[1].offset, 0x18_0a87_2000);
+    }
+
+    #[test]
+    fn mount_size_may_end_inside_the_last_block() {
+        let mut b = layout(&[0, 0x31d0], 3, 0);
+        let last = HEADER_SIZE + 2 * FILE_ENTRY_SIZE;
+        let short = 2 * BLOCK_SIZE + CHUNK_SIZE;
+        b[last..last + 5].copy_from_slice(&short.to_le_bytes()[..5]);
+        let l = Layout::parse(&b).unwrap();
+        assert_eq!(l.mount_size(), short);
+        assert_eq!(l.region(1), (0x31d0, short, false));
+        b[last..last + 5].copy_from_slice(&(2 * BLOCK_SIZE).to_le_bytes()[..5]);
+        assert!(Layout::parse(&b).is_err());
     }
 
     #[test]

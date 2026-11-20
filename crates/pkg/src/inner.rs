@@ -35,6 +35,10 @@ impl InnerImage {
         }
     }
 
+    pub fn layout(&self) -> &Arc<Layout> {
+        &self.layout
+    }
+
     fn block(&self, region: usize, index: u64) -> Result<Arc<Vec<u8>>> {
         let key = (region, index);
         if let Some((_, b)) = self.cache.lock().unwrap().iter().find(|(k, _)| *k == key) {
@@ -50,7 +54,28 @@ impl InnerImage {
     }
 
     /// Decodes block `index` of a region (counted from the region's start).
-    fn decode_block(&self, region: usize, index: u64) -> Result<Vec<u8>> {
+    pub fn decode_block(&self, region: usize, index: u64) -> Result<Vec<u8>> {
+        let from = self.layout.region(region).0 + index * BLOCK_SIZE;
+        self.decode_block_inner(region, index).map_err(|e| {
+            let record = self.layout.piece(from);
+            let what = format!(
+                "{} (logical {from:#x}, stored {:#x}, flags {:#x})",
+                match &e {
+                    Error::Invalid(w) | Error::Unsupported(w) => w.clone(),
+                    e => e.to_string(),
+                },
+                record.map_or(0, |r| r.offset),
+                record.map_or(0, |r| r.flags),
+            );
+            match e {
+                Error::Unsupported(_) => Error::Unsupported(what),
+                Error::Io(e) => Error::Io(e),
+                _ => Error::Invalid(what),
+            }
+        })
+    }
+
+    fn decode_block_inner(&self, region: usize, index: u64) -> Result<Vec<u8>> {
         let (start, end, _) = self.layout.region(region);
         let from = start + index * BLOCK_SIZE;
         let len = (end - from).min(BLOCK_SIZE) as usize;

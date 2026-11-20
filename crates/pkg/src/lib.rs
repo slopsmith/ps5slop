@@ -19,6 +19,7 @@ mod xts;
 
 pub use error::Error;
 pub use extract::Extracted;
+pub use inner::InnerImage;
 pub use package::{Entry, Format, Header, Package, entry_id};
 pub use pfsc::PfscReader;
 pub use read::{FileSlice, ReadAt};

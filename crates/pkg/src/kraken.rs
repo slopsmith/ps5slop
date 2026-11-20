@@ -116,7 +116,11 @@ fn lengths_small(r: &mut MsbReader) -> Result<Lengths> {
     let width = r.bits(3)?;
     for _ in 0..n {
         let sym = r.bits(8)? as usize;
-        out[sym] = (r.bits(width)? + 1) as u8;
+        let len = r.bits(width)? + 1;
+        if len > MAX_CODE_LEN {
+            return Err(invalid("Kraken code length out of range"));
+        }
+        out[sym] = len as u8;
     }
     Ok(out)
 }
@@ -169,6 +173,9 @@ fn decode_table(lengths: &Lengths) -> Result<Vec<(u8, u8)>> {
         let len = u32::from(len);
         code <<= len - prev;
         prev = len;
+        if code >= 1 << len {
+            return Err(invalid("Kraken Huffman code is over-full"));
+        }
         let rev = code.reverse_bits() >> (32 - len);
         for hi in 0..1u32 << (TABLE_BITS - len) {
             table[(rev | hi << len) as usize] = (sym, len as u8);
@@ -522,6 +529,18 @@ mod tests {
         decode_array(&a, 0, &mut out).unwrap();
         assert_eq!(out.len(), 35);
         assert_eq!(&out[..12], &[8, 8, 8, 8, 8, 8, 8, 8, 8, 0, 8, 8]);
+    }
+
+    #[test]
+    fn rejects_bad_code_lengths_without_panicking() {
+        let mut r = MsbReader {
+            d: &[0x02, 0xe0, 0x1f, 0xc0, 0x40, 0x00],
+            pos: 0,
+        };
+        assert!(lengths_small(&mut r).is_err());
+        let mut lengths = [0u8; 256];
+        lengths[..3].fill(1);
+        assert!(decode_table(&lengths).is_err());
     }
 
     #[test]

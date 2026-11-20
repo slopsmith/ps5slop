@@ -76,7 +76,7 @@ Sources disagree on step 3: the psdevwiki PKG page (vic's saved copy) says the s
 - Packages that need keys we do not have (retail images, encrypted PS5 images) or a format we do not read fail at start with a message that says which.
 - Per-title data folders (`/data`, save data, `/temp0`) are named by the title id: `param.json`'s `titleId` (PS5), `param.sfo`'s `TITLE_ID` (PS4), else the one in the content id (`UP0000-PPSA01234_00-...`). Folder runs use the same id from `sce_sys/`.
 
-**Checked on 2026-11-20** with vic's two OpenOrbis packages (`pkgstore.pkg`, and `example.pkg` from `funny-ps4-engine`): every file read through `/app0` matches an extraction of the same package byte for byte (the ignored test `title::tests::package_files_match_their_extraction`), and `ps5slop run --headless` on each package gets as far as on its extracted folder (both stop at the unimplemented `sceMsgDialogInitialize`). **Checked on 2026-11-20** with the two PS5 fake packages: `ps5slop run --headless` loads both straight from the `.pkg`. Superliminal stops at the unimplemented libkernel import with NID `DGMG3JshrZU`, exactly as its extracted folder does; Astro Bot stops at the unimplemented libkernel import `4oXYe9Xmk0Q` (1,292 imports not implemented yet). Format details: "The inner image" below.
+**Checked on 2026-11-20** with vic's two OpenOrbis packages (`pkgstore.pkg`, and `example.pkg` from `funny-ps4-engine`): every file read through `/app0` matches an extraction of the same package byte for byte (the ignored test `title::tests::package_files_match_their_extraction`), and `ps5slop run --headless` on each package gets as far as on its extracted folder (both stop at the unimplemented `sceMsgDialogInitialize`). **Checked on 2026-11-20** with the two PS5 fake packages: `ps5slop run --headless` loads both straight from the `.pkg`. Superliminal stops at the unimplemented libkernel import with NID `DGMG3JshrZU`, exactly as its extracted folder does; Astro Bot stops at the unimplemented libkernel import `4oXYe9Xmk0Q` (1,292 imports not implemented yet). GTA V (103.6 GB, on an external SSD) also loads straight from its `.pkg` and starts in about a second; where it stops is in [hle-kernel.md](hle-kernel.md). Format details: "The inner image" below.
 
 ### Patches
 
@@ -95,7 +95,7 @@ Source: LibProsperoPKG's [ps5-pkg-format.md](https://github.com/SvenGDK/LibProsp
 
 ### PS5 packages we have looked at
 
-Two PS5 fake packages from vic's downloads, Superliminal (`PPSA06084`, 4.5 GB) and Astro Bot (`PPSA21564`, 38 GB), looked at on 2026-11-20 with a hex viewer and our own reader. What they show:
+Two PS5 fake packages from vic's downloads, Superliminal (`PPSA06084`, 4.5 GB) and Astro Bot (`PPSA21564`, 38 GB), looked at on 2026-11-20 with a hex viewer and our own reader, and later Grand Theft Auto V (`PPSA04263`, 103.6 GB, see "Packages over 64 GiB" below). What the first two show:
 
 - **FIH:** `0x10` and `0x18` are the PFS segment's offset (`0x10000`) and size, and `0x58` the embedded container's offset, as LibProsperoPKG says. `0xA0` is not the container's size in either file: it equals the stored size of `pfs_image.dat`. The u64 at `0x20` is the offset of the PFS superblock in the file. We read the container from `0x58` to the end of the file.
 - **Embedded container:** a `\x7FCNT` like the PS4's. Entry offsets count from the container's start. `param.json` (entry `0x2000`) is stored in the clear; we read the title id from it.
@@ -122,7 +122,7 @@ Two PS5 fake packages from vic's downloads, Superliminal (`PPSA06084`, 4.5 GB) a
 | 16-17 | stored offset bits 16-17 | — |
 | 18 | 0 | 1 |
 | 20-37 | where the piece starts within its logical block | stored offset bits 16-33 |
-| 38-54 | first chunk's stored size - 1 | bits 38-39: stored offset bits 34-35 (needed in Astro Bot, 37.6 GB) |
+| 38-54 | first chunk's stored size - 1 | bits 38-45: stored offset bits 34-41 (Astro Bot, 37.6 GB, needs bits 34-35; GTA V, 103 GB, bits 34-36) |
 | 55-71 | chunk flags | — |
 
 - **Stored offsets [bytes]:** an anchor gives one whole; a normal record gives the low 18 bits, completed from a reference (the last anchor, or the previous record's offset + its first chunk's size): the first value with those low bits at or above reference - 64 KiB. A piece's stored size is where the next record starts; when an anchor follows, the piece ends at the anchor's low 16 bits, above the piece's first chunk and at or below the next piece stored after it (deduplicated pieces in between point backwards; the next one can be 100+ records on). Identical blocks are stored once and shared.
@@ -139,6 +139,19 @@ Two PS5 fake packages from vic's downloads, Superliminal (`PPSA06084`, 4.5 GB) a
 - **Offsets [bytes]:** new offset = 8 + (high << 4 | code & 15), with k = code >> 4 and high = (next 4 + k bits) + ((2^k - 1) << 4). The high bits alternate between two bit streams in the tail, read most significant first: one forward from its start, one backward from its end.
 - **Escapes [bytes]:** in the trailing bytes, alternating forward and backward as above; each is an Exp-Golomb code of order 6 (count zeros z, skip the 1, read z + 6 bits, value = that number with its leading 1, minus 64).
 - **Inner PFS [prose: flat mode, bytes: the rest]:** superblock at the start of the last region (version 2, mode `0x18`, block size 0x10000, block count × block size = the mount size), unsigned 0xA8-byte inodes from the next block, each holding its data's byte address in the logical image at `+0x60`; directory entries as on PS4. The superroot holds `inode_flat_path_table`, `apr_flat_path_table`, `afid_to_ino_table` and `uroot`. Executables are stored raw.
+
+#### Packages over 64 GiB (Grand Theft Auto V)
+
+GTA V (`PPSA04263` EU v1.011.001, 103.6 GB, a fake package from vic's downloads) did not open at all: `ps5slop-pkg ls` stopped with "NAPS file-offset table does not end at the mount size". Its header, entry table and outer PFS were fine (same FIH layout, outer image in the clear with the `PPRPLAIN-NOAUTH!` seed); two things in the NAPS layout were new **[bytes]**:
+
+- **Mount size.** The last row of the file-offset table is 0x1830ce0000, 128 KiB short of the logical block count (396,340) times 256 KiB. In the earlier two packages they were equal. The mount size is now that last row, which must fall inside the last logical block; the image need not fill it.
+- **Anchors past 64 GiB.** The anchor records' stored offsets reach 0x180a870000, which needs offset bit 36. The field that holds bits 34 and up is wider than the two bits Astro Bot needed: in GTA V its low 3 bits take the values 0 to 6 and bits 3 to 11 are always zero (the higher bits carry something else). We read 8 bits (offsets up to 4 TiB). With only two bits, every block stored past 64 GiB was read from 64 GiB too early, which surfaced as garbage arrays (array types 1 and 3 that no package actually uses).
+
+Nothing else differs: GTA V's 17,357 Kraken blocks use the same chunk layout and only stored and three-stream Huffman arrays (51,753 and 79,982 of them); its other 379,136 blocks are stored as is (record flags `0x09`).
+
+**Verified on 2026-11-20:** `ps5slop-pkg naps --verify` decodes all 396,493 blocks of GTA V's inner image without an error (about 10 minutes from an external SSD), and still all of Superliminal's (56,975) and Astro Bot's (734,940). The file listing (290 files) matches pkg-to-anyps5's name for name and size for size, and four files read with `ps5slop-pkg cat` (`rpf.cache`, `prosperow.rpf`, `update/update.rpf`, a DLC `dlc_update.rpf`; 3.6 GB) are byte-identical to pkg-to-anyps5's extraction, run as a black box with its output kept outside the repo and deleted afterwards. A size limit from 32-bit offsets, multi-part packages or the external volume played no part. No keys are involved.
+
+`ps5slop-pkg naps PKG` also counts the records by flags, and `naps --verify` decodes every block and counts failures by message, each with the first logical offset; block errors now name the logical offset, stored offset and record flags.
 
 #### What is not handled
 

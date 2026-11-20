@@ -326,3 +326,8 @@ Vibration, the light bar and DualSense trigger effects go through Apple's GameCo
 
 Reason: GameController already gives us input from the same controllers, needs no entitlement, and covers DualSense, DualShock 4 and Xbox pads over USB and Bluetooth. Writing HID output reports ourselves would mean per-controller report formats, CRCs for Bluetooth and fighting the system's own driver for the device. Keeping the HLE free of host calls lets headless runs and tests use the same code.
 
+## 2026-11-20: Kraken features are added only when a package uses them
+
+While GTA V failed, its blocks seemed to hold tANS and run-length arrays. Decoders for both were written (from kraken-decode's and lztans's MIT-licensed descriptions and code), then removed: the real fault was the stored offset of blocks past 64 GiB, and with that fixed GTA V uses only the array types the decoder already had ([packages.md](packages.md)).
+
+Reason: code for a feature no package uses cannot be checked against real data or an oracle here (building lztans to run it was blocked), so it would be unverified code on the path every read takes. The guards that turn malformed Huffman descriptions into errors instead of panics stay.

@@ -82,12 +82,10 @@ impl Package {
     /// A PS5 "data-first" inner image: files first, compressed in blocks the
     /// NAPS layout maps, with the inner superblock in the last region.
     fn data_first_pfs(&self, outer: &Pfs, stored: Arc<dyn ReadAt + Send + Sync>) -> Result<Pfs> {
-        let entry = outer.lookup(NAPS_LAYOUT)?;
-        let file = outer.open_file_stored(entry.inode)?;
-        let layout = Arc::new(Layout::parse(&file.read_vec(0, file.len() as usize)?)?);
+        let inner = Self::inner_image(outer, stored)?;
+        let layout = inner.layout().clone();
         let superblock = layout.files[layout.file_count as usize - 1].offset;
-        let image: Arc<dyn ReadAt + Send + Sync> =
-            Arc::new(InnerImage::new(layout.clone(), stored));
+        let image: Arc<dyn ReadAt + Send + Sync> = Arc::new(inner);
         let sb = Superblock::read(&*image, superblock)?;
         if sb.dinode_block_count == 0 || !sb.is_flat() {
             return Err(Error::Unsupported(format!(
@@ -104,6 +102,20 @@ impl Package {
         let entry = outer.lookup(NAPS_LAYOUT)?;
         let file = outer.open_file_stored(entry.inode)?;
         Layout::parse(&file.read_vec(0, file.len() as usize)?)
+    }
+
+    /// The decompressed view of a PS5 package's `pfs_image.dat`.
+    pub fn ps5_inner_image(&self) -> Result<InnerImage> {
+        let outer = self.outer_pfs(&crate::keys::DEFAULT_PASSCODE)?;
+        let entry = outer.lookup(INNER_IMAGE)?;
+        Self::inner_image(&outer, outer.open_file_stored(entry.inode)?)
+    }
+
+    fn inner_image(outer: &Pfs, stored: Arc<dyn ReadAt + Send + Sync>) -> Result<InnerImage> {
+        let entry = outer.lookup(NAPS_LAYOUT)?;
+        let file = outer.open_file_stored(entry.inode)?;
+        let layout = Layout::parse(&file.read_vec(0, file.len() as usize)?)?;
+        Ok(InnerImage::new(Arc::new(layout), stored))
     }
 
     /// Writes the app's files below `dest`, which must not hold any of them yet,

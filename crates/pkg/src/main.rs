@@ -34,7 +34,12 @@ enum Command {
         passcode: Option<String>,
     },
     /// Prints the block map of a PS5 package's inner image.
-    Naps { package: PathBuf },
+    Naps {
+        package: PathBuf,
+        /// Decodes every block instead and counts the failures by message.
+        #[arg(long)]
+        verify: bool,
+    },
     /// Extracts the app's files into a new folder.
     Extract {
         package: PathBuf,
@@ -113,7 +118,11 @@ fn run(cli: Cli) -> pkg::Result<()> {
                 at += n as u64;
             }
         }
-        Command::Naps { package } => {
+        Command::Naps {
+            package,
+            verify: true,
+        } => verify_blocks(&Package::open(&package)?.ps5_inner_image()?),
+        Command::Naps { package, .. } => {
             let l = Package::open(&package)?.naps_layout(&DEFAULT_PASSCODE)?;
             println!("header:         {:02x?}", l.header);
             println!("compression:    {}", l.compression());
@@ -126,6 +135,13 @@ fn run(cli: Cli) -> pkg::Result<()> {
             println!("outer blocks:   {}", l.outer_blocks);
             println!("u2c groups:     {}", l.u2c.len());
             println!("records:        {}", l.records.len());
+            let mut flags = std::collections::BTreeMap::new();
+            for r in l.records.iter().filter(|r| !r.anchor) {
+                *flags.entry(r.flags).or_insert(0u64) += 1;
+            }
+            for (f, n) in flags {
+                println!("records with flags {f:#06x}: {n}");
+            }
             for (i, f) in l.files.iter().enumerate() {
                 println!("file {i:6}: {:#12x} kind {:#04x}", f.offset, f.kind);
             }
@@ -146,6 +162,54 @@ fn run(cli: Cli) -> pkg::Result<()> {
         }
     }
     Ok(())
+}
+
+fn verify_blocks(image: &pkg::InnerImage) {
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let layout = image.layout();
+    let blocks: Vec<(usize, u64)> = (0..layout.files.len() - 1)
+        .flat_map(|r| {
+            let (start, end, sparse) = layout.region(r);
+            let n = if sparse {
+                0
+            } else {
+                (end - start).div_ceil(pkg::naps::BLOCK_SIZE)
+            };
+            (0..n).map(move |i| (r, i))
+        })
+        .collect();
+    let next = AtomicUsize::new(0);
+    let failures: Mutex<BTreeMap<String, (u64, u64)>> = Mutex::default();
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(&(region, index)) = blocks.get(i) else {
+                        break;
+                    };
+                    if i.is_multiple_of(20000) {
+                        eprintln!("{i} of {} blocks", blocks.len());
+                    }
+                    if let Err(e) = image.decode_block(region, index) {
+                        let at = layout.region(region).0 + index * pkg::naps::BLOCK_SIZE;
+                        let mut f = failures.lock().unwrap();
+                        let entry = f.entry(e.to_string()).or_insert((0, at));
+                        entry.0 += 1;
+                        entry.1 = entry.1.min(at);
+                    }
+                }
+            });
+        }
+    });
+    let failures = failures.into_inner().unwrap();
+    println!("{} blocks decoded", blocks.len());
+    for (what, (count, first)) in &failures {
+        println!("{count:8} failed, first at {first:#x}: {what}");
+    }
 }
 
 fn passcode_or_default(passcode: Option<String>) -> pkg::Result<Passcode> {
