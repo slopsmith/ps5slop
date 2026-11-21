@@ -4489,15 +4489,14 @@ impl Metal {
         };
         let start = u[uconfig::GE_INDX_OFFSET];
         match draw {
-            Draw::Auto { .. } if rect && start != 0 => {
-                return Err("rectangle list with an index offset");
-            }
+            // gen5_vs_rect takes the index offset as its base instance.
             Draw::Auto { count, instances } if rect => unsafe {
-                enc.drawPrimitives_vertexStart_vertexCount_instanceCount(
+                enc.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
                     primitive,
                     0,
                     (count / 3 * 6) as usize,
                     instances.max(1) as usize,
+                    start as usize,
                 );
             },
             Draw::Indexed { .. } if rect => return Err("indexed rectangle list"),
@@ -5188,7 +5187,7 @@ fn rect_source(msl: &str) -> Option<String> {
         .map(|f| format!("    o.{f} = b.{f} + c.{f} - a.{f};\n"))
         .collect();
     Some(format!(
-        "{msl}\nvertex VsOut gen5_vs_rect(uint rv [[vertex_id]], uint iid [[instance_id]], {params}) {{\n    uint base = rv / 6 * 3;\n    uint k = (0x231210u >> ((rv % 6) * 4)) & 0xFu;\n    if (k < 3) return gen5_vs_body(base + k, iid{args});\n    VsOut a = gen5_vs_body(base, iid{args});\n    VsOut b = gen5_vs_body(base + 1, iid{args});\n    VsOut c = gen5_vs_body(base + 2, iid{args});\n    VsOut o = a;\n{combine}    return o;\n}}\n"
+        "{msl}\nvertex VsOut gen5_vs_rect(uint rv [[vertex_id]], uint first_iid [[instance_id]], uint rect_offset [[base_instance]], {params}) {{\n    uint iid = first_iid - rect_offset;\n    uint base = rect_offset + rv / 6 * 3;\n    uint k = (0x231210u >> ((rv % 6) * 4)) & 0xFu;\n    if (k < 3) return gen5_vs_body(base + k, iid{args});\n    VsOut a = gen5_vs_body(base, iid{args});\n    VsOut b = gen5_vs_body(base + 1, iid{args});\n    VsOut c = gen5_vs_body(base + 2, iid{args});\n    VsOut o = a;\n{combine}    return o;\n}}\n"
     ))
 }
 
