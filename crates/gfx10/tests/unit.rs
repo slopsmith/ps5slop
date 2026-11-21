@@ -738,6 +738,35 @@ fn samplers_indexed_by_a_buffer_dword_resolve() {
 }
 
 #[test]
+fn one_sampler_copied_into_other_registers_takes_one_slot() {
+    let code = [
+        0xBE98_0308, // s_mov_b32 s24, s8
+        0xBE99_0309, // s_mov_b32 s25, s9
+        0xBE9A_030A, // s_mov_b32 s26, s10
+        0xBE9B_030B, // s_mov_b32 s27, s11
+        0xF080_0F08,
+        0x0044_0000, // image_sample v[0:3], v[0:1], s[16:23], s[8:11] dmask:0xf dim:2D
+        0xF080_0F08,
+        0x00C4_0400, // image_sample v[4:7], v[0:1], s[16:23], s[24:27] dmask:0xf dim:2D
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 24, 24 << 1);
+    let samplers: Vec<_> = t
+        .resources
+        .iter()
+        .filter(|r| matches!(r, Resource::Sampler { .. }))
+        .collect();
+    assert_eq!(
+        samplers,
+        [&Resource::Sampler {
+            slot: 0,
+            source: Source::UserSgpr(8)
+        }]
+    );
+    compile(&t.msl);
+}
+
+#[test]
 fn flat_and_global_loads_read_guest_memory() {
     let code = [
         0xDC20_0000,

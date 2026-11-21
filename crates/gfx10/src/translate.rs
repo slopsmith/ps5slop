@@ -377,7 +377,7 @@ struct Tx<'a> {
     /// Descriptor register, dimension, source and access, as of the first
     /// instruction using it.
     textures: Vec<(u16, TextureKind, Source, Access)>,
-    samplers: Vec<(u16, Source)>,
+    samplers: Vec<Source>,
     attrs: BTreeMap<u8, Interp>,
     params: BTreeSet<u8>,
     mrts: u8,
@@ -3059,14 +3059,10 @@ impl<'a> Tx<'a> {
             .ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?;
         let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Sample)?;
         let s_source = self.descriptor_source(pc, m.ssamp as u16, 4)?;
-        let sm = match self
-            .samplers
-            .iter()
-            .position(|x| *x == (m.ssamp as u16, s_source.clone()))
-        {
+        let sm = match self.samplers.iter().position(|x| *x == s_source) {
             Some(i) => i,
             None => {
-                self.samplers.push((m.ssamp as u16, s_source));
+                self.samplers.push(s_source);
                 self.samplers.len() - 1
             }
         };
@@ -3383,7 +3379,7 @@ impl<'a> Tx<'a> {
                 access: *access,
             });
         }
-        for (i, (_, source)) in self.samplers.iter().enumerate() {
+        for (i, source) in self.samplers.iter().enumerate() {
             resources.push(Resource::Sampler {
                 slot: i as u8,
                 source: source.clone(),
