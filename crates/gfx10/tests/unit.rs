@@ -473,6 +473,76 @@ fn gds_appends_count_through_the_bound_global_data_share() {
     let t = compute(&code, 0, 0);
     assert!(t.gds);
     assert!(t.msl.contains("atomic_fetch_add_explicit(&gds["));
+    assert!(t.msl.contains("(m0 >> 16) + 8u"), "{}", t.msl);
+    compile(&t.msl);
+}
+
+#[test]
+fn bvh_intersection_reads_nodes_through_guest_memory() {
+    let code = [
+        0xF198_9F01,
+        0x0000_0004, // image_bvh_intersect_ray v[0:3], v[4:14], s[0:3]
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 4, 0);
+    assert!(
+        t.msl.contains(
+            "uint4 r = bvh_intersect(mem, mem_base, uint4(s0, s1, s2, s3), ulong(v4), F(v5)"
+        ),
+        "{}",
+        t.msl
+    );
+    assert!(t.msl.contains("v3 = r[3];"));
+    compile(&t.msl);
+}
+
+#[test]
+fn wave32_masks_are_one_sgpr() {
+    let code = [
+        0xBE80_3C6A, // s_and_saveexec_b32 s0, vcc_lo
+        0xD4C2_0002,
+        0x0002_0300, // v_cmp_eq_u32_e64 s2, v0, v1
+        0xD70F_0402,
+        0x0002_0300, // v_add_co_u32 v2, s4, v0, v1
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 0, 0);
+    assert!(!t.msl.contains("s3 = 0u"), "{}", t.msl);
+    assert!(!t.msl.contains("s5 = 0u"), "{}", t.msl);
+    compile(&t.msl);
+}
+
+#[test]
+fn one_wave64_group_talking_through_lds_runs_in_step() {
+    let code = [
+        0x7E02_0280, // v_mov_b32_e32 v1, 0
+        0xD834_0000,
+        0x0000_0001, // ds_write_b32 v1, v0
+        0xBF06_8000, // s_cmp_eq_u32 s0, 0
+        0xBF85_0001, // s_cbranch_scc1 1
+        0xD8D8_0004,
+        0x0200_0001, // ds_read_b32 v2, v1 offset:4
+        0x7D84_0480, // v_cmp_eq_u32_e32 vcc, 0, v2
+        0xBF86_0001, // s_cbranch_vccz 1
+        0xBF80_0000, // s_nop 0
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 1, 0);
+    assert!(
+        t.msl.contains("wave_any(scc, lockstep_vote, sgi)"),
+        "{}",
+        t.msl
+    );
+    assert!(
+        t.msl
+            .contains("wave_any((vcc_lo & 1u) != 0u, lockstep_vote, sgi)")
+    );
+    assert!(
+        t.msl
+            .matches("threadgroup_barrier(mem_flags::mem_threadgroup);")
+            .count()
+            >= 4
+    );
     compile(&t.msl);
 }
 

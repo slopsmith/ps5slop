@@ -346,13 +346,16 @@ struct Bound {
 
 /// Binding of the second guest memory window (reached through `Win.delta`).
 const SECOND_WINDOW: usize = 26;
+/// Binding of the third window (`Win.delta3`).
+const THIRD_WINDOW: usize = 30;
 
 /// The guest memory bound for a program and its `Win`: both windows' ranges,
 /// the second's GPU address minus the first's, and the range stores skip.
 struct Memory {
     buffer: Retained<Buffer>,
     second: Option<Retained<Buffer>>,
-    win: [u64; 7],
+    third: Option<Retained<Buffer>>,
+    win: [u64; 10],
 }
 
 struct Program {
@@ -490,6 +493,9 @@ pub struct Metal {
     /// Addresses of volumes a colour target was drawn to since a program last
     /// wrote the volume: sampling them reads the target.
     volume_older: std::collections::HashSet<u64>,
+    /// The last colour target with CMASK or DCC at each address, so a program
+    /// storing to it first applies a fast clear still pending there.
+    color_meta: HashMap<u64, ColorTarget>,
     /// Zero-filled stand-ins for depth-layout images no depth target backs.
     blank: HashMap<(Image, TextureKind), Retained<Texture>>,
     epoch: u64,
@@ -716,6 +722,7 @@ impl Metal {
             volumes: HashMap::new(),
             volume_sources: HashMap::new(),
             volume_older: Default::default(),
+            color_meta: HashMap::new(),
             blank: HashMap::new(),
             epoch: 0,
             detilers: HashMap::new(),
@@ -1503,6 +1510,11 @@ impl Metal {
     ) -> Option<(Retained<Texture>, MTLPixelFormat)> {
         let format = color_format(t.format)?;
         self.color_newer.insert(t.address);
+        if t.fast_clear.is_some() || t.dcc.is_some() {
+            self.color_meta.insert(t.address, *t);
+        } else {
+            self.color_meta.remove(&t.address);
+        }
         if self.volumes.contains_key(&t.address) {
             self.volume_older.insert(t.address);
         }
@@ -3211,6 +3223,17 @@ impl Metal {
             && t.texture.textureType() == MTLTextureType::Type2D
             && t.texture.width() as u32 == image.width
             && t.texture.height() as u32 == image.height
+            && (t.pixel_format == format || view_compatible(t.pixel_format, format))
+            && let Some(meta) = self.color_meta.get(&image.address).copied()
+        {
+            // Stores leave the blocks they touch uncompressed; the rest keep the clear.
+            let texture = t.texture.clone();
+            self.fast_clear(host, &meta, &texture);
+        }
+        if let Some(t) = self.targets.get(&image.address)
+            && t.texture.textureType() == MTLTextureType::Type2D
+            && t.texture.width() as u32 == image.width
+            && t.texture.height() as u32 == image.height
         {
             if t.pixel_format == format {
                 return Some(t.texture.clone());
@@ -3764,6 +3787,9 @@ impl Metal {
             if let Some(b) = &m.second {
                 enc.buffer(b, 0, SECOND_WINDOW);
             }
+            if let Some(b) = &m.third {
+                enc.buffer(b, 0, THIRD_WINDOW);
+            }
             enc.bytes(
                 m.win.as_ptr().cast(),
                 std::mem::size_of_val(&m.win),
@@ -3782,19 +3808,22 @@ impl Metal {
     }
 
     /// Windows over the largest region a program's user data points into and
-    /// over the GPU area (or the other way round), as programs read both.
+    /// over the GPU area (or the other way round), as programs read both, and
+    /// over the largest other region the user data points into.
     fn guest_window(&mut self, host: &dyn Host, user: &[u32], code: u64) -> Option<Memory> {
         let max = self.device.maxBufferLength() as u64 & !(PAGE - 1);
         let area = host.gpu_area();
         let in_area = |a: u64| area.is_some_and(|(s, e)| s <= a && a < e);
         let mut best = host.extent(code);
         let mut outside = best.filter(|&(lo, _)| !in_area(lo));
+        let mut pointed: Vec<(u64, u64, bool)> = Vec::new();
         for pair in user.windows(2) {
             for ptr in [
                 pair[0] as u64 | (pair[1] as u64) << 32,
                 pair[0] as u64 | ((pair[1] & 0xFFFF) as u64) << 32,
             ] {
                 if let Some((lo, hi)) = host.extent(ptr) {
+                    pointed.push((lo, hi, ptr >> 32 != 0));
                     if best.is_none_or(|(l, h)| hi - lo > h - l) {
                         best = Some((lo, hi));
                     }
@@ -3824,18 +3853,42 @@ impl Metal {
             }
             None => (region(self, (lo, hi)), None),
         };
+        // A word followed by 0 often only looks like a pointer: prefer ones above 4 GiB.
+        let third = pointed
+            .into_iter()
+            .filter(|&(l, _, _)| !in_area(l) && Some(l) != outside.map(|o| o.0) && l != lo)
+            .max_by_key(|&(l, h, wide)| (wide, h - l))
+            .and_then(|(l, h, _)| region(self, (l, h)));
         let (buffer, base) = first?;
         let (ro, ro_end) = outside.and_then(|(lo, _)| host.image(lo)).unwrap_or((0, 0));
-        let mut win = [base, base + buffer.length() as u64, 0, 0, 0, ro, ro_end];
+        let mut win = [
+            base,
+            base + buffer.length() as u64,
+            0,
+            0,
+            0,
+            ro,
+            ro_end,
+            0,
+            0,
+            0,
+        ];
         let second = second.map(|(b, base2)| {
             win[2] = base2;
             win[3] = base2 + b.length() as u64;
             win[4] = b.gpuAddress().wrapping_sub(buffer.gpuAddress());
             b
         });
+        let third = third.map(|(b, base3)| {
+            win[7] = base3;
+            win[8] = base3 + b.length() as u64;
+            win[9] = b.gpuAddress().wrapping_sub(buffer.gpuAddress());
+            b
+        });
         Some(Memory {
             buffer,
             second,
+            third,
             win,
         })
     }
@@ -3951,15 +4004,15 @@ impl Metal {
         let users = (s[sh::COMPUTE_PGM_RSRC2] >> 1) & 0x1F;
         let user =
             &s[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + sh::COMPUTE_USER_DATA_COUNT];
-        let program = self
-            .typed_program(host, state, Stage::Compute, address, users, false, 0, user)
-            .ok_or("compute program")?;
         self.note(|| {
             format!(
                 "compute {address:#x} groups {groups:?} user {:x?}",
                 &user[..users as usize]
             )
         });
+        let program = self
+            .typed_program(host, state, Stage::Compute, address, users, false, 0, user)
+            .ok_or("compute program")?;
         self.trace_user_memory(host, &user[..users as usize], false);
         let task = program.compute.as_ref().ok_or("compute pipeline")?;
         let pipeline = match task.poll() {
@@ -3983,7 +4036,8 @@ impl Metal {
                 m.second.as_ref().map(|b| Retained::as_ptr(b) as usize),
             );
             let win = m.win;
-            self.note(|| format!("      windows {a:#x} {b:x?} {win:x?}"));
+            let c = m.third.as_ref().map(|b| Retained::as_ptr(b) as usize);
+            self.note(|| format!("      windows {a:#x} {b:x?} {c:x?} {win:x?}"));
         }
         self.end_pass();
         let command = self.command();

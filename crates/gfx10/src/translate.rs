@@ -396,6 +396,11 @@ struct Tx<'a> {
     simd_lane: bool,
     /// The current DPP instruction leaves some lanes unwritten (`dpp_on`).
     dpp_lane_off: bool,
+    /// The program runs in wave32: lane masks a VALU instruction writes are one SGPR.
+    wave32: bool,
+    /// A compute group that is one wave64 and talks through LDS without `s_barrier`,
+    /// relying on its lanes running together: its two Metal SIMD groups are kept in step.
+    lockstep: bool,
     /// The body holds indexed VGPR accesses (`movrel`) to fill in.
     movrel: bool,
     ij_vgprs: BTreeMap<u16, Interp>,
@@ -439,9 +444,27 @@ impl<'a> Tx<'a> {
                 }
             }
         }
+        let wave32 = insts.iter().any(|(_, i)| {
+            let n = i.op.name;
+            n.contains("saveexec_b32")
+                || n.ends_with("_b32")
+                    && matches!(
+                        i.kind,
+                        Kind::Sop1 { sdst: 126, .. } | Kind::Sop2 { sdst: 126, .. }
+                    )
+        });
+        let lockstep = req.stage == Stage::Compute
+            && !wave32
+            && req.threads.iter().product::<u32>() == 64
+            && !insts.iter().any(|(_, i)| i.op.name == "s_barrier")
+            && insts
+                .iter()
+                .any(|(_, i)| matches!(i.kind, Kind::Ds { gds: false, .. }));
         Tx {
             req,
             insts,
+            wave32,
+            lockstep,
             has_barrier: false,
             guarded: false,
             body: String::new(),
@@ -588,6 +611,18 @@ impl<'a> Tx<'a> {
         })
     }
 
+    // Assigns a VALU lane mask (this thread's bit) to `dst`: an SGPR pair, or one in wave32.
+    fn set_mask(&mut self, dst: u16, bit: &str) -> String {
+        self.written(dst);
+        let lo = self.s(dst);
+        if self.wave32 {
+            return format!(" {lo} = uint({bit});");
+        }
+        self.written(dst + 1);
+        let hi = self.s(dst + 1);
+        format!(" {lo} = uint({bit}); {hi} = 0u;")
+    }
+
     fn set64(&mut self, code: u16, value: &str) {
         if code == src::NULL {
             return;
@@ -652,7 +687,14 @@ impl<'a> Tx<'a> {
             self.pc = *pc;
             let text = print(inst, Syntax { wave64: true });
             self.line(&format!("// {text}"));
+            let step = self.lockstep && matches!(inst.kind, Kind::Ds { gds: false, .. });
+            if step {
+                self.line(LOCKSTEP_BARRIER);
+            }
             self.inst(*pc, inst)?;
+            if step {
+                self.line(LOCKSTEP_BARRIER);
+            }
         }
         self.close_guard();
         self.insts = insts;
@@ -776,6 +818,14 @@ impl<'a> Tx<'a> {
             n if n.starts_with("s_cbranch") => {
                 let t = branch_target(pc, inst).unwrap();
                 let cond = match n {
+                    "s_cbranch_scc0" | "s_cbranch_scc1" if self.lockstep => {
+                        let any = "wave_any(scc, lockstep_vote, sgi)";
+                        if n.ends_with('0') {
+                            format!("!{any}")
+                        } else {
+                            any.to_string()
+                        }
+                    }
                     "s_cbranch_scc0" => "!scc".to_string(),
                     "s_cbranch_scc1" => "scc".to_string(),
                     "s_cbranch_vccz" | "s_cbranch_vccnz" | "s_cbranch_execz"
@@ -785,7 +835,9 @@ impl<'a> Tx<'a> {
                         } else {
                             self.s(126)
                         };
-                        let any = if self.req.stage == Stage::Compute {
+                        let any = if self.lockstep {
+                            format!("wave_any(({mask} & 1u) != 0u, lockstep_vote, sgi)")
+                        } else if self.req.stage == Stage::Compute {
                             format!("simd_any(({mask} & 1u) != 0u)")
                         } else {
                             format!("(({mask} & 1u) != 0u)")
@@ -828,6 +880,9 @@ impl<'a> Tx<'a> {
                 format!("if (++back > {MAX_BACK_BRANCHES}u) {{ discard_fragment(); return o; }} ")
             }
             Stage::Vertex => format!("if (++back > {MAX_BACK_BRANCHES}u) {{ return o; }} "),
+            Stage::Compute if self.lockstep => {
+                "if (lockstep_leave(guard, ++back, tg_bail)) { return; } ".into()
+            }
             Stage::Compute if self.has_barrier => {
                 "if (guard_leave(guard, ++back, bail_at, tg_bail)) { return; } ".into()
             }
@@ -1854,10 +1909,7 @@ impl<'a> Tx<'a> {
         }
         write!(s, " if (on) {d} = uint(r);").unwrap();
         if dst != src::NULL {
-            self.written(dst);
-            self.written(dst + 1);
-            let (lo, hi) = (self.s(dst), self.s(dst + 1));
-            write!(s, " {lo} = uint(k); {hi} = 0u;").unwrap();
+            s.push_str(&self.set_mask(dst, "k"));
         }
         s.push_str(" }");
         self.line(&s);
@@ -1902,10 +1954,7 @@ impl<'a> Tx<'a> {
         );
         let dst = v.sdst.map_or(src::NULL, |s| s as u16);
         if dst != src::NULL {
-            self.written(dst);
-            self.written(dst + 1);
-            let (slo, shi) = (self.s(dst), self.s(dst + 1));
-            write!(s, " {slo} = uint(k); {shi} = 0u;").unwrap();
+            s.push_str(&self.set_mask(dst, "k"));
         }
         s.push_str(" }");
         self.line(&s);
@@ -2105,11 +2154,9 @@ impl<'a> Tx<'a> {
         if dst == src::NULL {
             return Ok(());
         }
-        self.written(dst);
-        self.written(dst + 1);
-        let (lo, hi) = (self.s(dst), self.s(dst + 1));
+        let set = self.set_mask(dst, "c");
         self.line(&format!(
-            "{{ bool c = ({cond}) && ({e} & 1u) != 0u; {lo} = uint(c); {hi} = 0u; }}"
+            "{{ bool c = ({cond}) && ({e} & 1u) != 0u;{set} }}"
         ));
         Ok(())
     }
@@ -2627,7 +2674,8 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
-    // `ds_append`/`ds_consume`: a counter at M0's base plus `offset`. Lanes
+    // `ds_append`/`ds_consume`: a counter at M0's base plus `offset` (for the GDS,
+    // the base is M0's high half: Astro Bot's packets clear its counters there). Lanes
     // are threads here (`v_mbcnt` gives 0), so each thread counts itself and
     // gets its own previous value; a wave on hardware adds its active lanes at once.
     fn ds_counter(
@@ -2644,7 +2692,7 @@ impl<'a> Tx<'a> {
         let stmt = if gds {
             self.gds = true;
             format!(
-                "{{ uint a = (({m0} & 0xffffu) + {offset}u) & 0xfffcu; {d} = atomic_fetch_{op}_explicit(&gds[a >> 2], 1u, memory_order_relaxed); }}"
+                "{{ uint a = (({m0} >> 16) + {offset}u) & 0xfffcu; {d} = atomic_fetch_{op}_explicit(&gds[a >> 2], 1u, memory_order_relaxed); }}"
             )
         } else {
             if self.req.stage != Stage::Compute {
@@ -2969,6 +3017,9 @@ impl<'a> Tx<'a> {
         if m.a16 || m.tfe || m.lwe {
             return Err(err(pc, "unsupported image modifiers"));
         }
+        if name.starts_with("image_bvh") {
+            return self.bvh(m, name.starts_with("image_bvh64"));
+        }
         let kind = match m.dim {
             1 => TextureKind::Tex2d,
             5 => TextureKind::Tex2dArray,
@@ -3255,6 +3306,38 @@ impl<'a> Tx<'a> {
         };
         if m.glc {
             write!(s, " {d} = {conv}(r.x);").unwrap();
+        }
+        self.guard(&s);
+        Ok(())
+    }
+
+    fn bvh(&mut self, m: &Mimg, wide: bool) -> Result<(), TranslateError> {
+        self.mem = true;
+        let n = if wide { 12 } else { 11 };
+        let a: Vec<String> = (0..n)
+            .map(|i| {
+                self.v(if m.nsa > 0 {
+                    m.vaddr[i] as u16
+                } else {
+                    m.vaddr[0] as u16 + i as u16
+                })
+            })
+            .collect();
+        let node = if wide {
+            format!("(ulong({}) | (ulong({}) << 32))", a[0], a[1])
+        } else {
+            format!("ulong({})", a[0])
+        };
+        let r = &a[n - 10..];
+        let d: Vec<String> = (0..4).map(|i| self.s(m.srsrc as u16 + i)).collect();
+        let mut s = format!(
+            "uint4 r = bvh_intersect(mem, mem_base, uint4({}, {}, {}, {}), {node}, F({}), \
+             float3(F({}), F({}), F({})), float3(F({}), F({}), F({})), float3(F({}), F({}), F({})));",
+            d[0], d[1], d[2], d[3], r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9]
+        );
+        for i in 0..4 {
+            let v = self.v(m.vdata as u16 + i);
+            write!(s, " {v} = r[{i}];").unwrap();
         }
         self.guard(&s);
         Ok(())
@@ -3575,12 +3658,16 @@ impl<'a> Tx<'a> {
                     ""
                 }
                 .to_string();
-                if self.guarded && self.has_barrier {
+                if self.guarded && (self.has_barrier || self.lockstep) {
                     lds.push_str("    threadgroup bool tg_bail;\n    uint bail_at = 0;\n    if (all(lid == 0)) tg_bail = false;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n");
                 }
+                let mut params = entry_params.join(", ");
+                if self.lockstep {
+                    lds.push_str("    threadgroup uint lockstep_vote[2];\n");
+                    params.push_str(", ushort sgi [[simdgroup_index_in_threadgroup]]");
+                }
                 out.push_str(&format!(
-                    "kernel void gen5_cs({}, uint3 lid [[thread_position_in_threadgroup]], uint3 gid [[threadgroup_position_in_grid]]) {{\n{lds}{init}{}}}\n",
-                    entry_params.join(", "),
+                    "kernel void gen5_cs({params}, uint3 lid [[thread_position_in_threadgroup]], uint3 gid [[threadgroup_position_in_grid]]) {{\n{lds}{init}{}}}\n",
                     self.body
                 ));
             }
@@ -3724,6 +3811,15 @@ static inline bool guard_stop(device atomic_uint* g, uint back) {
     return stop;
 }
 
+// The group leaves together once any thread's loop budget is spent (lockstep programs).
+static inline bool lockstep_leave(device atomic_uint* g, uint back, threadgroup bool& tg_bail) {
+    if (guard_stop(g, back)) tg_bail = true;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    bool leave = tg_bail;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return leave;
+}
+
 static inline bool guard_leave(device atomic_uint* g, uint back, thread uint& bail_at, threadgroup bool& tg_bail) {
     if (bail_at == 0u && guard_stop(g, back)) {
         bail_at = back;
@@ -3732,6 +3828,8 @@ static inline bool guard_leave(device atomic_uint* g, uint back, thread uint& ba
     return bail_at != 0u && back - bail_at > GUARD_UNIT;
 }
 "#;
+
+const LOCKSTEP_BARRIER: &str = "threadgroup_barrier(mem_flags::mem_threadgroup);";
 
 const PRELUDE: &str = r#"#include <metal_stdlib>
 using namespace metal;
@@ -3806,21 +3904,92 @@ static inline half half_rtz(float x) {
     return h;
 }
 
-// `mem` covers [base, end); a second window over [base2, end2) lies
-// `delta` bytes from `mem` in the GPU's address space. Stores skip [ro, ro_end).
-struct Win { ulong base; ulong end; ulong base2; ulong end2; long delta; ulong ro; ulong ro_end; };
+// `mem` covers [base, end); windows over [base2, end2) and [base3, end3) lie `delta`
+// and `delta3` bytes from `mem` in the GPU's address space. Stores skip [ro, ro_end).
+struct Win { ulong base; ulong end; ulong base2; ulong end2; long delta; ulong ro; ulong ro_end; ulong base3; ulong end3; long delta3; };
 #define OOB_OFF (-0x7fffffffffffffffl - 1l)
 
 // Byte offset from `mem` of guest address `a`, or OOB_OFF outside both windows.
 static inline long goff(Win w, ulong a) {
     if (a >= w.base && a < w.end) return long(a - w.base);
     if (a >= w.base2 && a < w.end2) return long(a - w.base2) + w.delta;
+    if (a >= w.base3 && a < w.end3) return long(a - w.base3) + w.delta3;
     return OOB_OFF;
 }
 
 static inline uint ld32(device const uchar* mem, Win w, ulong addr) {
     long o = goff(w, addr);
     return o == OOB_OFF ? 0u : *(device const uint*)(mem + o);
+}
+
+// image_bvh_intersect_ray as Mesa radv's software emulation states it. Box nodes
+// (types 4, 5) give the children the ray enters, nearest first; triangles (t, det, i, j).
+static inline uint4 bvh_intersect(device const uchar* mem, Win w, uint4 d, ulong node, float tmax, float3 o, float3 dir, float3 inv) {
+    ulong a = ((ulong(d.x) | (ulong(d.y & 0xffu) << 32)) << 8) + ((node & ~7ul) << 3);
+    uint type = uint(node) & 7u;
+    if (type == 4u || type == 5u) {
+        float4 dist = float4(INFINITY);
+        uint4 child = uint4(0xffffffffu);
+        inv = clamp(inv, float3(-FLT_MAX), float3(FLT_MAX));
+        for (uint i = 0u; i < 4u; i++) {
+            float3 lo, hi;
+            if (type == 5u) {
+                ulong b = a + 16ul + 24ul * i;
+                lo = float3(F(ld32(mem, w, b)), F(ld32(mem, w, b + 4ul)), F(ld32(mem, w, b + 8ul)));
+                hi = float3(F(ld32(mem, w, b + 12ul)), F(ld32(mem, w, b + 16ul)), F(ld32(mem, w, b + 20ul)));
+            } else {
+                ulong b = a + 16ul + 12ul * i;
+                half2 h0 = as_type<half2>(ld32(mem, w, b));
+                half2 h1 = as_type<half2>(ld32(mem, w, b + 4ul));
+                half2 h2 = as_type<half2>(ld32(mem, w, b + 8ul));
+                lo = float3(float(h0.x), float(h0.y), float(h1.x));
+                hi = float3(float(h1.y), float(h2.x), float(h2.y));
+            }
+            float3 b0 = (lo - o) * inv, b1 = (hi - o) * inv;
+            float3 near = min(b0, b1), far = max(b0, b1);
+            float t0 = max(max(near.x, near.y), near.z);
+            float t1 = min(min(far.x, far.y), far.z);
+            if (!isnan(lo.x) && t1 >= max(0.0f, t0) && t0 < tmax) {
+                dist[i] = t0;
+                child[i] = ld32(mem, w, a + 4ul * i);
+            }
+        }
+        if ((d.y >> 31) != 0u) {
+            const uint2 pairs[5] = { uint2(0, 1), uint2(2, 3), uint2(0, 2), uint2(1, 3), uint2(1, 2) };
+            for (uint p = 0u; p < 5u; p++) {
+                uint x = pairs[p].x, y = pairs[p].y;
+                if (dist[y] < dist[x]) {
+                    float td = dist[x]; dist[x] = dist[y]; dist[y] = td;
+                    uint tc = child[x]; child[x] = child[y]; child[y] = tc;
+                }
+            }
+        }
+        return child;
+    }
+    if (type > 3u) return uint4(0xffffffffu);
+    float3 v[3];
+    for (uint i = 0u; i < 3u; i++) {
+        ulong b = a + 12ul * i;
+        v[i] = float3(F(ld32(mem, w, b)), F(ld32(mem, w, b + 4ul)), F(ld32(mem, w, b + 8ul))) - o;
+    }
+    // Watertight test (Woop, Benthin and Wald, JCGT 2013), as radv does it.
+    float3 ad = abs(dir);
+    uint kz = ad.x >= ad.y ? (ad.x >= ad.z ? 0u : 2u) : (ad.y >= ad.z ? 1u : 2u);
+    uint kx = (kz + 1u) % 3u, ky = (kx + 1u) % 3u;
+    if (dir[kz] < 0.0f) { uint t = kx; kx = ky; ky = t; }
+    float sz = 1.0f / dir[kz], sx = dir[kx] * sz, sy = dir[ky] * sz;
+    float ax = v[0][kx] - sx * v[0][kz], ay = v[0][ky] - sy * v[0][kz];
+    float bx = v[1][kx] - sx * v[1][kz], by = v[1][ky] - sy * v[1][kz];
+    float cx = v[2][kx] - sx * v[2][kz], cy = v[2][ky] - sy * v[2][kz];
+    float u = cx * by - cy * bx, vv = ax * cy - ay * cx, ww = bx * ay - by * ax;
+    bool back = u < 0.0f || vv < 0.0f || ww < 0.0f;
+    bool front = u > 0.0f || vv > 0.0f || ww > 0.0f;
+    if (!(back && front)) {
+        float det = u + vv + ww;
+        float t = u * sz * v[0][kz] + vv * sz * v[1][kz] + ww * sz * v[2][kz];
+        if (!(sign(det) * t < 0.0f)) return uint4(U(t), U(det), U(vv), U(ww));
+    }
+    return uint4(U(INFINITY), U(1.0f), 0u, 0u);
 }
 
 // Byte offset into the memory buffer of a buffer element, or OOB_OFF when out of range.
@@ -4139,7 +4308,16 @@ static inline void buffer_store_format(device uchar* mem, Win mem_base, uint4 vs
 
 "#;
 
-const LDS_PRELUDE: &str = r#"static inline uint lds_rmw_add(threadgroup uint* lds, uint a, uint v) {
+const LDS_PRELUDE: &str = r#"// A branch vote over a wave64 group run as two SIMD groups (lockstep programs).
+static inline bool wave_any(bool x, threadgroup uint* vote, ushort sgi) {
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    bool a = simd_any(x);
+    if (simd_is_first()) vote[sgi & 1] = a ? 1u : 0u;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return (vote[0] | vote[1]) != 0u;
+}
+
+static inline uint lds_rmw_add(threadgroup uint* lds, uint a, uint v) {
     if (a >= LDS_BYTES) return 0u;
     return uint(atomic_fetch_add_explicit((threadgroup atomic_uint*)&lds[a >> 2], v, memory_order_relaxed));
 }
