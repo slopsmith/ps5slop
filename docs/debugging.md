@@ -172,3 +172,14 @@ A NID is a hash of the symbol name, so a name can be confirmed by hashing guesse
 - Runs that share the default data folder change each other's remembered menu state and saves. Give each run its own `--data DIR`.
 - Kill earlier runs before reusing a log file: an older process still writes into a truncated file.
 - Another process's GPU fault resets the GPU for everyone: Metal then reports our command buffers as `Discarded (victim of GPU error/recovery)` and soon `Ignored (for causing prior/excessive GPU errors)`, and the screen freezes on the last frame while the guest runs on. Grep a log for `command buffer failed` before trusting a run, especially while other agents run titles.
+
+## GTA V to the prologue
+
+A route that worked headless on 2026-11-21 with a fresh `--data` folder, times from start, `press` through the control socket (`press cross` holds 400 ms):
+
+1. About 36 s: the title screen ("Continue"): `press cross`.
+2. About 46 s: the language picker: `press cross`. About 55 s: Display Calibration: `press cross`.
+3. About 64 s: the landing page: `press r1`, and again at about 72 s, to the STORY tab ("Resume Story"). About 78 s: `press cross`.
+4. The "Entering Story Mode" loading screen runs to about 130 s, then the card "Ludendorff, North Yankton, nine years ago." and, at about 175 s, gameplay: HUD, minimap, "Go to the guard.". The picture is very dark; raising levels (for example to 0 to 10%) shows the scene.
+
+`press lup 2000` and `press rright 600` move and turn the player (watch the minimap arrow). The times are loose: wait for each screen with `shot` rather than trusting them.

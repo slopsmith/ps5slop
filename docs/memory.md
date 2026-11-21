@@ -47,6 +47,8 @@ Our choices, in `crates/ps5slop` and `crates/hle`, until real titles tell us oth
 | `0x5_0000_0000 ..` | Stacks of threads made by `pthread_create`, 1 MiB each |
 | `0x7_0001_0000 ..` | Each thread's static TLS and thread control block (errno at the thread pointer + `0x800`) |
 | `0x8_0000_0000 ..` | Modules (`.prx`), one after another |
+| `0x10_0000_0000 .. 0x11_0000_0000` | Left to fixed maps: GTA V puts its streaming arena at `0x10_0000_0000` unasked ([decisions.md](decisions.md)) |
+| `0x11_0000_0000 ..` | Direct memory, flexible memory, reservations and `mmap` without a fixed address, searched upward; the GPU area window covers `0x10_0000_0000..0x15_0000_0000` |
 | `0x20_0000_0000 ..` | The host heap: memory host functions hand to the guest (`strdup`, `fopen`'s FILE handles, `getenv` strings), grown 1 MiB at a time |
 | `0xFE_0000_0000 .. 0xFF_0000_0000` | Reserved for the JIT's runtime in the VM's physical address space; never guest memory (see [jit.md](jit.md)) |
 | `0xFF_0000_0000 ..` | The HLE trap region, one 16-byte slot per imported function |
