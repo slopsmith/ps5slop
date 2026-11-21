@@ -439,3 +439,7 @@ The command processor now stops at a `REWIND` until the CPU marks it valid and t
 
 Landing `WRITE_DATA` on the GPU's timeline (a blit into the guest-memory buffer, so dispatches after it see the value) was tried for GTA V's culling queue and dropped: it did not change GTA V's stall and Minecraft's title fell from 56 to 43 flips a second, because every such write makes the renderer wait before it next reads guest memory. Writes stay queued until the queue drains, which is known to be wrong for a dispatch that reads what a write before it set.
 
+## 2026-11-21: GTA V's add-on entitlements are reported as installed
+
+`sceNpEntitlementAccess` reports GTA V's three Story Mode add-on labels as installed, so the game counts Story Mode as owned. Reason: the PS5 disc and store versions ship Story Mode as an add-on of the base package, and without it the game stops at a purchase screen. vic agreed (2026-11-21); the game's own files are all there, nothing is unlocked that the package lacks.
+

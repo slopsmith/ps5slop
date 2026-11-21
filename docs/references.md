@@ -105,7 +105,7 @@ ps5slop is GPL-2.0-or-later.
 - **Copying code** is fine from MIT, BSD, ISC, zlib and GPL-2.0-or-later sources, keeping their notices.
 - **GPL-2.0-only** code (rps5e, AnyPS5, and conservatively any project whose LICENSE is bare GPLv2 text with no "or later" in its headers) can be copied, but it turns the whole project GPL-2.0-only. Ask vic first.
 - **Apache-2.0, GPL-3.0, LGPL-3.0** code is incompatible with GPLv2. Copying it forces the combined work to GPLv3. This also matters for dependencies we link statically, for example SPIRV-Cross (Apache-2.0). Rust crates under `MIT OR Apache-2.0` are fine: we take them under MIT.
-- **No license** means all rights reserved: read only.
+- **No license** means all rights reserved: read only. Facts taken from such a project and written into our own code are fine (vic, 2026-11-21, for prosper's AGC notes).
 - **Tables are a provenance problem, not only a license one.** Several emulators and SDKs carry symbol name lists, NID databases and stub lists generated from decrypted Sony modules (for example the payload SDK's `sce_stubs`, `aerolib.csv`, ps4libdoc). We never import those, whatever their license. See [legal.md](legal.md).
 
 ## Prior art
