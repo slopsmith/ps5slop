@@ -241,12 +241,23 @@ struct Target {
 }
 
 struct Bound {
-    memory: Option<(Retained<Buffer>, u64)>,
+    memory: Option<Memory>,
     gds: Option<Retained<Buffer>>,
     /// Dword 0 of each sampler slot's S#, by slot.
     sampler_words: Vec<(usize, u32)>,
     textures: Vec<(usize, Retained<Texture>)>,
     samplers: Vec<(usize, Retained<ProtocolObject<dyn MTLSamplerState>>)>,
+}
+
+/// Binding of the second guest memory window (reached through `Win.delta`).
+const SECOND_WINDOW: usize = 26;
+
+/// The guest memory bound for a program and its `Win`: both windows' ranges
+/// and the second's GPU address minus the first's.
+struct Memory {
+    buffer: Retained<Buffer>,
+    second: Option<Retained<Buffer>>,
+    win: [u64; 5],
 }
 
 struct Program {
@@ -257,6 +268,8 @@ struct Program {
     translated: Translated,
     /// The `user(locnN)` locations a pixel program reads flat.
     flat: Vec<u32>,
+    /// Texture slots declared `<int>`.
+    sint_textures: u32,
 }
 
 /// What a program is translated for besides its code and registers.
@@ -892,6 +905,9 @@ impl Metal {
         if target {
             usage |= MTLTextureUsage::RenderTarget;
         }
+        if atomic_capable(format) {
+            usage |= MTLTextureUsage::ShaderAtomic;
+        }
         if is_compressed(format) {
             usage = MTLTextureUsage::ShaderRead;
         }
@@ -1098,16 +1114,14 @@ impl Metal {
         {
             let tex = &t.texture;
             if tex.width() as u32 == image.width && tex.height() as u32 == image.height {
-                let found = if t.pixel_format == format {
-                    Some(tex.clone())
-                } else if view_compatible(t.pixel_format, format) {
-                    tex.newTextureViewWithPixelFormat(format)
-                } else {
-                    self.report(format!("render target at {:#x} ({:?}) cannot be viewed as {format:?}", image.address, t.pixel_format));
-                    None
-                };
-                self.note(|| format!("      {:#x} from a render target", image.address));
-                return found;
+                // Memory reused for another surface: read guest memory below.
+                if t.pixel_format == format || view_compatible(t.pixel_format, format) {
+                    let found = if t.pixel_format == format { Some(tex.clone()) } else { tex.newTextureViewWithPixelFormat(format) };
+                    self.note(|| format!("      {:#x} from a render target", image.address));
+                    return found;
+                }
+                let have = t.pixel_format;
+                self.note(|| format!("      {:#x}: the render target there ({have:?}) cannot be viewed as {format:?}", image.address));
             }
         }
         if let Some((epoch, tex)) = self.images.get(&(image, kind))
@@ -1478,6 +1492,7 @@ impl Metal {
                             },
                             function,
                             flat: flat_locations(&translated.msl),
+                            sint_textures: variant.sint_textures,
                             translated,
                         })
                     })
@@ -1715,6 +1730,85 @@ impl Metal {
         true
     }
 
+    /// Applies a colour fast clear made through `t`'s CMASK or DCC, judged by
+    /// its first dword, which is then marked expanded (see gpu.md).
+    fn fast_clear(&mut self, host: &dyn Host, t: &ColorTarget, tex: &Texture) {
+        let mut word = [0u8; 4];
+        if let Some((cmask, words)) = t.fast_clear {
+            self.settle();
+            if host.read(cmask, &mut word) && u32::from_le_bytes(word) & 0xF == 0 {
+                host.write(cmask, &(u32::from_le_bytes(word) | 0xF).to_le_bytes());
+                self.fill_raw(t, tex, words);
+                self.note(|| format!("      color {:#x} fast-cleared through CMASK at {cmask:#x} to {words:x?}", t.address));
+            }
+        }
+        if let Some(dcc) = t.dcc {
+            self.settle();
+            if !host.read(dcc, &mut word) {
+                return;
+            }
+            let code = u32::from_le_bytes(word);
+            let colour = match code {
+                0x0000_0000 => [0.0, 0.0, 0.0, 0.0],
+                0x4040_4040 => [0.0, 0.0, 0.0, 1.0],
+                0x8080_8080 => [1.0, 1.0, 1.0, 0.0],
+                0xC0C0_C0C0 => [1.0, 1.0, 1.0, 1.0],
+                0x2020_2020 => [f64::NAN; 4],
+                _ => return,
+            };
+            host.write(dcc, &u32::MAX.to_le_bytes());
+            if colour[0].is_nan() {
+                let words = t.fast_clear.map_or([0; 2], |f| f.1);
+                self.fill_raw(t, tex, words);
+            } else {
+                self.fill_colour(t, tex, colour);
+            }
+            self.note(|| format!("      color {:#x} fast-cleared through DCC at {dcc:#x} with code {code:#x}", t.address));
+        }
+    }
+
+    fn target_slice(t: &ColorTarget, tex: &Texture) -> usize {
+        if tex.textureType() == MTLTextureType::Type2DArray { t.slice as usize } else { 0 }
+    }
+
+    /// Fills `tex` with the raw bits of `words` per texel (up to 8 bytes).
+    fn fill_raw(&mut self, t: &ColorTarget, tex: &Texture, words: [u32; 2]) {
+        let Some(bpp) = texel_bytes(tex.pixelFormat()).filter(|&b| b <= 8) else { return };
+        let (w, h) = (tex.width(), tex.height());
+        let pixel: Vec<u8> = words.iter().flat_map(|x| x.to_le_bytes()).take(bpp).collect();
+        let Some((buf, offset)) = self.scratch(w * h * bpp) else { return };
+        // SAFETY: the scratch range is fresh shared memory of w * h * bpp bytes.
+        let dst = unsafe { std::slice::from_raw_parts_mut(buf.contents().as_ptr().cast::<u8>().add(offset), w * h * bpp) };
+        for p in dst.chunks_exact_mut(bpp) {
+            p.copy_from_slice(&pixel);
+        }
+        self.end_pass();
+        let command = self.command();
+        let Some(blit) = command.blitCommandEncoder() else { return };
+        unsafe {
+            blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
+                &buf, offset, w * bpp, w * h * bpp, MTLSize { width: w, height: h, depth: 1 }, tex, Self::target_slice(t, tex), 0, MTLOrigin { x: 0, y: 0, z: 0 },
+            );
+        }
+        blit.endEncoding();
+    }
+
+    /// Clears `tex` to `colour` with a render pass of its own.
+    fn fill_colour(&mut self, t: &ColorTarget, tex: &Texture, colour: [f64; 4]) {
+        self.end_pass();
+        let command = self.command();
+        let pass = MTLRenderPassDescriptor::new();
+        let att = unsafe { pass.colorAttachments().objectAtIndexedSubscript(0) };
+        att.setTexture(Some(tex));
+        att.setSlice(Self::target_slice(t, tex));
+        att.setLoadAction(MTLLoadAction::Clear);
+        att.setStoreAction(MTLStoreAction::Store);
+        att.setClearColor(MTLClearColor { red: colour[0], green: colour[1], blue: colour[2], alpha: colour[3] });
+        if let Some(enc) = command.renderCommandEncoderWithDescriptor(&pass) {
+            enc.endEncoding();
+        }
+    }
+
     /// The depth texture at `d`'s address; new ones start cleared.
     fn depth_texture(&mut self, d: &DepthTarget, width: u32, height: u32) -> Option<(Retained<Texture>, MTLPixelFormat, bool)> {
         let format = match (d.format, d.stencil) {
@@ -1890,9 +1984,10 @@ impl Metal {
             if view_compatible(t.pixel_format, format) {
                 return t.texture.newTextureViewWithPixelFormat(format);
             }
+            // Memory reused for another surface: the old contents are dead.
             let have = t.pixel_format;
-            self.report(format!("image at {:#x} ({have:?}) cannot be viewed as {format:?}", image.address));
-            return None;
+            self.note(|| format!("      image at {:#x} ({have:?}) replaced by a {format:?} one", image.address));
+            self.targets.remove(&image.address);
         }
         let texture = self.new_texture(format, image.width, image.height, true)?;
         if let Some(mode) = image.tile
@@ -1999,7 +2094,11 @@ impl Metal {
                 desc.setArrayLength(d);
             }
         }
-        desc.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::ShaderWrite | MTLTextureUsage::PixelFormatView);
+        let mut usage = MTLTextureUsage::ShaderRead | MTLTextureUsage::ShaderWrite | MTLTextureUsage::PixelFormatView;
+        if atomic_capable(format) {
+            usage |= MTLTextureUsage::ShaderAtomic;
+        }
+        desc.setUsage(usage);
         desc.setStorageMode(MTLStorageMode::Shared);
         let t = self.device.newTextureWithDescriptor(&desc)?;
         let row = w * texel_bytes(format)?;
@@ -2102,7 +2201,23 @@ impl Metal {
                         self.report(format!("{kind:?} textures with {access:?} access not supported"));
                         return None;
                     }
-                    let tex = if access != Access::Sample {
+                    let tex = if access == Access::Atomic {
+                        let sint = program.sint_textures >> slot & 1 != 0;
+                        let want = if sint { MTLPixelFormat::R32Sint } else { MTLPixelFormat::R32Uint };
+                        if image.address == 0 || image.kind < 8 {
+                            None
+                        } else {
+                            self.storage_image(host, image, kind).and_then(|t| {
+                                if t.pixelFormat() == want {
+                                    Some(t)
+                                } else if atomic_capable(t.pixelFormat()) {
+                                    t.newTextureViewWithPixelFormat(want)
+                                } else {
+                                    None
+                                }
+                            })
+                        }
+                    } else if access != Access::Sample {
                         if image.address == 0 || image.kind < 8 { None } else { self.storage_image(host, image, kind) }
                     } else if image.address == 0 || image.kind < 8 {
                         self.null_texture(kind)
@@ -2136,9 +2251,12 @@ impl Metal {
             }
         }
         enc.bytes(data.as_ptr().cast(), data.len() * 4, binding::USER as usize);
-        if let Some((buf, base)) = &bound.memory {
-            enc.buffer(buf, 0, binding::MEM as usize);
-            enc.bytes((base as *const u64).cast(), 8, binding::MEM_BASE as usize);
+        if let Some(m) = &bound.memory {
+            enc.buffer(&m.buffer, 0, binding::MEM as usize);
+            if let Some(b) = &m.second {
+                enc.buffer(b, 0, SECOND_WINDOW);
+            }
+            enc.bytes(m.win.as_ptr().cast(), std::mem::size_of_val(&m.win), binding::MEM_BASE as usize);
         }
         if let Some(gds) = &bound.gds {
             enc.buffer(gds, 0, binding::GDS as usize);
@@ -2151,31 +2269,52 @@ impl Metal {
         }
     }
 
-    /// A window over the guest memory a program's user data points into,
-    /// and the guest address of its first byte.
-    fn guest_window(&mut self, host: &dyn Host, user: &[u32], code: u64) -> Option<(Retained<Buffer>, u64)> {
-        let max = self.device.maxBufferLength() as u64;
+    /// Windows over the largest region a program's user data points into and
+    /// over the GPU area (or the other way round), as programs read both.
+    fn guest_window(&mut self, host: &dyn Host, user: &[u32], code: u64) -> Option<Memory> {
+        let max = self.device.maxBufferLength() as u64 & !(PAGE - 1);
+        let area = host.gpu_area();
+        let in_area = |a: u64| area.is_some_and(|(s, e)| s <= a && a < e);
         let mut best = host.extent(code);
+        let mut outside = best.filter(|&(lo, _)| !in_area(lo));
         for pair in user.windows(2) {
             for ptr in [pair[0] as u64 | (pair[1] as u64) << 32, pair[0] as u64 | ((pair[1] & 0xFFFF) as u64) << 32] {
-                if let Some((lo, hi)) = host.extent(ptr)
-                    && best.is_none_or(|(l, h)| hi - lo > h - l)
-                {
-                    best = Some((lo, hi));
+                if let Some((lo, hi)) = host.extent(ptr) {
+                    if best.is_none_or(|(l, h)| hi - lo > h - l) {
+                        best = Some((lo, hi));
+                    }
+                    if !in_area(lo) && outside.is_none_or(|(l, h)| hi - lo > h - l) {
+                        outside = Some((lo, hi));
+                    }
                 }
             }
         }
         let (lo, hi) = best?;
-        if let Some((start, end)) = host.gpu_area()
-            && start <= lo
-            && lo < end
-            && let Some(w) = self.area_window(host, start, end, hi)
-        {
-            return Some((w, start));
-        }
-        let len = (hi - lo).min(max & !(PAGE - 1));
-        let (buf, offset) = self.window(host, lo, len)?;
-        Some((buf, lo - offset as u64))
+        let region = |this: &mut Self, (lo, hi): (u64, u64)| -> Option<(Retained<Buffer>, u64)> {
+            let (buf, offset) = this.window(host, lo, (hi - lo).min(max))?;
+            Some((buf, lo - offset as u64))
+        };
+        let (first, second) = match area {
+            Some((start, end)) if in_area(lo) => {
+                let w = self.area_window(host, start, end, hi)?;
+                (Some((w, start)), outside.and_then(|r| region(self, r)))
+            }
+            Some((start, end)) => {
+                let need = self.area.as_ref().map_or(end, |w| w.end);
+                let a = self.area_window(host, start, end, need).map(|w| (w, start));
+                (region(self, (lo, hi)), a)
+            }
+            None => (region(self, (lo, hi)), None),
+        };
+        let (buffer, base) = first?;
+        let mut win = [base, base + buffer.length() as u64, 0, 0, 0];
+        let second = second.map(|(b, base2)| {
+            win[2] = base2;
+            win[3] = base2 + b.length() as u64;
+            win[4] = b.gpuAddress().wrapping_sub(buffer.gpuAddress());
+            b
+        });
+        Some(Memory { buffer, second, win })
     }
 
     /// The window over the GPU area `[start, end)` reaching at least `need`,
@@ -2294,6 +2433,20 @@ impl Metal {
         if skipped(vs_addr) || skipped(ps_addr) {
             return Err("skipped by gpuskip");
         }
+        // Modes 2, 5 and 6 only rewrite compression metadata; later draws
+        // inheriting the mode are normal ones (see gpu.md).
+        if state.color_control_written && matches!(c[context::CB_COLOR_CONTROL] >> 4 & 7, 2 | 5 | 6) {
+            for n in 0..8 {
+                if c[context::CB_TARGET_MASK] >> (4 * n) & 0xF != 0
+                    && let Some(t) = ColorTarget::read(c, n)
+                    && t.mip_level == 0
+                    && let Some((tex, _)) = self.target(host, &t)
+                {
+                    self.fast_clear(host, &t, &tex);
+                }
+            }
+            return Err("metadata pass");
+        }
         let vs_users = user_count(s[vs_rsrc2]);
         let ps_users = user_count(s[sh::SPI_SHADER_PGM_RSRC2_PS]);
         let vs_data = &s[vs_user..vs_user + sh::USER_DATA_COUNT];
@@ -2326,7 +2479,7 @@ impl Metal {
         self.note(|| {
             format!(
                 "CB_COLOR_CONTROL {:#x} CB_TARGET_MASK {:#x} CB_SHADER_MASK {:#x} CB_BLEND0..3 {:x?} DB_DEPTH_CONTROL {:#x} DB_STENCIL_CONTROL {:#x} DB_STENCIL_REF_MASK {:#x} DB_RENDER_CONTROL {:#x}",
-                c[0x202],
+                c[context::CB_COLOR_CONTROL],
                 c[context::CB_TARGET_MASK],
                 c[context::CB_TARGET_MASK + 1],
                 &c[context::CB_BLEND0_CONTROL..context::CB_BLEND0_CONTROL + 4],
@@ -2362,6 +2515,7 @@ impl Metal {
                 return Err("draw to a mip level above 0");
             }
             let (tex, format) = self.target(host, &t).ok_or("color target format")?;
+            self.fast_clear(host, &t, &tex);
             key.formats[targets.len()] = format.0;
             key.blends[targets.len()] = (Blend::read(c, n), write_mask(write, t.format.swap) as u8);
             let slice = if tex.textureType() == MTLTextureType::Type2DArray { t.slice } else { 0 };
@@ -2952,6 +3106,11 @@ fn is_depth_layout(raw: u32) -> bool {
 /// Bytes per texel of an uncompressed format, from the image format table.
 fn texel_bytes(f: MTLPixelFormat) -> Option<usize> {
     (0..256).find_map(|n| image_format(n).filter(|(m, _)| *m == f).map(|(_, b)| b as usize))
+}
+
+/// Formats made with atomic usage, for image atomics.
+fn atomic_capable(format: MTLPixelFormat) -> bool {
+    matches!(format, MTLPixelFormat::R32Uint | MTLPixelFormat::R32Sint)
 }
 
 fn is_compressed(f: MTLPixelFormat) -> bool {

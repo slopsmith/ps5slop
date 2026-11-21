@@ -50,6 +50,8 @@ A Metal frame capture (`MTLCaptureManager` to a `.gputrace`, opened in Xcode) wa
 
 `PS5SLOP_GPU_OPCODES=1` (with `PS5SLOP_GPU_STATS=1`) prints each queue's packet counts by opcode once a second (NOP codes as `0x100 | code`), which shows the packets a title uses that the command processor ignores. A `WAIT_REG_MEM` that gives up after 5 s prints its address, current value, function and reference (the first 16 per queue); a label nobody sets points at a missing packet, a skipped program or a queue blocked behind another.
 
+`PS5SLOP_TRACE_DMA=1` prints every `DMA_DATA` packet as the command processor runs it: source and destination selects and addresses, size and the first word moved. It ruled out a DMA fill as what clears Astro Bot's transparency buffer (it was a DCC fast clear).
+
 `PS5SLOP_TRACE_REGS=1` adds to every traced draw the context (0xA000 + n) and uconfig (0xC000 + n) registers that changed since the previous traced draw. It showed that Superliminal's draws without a colour target were AGC's decompress draws rather than lights with lost state.
 
 The profile's GPU thread line includes "compiling (in encoding)", the time spent compiling MSL and Metal pipelines. Metal keeps compiled programs in a cache shared by all processes, so a run of the same build compiles almost nothing; `PS5SLOP_MSL_UNIQUE=1` makes every program's source unique to measure a first run (Superliminal's New Game: 33 s of compiling, a 31 s stall).

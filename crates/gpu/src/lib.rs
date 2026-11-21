@@ -19,6 +19,8 @@ pub struct State<'a> {
     pub context: &'a [u32],
     pub sh: &'a [u32],
     pub uconfig: &'a [u32],
+    /// `CB_COLOR_CONTROL` was written since the previous draw.
+    pub color_control_written: bool,
 }
 
 /// A draw's vertex source.

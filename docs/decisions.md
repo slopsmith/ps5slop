@@ -403,6 +403,18 @@ Reason: Superliminal clears every shadow map by filling its HTILE with a compute
 
 A change that ran queued submissions back to back and waited for Metal once the queue was empty was tried and dropped. Superliminal's menu ran at 22.9 flips a second with it and 25.2 without (single runs, within noise), and the long stall after New Game turned out to be shader compilation, not the per-submission waits ([hle-kernel.md](hle-kernel.md#what-superliminal-needs-2026-11-20)). Not worth an unproven change to GPU synchronisation.
 
+## 2026-11-21: Programs see two guest memory windows
+
+A program's guest memory was one no-copy window. Astro Bot's draws read constants in one region and vertex data in the GPU area, 47 GiB apart, more than one Metal buffer can span. The shader now gets a second window and maps each address into either; the second is reached from the first through the difference of their GPU addresses. Reason: no geometry drew without it, and binding a buffer per region would mean threading a second pointer through every memory helper for the same effect. Pointer arithmetic outside the bound buffer relies on Apple GPUs not bounds-checking device pointers; Metal's shader validation would flag it.
+
+## 2026-11-21: Colour metadata passes are skipped only when their own register table set the mode
+
+Astro Bot leaves `CB_COLOR_CONTROL` at mode 6 (DCC decompress in Mesa's enum) after its decompress passes and its own following draws (upscale, final output) must draw. Skipping every draw in modes 2, 5 and 6, as SharpEmu-mac does, removed those; skipping none let the passes overwrite the scene. Only a draw whose register table wrote `CB_COLOR_CONTROL` counts as a metadata pass. Reason: it is the one rule consistent with every trace taken; what the console does is unknown, so this is a guess to revisit when another title disagrees.
+
+## 2026-11-21: Colour fast clears are applied from CMASK and DCC, like HTILE
+
+As for depth, the first dword of a target's CMASK or DCC is checked before a draw to it and at its metadata passes; a clear code clears the Metal texture and marks the dword expanded. Reason: Astro Bot clears its targets only through metadata, and its transparency buffer must start at alpha 1. The same limits as HTILE apply: one dword stands for the whole surface, and the check waits for earlier GPU work that wrote memory.
+
 ## 2026-11-21: A title's own add-on entitlements are reported as installed
 
 `sceNpEntitlementAccessGetAddcontEntitlementInfoList` reports, per title id, the add-on entitlements a title's own package carries, as installed (package type 3, download status 4). Only GTA V has a list so far (three labels that unlock its Story Mode). Every other title gets none.

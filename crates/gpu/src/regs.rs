@@ -24,6 +24,7 @@ pub mod context {
     pub const DB_STENCIL_REF_MASK_BF: usize = 0x10D;
     pub const DB_DEPTH_CONTROL: usize = 0x200;
     pub const CB_TARGET_MASK: usize = 0x08E;
+    pub const CB_COLOR_CONTROL: usize = 0x202;
     pub const PA_SC_SCREEN_SCISSOR_TL: usize = 0x00C;
     pub const PA_SC_SCREEN_SCISSOR_BR: usize = 0x00D;
     pub const PA_SC_WINDOW_SCISSOR_TL: usize = 0x081;
@@ -50,6 +51,11 @@ pub mod context {
     pub const CB_COLOR0_VIEW: usize = 0x31B;
     pub const CB_COLOR0_INFO: usize = 0x31C;
     pub const CB_COLOR0_BASE_EXT: usize = 0x390;
+    pub const CB_COLOR0_CMASK: usize = 0x31F;
+    pub const CB_COLOR0_CLEAR_WORD0: usize = 0x323;
+    pub const CB_COLOR0_CMASK_BASE_EXT: usize = 0x398;
+    pub const CB_COLOR0_DCC_BASE: usize = 0x325;
+    pub const CB_COLOR0_DCC_BASE_EXT: usize = 0x3A8;
     pub const CB_COLOR0_ATTRIB2: usize = 0x3B0;
     pub const CB_COLOR0_ATTRIB3: usize = 0x3B8;
     /// Distance between consecutive color targets' registers.
@@ -124,6 +130,11 @@ pub struct ColorTarget {
     pub slice: u32,
     /// Array slices of the surface (`CB_COLOR_ATTRIB3.MIP0_DEPTH` + 1).
     pub slices: u32,
+    /// With `CB_COLOR_INFO.FAST_CLEAR`: the CMASK address and the clear
+    /// value's raw bits (`CB_COLOR_CLEAR_WORD0/1`).
+    pub fast_clear: Option<(u64, [u32; 2])>,
+    /// With `CB_COLOR_INFO.DCC_ENABLE`: the DCC address.
+    pub dcc: Option<u64>,
 }
 
 impl ColorTarget {
@@ -156,6 +167,14 @@ impl ColorTarget {
             mip_level: (r(CB_COLOR0_VIEW) >> 26) & 0xF,
             slice: r(CB_COLOR0_VIEW) & 0x1FFF,
             slices: (attrib3 & 0x1FFF) + 1,
+            fast_clear: {
+                let cmask = ((r(CB_COLOR0_CMASK) as u64) | ((c[CB_COLOR0_CMASK_BASE_EXT + n] as u64 & 0xFF) << 32)) << 8;
+                (info & 1 << 13 != 0 && cmask != 0).then(|| (cmask, [r(CB_COLOR0_CLEAR_WORD0), r(CB_COLOR0_CLEAR_WORD0 + 1)]))
+            },
+            dcc: {
+                let dcc = ((r(CB_COLOR0_DCC_BASE) as u64) | ((c[CB_COLOR0_DCC_BASE_EXT + n] as u64 & 0xFF) << 32)) << 8;
+                (info & 1 << 28 != 0 && dcc != 0).then_some(dcc)
+            },
         })
     }
 }

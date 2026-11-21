@@ -34,6 +34,7 @@ const IT_SET_UCONFIG_REG_INDIRECT: u32 = 0x64;
 const IT_SET_CONTEXT_REG_INDIRECT: u32 = 0x9F;
 const IT_SET_BASE: u32 = 0x11;
 const IT_DMA_DATA: u32 = 0x50;
+const CB_COLOR_CONTROL: u32 = 0x202;
 /// The global data share's size on GFX10.
 const GDS_BYTES: usize = 64 << 10;
 /// Largest DMA_DATA transfer carried out, a guard against garbage.
@@ -105,6 +106,8 @@ pub struct Processor {
     /// Releases and memory writes whose earlier GPU work is committed but
     /// not known to be done, in command order.
     pending: Vec<Pending>,
+    /// A register table wrote `CB_COLOR_CONTROL` since the last draw.
+    color_control_written: bool,
 }
 
 enum Pending {
@@ -145,6 +148,7 @@ impl Default for Processor {
             gds: vec![0; GDS_BYTES],
             pending: Vec::new(),
             last_flip: None,
+            color_control_written: false,
         }
     }
 }
@@ -284,6 +288,9 @@ impl Processor {
                     if e[0] == u32::MAX {
                         continue;
                     }
+                    if op == IT_SET_CONTEXT_REG_INDIRECT && e[0] & !TABLE_SELECTOR == CB_COLOR_CONTROL {
+                        self.color_control_written = true;
+                    }
                     if let Some(r) = bank.get_mut((e[0] & !TABLE_SELECTOR) as usize) {
                         *r = e[1];
                     }
@@ -380,6 +387,9 @@ impl Processor {
                 host.read(src, &mut data);
             }
         }
+        if std::env::var_os("PS5SLOP_TRACE_DMA").is_some() {
+            eprintln!("ps5slop: DMA_DATA src_sel {src_sel} {src:#x} dst_sel {dst_sel} {dst:#x} {bytes:#x} bytes, first word {:#x}", u32::from_le_bytes([data[0], *data.get(1).unwrap_or(&0), *data.get(2).unwrap_or(&0), *data.get(3).unwrap_or(&0)]));
+        }
         if dst_fixed {
             let n = data.len().min(4);
             data.drain(..data.len() - n);
@@ -404,7 +414,7 @@ impl Processor {
     fn dispatch(&mut self, host: &dyn Host, groups: [u32; 3]) {
         self.stats.dispatches += 1;
         if let Some(b) = self.backend.as_mut() {
-            let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig };
+            let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig, color_control_written: self.color_control_written };
             let t = crate::timing::start();
             b.dispatch(host, &state, groups);
             crate::timing::add(crate::timing::Part::Dispatch, t);
@@ -415,11 +425,12 @@ impl Processor {
         self.stats.draws += 1;
         self.dump_draw(op, p);
         if let Some(b) = self.backend.as_mut() {
-            let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig };
+            let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig, color_control_written: self.color_control_written };
             let t = crate::timing::start();
             b.draw(host, &state, draw);
             crate::timing::add(crate::timing::Part::Draw, t);
         }
+        self.color_control_written = false;
     }
 
     fn sync(&mut self) {
