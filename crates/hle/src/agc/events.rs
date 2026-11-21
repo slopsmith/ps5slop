@@ -144,17 +144,14 @@ fn wait_until_safe(env: &mut Env) -> Result<Outcome, CallError> {
 fn set_flip(env: &mut Env) -> Result<Outcome, CallError> {
     let (handle, index, mode) = (env.arg(1) as u32, env.arg(2) as u32, env.arg(3) as u32);
     let flip_arg = env.arg(4);
-    put(
-        env,
-        &[
-            pm4(6, IT_NOP, R_FLIP),
-            handle,
-            index,
-            mode,
-            flip_arg as u32,
-            (flip_arg >> 32) as u32,
-        ],
-    )
+    let buffer = env.arg(0);
+    if buffer == 0 {
+        return ret(0);
+    }
+    let packet = [pm4(6, IT_NOP, R_FLIP), handle, index, mode, flip_arg as u32, (flip_arg >> 32) as u32];
+    let at = emit(env, buffer, &packet)?;
+    env.kernel.agc.gpu.flip_built(at);
+    ret(at)
 }
 
 /// RELEASE_MEM. Args: event, gcr, destination, cache policy, address, data

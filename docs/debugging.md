@@ -56,6 +56,8 @@ A Metal frame capture (`MTLCaptureManager` to a `.gputrace`, opened in Xcode) wa
 
 `PS5SLOP_GPU_OPCODES=1` (with `PS5SLOP_GPU_STATS=1`) prints each queue's packet counts by opcode once a second (NOP codes as `0x100 | code`), which shows the packets a title uses that the command processor ignores. A `WAIT_REG_MEM` that gives up after 5 s prints its address, current value, function and reference (the first 16 per queue); a label nobody sets points at a missing packet, a skipped program or a queue blocked behind another. The message names the queue's thread (`gpu graphics`, `gpu compute 0x20`, ...).
 
+`PS5SLOP_TRACE_TARGETS=1` prints each render target the renderer creates and each image it first reads from guest memory, with the frame number: light enough to leave on for a whole run, it shows whether a target a later draw samples was ever drawn (Isaac's backdrop targets were not, in bad boots). `PS5SLOP_GPU_NO_THROTTLE=1` lets submitters run ahead of the GPU thread as before the submission throttle ([gpu.md](gpu.md)), for comparing.
+
 `PS5SLOP_GPU_TRACE_SYNC=1` logs, per queue thread, every submission (address and size), wait, release, command-processor write, REWIND wait and dispatch (groups and program address). Grepping it for a label address shows who sets it and who waits for it; GTA V's Story Mode queues were followed this way. `PS5SLOP_GPU_SYNC_DISPATCHES=1` waits for Metal after every dispatch (slow), so when a program never finishes, the last `dispatch` line of its queue names it.
 
 `PS5SLOP_TRACE_DMA=1` prints every `DMA_DATA` packet as the command processor runs it: source and destination selects and addresses, size and the first word moved. It ruled out a DMA fill as what clears Astro Bot's transparency buffer (it was a DCC fast clear).

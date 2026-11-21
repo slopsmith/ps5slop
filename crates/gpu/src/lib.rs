@@ -146,6 +146,9 @@ pub trait Host {
     fn back(&self, _start: u64, _end: u64) -> bool {
         false
     }
+    /// The command processor starts (`true`) or stops polling memory that
+    /// only other work or the CPU can change.
+    fn waiting(&self, _polling: bool) {}
 }
 
 /// A flip request from a command buffer.

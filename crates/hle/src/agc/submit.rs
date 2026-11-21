@@ -7,7 +7,8 @@
 
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use super::{ERROR_INVALID_ARGUMENT, ret};
 use crate::pthread::lock;
@@ -24,9 +25,72 @@ const MAX_QUEUED: usize = 1;
 /// SharpEmu's limit on one submission's size.
 const MAX_DWORDS: u32 = 0xF_FFFF;
 
+/// How long a submitter waits for the submission before its own at most.
+const THROTTLE_LIMIT: Duration = Duration::from_secs(5);
+
 /// Command buffers to run, in order, on one queue.
 struct Job {
     buffers: Vec<(u64, u32)>,
+    /// One of the buffers holds a flip packet, so this ends a frame.
+    ends_frame: bool,
+}
+
+/// Where a queue's jobs go, and how far its GPU thread has got.
+type Queue = (SyncSender<Job>, Arc<Progress>);
+
+/// How far a queue's GPU thread has got, for throttling submitters.
+#[derive(Default)]
+struct Progress {
+    counts: Mutex<Counts>,
+    changed: Condvar,
+    /// Held from numbering a submission until it is queued, so both keep one order.
+    order: Mutex<()>,
+}
+
+#[derive(Default)]
+struct Counts {
+    submitted: u64,
+    finished: u64,
+    /// The last submission that ended a frame.
+    frame_end: u64,
+    /// The GPU thread polls memory that the CPU may have to change.
+    polling: bool,
+}
+
+impl Progress {
+    fn update(&self, f: impl FnOnce(&mut Counts)) {
+        f(&mut lock(&self.counts));
+        self.changed.notify_all();
+    }
+
+    /// Counts a submission, which ends a frame if `ends_frame`, and returns
+    /// the last submission before it that ended one.
+    fn add(&self, ends_frame: bool) -> u64 {
+        let mut c = lock(&self.counts);
+        c.submitted += 1;
+        let previous = c.frame_end;
+        if ends_frame {
+            c.frame_end = c.submitted;
+        }
+        previous
+    }
+
+    /// Waits until submission `n` has finished, the GPU thread waits on
+    /// memory, or the limit passes. `PS5SLOP_GPU_NO_THROTTLE` turns this off.
+    fn wait_for(&self, n: u64, exiting: impl Fn() -> bool) {
+        static OFF: OnceLock<bool> = OnceLock::new();
+        if *OFF.get_or_init(|| std::env::var_os("PS5SLOP_GPU_NO_THROTTLE").is_some()) {
+            return;
+        }
+        let start = Instant::now();
+        let mut c = lock(&self.counts);
+        while c.finished < n && !c.polling && !exiting() && start.elapsed() < THROTTLE_LIMIT {
+            c = match self.changed.wait_timeout(c, Duration::from_millis(50)) {
+                Ok((c, _)) => c,
+                Err(e) => e.into_inner().0,
+            };
+        }
+    }
 }
 
 /// The graphics queue's key; compute queues are keyed by their owner.
@@ -35,8 +99,29 @@ const GRAPHICS: u64 = u64::MAX;
 /// The GPU threads' queues, each started by its first submission.
 #[derive(Default)]
 pub(super) struct Gpu {
-    jobs: Mutex<HashMap<u64, SyncSender<Job>>>,
+    jobs: Mutex<HashMap<u64, Queue>>,
     backend: Arc<OnceLock<Option<gpu::SharedBackend>>>,
+    /// Flip packets built and not yet seen in a submitted buffer, by address.
+    flips: Mutex<Vec<u64>>,
+}
+
+impl Gpu {
+    /// `sceAgcDcbSetFlip` and friends built a flip packet at `at`.
+    pub(super) fn flip_built(&self, at: u64) {
+        let mut flips = lock(&self.flips);
+        if flips.len() >= 16 {
+            flips.remove(0);
+        }
+        flips.push(at);
+    }
+
+    /// Whether one of `buffers` holds a flip packet built for it.
+    fn takes_flip(&self, buffers: &[(u64, u32)]) -> bool {
+        let mut flips = lock(&self.flips);
+        let before = flips.len();
+        flips.retain(|&at| !buffers.iter().any(|&(addr, dwords)| (addr..addr + 4 * dwords as u64).contains(&at)));
+        flips.len() != before
+    }
 }
 
 pub(super) static FUNCTIONS: &[Function] = &[
@@ -65,6 +150,7 @@ const fn d(name: &'static str, func: crate::HostFn) -> Function {
 struct Host {
     kernel: Arc<Kernel>,
     mem: memory::Memory,
+    progress: Arc<Progress>,
 }
 
 impl gpu::Host for Host {
@@ -116,6 +202,10 @@ impl gpu::Host for Host {
     fn back(&self, start: u64, end: u64) -> bool {
         self.mem.back(start, end).is_ok()
     }
+
+    fn waiting(&self, polling: bool) {
+        self.progress.update(|c| c.polling = polling);
+    }
 }
 
 fn new_backend() -> Option<gpu::SharedBackend> {
@@ -144,8 +234,13 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>, backend: Arc<OnceLock<Option<gpu:
                     eprintln!("ps5slop: GPU: {e}");
                 }
             }
-            processor.drain(&host);
+            if job.ends_frame {
+                processor.finish(&host);
+            } else {
+                processor.drain(&host);
+            }
         });
+        host.progress.update(|c| c.finished += 1);
         // Unverified: the driver signals each submission's completion; Minecraft
         // waits for it when its label poll loses the race.
         gpu::Host::interrupt(&host, 0);
@@ -185,11 +280,13 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>, backend: Arc<OnceLock<Option<gpu:
 fn enqueue(env: &Env, queue: u64, buffers: Vec<(u64, u32)>) {
     let gpu = &env.kernel.agc.gpu;
     let mut jobs = lock(&gpu.jobs);
-    let sender = jobs.entry(queue).or_insert_with(|| {
+    let (sender, progress) = jobs.entry(queue).or_insert_with(|| {
         let (tx, rx) = sync_channel(MAX_QUEUED);
+        let progress = Arc::new(Progress::default());
         let host = Host {
             kernel: env.kernel.this(),
             mem: env.kernel.memory(),
+            progress: progress.clone(),
         };
         let backend = gpu.backend.clone();
         let name = if queue == GRAPHICS { "graphics".to_string() } else { format!("compute {queue:#x}") };
@@ -197,11 +294,17 @@ fn enqueue(env: &Env, queue: u64, buffers: Vec<(u64, u32)>) {
             .name(format!("gpu {name}"))
             .spawn(move || gpu_thread(host, rx, backend, name))
             .expect("the GPU thread starts");
-        tx
+        (tx, progress)
     });
-    let sender = sender.clone();
+    let (sender, progress) = (sender.clone(), progress.clone());
     drop(jobs);
-    let _ = sender.send(Job { buffers });
+    let order = lock(&progress.order);
+    let ends_frame = gpu.takes_flip(&buffers);
+    let previous = progress.add(ends_frame);
+    let _ = sender.send(Job { buffers, ends_frame });
+    drop(order);
+    // Titles reuse the previous frame's memory once the next frame is submitted.
+    progress.wait_for(previous, || env.kernel.has_exited());
 }
 
 /// A submit descriptor: the command address (u64 at 0) and dword count (u32 at 8).

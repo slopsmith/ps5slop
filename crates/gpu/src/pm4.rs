@@ -189,6 +189,22 @@ impl Default for Processor {
     }
 }
 
+/// Tells the host the command processor polls memory, for as long as it lives.
+struct Polling<'a>(&'a dyn Host);
+
+impl<'a> Polling<'a> {
+    fn start(host: &'a dyn Host) -> Self {
+        host.waiting(true);
+        Self(host)
+    }
+}
+
+impl Drop for Polling<'_> {
+    fn drop(&mut self) {
+        self.0.waiting(false);
+    }
+}
+
 fn read_dwords(host: &dyn Host, addr: u64, n: usize) -> Result<Vec<u32>, Error> {
     let mut b = vec![0u8; n * 4];
     if !host.read(addr, &mut b) {
@@ -499,11 +515,13 @@ impl Processor {
         self.drain(host);
         self.sync();
         let start = Instant::now();
+        let mut polling = None;
         loop {
             let passed = atomic(host, address, wide, |v| atomic_op(op, v, source, compare));
             if command != 1 || op != 8 || passed != Some(false) || host.exiting() {
                 return;
             }
+            polling.get_or_insert_with(|| Polling::start(host));
             if start.elapsed() > WAIT_LIMIT {
                 self.stats.timeouts += 1;
                 return;
@@ -527,7 +545,9 @@ impl Processor {
             7 => {
                 self.drain(host);
                 let start = Instant::now();
+                let mut polling = None;
                 while atomic(host, address, true, |v| (v != 0, v.saturating_sub(1))) == Some(false) {
+                    polling.get_or_insert_with(|| Polling::start(host));
                     if host.exiting() {
                         return;
                     }
@@ -558,6 +578,7 @@ impl Processor {
         trace(format_args!("rewind {:#x} waits", body - 4));
         let start = Instant::now();
         let mut warned = false;
+        let _polling = Polling::start(host);
         while !valid(host) && !host.exiting() {
             if !warned && start.elapsed() > WAIT_LIMIT {
                 warned = true;
@@ -854,6 +875,13 @@ impl Processor {
         }
     }
 
+    /// Ends a submission: pending releases take effect, and the GPU work
+    /// encoded so far is done.
+    pub fn finish(&mut self, host: &dyn Host) {
+        self.drain(host);
+        self.sync();
+    }
+
     /// Waits for the GPU work behind pending releases, then makes them take
     /// effect in order. Called before anything that could observe them.
     pub fn drain(&mut self, host: &dyn Host) {
@@ -920,6 +948,7 @@ impl Processor {
         }
         self.drain(host);
         let start = Instant::now();
+        let mut polling = None;
         loop {
             let value = if wide {
                 read_u64(host, address)
@@ -942,6 +971,7 @@ impl Processor {
                 }
                 return;
             }
+            polling.get_or_insert_with(|| Polling::start(host));
             let t = crate::timing::start();
             std::thread::sleep(Duration::from_micros(200));
             crate::timing::add(crate::timing::Part::WaitMemory, t);

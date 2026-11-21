@@ -103,6 +103,12 @@ pub static RELOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 /// that causes a rendering bug (the control socket's `gpuskip`).
 pub static SKIP: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
+/// `PS5SLOP_TRACE_TARGETS`: logs each new render target and each image first read from guest memory.
+fn trace_targets() -> bool {
+    static ENV: OnceLock<bool> = OnceLock::new();
+    *ENV.get_or_init(|| std::env::var_os("PS5SLOP_TRACE_TARGETS").is_some())
+}
+
 fn skipped(address: u64) -> bool {
     SKIP.lock().is_ok_and(|s| s.contains(&address))
 }
@@ -1070,6 +1076,16 @@ impl Metal {
             record(t.address | 2, &existing.texture, false);
             return Some((existing.texture.clone(), format));
         }
+        if trace_targets() {
+            eprintln!(
+                "ps5slop: targets: frame {} new target {:#x} {}x{} {format:?}{}",
+                self.epoch,
+                t.address,
+                t.width,
+                t.height,
+                if self.targets.contains_key(&t.address) { " (replacing)" } else { "" }
+            );
+        }
         let texture = if layered {
             self.new_target_array(format, t.width, t.height, slices)?
         } else {
@@ -1228,6 +1244,9 @@ impl Metal {
             (image.width, image.height)
         };
         let layout = Layout::new(image.tile?, bpe, ew, eh)?;
+        if trace_targets() && !self.images.contains_key(&(image, kind)) {
+            eprintln!("ps5slop: targets: frame {} image {:#x} {}x{} from guest memory", self.epoch, image.address, image.width, image.height);
+        }
         let tex = match self.images.get(&(image, kind)) {
             Some((_, t)) => t.clone(),
             None if kind == TextureKind::Tex2d => self.new_texture(format, image.width, image.height, false)?,
