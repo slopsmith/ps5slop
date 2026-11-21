@@ -393,3 +393,12 @@ Reason: a capture records every buffer the frame uses, and our no-copy windows o
 
 Reason: GTA V checks bit `0x80` before an APR read to choose between reading straight into its buffer and a bounce buffer, and its bounce path loses the first of two reads on one request; with derived bits every read bounced and its streamer asserted. Reporting what the guest gave is also what a title can expect from a console, whatever the bits mean. Found by disassembling the game's code locally, as vic allowed on 2026-11-20.
 
+## 2026-11-21: Depth fast clears are read from HTILE
+
+Before drawing to a depth target with HTILE enabled, the renderer reads the first HTILE dword of the slice from guest memory; a ZMask of 0 means a fast clear, so the slice is cleared to `DB_DEPTH_CLEAR`, and the dword is marked expanded (ZMask 0xF) so the clear happens once ([gpu.md](gpu.md)).
+
+Reason: Superliminal clears every shadow map by filling its HTILE with a compute program and never touches the depth data; without this the shadow maps held whatever was drawn first, every shadow test failed and the menu's lights added nothing. Modelling HTILE compression fully is not needed for this. The check costs a wait for earlier GPU work whenever compute programs wrote memory, which did not show in Superliminal's or Minecraft's frame rates (not measured separately).
+
+## 2026-11-21: Submissions still wait for Metal one by one
+
+A change that ran queued submissions back to back and waited for Metal once the queue was empty was tried and dropped. Superliminal's menu ran at 22.9 flips a second with it and 25.2 without (single runs, within noise), and the long stall after New Game turned out to be shader compilation, not the per-submission waits ([hle-kernel.md](hle-kernel.md#what-superliminal-needs-2026-11-20)). Not worth an unproven change to GPU synchronisation.

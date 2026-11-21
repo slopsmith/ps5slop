@@ -125,7 +125,16 @@ Semantics from AMD's RDNA ISA guide (as recalled) and Mesa's opcode table; each 
 - **`ds_append`/`ds_consume`** on GDS (`gds` bit) or LDS: an atomic add or subtract of 1 at `M0[15:0] + offset`. On hardware a wave adds its active lane count once and every lane gets the old value, then adds its `v_mbcnt` rank; here `v_mbcnt` gives 0 (lanes are threads), so each thread counts itself and gets its own old value. Totals and the indices handed out match; their order does not.
 - `v_cvt_pknorm_u16_f32` and `_i16_f32` used MSL names that do not exist (`pack_unorm2x16`); now `pack_float_to_unorm2x16` and `pack_float_to_snorm2x16`.
 
-Superliminal: all 16 programs it runs translate. Astro Bot: 66 of the 70 programs seen in a 400 s run translate; the other 4 use ray tracing.
+Superliminal: all 16 programs it runs translate.
+
+## Added for Superliminal (2026-11-21)
+
+Semantics from AMD's RDNA ISA guide (as recalled); one test in `tests/unit.rs` translates them, checks the MSL text and compiles it with Metal (no oracle checks the values):
+
+- **`tbuffer_load_format_*`, `tbuffer_store_format_*`**: the MUBUF forms with the instruction's 7-bit format (the same numbering as the V#'s, `BUF_FMT` in Mesa's `gfx10-rsrc.json`) put into word 3 of the V# before the access. Superliminal's lamp, and two other vertex programs, read positions this way.
+- **`v_fma_mix_f32`, `v_fma_mixlo_f16`, `v_fma_mixhi_f16`**: each source is a 32-bit float or, with its `op_sel_hi` bit, the 16-bit half its `op_sel` bit picks; `neg_hi` is the source's abs and `neg_lo` its negation. Inline constants keep their value either way (assumed). The `mixlo`/`mixhi` forms write a half and keep the other.
+
+All 243 programs captured from Superliminal's menu and first level translate and compile (`captures` example). Astro Bot: 66 of the 70 programs seen in a 400 s run translate; the other 4 use ray tracing.
 
 ## Open questions
 

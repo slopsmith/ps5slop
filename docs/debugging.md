@@ -29,6 +29,7 @@ The protocol is the one 86slopper uses: one command per line, and each answer en
 | `gpuskip [ADDR...]` | Skips every draw and dispatch that uses one of these program addresses (vertex, pixel or compute); with none, skips nothing. Comparing screenshots with and without a pass shows which pass causes a bug |
 | `gpureload` | Translates every program again at the end of the frame, reading `PS5SLOP_MSL_OVERRIDE` files again |
 | `shot PATH` | Writes the screen as PPM; with `press`, this drives menus step by step |
+| `rates` | The guest's instructions per second, translated and interpreted, since the last `rates`, as the window title shows them (the first call starts the window) |
 | `quit` | Ends the guest |
 
 Thread names come from `scePthreadCreate`, `scePthreadRename` and `pthread_set_name_np`. Host threads are named `guest 0xTCB`.
@@ -48,6 +49,12 @@ The report also has a GPU thread line: time encoding draws and dispatches, waiti
 A Metal frame capture (`MTLCaptureManager` to a `.gputrace`, opened in Xcode) was tried on 2026-11-21 and dropped: it records every buffer the frame uses, and our no-copy windows over guest memory are several GiB, so it wrote 25 GB and grew the process to 13 GB within seconds. `gpusnap` gives the per-pass view without that.
 
 `PS5SLOP_GPU_OPCODES=1` (with `PS5SLOP_GPU_STATS=1`) prints each queue's packet counts by opcode once a second (NOP codes as `0x100 | code`), which shows the packets a title uses that the command processor ignores. A `WAIT_REG_MEM` that gives up after 5 s prints its address, current value, function and reference (the first 16 per queue); a label nobody sets points at a missing packet, a skipped program or a queue blocked behind another.
+
+`PS5SLOP_TRACE_REGS=1` adds to every traced draw the context (0xA000 + n) and uconfig (0xC000 + n) registers that changed since the previous traced draw. It showed that Superliminal's draws without a colour target were AGC's decompress draws rather than lights with lost state.
+
+The profile's GPU thread line includes "compiling (in encoding)", the time spent compiling MSL and Metal pipelines. Metal keeps compiled programs in a cache shared by all processes, so a run of the same build compiles almost nothing; `PS5SLOP_MSL_UNIQUE=1` makes every program's source unique to measure a first run (Superliminal's New Game: 33 s of compiling, a 31 s stall).
+
+An MSL probe needs to compile: check it first with a few lines of Swift around `MTLDevice.makeLibrary(source:options:)`, since compile errors past the first few reports are not printed. The `captures` example's output ends with a summary line that is not MSL.
 
 `PS5SLOP_PROBE_FLAT=1` makes every pixel program with a flat input write that input's raw value into colour output 1 (low byte red, next byte green, third byte blue) instead of what it computes, so a target dump shows per pixel which integer arrived (used to check Minecraft's terrain texture-set index).
 
