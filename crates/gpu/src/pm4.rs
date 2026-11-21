@@ -34,6 +34,13 @@ const IT_SET_UCONFIG_REG_INDIRECT: u32 = 0x64;
 const IT_SET_CONTEXT_REG_INDIRECT: u32 = 0x9F;
 const IT_SET_BASE: u32 = 0x11;
 const IT_DMA_DATA: u32 = 0x50;
+const IT_REWIND: u32 = 0x59;
+const IT_ATOMIC_MEM: u32 = 0x1E;
+const IT_MEM_SEMAPHORE: u32 = 0x39;
+const IT_COPY_DATA: u32 = 0x40;
+const IT_COND_EXEC: u32 = 0x22;
+/// REWIND's valid bit: the CPU has finished writing the buffer past the packet.
+const REWIND_VALID: u32 = 1 << 31;
 const CB_COLOR_CONTROL: u32 = 0x202;
 /// The global data share's size on GFX10.
 const GDS_BYTES: usize = 64 << 10;
@@ -185,6 +192,75 @@ fn compare(function: u32, value: u64, reference: u64) -> bool {
     }
 }
 
+fn gpu_clock() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64)
+}
+
+/// ATOMIC_MEM's operation `op` (the TC op numbers SharpEmu-mac uses) on
+/// `current`: whether it applied (a compare-swap may not) and the new value.
+fn atomic_op(op: u32, current: u64, source: u64, compare: u64) -> (bool, u64) {
+    let v = match op {
+        7 => source,
+        8 if current == compare => source,
+        8 => return (false, current),
+        15 => current.wrapping_add(source),
+        16 => current.wrapping_sub(source),
+        17 => (current as i64).min(source as i64) as u64,
+        18 => current.min(source),
+        19 => (current as i64).max(source as i64) as u64,
+        20 => current.max(source),
+        21 => current & source,
+        22 => current | source,
+        23 => current ^ source,
+        24 if current >= source => 0,
+        24 => current + 1,
+        25 if current == 0 || current > source => source,
+        25 => current - 1,
+        _ => current,
+    };
+    (true, v)
+}
+
+/// Applies `f` to the 32- or 64-bit value at `address` atomically where the
+/// host maps it, and returns what `f` said about it.
+fn atomic(host: &dyn Host, address: u64, wide: bool, f: impl Fn(u64) -> (bool, u64)) -> Option<bool> {
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::SeqCst};
+    let size = if wide { 8 } else { 4 };
+    let mut probe = [0u8; 8];
+    if address % size != 0 || !host.read(address, &mut probe[..size as usize]) {
+        return None;
+    }
+    let mut result = true;
+    match host.host_pointer(address) {
+        // SAFETY: the address is aligned and readable guest memory, which the
+        // host maps for the life of the process.
+        Some(ptr) if wide => {
+            let cell = unsafe { AtomicU64::from_ptr(ptr.cast()) };
+            let _ = cell.try_update(SeqCst, SeqCst, |v| {
+                let (ok, new) = f(v);
+                result = ok;
+                Some(new)
+            });
+        }
+        Some(ptr) => {
+            let cell = unsafe { AtomicU32::from_ptr(ptr.cast()) };
+            let _ = cell.try_update(SeqCst, SeqCst, |v| {
+                let (ok, new) = f(v as u64);
+                result = ok;
+                Some(new as u32)
+            });
+        }
+        None => {
+            let (ok, new) = f(if wide { u64::from_le_bytes(probe) } else { u32::from_le_bytes(probe[..4].try_into().unwrap()) as u64 });
+            result = ok;
+            host.write(address, &new.to_le_bytes()[..size as usize]);
+        }
+    }
+    Some(result)
+}
+
 impl Processor {
     /// Runs the `dwords`-dword command buffer at `addr`.
     pub fn run(&mut self, host: &dyn Host, addr: u64, dwords: u32) -> Result<(), Error> {
@@ -218,6 +294,25 @@ impl Processor {
                     base = (payload[0] & !3) as u64 | ((payload[1] & 0xFFFF) as u64) << 32;
                     dwords = payload[2] & 0xF_FFFF;
                     continue 'chain;
+                }
+                if (header >> 8) & 0xFF == IT_REWIND && !payload.is_empty() {
+                    *self.stats.opcodes.entry(IT_REWIND).or_default() += 1;
+                    self.rewind(host, here + 4);
+                    let next = (at + len) as u32;
+                    base += 4 * next as u64;
+                    dwords -= next;
+                    continue 'chain;
+                }
+                if (header >> 8) & 0xFF == IT_COND_EXEC && payload.len() >= 4 {
+                    *self.stats.opcodes.entry(IT_COND_EXEC).or_default() += 1;
+                    self.drain(host);
+                    self.sync();
+                    let flag = read_dwords(host, addr(payload[0] & !3, payload[1]), 1).map_or(0, |w| w[0]);
+                    at += len;
+                    if flag == 0 {
+                        at += (payload[3] & 0x3FFF) as usize;
+                    }
+                    continue;
                 }
                 self.packet(host, header, payload, depth)?;
                 at += len;
@@ -273,6 +368,9 @@ impl Processor {
                     p[6] & 0x07FF_FFFF,
                 );
             }
+            IT_COPY_DATA if p.len() >= 5 => self.copy_data(host, p),
+            IT_ATOMIC_MEM if p.len() >= 8 => self.atomic_mem(host, p),
+            IT_MEM_SEMAPHORE if p.len() >= 3 => self.mem_semaphore(host, p),
             IT_SET_CONTEXT_REG => Self::set_registers(&mut self.context, p),
             IT_SET_SH_REG => Self::set_registers(&mut self.sh, p),
             IT_SET_UCONFIG_REG | IT_SET_UCONFIG_REG_INDEX => Self::set_registers(&mut self.uconfig, p),
@@ -332,6 +430,112 @@ impl Processor {
             _ => {}
         }
         Ok(())
+    }
+
+    /// COPY_DATA from an immediate or memory into memory. Selectors are the
+    /// compute form; the graphics form has the same low bits (Mesa's `sid.h`).
+    fn copy_data(&mut self, host: &dyn Host, p: &[u32]) {
+        let control = p[0];
+        let (src_sel, dst_sel) = (control & 0xF, (control >> 8) & 0xF);
+        let wide = control & (1 << 16) != 0;
+        let n = if wide { 2 } else { 1 };
+        if !matches!(dst_sel, 1 | 2 | 5) {
+            return;
+        }
+        let dest = addr(p[3], p[4]);
+        let values = match src_sel {
+            5 => vec![p[1], p[2]][..n].to_vec(),
+            1 | 2 => {
+                self.drain(host);
+                self.sync();
+                read_dwords(host, addr(p[1], p[2]) & !3, n).unwrap_or_else(|_| vec![0; n])
+            }
+            9 => {
+                let clock = gpu_clock();
+                vec![clock as u32, (clock >> 32) as u32][..n].to_vec()
+            }
+            _ => return,
+        };
+        self.write_values(host, dest, &values, false);
+    }
+
+    /// ATOMIC_MEM: one read-modify-write after the work before it, or with
+    /// command 1 a compare-swap retried until it succeeds.
+    fn atomic_mem(&mut self, host: &dyn Host, p: &[u32]) {
+        let op = p[0] & 0x1F;
+        let wide = p[0] & 0x20 != 0;
+        let command = (p[0] >> 8) & 0xF;
+        let (address, source, compare) = (addr(p[1], p[2]), addr(p[3], p[4]), addr(p[5], p[6]));
+        self.drain(host);
+        self.sync();
+        let start = Instant::now();
+        loop {
+            let passed = atomic(host, address, wide, |v| atomic_op(op, v, source, compare));
+            if command != 1 || op != 8 || passed != Some(false) || host.exiting() {
+                return;
+            }
+            if start.elapsed() > WAIT_LIMIT {
+                self.stats.timeouts += 1;
+                return;
+            }
+            std::thread::sleep(Duration::from_micros(200));
+        }
+    }
+
+    /// MEM_SEMAPHORE: select 6 signals (adds one to the 64-bit count, or sets
+    /// it to 1), select 7 waits until the count is not zero and takes one.
+    fn mem_semaphore(&mut self, host: &dyn Host, p: &[u32]) {
+        let address = (p[0] & !7) as u64 | (p[1] as u64) << 32;
+        let select = p[2] >> 29;
+        match select {
+            6 => {
+                self.drain(host);
+                self.sync();
+                let set = p[2] & (1 << 20) != 0;
+                atomic(host, address, true, |v| (true, if set { 1 } else { v.wrapping_add(1) }));
+            }
+            7 => {
+                self.drain(host);
+                let start = Instant::now();
+                while atomic(host, address, true, |v| (v != 0, v.saturating_sub(1))) == Some(false) {
+                    if host.exiting() {
+                        return;
+                    }
+                    if start.elapsed() > WAIT_LIMIT {
+                        self.stats.timeouts += 1;
+                        eprintln!("ps5slop: GPU: semaphore wait at {address:#x} timed out");
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_micros(200));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// REWIND: waits until the CPU sets the valid bit at `body`; the caller then
+    /// fetches the rest of the buffer again, which the CPU may have written since.
+    fn rewind(&mut self, host: &dyn Host, body: u64) {
+        let valid = |host: &dyn Host| {
+            let mut b = [0u8; 4];
+            host.read(body, &mut b);
+            u32::from_le_bytes(b) & REWIND_VALID != 0
+        };
+        if valid(host) {
+            return;
+        }
+        self.drain(host);
+        let start = Instant::now();
+        let mut warned = false;
+        while !valid(host) && !host.exiting() {
+            if !warned && start.elapsed() > WAIT_LIMIT {
+                warned = true;
+                eprintln!("ps5slop: GPU: REWIND at {:#x} still not valid after {} s", body - 4, WAIT_LIMIT.as_secs());
+            }
+            let t = crate::timing::start();
+            std::thread::sleep(Duration::from_micros(50));
+            crate::timing::add(crate::timing::Part::WaitMemory, t);
+        }
     }
 
     /// `n` argument dwords of an indirect draw or dispatch at `offset` past
@@ -628,10 +832,10 @@ impl Processor {
                     host.write(dest, &value.to_le_bytes());
                 }
                 3 | 4 => {
-                    let clock = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_or(0, |d| d.as_nanos() as u64);
-                    host.write(dest, &clock.to_le_bytes());
+                    host.write(dest, &gpu_clock().to_le_bytes());
+                }
+                7 => {
+                    atomic(host, dest, false, |v| (true, v.wrapping_add(value & 0xFFFF_FFFF)));
                 }
                 _ => {}
             }
@@ -854,6 +1058,103 @@ mod tests {
         let mut p = Processor::default();
         p.run(&host, 0x100, 8).unwrap();
         assert_eq!(p.stats.draws, segments);
+    }
+
+    #[test]
+    fn a_valid_rewind_runs_what_was_written_after_it() {
+        let host = Fake::default();
+        host.mem.replace(vec![0; 0x1000]);
+        let first = [header(2, IT_REWIND, 0), REWIND_VALID];
+        host.write(0x100, &first.iter().flat_map(|d| d.to_le_bytes()).collect::<Vec<u8>>());
+        let late = [header(5, IT_WRITE_DATA, 0), 5 << 8, 0x800, 0, 9];
+        struct Late<'a>(&'a Fake, [u32; 5]);
+        impl Host for Late<'_> {
+            fn read(&self, addr: u64, buf: &mut [u8]) -> bool {
+                if addr == 0x108 {
+                    self.0.write(0x108, &self.1.iter().flat_map(|d| d.to_le_bytes()).collect::<Vec<u8>>());
+                }
+                self.0.read(addr, buf)
+            }
+            fn write(&self, addr: u64, data: &[u8]) -> bool {
+                self.0.write(addr, data)
+            }
+            fn interrupt(&self, _: u32) {}
+            fn flip(&self, _: Flip) {}
+            fn exiting(&self) -> bool {
+                false
+            }
+        }
+        let mut p = Processor::default();
+        p.run(&Late(&host, late), 0x100, 7).unwrap();
+        assert_eq!(word(&host, 0x800), 9);
+    }
+
+    #[test]
+    fn cond_exec_skips_its_dwords_when_the_flag_is_zero() {
+        let (host, _) = run(&[
+            header(5, IT_COND_EXEC, 0),
+            0x900,
+            0,
+            0,
+            5,
+            header(5, IT_WRITE_DATA, 0),
+            5 << 8,
+            0x800,
+            0,
+            1,
+            header(5, IT_WRITE_DATA, 0),
+            5 << 8,
+            0x804,
+            0,
+            2,
+        ]);
+        assert_eq!((word(&host, 0x800), word(&host, 0x804)), (0, 2));
+    }
+
+    #[test]
+    fn copy_data_atomics_and_semaphores_update_memory() {
+        let (host, _) = run(&[
+            header(6, IT_COPY_DATA, 0),
+            5 | 5 << 8,
+            0x77,
+            0,
+            0x800,
+            0,
+            header(9, IT_ATOMIC_MEM, 0),
+            15 | 0x40,
+            0x800,
+            0,
+            3,
+            0,
+            0,
+            0,
+            0,
+            header(4, IT_MEM_SEMAPHORE, 0),
+            0x808,
+            0,
+            6 << 29,
+            header(8, IT_RELEASE_MEM, 0),
+            0,
+            7 << 29,
+            0x810,
+            0,
+            5,
+            0,
+            0,
+        ]);
+        assert_eq!((word(&host, 0x800), word(&host, 0x808), word(&host, 0x810)), (0x7A, 1, 5));
+    }
+
+    #[test]
+    fn a_semaphore_wait_takes_one_count() {
+        let host = Fake::default();
+        host.mem.replace(vec![0; 0x1000]);
+        host.write(0x808, &2u64.to_le_bytes());
+        let packets = [header(4, IT_MEM_SEMAPHORE, 0), 0x808, 0, 7 << 29];
+        host.write(0x100, &packets.iter().flat_map(|d| d.to_le_bytes()).collect::<Vec<u8>>());
+        let mut p = Processor::default();
+        p.run(&host, 0x100, 4).unwrap();
+        assert_eq!((word(&host, 0x808), p.stats.timeouts), (1, 0));
     }
 
     #[test]
