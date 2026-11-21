@@ -188,35 +188,38 @@ impl Processor {
         self.walk(host, addr, dwords, 0)
     }
 
+    /// Runs a command buffer. A chained INDIRECT_BUFFER (CHAIN, bit 20 of its
+    /// size dword) ends the buffer and continues at its target, at the same depth.
     fn walk(&mut self, host: &dyn Host, base: u64, dwords: u32, depth: u32) -> Result<(), Error> {
         if depth > MAX_DEPTH {
             return Err(Error::TooDeep(base));
         }
-        let words = read_dwords(host, base, dwords as usize)?;
-        let mut at = 0usize;
-        while at < words.len() {
-            let header = words[at];
-            let here = base + 4 * at as u64;
-            match header >> 30 {
-                3 => {}
-                2 => {
+        let (mut base, mut dwords) = (base, dwords);
+        'chain: loop {
+            let words = read_dwords(host, base, dwords as usize)?;
+            let mut at = 0usize;
+            while at < words.len() {
+                let header = words[at];
+                let here = base + 4 * at as u64;
+                if header >> 30 != 3 {
                     at += 1;
                     continue;
                 }
-                _ => {
-                    at += 1;
-                    continue;
+                let len = (((header >> 16) & 0x3FFF) + 2) as usize;
+                if at + len > words.len() {
+                    return Err(Error::Truncated { addr: here, header });
                 }
+                let payload = &words[at + 1..at + len];
+                if (header >> 8) & 0xFF == IT_INDIRECT_BUFFER && payload.len() >= 3 && payload[2] & (1 << 20) != 0 {
+                    base = (payload[0] & !3) as u64 | ((payload[1] & 0xFFFF) as u64) << 32;
+                    dwords = payload[2] & 0xF_FFFF;
+                    continue 'chain;
+                }
+                self.packet(host, header, payload, depth)?;
+                at += len;
             }
-            let len = (((header >> 16) & 0x3FFF) + 2) as usize;
-            if at + len > words.len() {
-                return Err(Error::Truncated { addr: here, header });
-            }
-            let payload = &words[at + 1..at + len];
-            self.packet(host, header, payload, depth)?;
-            at += len;
+            return Ok(());
         }
-        Ok(())
     }
 
     fn packet(&mut self, host: &dyn Host, header: u32, p: &[u32], depth: u32) -> Result<(), Error> {
@@ -821,6 +824,25 @@ mod tests {
         p.run(&host, 0x100, outer.len() as u32).unwrap();
         assert_eq!((p.sh[8], p.sh[9]), (0x1234, 0x5678));
         assert_eq!(p.stats.draws, 1);
+    }
+
+    #[test]
+    fn chained_indirect_buffers_continue_without_nesting() {
+        let host = Fake::default();
+        host.mem.replace(vec![0; 0x2000]);
+        let segments = 2 * MAX_DEPTH as u64;
+        for k in 0..segments {
+            let at = 0x100 + 0x100 * k;
+            let mut seg = vec![header(2, IT_DRAW_INDEX_AUTO, 0), 3];
+            if k + 1 < segments {
+                seg.extend([header(4, IT_INDIRECT_BUFFER, 0), (at + 0x100) as u32, 0, 7 | 1 << 20]);
+                seg.extend([header(2, IT_DRAW_INDEX_AUTO, 0), 3]);
+            }
+            host.write(at, &seg.iter().flat_map(|d| d.to_le_bytes()).collect::<Vec<u8>>());
+        }
+        let mut p = Processor::default();
+        p.run(&host, 0x100, 8).unwrap();
+        assert_eq!(p.stats.draws, segments);
     }
 
     #[test]
