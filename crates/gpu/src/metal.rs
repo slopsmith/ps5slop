@@ -13,6 +13,7 @@ use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
 use objc2_metal::*;
 
+use crate::compile::Task;
 use crate::regs::{self, Blend, ColorTarget, DepthState, DepthTarget, Image, Sampler, Viewport, context, sh, uconfig};
 use gfx10::translate::{self as shader, Access, Resource, Source, Stage, TextureKind, Translated, binding};
 use crate::tiling::{Layout, TileMode};
@@ -248,6 +249,9 @@ const WINDOW: u64 = 64 << 20;
 const PAGE: u64 = 0x4000;
 /// Draws whose shaders failed are reported this many times.
 const REPORTS: u32 = 24;
+/// Time per frame draws to redrawn targets may wait for their pipelines
+/// before they are skipped.
+const COMPILE_BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
 
 struct Window {
     start: u64,
@@ -284,7 +288,9 @@ struct Program {
     address: u64,
     /// Unique per translation, so caches tell apart programs loaded at one address.
     id: u64,
-    function: Retained<Function>,
+    function: Arc<Task<Retained<Function>>>,
+    /// The pipeline of a compute program, compiled as soon as it is translated.
+    compute: Option<Arc<Task<Retained<ComputePipeline>>>>,
     translated: Translated,
     /// The `user(locnN)` locations a pixel program reads flat.
     flat: Vec<u32>,
@@ -372,9 +378,15 @@ pub struct Metal {
     epoch: u64,
     detilers: HashMap<(TileMode, u32, Detile), Retained<ComputePipeline>>,
     programs: HashMap<(u64, u64), Option<Arc<Program>>>,
-    computes: HashMap<u64, Option<Retained<ComputePipeline>>>,
-    variants: HashMap<VariantKey, Option<Retained<Function>>>,
-    pipelines: HashMap<PipelineKey, Option<Retained<RenderPipeline>>>,
+    variants: HashMap<VariantKey, Arc<Task<Retained<Function>>>>,
+    pipelines: HashMap<PipelineKey, Arc<Task<Retained<RenderPipeline>>>>,
+    /// The first and last frame each colour or depth target (address,
+    /// pixel format, width) was drawn to.
+    drawn: HashMap<(u64, usize, usize), (u64, u64)>,
+    /// What this frame may still spend waiting for pipelines before skipping draws.
+    compile_budget: std::time::Duration,
+    /// Draws and dispatches that waited for a pipeline: how many, and how long.
+    compile_waits: [(u64, std::time::Duration); 2],
     samplers: HashMap<Sampler, Retained<ProtocolObject<dyn MTLSamplerState>>>,
     reports: u32,
     null: HashMap<TextureKind, Retained<Texture>>,
@@ -557,9 +569,11 @@ impl Metal {
             epoch: 0,
             detilers: HashMap::new(),
             programs: HashMap::new(),
-            computes: HashMap::new(),
             variants: HashMap::new(),
             pipelines: HashMap::new(),
+            drawn: HashMap::new(),
+            compile_budget: COMPILE_BUDGET,
+            compile_waits: Default::default(),
             samplers: HashMap::new(),
             reports: 0,
             null: HashMap::new(),
@@ -574,6 +588,14 @@ impl Metal {
             }),
             trace: None,
         })
+    }
+
+    /// Counts a wait for a pipeline that began at `since`, by a draw (0) or a dispatch (1).
+    fn note_wait(&mut self, kind: usize, since: std::time::Instant) {
+        let waited = since.elapsed();
+        crate::timing::add_raw(crate::timing::Part::CompileWait, waited.as_nanos() as u64);
+        self.compile_waits[kind].0 += 1;
+        self.compile_waits[kind].1 += waited;
     }
 
     fn note(&mut self, what: impl FnOnce() -> String) {
@@ -855,26 +877,13 @@ impl Metal {
     }
 
     fn compile(&mut self, msl: &str, entry: &str) -> Option<Retained<Function>> {
-        let t = crate::timing::start();
-        let unique;
-        let msl = if std::env::var_os("PS5SLOP_MSL_UNIQUE").is_some() {
-            unique = format!("{msl}\n// {:?}\n", std::time::SystemTime::now());
-            unique.as_str()
-        } else {
-            msl
-        };
-        let lib = self.device.newLibraryWithSource_options_error(&NSString::from_str(msl), None);
-        crate::timing::add(crate::timing::Part::Compile, t);
-        match lib {
-            Ok(lib) => lib.newFunctionWithName(&NSString::from_str(entry)),
-            Err(e) => {
-                self.report(format!("MSL did not compile: {}", e.localizedDescription()));
-                if std::env::var_os("PS5SLOP_MSL_ERRORS").is_some() {
-                    eprintln!("{msl}");
-                }
-                None
-            }
-        }
+        compile(&self.device, msl, entry)
+    }
+
+    /// Compiles `msl` on the compile threads.
+    fn compile_later(&self, msl: String, entry: String) -> Arc<Task<Retained<Function>>> {
+        let device = self.device.clone();
+        Task::spawn(move || compile(&device, &msl, &entry))
     }
 
     /// Copies a tiled guest surface into slice `slice` of `texture` on the GPU.
@@ -1564,19 +1573,29 @@ impl Metal {
                     if std::env::var_os("PS5SLOP_MSL_DUMP").is_some() {
                         eprintln!("=== {stage:?} {address:#x}\n{}", translated.msl);
                     }
-                    self.compile(&translated.msl, &translated.entry).map(|function| {
-                        Arc::new(Program {
-                            address,
-                            id: {
-                                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-                                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                            },
-                            function,
-                            flat: flat_locations(&translated.msl),
-                            sint_textures: variant.sint_textures,
-                            translated,
+                    let function = self.compile_later(translated.msl.clone(), translated.entry.clone());
+                    let compute = (stage == Stage::Compute).then(|| {
+                        let (device, function) = (self.device.clone(), function.clone());
+                        Task::spawn(move || {
+                            let function = function.wait()?;
+                            let t = crate::timing::start();
+                            let p = device.newComputePipelineStateWithFunction_error(&function);
+                            crate::timing::add(crate::timing::Part::Compile, t);
+                            p.map_err(|e| late_report(format!("compute pipeline failed: {}", e.localizedDescription()))).ok()
                         })
-                    })
+                    });
+                    Some(Arc::new(Program {
+                        address,
+                        id: {
+                            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        },
+                        function,
+                        compute,
+                        flat: flat_locations(&translated.msl),
+                        sint_textures: variant.sint_textures,
+                        translated,
+                    }))
                 }
                 Err(e) => {
                     self.report(format!("{stage:?} program at {address:#x} not translated: {e}"));
@@ -1592,7 +1611,7 @@ impl Metal {
 
     // Metal rejects pixel inputs the vertex function lacks; hardware reads
     // zeros, so variants declare them.
-    fn vertex_function(&mut self, vertex: &Program, pixel: &Program, rect: bool, gl_clip: bool) -> Option<Retained<Function>> {
+    fn vertex_function(&mut self, vertex: &Program, pixel: &Program, rect: bool, gl_clip: bool) -> Arc<Task<Retained<Function>>> {
         let locations = |msl: &str| -> Vec<u32> {
             let mut v: Vec<u32> = msl
                 .match_indices("[[user(locn")
@@ -1613,75 +1632,78 @@ impl Metal {
         };
         let flat: Vec<u32> = if rect { Vec::new() } else { pixel.flat.clone() };
         if missing.is_empty() && flat.is_empty() && !rect && !gl_clip {
-            return Some(vertex.function.clone());
+            return vertex.function.clone();
         }
         let key = (vertex.id, rect, gl_clip, missing.clone(), flat.clone());
         if let Some(f) = self.variants.get(&key) {
             return f.clone();
         }
-        let extra: String = missing
-            .iter()
-            .map(|l| format!("    {} x{l} [[user(locn{l})]];\n", if flat.contains(l) { "uint4" } else { "float4" }))
-            .collect();
-        let mut msl = vertex.translated.msl.replacen("    float4 pos [[position]];\n", &format!("    float4 pos [[position]];\n{extra}"), 1);
-        for l in &flat {
-            msl = uint_output(&msl, *l);
-        }
-        if gl_clip {
-            msl = gl_clip_space(&msl);
-        }
-        let f = if rect {
-            rect_source(&msl).and_then(|m| self.compile(&m, "gen5_vs_rect"))
-        } else {
-            self.compile(&msl, &vertex.translated.entry)
-        };
+        let (device, source, entry) = (self.device.clone(), vertex.translated.msl.clone(), vertex.translated.entry.clone());
+        let f = Task::spawn(move || {
+            let extra: String = missing
+                .iter()
+                .map(|l| format!("    {} x{l} [[user(locn{l})]];\n", if flat.contains(l) { "uint4" } else { "float4" }))
+                .collect();
+            let mut msl = source.replacen("    float4 pos [[position]];\n", &format!("    float4 pos [[position]];\n{extra}"), 1);
+            for l in &flat {
+                msl = uint_output(&msl, *l);
+            }
+            if gl_clip {
+                msl = gl_clip_space(&msl);
+            }
+            if rect {
+                rect_source(&msl).and_then(|m| compile(&device, &m, "gen5_vs_rect"))
+            } else {
+                compile(&device, &msl, &entry)
+            }
+        });
         self.variants.insert(key, f.clone());
         f
     }
 
-    fn pipeline(&mut self, key: &PipelineKey, vertex: &Function, pixel: &Program) -> Option<Retained<RenderPipeline>> {
+    /// The render pipeline for `key`, compiled on the compile threads once both functions are.
+    fn pipeline(&mut self, key: &PipelineKey, vertex: Arc<Task<Retained<Function>>>, pixel: &Program) -> Arc<Task<Retained<RenderPipeline>>> {
         if let Some(p) = self.pipelines.get(key) {
             return p.clone();
         }
-        let desc = MTLRenderPipelineDescriptor::new();
-        desc.setVertexFunction(Some(vertex));
-        desc.setFragmentFunction(Some(&pixel.function));
-        for (i, &raw) in key.formats.iter().enumerate() {
-            if raw == 0 {
-                continue;
+        let (device, k, pixel) = (self.device.clone(), key.clone(), pixel.function.clone());
+        let task = Task::spawn(move || {
+            let key = &k;
+            let (vertex, pixel) = (vertex.wait()?, pixel.wait()?);
+            let desc = MTLRenderPipelineDescriptor::new();
+            desc.setVertexFunction(Some(&vertex));
+            desc.setFragmentFunction(Some(&pixel));
+            for (i, &raw) in key.formats.iter().enumerate() {
+                if raw == 0 {
+                    continue;
+                }
+                let att = unsafe { desc.colorAttachments().objectAtIndexedSubscript(i) };
+                att.setPixelFormat(MTLPixelFormat(raw));
+                let (b, mask) = key.blends[i];
+                att.setWriteMask(MTLColorWriteMask(mask as usize));
+                if b.enable {
+                    att.setBlendingEnabled(true);
+                    att.setSourceRGBBlendFactor(blend_factor(b.color_src));
+                    att.setDestinationRGBBlendFactor(blend_factor(b.color_dst));
+                    att.setRgbBlendOperation(blend_op(b.color_op));
+                    att.setSourceAlphaBlendFactor(blend_factor(b.alpha_src));
+                    att.setDestinationAlphaBlendFactor(blend_factor(b.alpha_dst));
+                    att.setAlphaBlendOperation(blend_op(b.alpha_op));
+                }
             }
-            let att = unsafe { desc.colorAttachments().objectAtIndexedSubscript(i) };
-            att.setPixelFormat(MTLPixelFormat(raw));
-            let (b, mask) = key.blends[i];
-            att.setWriteMask(MTLColorWriteMask(mask as usize));
-            if b.enable {
-                att.setBlendingEnabled(true);
-                att.setSourceRGBBlendFactor(blend_factor(b.color_src));
-                att.setDestinationRGBBlendFactor(blend_factor(b.color_dst));
-                att.setRgbBlendOperation(blend_op(b.color_op));
-                att.setSourceAlphaBlendFactor(blend_factor(b.alpha_src));
-                att.setDestinationAlphaBlendFactor(blend_factor(b.alpha_dst));
-                att.setAlphaBlendOperation(blend_op(b.alpha_op));
+            if key.depth != 0 {
+                desc.setDepthAttachmentPixelFormat(MTLPixelFormat(key.depth));
+                if key.stencil {
+                    desc.setStencilAttachmentPixelFormat(MTLPixelFormat(key.depth));
+                }
             }
-        }
-        if key.depth != 0 {
-            desc.setDepthAttachmentPixelFormat(MTLPixelFormat(key.depth));
-            if key.stencil {
-                desc.setStencilAttachmentPixelFormat(MTLPixelFormat(key.depth));
-            }
-        }
-        let t = crate::timing::start();
-        let made = self.device.newRenderPipelineStateWithDescriptor_error(&desc);
-        crate::timing::add(crate::timing::Part::Compile, t);
-        let pipeline = match made {
-            Ok(p) => Some(p),
-            Err(e) => {
-                self.report(format!("render pipeline failed: {}", e.localizedDescription()));
-                None
-            }
-        };
-        self.pipelines.insert(key.clone(), pipeline.clone());
-        pipeline
+            let t = crate::timing::start();
+            let made = device.newRenderPipelineStateWithDescriptor_error(&desc);
+            crate::timing::add(crate::timing::Part::Compile, t);
+            made.map_err(|e| late_report(format!("render pipeline failed: {}", e.localizedDescription()))).ok()
+        });
+        self.pipelines.insert(key.clone(), task.clone());
+        task
     }
 
     /// The render encoder for color targets `targets`, reusing the open pass when it matches.
@@ -2458,14 +2480,13 @@ impl Metal {
         let program = self.typed_program(host, state, Stage::Compute, address, users, false, 0, user).ok_or("compute program")?;
         self.note(|| format!("compute {address:#x} groups {groups:?} user {:x?}", &user[..users as usize]));
         self.trace_user_memory(host, &user[..users as usize], false);
-        let id = Arc::as_ptr(&program) as u64;
-        let pipeline = match self.computes.get(&id) {
-            Some(p) => p.clone(),
+        let task = program.compute.as_ref().ok_or("compute pipeline")?;
+        let pipeline = match task.poll() {
+            Some(p) => p,
             None => {
-                let t = crate::timing::start();
-                let p = self.device.newComputePipelineStateWithFunction_error(&program.function).ok();
-                crate::timing::add(crate::timing::Part::Compile, t);
-                self.computes.insert(id, p.clone());
+                let t = std::time::Instant::now();
+                let p = task.wait();
+                self.note_wait(1, t);
                 p
             }
         }
@@ -2575,7 +2596,7 @@ impl Metal {
         });
         let rect = u[uconfig::VGT_PRIMITIVE_TYPE] == 7;
         let gl_clip = c[context::PA_CL_CLIP_CNTL] & (1 << 19) == 0;
-        let vertex_function = self.vertex_function(&vertex, &pixel, rect, gl_clip).ok_or("vertex program variant")?;
+        let vertex_function = self.vertex_function(&vertex, &pixel, rect, gl_clip);
 
         let mask = c[context::CB_TARGET_MASK];
         let mut targets = Vec::new();
@@ -2635,7 +2656,44 @@ impl Metal {
         if targets.is_empty() && depth.is_none() {
             return Err("no color target");
         }
-        let pipeline = self.pipeline(&key, &vertex_function, &pixel).ok_or("pipeline")?;
+        let pipeline = self.pipeline(&key, vertex_function, &pixel);
+        let mut redrawn = !vertex.translated.writes_memory && !pixel.translated.writes_memory && !compile_wait();
+        let surfaces: Vec<_> = targets
+            .iter()
+            .map(|t| (t.0, &t.1))
+            .chain(depth.as_ref().map(|d| (d.0, &d.1)))
+            .map(|(address, t)| (address, t.pixelFormat().0, t.width()))
+            .collect();
+        for surface in surfaces {
+            let (first, last) = self.drawn.entry(surface).or_insert((self.epoch, self.epoch));
+            redrawn &= self.shown.contains_key(&surface.0) || (*first < self.epoch && *last + 2 >= self.epoch);
+            *last = self.epoch;
+        }
+        let mut ready = pipeline.poll();
+        if ready.is_none() && redrawn && !self.compile_budget.is_zero() {
+            let t = std::time::Instant::now();
+            ready = pipeline.wait_for(self.compile_budget.min(std::time::Duration::from_millis(4)));
+            self.compile_budget = self.compile_budget.saturating_sub(t.elapsed());
+            crate::timing::add_raw(crate::timing::Part::CompileWait, t.elapsed().as_nanos() as u64);
+        }
+        let pipeline = match ready {
+            Some(p) => p,
+            // A target drawn every frame shows this draw from a later frame on.
+            None if redrawn => {
+                // The clear rides on the pass and would be lost with the draw.
+                if clear.is_some() {
+                    self.pass(&targets, depth, clear).ok_or("render pass")?;
+                }
+                return Err("compiling");
+            }
+            None => {
+                let t = std::time::Instant::now();
+                let p = pipeline.wait();
+                self.note_wait(0, t);
+                p
+            }
+        }
+        .ok_or("pipeline")?;
         let depth_bound = depth.is_some();
         let (w, h) = match (size, &depth) {
             (Some((w, h)), _) => (w as f64, h as f64),
@@ -2774,7 +2832,6 @@ impl Metal {
     fn frame_tools(&mut self) {
         if RELOAD.swap(false, std::sync::atomic::Ordering::Relaxed) {
             self.programs.clear();
-            self.computes.clear();
             self.variants.clear();
             self.pipelines.clear();
             self.missing_inputs.clear();
@@ -2931,7 +2988,7 @@ impl Backend for Metal {
         let image_bytes: u64 = self.images.values().map(|(_, t)| mib(t)).sum();
         let target_bytes: u64 = self.targets.values().map(|t| mib(&t.texture)).sum();
         format!(
-            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} command buffers failed; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines",
+            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} command buffers failed; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms)",
             self.draws,
             self.dispatches,
             self.skipped,
@@ -2944,7 +3001,12 @@ impl Backend for Metal {
             self.volumes.len(),
             self.swizzles.len(),
             self.windows.len(),
-            self.pipelines.len()
+            self.pipelines.len(),
+            crate::compile::queued(),
+            self.compile_waits[0].0,
+            self.compile_waits[0].1.as_millis(),
+            self.compile_waits[1].0,
+            self.compile_waits[1].1.as_millis()
         )
     }
 
@@ -2987,6 +3049,7 @@ impl Backend for Metal {
             eprintln!("ps5slop: trace: frame {} done, showing {shown:x?}", self.epoch);
         }
         self.epoch += 1;
+        self.compile_budget = COMPILE_BUDGET;
         self.swizzles.clear();
         let epoch = self.epoch;
         self.images.retain(|_, (used, _)| epoch - *used < IMAGE_LIFETIME);
@@ -2998,6 +3061,44 @@ impl Backend for Metal {
 }
 
 // Each rectangle draws guest vertices 0, 1, 2, 1, 3, 2; corner 3 is v1 + v2 - v0.
+/// Compiles `msl` and returns its function `entry`; any thread.
+fn compile(device: &Device, msl: &str, entry: &str) -> Option<Retained<Function>> {
+    let t = crate::timing::start();
+    let unique;
+    let msl = if std::env::var_os("PS5SLOP_MSL_UNIQUE").is_some() {
+        unique = format!("{msl}\n// {:?}\n", std::time::SystemTime::now());
+        unique.as_str()
+    } else {
+        msl
+    };
+    let lib = device.newLibraryWithSource_options_error(&NSString::from_str(msl), None);
+    crate::timing::add(crate::timing::Part::Compile, t);
+    match lib {
+        Ok(lib) => lib.newFunctionWithName(&NSString::from_str(entry)),
+        Err(e) => {
+            late_report(format!("MSL did not compile: {}", e.localizedDescription()));
+            if std::env::var_os("PS5SLOP_MSL_ERRORS").is_some() {
+                eprintln!("{msl}");
+            }
+            None
+        }
+    }
+}
+
+/// Reports a failure from the compile threads, the first [`REPORTS`] times.
+fn late_report(what: String) {
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < REPORTS {
+        eprintln!("ps5slop: GPU: {what}");
+    }
+}
+
+/// Whether draws wait for their pipeline instead of skipping (`PS5SLOP_COMPILE_WAIT`).
+fn compile_wait() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("PS5SLOP_COMPILE_WAIT").is_some())
+}
+
 fn rect_source(msl: &str) -> Option<String> {
     let start = msl.find("vertex VsOut gen5_vs(")?;
     let open = start + "vertex VsOut gen5_vs(".len();

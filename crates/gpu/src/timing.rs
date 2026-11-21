@@ -26,11 +26,13 @@ pub enum Part {
     Submission,
     /// From the GPU finishing to our wait returning.
     WakeUp,
-    /// Compiling MSL and pipelines (part of encoding).
+    /// Compiling MSL and pipelines, summed over the compile threads.
     Compile,
+    /// Encoding waiting for a program or pipeline still compiling.
+    CompileWait,
 }
 
-pub const NAMES: [&str; 12] = [
+pub const NAMES: [&str; 13] = [
     "draw encoding",
     "dispatch encoding",
     "waiting for Metal",
@@ -42,11 +44,12 @@ pub const NAMES: [&str; 12] = [
     "scheduled to start",
     "commit to scheduled",
     "done to woken",
-    "compiling (in encoding)",
+    "compiling (compile threads)",
+    "waiting for compiles (in encoding)",
 ];
 
 static ON: AtomicBool = AtomicBool::new(false);
-static NS: [AtomicU64; 12] = [const { AtomicU64::new(0) }; 12];
+static NS: [AtomicU64; 13] = [const { AtomicU64::new(0) }; 13];
 
 /// Starts counting from zero, or stops.
 pub fn set(on: bool) {
@@ -75,7 +78,7 @@ pub fn add_raw(part: Part, n: u64) {
 }
 
 /// Nanoseconds per [`Part`] since counting started.
-pub fn totals() -> [u64; 12] {
+pub fn totals() -> [u64; 13] {
     NS.each_ref().map(|n| n.load(Ordering::Relaxed))
 }
 

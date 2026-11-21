@@ -6,6 +6,8 @@
 //! PM4 documentation and SharpEmu's interpreter (GPL-2.0-or-later).
 
 #[cfg(target_os = "macos")]
+mod compile;
+#[cfg(target_os = "macos")]
 pub mod metal;
 mod pm4;
 pub mod regs;
