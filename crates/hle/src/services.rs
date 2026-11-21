@@ -57,6 +57,12 @@ pub static FUNCTIONS: &[Function] = &[
     ),
     f("libSceRtc", "sceRtcGetCurrentNetworkTick", rtc_current_tick),
     f("libSceRtc", "sceRtcSetTick", rtc_set_tick),
+    f("libSceRtc", "sceRtcGetTick", rtc_get_tick),
+    f("libSceRtc", "sceRtcGetCurrentClock", rtc_current_clock),
+    f("libSceRtc", "sceRtcGetCurrentClockLocalTime", rtc_current_clock_local),
+    f("libSceRtc", "sceRtcConvertUtcToLocalTime", rtc_utc_to_local),
+    f("libSceRtc", "sceRtcGetTime_t", rtc_get_time_t),
+    f("libSceRtc", "sceRtcSetTime_t", rtc_set_time_t),
 ];
 
 /// `sceSystemServiceGetDisplaySafeAreaInfo(info)`: the whole screen is safe.
@@ -227,9 +233,18 @@ const RTC_EPOCH_OFFSET: u64 = 62_135_596_800;
 fn rtc_set_tick(env: &mut Env) -> Result<Outcome, CallError> {
     let (out, tick_at) = (env.arg(0), env.arg(1));
     if out == 0 || tick_at == 0 {
-        return ret(crate::dmem::sce_error(crate::errno::EINVAL));
+        return ret(rtc_invalid());
     }
     let tick = env.mem.read_u64(tick_at)?;
+    write_date_time(env, out, tick)
+}
+
+fn rtc_invalid() -> u64 {
+    crate::dmem::sce_error(crate::errno::EINVAL)
+}
+
+/// Writes tick `tick` at `out` as a date and time (see [`rtc_set_tick`]).
+fn write_date_time(env: &mut Env, out: u64, tick: u64) -> Result<Outcome, CallError> {
     let (secs, micros) = (tick / 1_000_000, (tick % 1_000_000) as u32);
     let (year, month, day) = civil_from_days((secs / 86_400) as i64 - 719_162);
     let in_day = secs % 86_400;
@@ -243,6 +258,84 @@ fn rtc_set_tick(env: &mut Env) -> Result<Outcome, CallError> {
     b[12..16].copy_from_slice(&micros.to_le_bytes());
     env.mem.write(out, &b)?;
     ret(0)
+}
+
+/// The tick of the date and time at `at`, or `None` when it is not a valid
+/// date.
+fn read_date_time(env: &Env, at: u64) -> Result<Option<u64>, CallError> {
+    let mut b = [0u8; 16];
+    env.mem.read(at, &mut b)?;
+    let f = |k: usize| u16::from_le_bytes([b[2 * k], b[2 * k + 1]]) as u64;
+    let (year, month, day, hour, minute, second) = (f(0), f(1), f(2), f(3), f(4), f(5));
+    let micros = u32::from_le_bytes([b[12], b[13], b[14], b[15]]) as u64;
+    if year == 0 || !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 59 || micros >= 1_000_000 {
+        return Ok(None);
+    }
+    let days = (days_from_civil(year as i64, month, day) + 719_162) as u64;
+    Ok(Some(((days * 86_400 + hour * 3600 + minute * 60 + second) * 1_000_000) + micros))
+}
+
+/// `sceRtcGetTick(&date_time, &tick)`.
+fn rtc_get_tick(env: &mut Env) -> Result<Outcome, CallError> {
+    match read_date_time(env, env.arg(0))? {
+        Some(tick) if env.arg(1) != 0 => {
+            env.mem.write_u64(env.arg(1), tick)?;
+            ret(0)
+        }
+        _ => ret(rtc_invalid()),
+    }
+}
+
+/// `sceRtcGetCurrentClock(&date_time, minutes east of UTC)`.
+fn rtc_current_clock(env: &mut Env) -> Result<Outcome, CallError> {
+    let offset = env.arg(1) as i32 as i64 * 60_000_000;
+    let tick = current_tick().saturating_add_signed(offset);
+    write_date_time(env, env.arg(0), tick)
+}
+
+/// `sceRtcGetCurrentClockLocalTime(&date_time)`: local time is UTC, as
+/// `sceSystemServiceParamGetInt` reports.
+fn rtc_current_clock_local(env: &mut Env) -> Result<Outcome, CallError> {
+    write_date_time(env, env.arg(0), current_tick())
+}
+
+/// `sceRtcConvertUtcToLocalTime(&utc, &local)`, ticks; local time is UTC.
+fn rtc_utc_to_local(env: &mut Env) -> Result<Outcome, CallError> {
+    let tick = env.mem.read_u64(env.arg(0))?;
+    env.mem.write_u64(env.arg(1), tick)?;
+    ret(0)
+}
+
+/// `sceRtcGetTime_t(&date_time, &time_t)`: seconds since 1970.
+fn rtc_get_time_t(env: &mut Env) -> Result<Outcome, CallError> {
+    match read_date_time(env, env.arg(0))? {
+        Some(tick) if env.arg(1) != 0 => {
+            let secs = (tick / 1_000_000) as i64 - RTC_EPOCH_OFFSET as i64;
+            env.mem.write_u64(env.arg(1), secs as u64)?;
+            ret(0)
+        }
+        _ => ret(rtc_invalid()),
+    }
+}
+
+/// `sceRtcSetTime_t(&date_time, time_t)`.
+fn rtc_set_time_t(env: &mut Env) -> Result<Outcome, CallError> {
+    let secs = env.arg(1) as i64;
+    if secs < 0 {
+        return ret(rtc_invalid());
+    }
+    write_date_time(env, env.arg(0), (secs as u64 + RTC_EPOCH_OFFSET) * 1_000_000)
+}
+
+/// Days from 1970-01-01 to the given date (proleptic Gregorian calendar).
+fn days_from_civil(year: i64, month: u64, day: u64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let m = month as i64;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + day as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 /// Year, month and day of the day `days` after 1970-01-01 (proleptic
@@ -263,17 +356,20 @@ fn civil_from_days(days: i64) -> (i64, u64, u64) {
 /// `sceRtcGetCurrentTick(&tick)`: microseconds since 0001-01-01 UTC. The
 /// network tick (`sceRtcGetCurrentNetworkTick`) is the same clock here.
 fn rtc_current_tick(env: &mut Env) -> Result<Outcome, CallError> {
+    env.mem.write_u64(env.arg(0), current_tick())?;
+    ret(0)
+}
+
+fn current_tick() -> u64 {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
-    let tick = (now.as_secs() + RTC_EPOCH_OFFSET) * 1_000_000 + now.subsec_micros() as u64;
-    env.mem.write_u64(env.arg(0), tick)?;
-    ret(0)
+    (now.as_secs() + RTC_EPOCH_OFFSET) * 1_000_000 + now.subsec_micros() as u64
 }
 
 #[cfg(test)]
 mod tests {
-    use super::civil_from_days;
+    use super::{civil_from_days, days_from_civil};
 
     #[test]
     fn days_map_to_gregorian_dates_across_leap_days_and_the_epoch() {
@@ -281,5 +377,13 @@ mod tests {
         assert_eq!(civil_from_days(-1), (1969, 12, 31));
         assert_eq!(civil_from_days(11_016), (2000, 2, 29));
         assert_eq!(civil_from_days(-719_162), (1, 1, 1));
+    }
+
+    #[test]
+    fn days_from_civil_inverts_civil_from_days() {
+        for days in [-719_162, -1, 0, 59, 60, 11_016, 20_000, 2_932_896] {
+            let (y, m, d) = civil_from_days(days);
+            assert_eq!(days_from_civil(y, m, d), days);
+        }
     }
 }

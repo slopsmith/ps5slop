@@ -121,7 +121,8 @@ fn main() -> ExitCode {
     let data = data.or_else(|| default_data(&title));
     let temp = data.as_ref().map(|d| beside(d, "temp"));
     let saves = data.as_ref().map(|d| beside(d, "savedata"));
-    for d in data.iter().chain(&temp).chain(&saves) {
+    let download = data.as_ref().map(|d| beside(d, "download0"));
+    for d in data.iter().chain(&temp).chain(&saves).chain(&download) {
         if let Err(e) = std::fs::create_dir_all(d) {
             eprintln!("ps5slop: cannot make {}: {e}", d.display());
         }
@@ -130,6 +131,9 @@ fn main() -> ExitCode {
     title.mount(&vfs);
     if let Some(t) = temp {
         vfs.mount("/temp0", t, true);
+    }
+    if let Some(d) = download {
+        vfs.mount("/download0", d, true);
     }
     if let Some(d) = std::env::var_os("PS5SLOP_DEVLOG") {
         vfs.mount("/devlog", std::path::PathBuf::from(d), true);

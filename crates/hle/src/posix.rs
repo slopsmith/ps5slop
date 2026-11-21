@@ -15,6 +15,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("fstat", fstat),
     f("sceKernelStat", sce_stat),
     f("sceKernelFstat", sce_fstat),
+    f("sceKernelCheckReachability", check_reachability),
     f("mkdir", mkdir),
     f("gettimeofday", gettimeofday),
     f("clock_gettime", clock_gettime),
@@ -166,6 +167,17 @@ fn sce_stat(env: &mut Env) -> Result<Outcome, CallError> {
 
 fn sce_fstat(env: &mut Env) -> Result<Outcome, CallError> {
     ret(stat_fd(env)?.map_or_else(sce_error, |()| 0))
+}
+
+/// `sceKernelCheckReachability(path)`: whether the path lies in a mount
+/// (name hashed from a guess; GTA V asks about `/download0/saves`). What a
+/// console checks beyond that is unknown.
+fn check_reachability(env: &mut Env) -> Result<Outcome, CallError> {
+    let path = super::libc::cstr(env, env.arg(0))?;
+    ret(match env.kernel.vfs.lookup(&path) {
+        Some(_) => 0,
+        None => sce_error(errno::ENOENT),
+    })
 }
 
 /// `mkdir(path, mode)`.

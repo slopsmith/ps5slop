@@ -55,6 +55,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceSaveDataDirNameSearch", dir_name_search),
     f("sceSaveDataSaveIcon", save_icon),
     f("sceSaveDataLoadIcon", load_icon),
+    f("sceSaveDataSaveIconByPath", save_icon_by_path),
     f("sceSaveDataDelete", delete),
     // Name unknown; Minecraft passes it the same condition and result.
     f("#X4MYzukPc3g", dir_name_search),
@@ -414,6 +415,22 @@ fn save_icon(env: &mut Env) -> Result<Outcome, CallError> {
     let size = env.mem.read_u64(icon + ICON_DATA_SIZE)?.min(16 << 20) as usize;
     let mut data = vec![0u8; size];
     env.mem.read(env.mem.read_u64(icon + ICON_BUF)?, &mut data)?;
+    let _ = file.parent().map(std::fs::create_dir_all);
+    std::fs::write(file, data).map_err(|_| CallError::Abort("cannot write a save icon"))?;
+    ret(0)
+}
+
+/// `sceSaveDataSaveIconByPath(mount_point, path)`: the icon is a file the
+/// title can read, such as `/app0/sce_sys/save_data.png` (name hashed from
+/// a guess; the arguments read off GTA V's call).
+fn save_icon_by_path(env: &mut Env) -> Result<Outcome, CallError> {
+    let Some(file) = icon_file(env, env.arg(0))? else {
+        return ret(ERROR_NOT_MOUNTED);
+    };
+    let path = env.mem.read_cstr(env.arg(1), 1024)?;
+    let Some(data) = env.kernel.vfs.read(&path) else {
+        return ret(ERROR_NOT_FOUND);
+    };
     let _ = file.parent().map(std::fs::create_dir_all);
     std::fs::write(file, data).map_err(|_| CallError::Abort("cannot write a save icon"))?;
     ret(0)
