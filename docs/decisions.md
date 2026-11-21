@@ -510,3 +510,7 @@ The compile pool has one thread per performance core (`hw.perflevel0.physicalcpu
 
 Programs with branches are guarded blocks in address order, with a loop only around each backward branch's range, instead of one `for (;;) switch (pc)` around the whole program; consecutive guarded vector instructions share one `if`. Reason: the whole-program loop made Metal's compiler spend over a third of its time in loop passes; Superliminal's largest programs compile in 780 ms instead of 1,070 ms. Overlapping loops keep the old form.
 
+## 2026-11-21: Translated programs compile in safe math mode
+
+`MTLCompileOptions.mathMode` is `Safe` for every translated program. Reason: with Metal's default fast math, one of Superliminal's material programs produced NaN pixels that bloom spread into a white glow; with safe (or relaxed) math it did not, same view and inputs (fast 6 of 14 angles, safe 0, relaxed 0). Safe rather than relaxed because the translated code mirrors the hardware's instructions one by one and the hardware does not reassociate them either. Measured cost: none in compile time; Superliminal's first room at 58 to 59 flips a second. Heavier titles were checked only by their regression screens.
+

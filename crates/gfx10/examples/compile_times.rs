@@ -1,9 +1,10 @@
 //! Times Metal's compiler on the programs a title ran, from the files
 //! `PS5SLOP_SHADER_DUMP` wrote (or `.metal` files). Each source gets a
 //! unique trailing comment, so Metal's shader cache never answers, unless
-//! `--warm` is given.
+//! `--warm` is given. Programs compile in safe math mode, as the renderer
+//! compiles them, unless `--fast` is given.
 //! Usage: `cargo run --release -p gfx10 --example compile_times -- DIR
-//! [--threads N] [--size] [--strip-comments] [--min-bytes N] [--warm]
+//! [--threads N] [--size] [--fast] [--strip-comments] [--min-bytes N] [--warm]
 //! [--dump OUT]`; `--dump` writes each translation to OUT instead.
 
 #[cfg(target_os = "macos")]
@@ -21,6 +22,7 @@ fn main() {
     let (mut threads, mut size, mut strip, mut min_bytes) = (1usize, false, false, 0usize);
     let mut dump = None;
     let mut warm = false;
+    let mut fast = false;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--threads" => threads = args.next().and_then(|v| v.parse().ok()).unwrap_or(1),
@@ -28,6 +30,7 @@ fn main() {
             "--strip-comments" => strip = true,
             "--dump" => dump = args.next(),
             "--warm" => warm = true,
+            "--fast" => fast = true,
             "--min-bytes" => min_bytes = args.next().and_then(|v| v.parse().ok()).unwrap_or(0),
             _ => panic!("unknown option {a}"),
         }
@@ -79,6 +82,9 @@ fn main() {
                 let options = MTLCompileOptions::new();
                 if size {
                     options.setOptimizationLevel(MTLLibraryOptimizationLevel::Size);
+                }
+                if !fast {
+                    options.setMathMode(objc2_metal::MTLMathMode::Safe);
                 }
                 loop {
                     let Some((i, (name, msl))) = jobs.lock().unwrap().pop() else {

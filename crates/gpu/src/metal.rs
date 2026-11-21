@@ -3754,7 +3754,16 @@ impl Metal {
             .next_multiple_of(1 << 30)
             .min(end)
             .min(start + max);
-        if need > stop || !host.back(start, stop) {
+        if need > stop {
+            self.report(format!(
+                "GPU area window: {need:#x} is past what a window may reach ({stop:#x}; area {start:#x}..{end:#x}, Metal's limit {max:#x})"
+            ));
+            return None;
+        }
+        if !host.back(start, stop) {
+            self.report(format!(
+                "GPU area window: guest memory {start:#x}..{stop:#x} could not be given host pages"
+            ));
             return None;
         }
         let ptr = NonNull::new(host.host_pointer(start)?)?;
@@ -3768,7 +3777,15 @@ impl Metal {
                     MTLResourceOptions::StorageModeShared,
                     None,
                 )
-        }?;
+        };
+        let Some(buffer) = buffer else {
+            self.report(format!(
+                "GPU area window: Metal refused a {} MiB buffer over guest memory ({} MiB allocated)",
+                (stop - start) >> 20,
+                self.device.currentAllocatedSize() >> 20
+            ));
+            return None;
+        };
         // Made again after mapping changes: report only growth, so the
         // window does not use up the reports.
         static LARGEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -4896,7 +4913,11 @@ fn compile(device: &Device, msl: &str, entry: &str) -> Option<Retained<Function>
     } else {
         msl
     };
-    let lib = device.newLibraryWithSource_options_error(&NSString::from_str(msl), None);
+    // Fast math assumes no NaN or infinity and then makes some: Superliminal
+    // got NaN pixels that bloom spread into white squares.
+    let options = objc2_metal::MTLCompileOptions::new();
+    options.setMathMode(objc2_metal::MTLMathMode::Safe);
+    let lib = device.newLibraryWithSource_options_error(&NSString::from_str(msl), Some(&options));
     crate::timing::add(crate::timing::Part::Compile, t);
     match lib {
         Ok(lib) => lib.newFunctionWithName(&NSString::from_str(entry)),
@@ -5110,6 +5131,7 @@ fn color_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
         (5, 7) => P::RG16Float,
         (6 | 7, _) => P::RG11B10Float,
         (8 | 9, 4) => P::RGB10A2Uint,
+        (8 | 9, _) if bgr => P::BGR10A2Unorm,
         (8 | 9, _) => P::RGB10A2Unorm,
         (11, 4) => P::RG32Uint,
         (11, 7) => P::RG32Float,
@@ -5169,7 +5191,7 @@ fn view_compatible(from: MTLPixelFormat, to: MTLPixelFormat) -> bool {
             | P::RGBA8Sint
             | P::BGRA8Unorm
             | P::BGRA8Unorm_sRGB => 4,
-            P::RGB10A2Unorm | P::RG11B10Float | P::RGB9E5Float => 4,
+            P::RGB10A2Unorm | P::BGR10A2Unorm | P::RG11B10Float | P::RGB9E5Float => 4,
             P::RG32Uint
             | P::RG32Sint
             | P::RG32Float
@@ -5795,6 +5817,52 @@ mod tests {
             (1, 2, 0),
             "the polling group never saw the flag"
         );
+    }
+
+    #[test]
+    fn swapped_10_10_10_2_targets_keep_the_hardware_component_order() {
+        let Some(mut metal) = Metal::new() else {
+            return;
+        };
+        let mem = Mem::new(4 << 20);
+        let target = ColorTarget {
+            address: 0x10000,
+            width: 64,
+            height: 32,
+            format: regs::ColorFormat {
+                layout: 9,
+                number: 0,
+                swap: 1,
+            },
+            tile: Some(TileMode::RenderTarget),
+            raw_tile: 0x1b,
+            max_mip: 0,
+            mip_level: 0,
+            slice: 0,
+            slices: 1,
+            fast_clear: None,
+            dcc: None,
+        };
+        let (drawn, format) = metal.target(&mem, &target).expect("the target is made");
+        assert_eq!(format, MTLPixelFormat::BGR10A2Unorm);
+        let image = Image {
+            address: target.address,
+            format: 50,
+            width: 64,
+            height: 32,
+            swizzle: [6, 5, 4, 7],
+            tile: Some(TileMode::RenderTarget),
+            raw_tile: 0x1b,
+            kind: 9,
+            base_level: 0,
+            last_level: 0,
+            depth: 1,
+            base_array: 0,
+        };
+        let read = metal.image(&mem, image, TextureKind::Tex2d).unwrap();
+        assert_eq!(read.pixelFormat(), MTLPixelFormat::RGB10A2Unorm);
+        let parent = read.parentTexture().map(|p| Retained::as_ptr(&p));
+        assert_eq!(parent, Some(Retained::as_ptr(&drawn)));
     }
 
     #[test]
