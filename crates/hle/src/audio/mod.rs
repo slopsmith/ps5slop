@@ -340,6 +340,7 @@ fn wait(env: &Env, handle: u64, wake: Instant) {
     let audio = &env.kernel.audio;
     if !audio.device_running() {
         if let Some(left) = wake.checked_duration_since(Instant::now()) {
+            jit::blocking();
             std::thread::sleep(left);
         }
         return;
@@ -359,6 +360,7 @@ fn wait(env: &Env, handle: u64, wake: Instant) {
             q.drain(..excess);
             return;
         }
+        jit::blocking();
         queues = audio
             .mixer
             .drained

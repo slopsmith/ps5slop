@@ -435,6 +435,7 @@ fn wait_vblank(env: &mut Env) -> Result<Outcome, CallError> {
         if env.kernel.has_exited() || crate::exception::interrupted(env) {
             break;
         }
+        jit::blocking();
         std::thread::sleep(left.min(POLL));
     }
     ret(0)

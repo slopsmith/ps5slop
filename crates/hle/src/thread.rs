@@ -285,6 +285,7 @@ fn join(env: &mut Env) -> Result<Outcome, CallError> {
         if crate::exception::interrupted(env) {
             return Ok(Outcome::Resume);
         }
+        jit::blocking();
         result = r
             .finished
             .wait_timeout(result, POLL)

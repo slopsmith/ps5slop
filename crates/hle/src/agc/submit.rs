@@ -88,6 +88,7 @@ impl Progress {
         let start = Instant::now();
         let mut c = lock(&self.counts);
         while c.finished < n && !c.polling && !exiting() && start.elapsed() < THROTTLE_LIMIT {
+            jit::blocking();
             c = match self.changed.wait_timeout(c, Duration::from_millis(50)) {
                 Ok((c, _)) => c,
                 Err(e) => e.into_inner().0,

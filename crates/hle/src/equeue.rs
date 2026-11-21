@@ -173,6 +173,7 @@ fn wait(env: &mut Env) -> Result<Outcome, CallError> {
             },
             None => POLL,
         };
+        jit::blocking();
         regs = q
             .triggered
             .wait_timeout(regs, wait)

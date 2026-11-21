@@ -327,6 +327,7 @@ fn acquire(env: &Env, m: &HostMutex, me: u64, try_only: bool, restartable: bool)
                     waiting = true;
                     s.waiters += 1;
                 }
+                jit::blocking();
                 s = m
                     .released
                     .wait_timeout(s, POLL)
@@ -430,6 +431,7 @@ fn wait(env: &mut Env, deadline: Option<Instant>) -> Result<Outcome, CallError> 
             },
             None => POLL,
         };
+        jit::blocking();
         generation = c
             .signalled
             .wait_timeout(generation, wait)
@@ -546,6 +548,7 @@ fn rwlock_take_until(
             Some(d) => POLL.min(d - now),
             None => POLL,
         };
+        jit::blocking();
         s = l
             .changed
             .wait_timeout(s, poll)
@@ -672,6 +675,7 @@ fn once(env: &mut Env) -> Result<Outcome, CallError> {
             _ => {
                 let objects = &env.kernel.objects;
                 let guard = lock(&objects.once);
+                jit::blocking();
                 let _ = objects.once_done.wait_timeout(guard, POLL);
                 if env.kernel.has_exited() {
                     return ret(0);
@@ -791,6 +795,7 @@ fn sce_mutex_timedlock(env: &mut Env) -> Result<Outcome, CallError> {
         if r != EBUSY || Instant::now() >= deadline || env.kernel.has_exited() {
             return sce(ret(if r == EBUSY { ETIMEDOUT } else { r }));
         }
+        jit::blocking();
         std::thread::sleep(Duration::from_millis(1));
     }
 }

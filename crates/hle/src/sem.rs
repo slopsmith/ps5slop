@@ -123,6 +123,7 @@ fn take(env: &mut Env, deadline: Option<Instant>) -> Result<Outcome, CallError> 
             },
             None => POLL,
         };
+        jit::blocking();
         count = s
             .posted
             .wait_timeout(count, wait)
@@ -265,6 +266,7 @@ fn sce_wait(env: &mut Env) -> Result<Outcome, CallError> {
             },
             None => POLL,
         };
+        jit::blocking();
         st = s
             .changed
             .wait_timeout(st, wait)

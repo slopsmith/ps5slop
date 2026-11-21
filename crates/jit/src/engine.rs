@@ -3,7 +3,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use memory::{FaultKind, Memory};
@@ -331,8 +331,52 @@ impl Drop for Engine {
 
 enum Slot {
     Untried,
-    Unavailable,
+    /// No vCPU was free when [`RELEASES`] stood at this count.
+    Unavailable(u64),
     Ready(Box<Engine>),
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        if let Slot::Unavailable(_) = self {
+            WANTING.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Running threads that interpret for want of a vCPU: HVF allows 64 per VM,
+/// and Astro Bot starts about 70 threads.
+static WANTING: AtomicUsize = AtomicUsize::new(0);
+/// vCPUs given back by threads about to block, so those without one try again.
+static RELEASES: AtomicU64 = AtomicU64::new(0);
+
+/// vCPUs given back so far, and threads now running without one.
+pub fn vcpu_sharing() -> (u64, usize) {
+    (
+        RELEASES.load(Ordering::Relaxed),
+        WANTING.load(Ordering::Relaxed),
+    )
+}
+
+/// Called by a thread about to block in a host function: while another
+/// running thread has no vCPU, this one gives its own back until it runs again.
+pub fn blocking() {
+    if WANTING.load(Ordering::Relaxed) == 0 {
+        return;
+    }
+    THREAD.with(|t| {
+        let Ok(mut t) = t.try_borrow_mut() else {
+            return;
+        };
+        match *t {
+            Slot::Ready(_) => {
+                *t = Slot::Untried;
+                RELEASES.fetch_add(1, Ordering::SeqCst);
+            }
+            Slot::Unavailable(_) => *t = Slot::Untried,
+            Slot::Untried => {}
+        }
+    });
 }
 
 thread_local! {
@@ -362,7 +406,13 @@ fn note_block(rip: u64) {
 pub fn run(cpu: &mut X86, mem: &Memory, stop: &dyn Fn() -> bool) -> x86::Exit {
     THREAD.with(|t| {
         let mut t = t.borrow_mut();
+        if let Slot::Unavailable(seen) = *t
+            && RELEASES.load(Ordering::SeqCst) != seen
+        {
+            *t = Slot::Untried;
+        }
         if let Slot::Untried = *t {
+            let seen = RELEASES.load(Ordering::SeqCst);
             *t = match machine().and_then(|mut m| Cpu::new(&mut m)) {
                 Ok(Some(cpu)) => Slot::Ready(Box::new(Engine {
                     cpu,
@@ -372,7 +422,10 @@ pub fn run(cpu: &mut X86, mem: &Memory, stop: &dyn Fn() -> bool) -> x86::Exit {
                     fpsr_dirty: true,
                     fpcr_dirty: true,
                 })),
-                _ => Slot::Unavailable,
+                _ => {
+                    WANTING.fetch_add(1, Ordering::SeqCst);
+                    Slot::Unavailable(seen)
+                }
             };
         }
         match &mut *t {

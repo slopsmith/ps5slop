@@ -221,6 +221,7 @@ fn sleep(env: &Env, time: Duration) {
         if env.kernel.has_exited() || crate::exception::interrupted(env) {
             break;
         }
+        jit::blocking();
         std::thread::sleep(left.min(POLL));
     }
 }

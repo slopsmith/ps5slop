@@ -501,8 +501,9 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
         .collect();
     let changes = kernel.memory().generation()
         - PROFILE_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+    let (given, wanting) = jit::vcpu_sharing();
     let mut out = vec![format!(
-        "{:.1} s; {} translations ({} of code translated before, {} bytes each on average), {} segments evicted, {} blocks in the cache, {changes} memory map changes",
+        "{:.1} s; {} translations ({} of code translated before, {} bytes each on average), {} segments evicted, {} blocks in the cache, {changes} memory map changes; {given} vCPUs given back since start, {wanting} threads running without one",
         r.seconds,
         r.translations,
         r.retranslations,

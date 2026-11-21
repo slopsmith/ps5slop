@@ -186,6 +186,7 @@ fn wait(env: &mut Env) -> Result<Outcome, CallError> {
             },
             None => POLL,
         };
+        jit::blocking();
         st = f
             .changed
             .wait_timeout(st, step)
