@@ -216,6 +216,143 @@ static RENDER_TARGET: [&[Term]; 5] = [
 /// log2 of a 64 KiB thin block's width and height, by log2 of the element size.
 const BLOCK_64K: [(u32, u32); 5] = [(8, 8), (8, 7), (7, 7), (7, 6), (6, 6)];
 
+/// Where each level of the mip tail starts inside the tail block, in
+/// elements, by log2 of the element size (SharpEmu-mac's `TileGeometry`).
+const TAIL_4K: [[(u32, u32); 8]; 5] = [
+    [
+        (32, 0),
+        (16, 32),
+        (0, 48),
+        (0, 32),
+        (16, 16),
+        (16, 0),
+        (0, 16),
+        (0, 0),
+    ],
+    [
+        (32, 0),
+        (16, 16),
+        (0, 24),
+        (0, 16),
+        (16, 8),
+        (16, 0),
+        (0, 8),
+        (0, 0),
+    ],
+    [
+        (16, 0),
+        (8, 16),
+        (0, 24),
+        (0, 16),
+        (8, 8),
+        (8, 0),
+        (0, 8),
+        (0, 0),
+    ],
+    [
+        (16, 0),
+        (8, 8),
+        (0, 12),
+        (0, 8),
+        (8, 4),
+        (8, 0),
+        (0, 4),
+        (0, 0),
+    ],
+    [
+        (8, 0),
+        (4, 8),
+        (0, 12),
+        (0, 8),
+        (4, 4),
+        (4, 0),
+        (0, 4),
+        (0, 0),
+    ],
+];
+const TAIL_64K: [[(u32, u32); 12]; 5] = [
+    [
+        (128, 0),
+        (0, 128),
+        (64, 0),
+        (0, 64),
+        (32, 0),
+        (16, 32),
+        (0, 48),
+        (0, 32),
+        (16, 16),
+        (16, 0),
+        (0, 16),
+        (0, 0),
+    ],
+    [
+        (128, 0),
+        (0, 64),
+        (64, 0),
+        (0, 32),
+        (32, 0),
+        (16, 16),
+        (0, 24),
+        (0, 16),
+        (16, 8),
+        (16, 0),
+        (0, 8),
+        (0, 0),
+    ],
+    [
+        (64, 0),
+        (0, 64),
+        (32, 0),
+        (0, 32),
+        (16, 0),
+        (8, 16),
+        (0, 24),
+        (0, 16),
+        (8, 8),
+        (8, 0),
+        (0, 8),
+        (0, 0),
+    ],
+    [
+        (64, 0),
+        (0, 32),
+        (32, 0),
+        (0, 16),
+        (16, 0),
+        (8, 8),
+        (0, 12),
+        (0, 8),
+        (8, 4),
+        (8, 0),
+        (0, 4),
+        (0, 0),
+    ],
+    [
+        (32, 0),
+        (0, 32),
+        (16, 0),
+        (0, 16),
+        (8, 0),
+        (4, 8),
+        (0, 12),
+        (0, 8),
+        (4, 4),
+        (4, 0),
+        (0, 4),
+        (0, 0),
+    ],
+];
+
+/// One mip level of a tiled 2D surface, from the start of its array slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mip {
+    pub offset: u64,
+    /// The level's size in elements, with its pitch.
+    pub layout: Layout,
+    /// Levels in the mip tail start at this element of the tail block.
+    pub origin: (u32, u32),
+}
+
 /// One mip level of a 2D surface: enough to find any element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Layout {
@@ -276,33 +413,102 @@ impl Layout {
         self.pitch as u64 * self.height.div_ceil(bh) as u64 * bh as u64 * self.bpe as u64
     }
 
-    /// Where mip level 0 starts in a 64 KiB-block surface of `levels`
-    /// levels: smaller levels come first, the smallest ones packed into one
-    /// trailing block (the mip tail).
+    /// Where mip level 0 starts in a surface of `levels` levels whose
+    /// level 0 is this layout.
     pub fn mip0_offset(&self, levels: u32) -> u64 {
+        self.mip_chain(levels, (self.width, self.height), 1).0[0].offset
+    }
+
+    /// Every level of a tiled surface of `levels` levels whose level 0 is
+    /// this layout, and the size of the whole chain (an array slice). Per
+    /// slice the mip tail (the smallest levels packed into one block) comes
+    /// first, then the other levels from the smallest up, each padded to
+    /// whole blocks. `texels` is level 0's size in texels and `block` the
+    /// texels per element side (4 for block-compressed formats). Linear
+    /// surfaces get level 0 only.
+    pub fn mips(&self, levels: u32, texels: (u32, u32), block: u32) -> Vec<Mip> {
+        self.mip_chain(levels, texels, block).0
+    }
+
+    /// The size of a whole chain of `levels` levels: the distance between array slices.
+    pub fn chain_size(&self, levels: u32) -> u64 {
+        self.mip_chain(levels, (self.width, self.height), 1).1
+    }
+
+    fn mip_chain(&self, levels: u32, texels: (u32, u32), block: u32) -> (Vec<Mip>, u64) {
         if self.mode == TileMode::Linear || levels <= 1 {
-            return 0;
+            let mip = Mip {
+                offset: 0,
+                layout: *self,
+                origin: (0, 0),
+            };
+            return (vec![mip], self.size());
         }
         let (bw, bh) = Self::block(self.mode, self.bpe);
-        let tail_max = 12;
+        let i = self.bpe.trailing_zeros() as usize;
+        let tail: &[(u32, u32)] = if self.mode == TileMode::Standard4K {
+            &TAIL_4K[i]
+        } else {
+            &TAIL_64K[i]
+        };
+        let (w0, h0) = (self.width, self.height);
         let first_tail = (0..levels)
             .find(|&l| {
-                self.width.div_ceil(1 << l) <= bw / 2
-                    && self.height.div_ceil(1 << l) <= bh
-                    && levels - l <= tail_max
+                w0.div_ceil(1 << l) <= bw / 2
+                    && h0.div_ceil(1 << l) <= bh
+                    && levels - l <= tail.len() as u32
             })
             .unwrap_or(levels);
-        let mut offset = if first_tail < levels {
-            self.block_bytes()
-        } else {
-            0
+        let level_size = |l: u32| {
+            (
+                (texels.0 >> l).max(1).div_ceil(block),
+                (texels.1 >> l).max(1).div_ceil(block),
+            )
         };
-        for l in 1..first_tail {
-            let pw = self.width.div_ceil(1 << l).max(1).next_multiple_of(bw) as u64;
-            let ph = self.height.div_ceil(1 << l).max(1).next_multiple_of(bh) as u64;
-            offset += pw * ph * self.bpe as u64;
+        let mut mips = vec![
+            Mip {
+                offset: 0,
+                layout: *self,
+                origin: (0, 0),
+            };
+            levels as usize
+        ];
+        let mut offset = 0;
+        if first_tail < levels {
+            for l in first_tail..levels {
+                let (w, h) = level_size(l);
+                mips[l as usize] = Mip {
+                    offset: 0,
+                    layout: Layout {
+                        mode: self.mode,
+                        bpe: self.bpe,
+                        width: w,
+                        height: h,
+                        pitch: bw,
+                    },
+                    origin: tail[(l - first_tail) as usize],
+                };
+            }
+            offset = self.block_bytes();
         }
-        offset
+        for l in (0..first_tail).rev() {
+            let (w, h) = level_size(l);
+            let pitch = w0.div_ceil(1 << l).max(1).next_multiple_of(bw);
+            let padded_height = h0.div_ceil(1 << l).max(1).next_multiple_of(bh);
+            mips[l as usize] = Mip {
+                offset,
+                layout: Layout {
+                    mode: self.mode,
+                    bpe: self.bpe,
+                    width: w,
+                    height: h,
+                    pitch,
+                },
+                origin: (0, 0),
+            };
+            offset += pitch as u64 * padded_height as u64 * self.bpe as u64;
+        }
+        (mips, offset)
     }
 
     /// The byte offset of element (`ex`, `ey`).
@@ -437,6 +643,39 @@ mod tests {
             }
             assert_eq!(small.offset(bw, 0), 0x1000);
         }
+    }
+
+    #[test]
+    fn mip_chains_put_the_tail_first_and_level_0_last() {
+        // A 256x256 BC6H cube level in SW_4KB_S: 64x64 blocks of 16 bytes.
+        let l = Layout::new(TileMode::Standard4K, 16, 64, 64).unwrap();
+        let mips = l.mips(9, (256, 256), 4);
+        // Levels 3 to 8 (8x8 blocks and smaller) fit the tail: half a block wide.
+        assert_eq!(mips[3].offset, 0);
+        assert_eq!(mips[3].origin, TAIL_4K[4][0]);
+        assert_eq!(mips[3].layout.pitch, 16);
+        assert_eq!(mips[8].origin, TAIL_4K[4][5]);
+        assert_eq!(mips[2].offset, 0x1000);
+        assert_eq!(mips[2].layout.width, 16);
+        assert_eq!(mips[1].offset, 0x1000 + 16 * 16 * 16);
+        assert_eq!(mips[0].offset, mips[1].offset + 32 * 32 * 16);
+        assert_eq!(l.chain_size(9), mips[0].offset + 64 * 64 * 16);
+        assert_eq!(l.mip0_offset(9), mips[0].offset);
+        // Every tail level's elements stay inside the tail block.
+        for m in &mips[3..] {
+            let (x, y) = m.origin;
+            let last = m
+                .layout
+                .offset(x + m.layout.width - 1, y + m.layout.height - 1);
+            assert!(last < l.block_bytes(), "{m:?}");
+        }
+    }
+
+    #[test]
+    fn a_surface_of_one_level_is_level_0_alone() {
+        let l = Layout::new(TileMode::Standard64K, 4, 300, 200).unwrap();
+        assert_eq!(l.mips(1, (300, 200), 1)[0].offset, 0);
+        assert_eq!(l.chain_size(1), l.size());
     }
 
     #[test]

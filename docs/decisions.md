@@ -497,3 +497,16 @@ Frames whose video-out format has top byte `0xC0` (Superliminal's `0xC0010006000
 ## 2026-11-21: A colour target drawn at a 2D array's address hides the array
 
 Sampling an address reads the colour target drawn there when that draw came after the last 2D-array or 3D write to the address; 2D storage writes then go to the target too, and a later array write makes the array current again. Before, arrays were looked up first whenever one existed for the address. Reason: Superliminal reuses the memory of a full-screen surface that a program once wrote as a 2D array, and from then on every read of that surface returned the array's old contents, so the picture froze in level 1's rook corridor while the game ran on ([gpu.md](gpu.md#superliminals-frozen-picture-at-the-rook-2026-11-21)).
+
+## 2026-11-21: Sampled textures get their whole mip chain
+
+Textures read from guest memory in tiled layouts are made with every level the descriptor names, each detiled from its place in the chain; the mip tail follows SharpEmu-mac's tables. Reason: Superliminal's reflection probes need their levels, since Unity picks the probe's level by roughness, and with level 0 alone every surface looked like a mirror. Cost: about a third more texture memory and one detile dispatch per level each frame; Superliminal's first room ran at 56 flips a second. Linear textures and descriptors with a base level above 0 still get level 0.
+
+## 2026-11-21: Compile threads per performance core; repeated requests first
+
+The compile pool has one thread per performance core (`hw.perflevel0.physicalcpu`, 10 on vic's Mac; `PS5SLOP_COMPILE_THREADS` still overrides), render pipelines wait outside the pool for their functions, and a draw skipped again in a later frame moves its programs' compiles to the front of the queue. Reason: with a cold Metal cache, Superliminal's level start was black or missing geometry for seconds while its materials waited behind 54 s of compiling for shaders the title draws once at start-up. Considered and not done: hiding frames that had skipped draws (vic: skipping geometry while compiling is fine, the compile time is the problem), and an archive of compiled programs of our own (Metal's cache already persists across runs of the same build).
+
+## 2026-11-21: Translated programs loop only where the program does
+
+Programs with branches are guarded blocks in address order, with a loop only around each backward branch's range, instead of one `for (;;) switch (pc)` around the whole program; consecutive guarded vector instructions share one `if`. Reason: the whole-program loop made Metal's compiler spend over a third of its time in loop passes; Superliminal's largest programs compile in 780 ms instead of 1,070 ms. Overlapping loops keep the old form.
+

@@ -18,7 +18,7 @@ use crate::regs::{
     self, Blend, ColorTarget, DepthState, DepthTarget, Image, Sampler, Viewport, context, sh,
     uconfig,
 };
-use crate::tiling::{Layout, TileMode};
+use crate::tiling::{Layout, Mip, TileMode};
 use crate::{Backend, Draw, Host, State};
 use gfx10::translate::{
     self as shader, Access, Resource, Source, Stage, TextureKind, Translated, binding,
@@ -367,6 +367,8 @@ struct Program {
     flat: Vec<u32>,
     /// Texture slots declared `<int>`.
     sint_textures: u32,
+    /// The frame it was translated in.
+    frame: u64,
 }
 
 /// What a program is translated for besides its code and registers.
@@ -1142,7 +1144,7 @@ impl Metal {
             ),
         };
         let msl = format!(
-            "#include <metal_stdlib>\nusing namespace metal;\n{}\nkernel void detile(device const uchar* src [[buffer(0)]], constant uint4& p [[buffer(1)]], {args}, uint2 id [[thread_position_in_grid]]) {{\n    if (id.x >= p.x || id.y >= p.y) return;\n    ulong o = surface_offset(id.x, id.y, p.z);\n    {ty} v = {load};\n    {store}\n}}\n",
+            "#include <metal_stdlib>\nusing namespace metal;\n{}\nkernel void detile(device const uchar* src [[buffer(0)]], constant uint4& p [[buffer(1)]], {args}, uint2 id [[thread_position_in_grid]]) {{\n    if (id.x >= p.x || id.y >= p.y) return;\n    ulong o = surface_offset(id.x + (p.w & 0xffffu), id.y + (p.w >> 16), p.z);\n    {ty} v = {load};\n    {store}\n}}\n",
             layout.msl_offset()
         );
         let function = self.compile(&msl, "detile")?;
@@ -1159,9 +1161,20 @@ impl Metal {
     }
 
     /// Compiles `msl` on the compile threads.
-    fn compile_later(&self, msl: String, entry: String) -> Arc<Task<Retained<Function>>> {
+    fn compile_later(
+        &self,
+        msl: String,
+        entry: String,
+        label: String,
+    ) -> Arc<Task<Retained<Function>>> {
         let device = self.device.clone();
-        Task::spawn(move || compile(&device, &msl, &entry))
+        let queued = std::time::Instant::now();
+        Task::spawn(move || {
+            let start = std::time::Instant::now();
+            let f = compile(&device, &msl, &entry);
+            log_compile("library", &label, msl.len(), queued, start, None);
+            f
+        })
     }
 
     /// Copies a tiled guest surface into slice `slice` of `texture` on the GPU.
@@ -1173,10 +1186,29 @@ impl Metal {
         address: u64,
         layout: Layout,
     ) -> bool {
-        let Some((buffer, offset)) = self.window(host, address, layout.size()) else {
+        let mip = Mip {
+            offset: 0,
+            layout,
+            origin: (0, 0),
+        };
+        self.detile_level_into(host, texture, slice, 0, address, mip)
+    }
+
+    /// As [`Self::detile_into`], for mip level `level` placed at `mip` from `address`.
+    fn detile_level_into(
+        &mut self,
+        host: &dyn Host,
+        texture: &Texture,
+        slice: usize,
+        level: usize,
+        address: u64,
+        mip: Mip,
+    ) -> bool {
+        let at = address + mip.offset;
+        let Some((buffer, offset)) = self.window(host, at, mip.layout.size()) else {
             return false;
         };
-        self.encode_detile(texture, slice, layout, (&buffer, offset), None, address)
+        self.encode_detile(texture, (slice, level), mip, (&buffer, offset), None, at)
     }
 
     /// Copies into slice `slice` of `texture` only the texels whose bytes in
@@ -1203,18 +1235,24 @@ impl Metal {
         let (Some(new), Some(old)) = (bytes(new), bytes(old)) else {
             return false;
         };
-        self.encode_detile(texture, slice, layout, (&new, 0), Some(&old), address)
+        let mip = Mip {
+            offset: 0,
+            layout,
+            origin: (0, 0),
+        };
+        self.encode_detile(texture, (slice, 0), mip, (&new, 0), Some(&old), address)
     }
 
     fn encode_detile(
         &mut self,
         texture: &Texture,
-        slice: usize,
-        layout: Layout,
+        (slice, level): (usize, usize),
+        mip: Mip,
         src: (&Buffer, usize),
         old: Option<&Buffer>,
         address: u64,
     ) -> bool {
+        let layout = mip.layout;
         let output = if old.is_some() {
             Detile::Changed
         } else {
@@ -1234,7 +1272,7 @@ impl Metal {
             texture.newTextureViewWithPixelFormat_textureType_levels_slices(
                 raw_format,
                 MTLTextureType::Type2D,
-                objc2_foundation::NSRange::new(0, 1),
+                objc2_foundation::NSRange::new(level, 1),
                 objc2_foundation::NSRange::new(slice, 1),
             )
         };
@@ -1249,7 +1287,12 @@ impl Metal {
                 layout.width, layout.height
             ))));
         }
-        let params = [layout.width, layout.height, layout.pitch, 0];
+        let params = [
+            layout.width,
+            layout.height,
+            layout.pitch,
+            mip.origin.0 | mip.origin.1 << 16,
+        ];
         enc.setComputePipelineState(&pipeline);
         unsafe {
             enc.setBuffer_offset_atIndex(Some(src.0), src.1, 0);
@@ -1275,25 +1318,28 @@ impl Metal {
         true
     }
 
-    /// A 2D array or cube texture to fill from guest memory.
+    /// A 2D, 2D-array or cube texture with `levels` mip levels, to fill from guest memory.
     fn new_layered_texture(
         &self,
         format: MTLPixelFormat,
-        width: u32,
-        height: u32,
+        (width, height): (u32, u32),
         kind: TextureKind,
         slices: usize,
+        levels: u32,
     ) -> Option<Retained<Texture>> {
         let desc = MTLTextureDescriptor::new();
         desc.setPixelFormat(format);
         unsafe {
             desc.setWidth(width as usize);
             desc.setHeight(height as usize);
-            if kind == TextureKind::Cube {
-                desc.setTextureType(MTLTextureType::TypeCube);
-            } else {
-                desc.setTextureType(MTLTextureType::Type2DArray);
-                desc.setArrayLength(slices.max(1));
+            desc.setMipmapLevelCount(levels as usize);
+            match kind {
+                TextureKind::Cube => desc.setTextureType(MTLTextureType::TypeCube),
+                TextureKind::Tex2d => desc.setTextureType(MTLTextureType::Type2D),
+                _ => {
+                    desc.setTextureType(MTLTextureType::Type2DArray);
+                    desc.setArrayLength(slices.max(1));
+                }
             }
         }
         let usage = if is_compressed(format) {
@@ -1373,14 +1419,16 @@ impl Metal {
         &mut self,
         host: &dyn Host,
         texture: &Texture,
-        slice: usize,
+        (slice, level): (usize, usize),
         address: u64,
-        layout: Layout,
+        mip: Mip,
     ) -> bool {
+        let layout = mip.layout;
         let Some(pipeline) = self.detiler(layout.mode, layout.bpe, Detile::Buffer) else {
             return false;
         };
-        let Some((buffer, offset)) = self.window(host, address, layout.size()) else {
+        let at = address + mip.offset;
+        let Some((buffer, offset)) = self.window(host, at, mip.layout.size()) else {
             return false;
         };
         let row = (layout.width * layout.bpe) as usize;
@@ -1395,7 +1443,12 @@ impl Metal {
         let Some(enc) = command.computeCommandEncoder() else {
             return false;
         };
-        let params = [layout.width, layout.height, layout.pitch, 0];
+        let params = [
+            layout.width,
+            layout.height,
+            layout.pitch,
+            mip.origin.0 | mip.origin.1 << 16,
+        ];
         enc.setComputePipelineState(&pipeline);
         unsafe {
             enc.setBuffer_offset_atIndex(Some(&buffer), offset, 0);
@@ -1424,10 +1477,14 @@ impl Metal {
                 0,
                 row,
                 len,
-                MTLSize { width: texture.width(), height: texture.height(), depth: 1 },
+                MTLSize {
+                    width: (texture.width() >> level).max(1),
+                    height: (texture.height() >> level).max(1),
+                    depth: 1,
+                },
                 texture,
                 slice,
-                0,
+                level,
                 MTLOrigin { x: 0, y: 0, z: 0 },
             );
         }
@@ -1673,29 +1730,38 @@ impl Metal {
                 self.epoch, image.address, image.width, image.height
             );
         }
+        let chain = image.last_level + 1;
+        let levels = sampled_levels(image, layout);
         let tex = match self.images.get(&(image, kind)) {
             Some((_, t)) => t.clone(),
-            None if kind == TextureKind::Tex2d => {
-                self.new_texture(format, image.width, image.height, false)?
+            None => {
+                self.new_layered_texture(format, (image.width, image.height), kind, slices, levels)?
             }
-            None => self.new_layered_texture(format, image.width, image.height, kind, slices)?,
         };
-        let base = image.address + layout.mip0_offset(image.last_level + 1);
+        let mips = layout.mips(
+            chain,
+            (image.width, image.height),
+            if compressed { 4 } else { 1 },
+        );
         // A 2D image bound where a cube is read shows its one slice on every face.
         let stride = if kind == TextureKind::Cube && image.kind != 11 {
             0
         } else {
-            layout.size().next_multiple_of(layout.block_bytes())
+            layout
+                .chain_size(chain)
+                .next_multiple_of(layout.block_bytes())
         };
         for slice in 0..slices {
-            let at = base + slice as u64 * stride;
-            let filled = if compressed {
-                self.detile_blocks_into(host, &tex, slice, at, layout)
-            } else {
-                self.detile_into(host, &tex, slice, at, layout)
-            };
-            if !filled {
-                return None;
+            let at = image.address + slice as u64 * stride;
+            for (level, mip) in mips.iter().enumerate().take(levels as usize) {
+                let filled = if compressed {
+                    self.detile_blocks_into(host, &tex, (slice, level), at, *mip)
+                } else {
+                    self.detile_level_into(host, &tex, slice, level, at, *mip)
+                };
+                if !filled {
+                    return None;
+                }
             }
         }
         self.images.insert((image, kind), (self.epoch, tex.clone()));
@@ -2109,8 +2175,18 @@ impl Metal {
                     .join(format!("{stage:?}-{address:x}-{key:016x}.bin"));
                 let _ = std::fs::write(path, gfx10::capture::Capture::new(&request).to_bytes());
             }
+            let translate_start = std::time::Instant::now();
             match shader::translate(&request) {
                 Ok(mut translated) => {
+                    if compile_log() {
+                        eprintln!(
+                            "ps5slop: compile: {:.3} s translated {stage:?} {address:#x} key {key:016x} in {:.2} ms, {} bytes of MSL, {} queued",
+                            log_clock(),
+                            translate_start.elapsed().as_secs_f64() * 1e3,
+                            translated.msl.len(),
+                            crate::compile::queued()
+                        );
+                    }
                     if let Some(dir) = std::env::var_os("PS5SLOP_MSL_OVERRIDE")
                         && let Ok(msl) = std::fs::read_to_string(
                             std::path::Path::new(&dir).join(format!("{stage:?}-{address:x}.metal")),
@@ -2125,15 +2201,24 @@ impl Metal {
                     if std::env::var_os("PS5SLOP_MSL_DUMP").is_some() {
                         eprintln!("=== {stage:?} {address:#x}\n{}", translated.msl);
                     }
-                    let function =
-                        self.compile_later(translated.msl.clone(), translated.entry.clone());
+                    let label = format!("{stage:?} {address:#x} key {key:016x}");
+                    let function = self.compile_later(
+                        translated.msl.clone(),
+                        translated.entry.clone(),
+                        label.clone(),
+                    );
                     let compute = (stage == Stage::Compute).then(|| {
-                        let (device, function) = (self.device.clone(), function.clone());
-                        Task::spawn(move || {
+                        let (device, f) = (self.device.clone(), function.clone());
+                        let queued = std::time::Instant::now();
+                        Task::spawn_after(&[&*function], move || {
+                            let function = f;
+                            let start = std::time::Instant::now();
                             let function = function.wait()?;
+                            let made = std::time::Instant::now();
                             let t = crate::timing::start();
                             let p = device.newComputePipelineStateWithFunction_error(&function);
                             crate::timing::add(crate::timing::Part::Compile, t);
+                            log_compile("compute pipeline", &label, 0, queued, start, Some(made));
                             p.map_err(|e| {
                                 late_report(format!(
                                     "compute pipeline failed: {}",
@@ -2154,6 +2239,7 @@ impl Metal {
                         compute,
                         flat: flat_locations(&translated.msl),
                         sint_textures: variant.sint_textures,
+                        frame: self.epoch,
                         translated,
                     }))
                 }
@@ -2220,7 +2306,13 @@ impl Metal {
             vertex.translated.msl.clone(),
             vertex.translated.entry.clone(),
         );
+        let label = format!(
+            "vertex {:#x} variant rect {rect} gl_clip {gl_clip} missing {missing:?} flat {flat:?}",
+            vertex.address
+        );
+        let queued = std::time::Instant::now();
         let f = Task::spawn(move || {
+            let start = std::time::Instant::now();
             let extra: String = missing
                 .iter()
                 .map(|l| {
@@ -2241,11 +2333,13 @@ impl Metal {
             if gl_clip {
                 msl = gl_clip_space(&msl);
             }
-            if rect {
+            let f = if rect {
                 rect_source(&msl).and_then(|m| compile(&device, &m, "gen5_vs_rect"))
             } else {
                 compile(&device, &msl, &entry)
-            }
+            };
+            log_compile("library", &label, msl.len(), queued, start, None);
+            f
         });
         self.variants.insert(key, f.clone());
         f
@@ -2262,9 +2356,14 @@ impl Metal {
             return p.clone();
         }
         let (device, k, pixel) = (self.device.clone(), key.clone(), pixel.function.clone());
-        let task = Task::spawn(move || {
+        let queued = std::time::Instant::now();
+        let (dv, dp) = (vertex.clone(), pixel.clone());
+        let deps: [&dyn crate::compile::Dependency; 2] = [&*dv, &*dp];
+        let task = Task::spawn_after(&deps, move || {
             let key = &k;
+            let start = std::time::Instant::now();
             let (vertex, pixel) = (vertex.wait()?, pixel.wait()?);
+            let ready = std::time::Instant::now();
             let desc = MTLRenderPipelineDescriptor::new();
             desc.setVertexFunction(Some(&vertex));
             desc.setFragmentFunction(Some(&pixel));
@@ -2295,6 +2394,14 @@ impl Metal {
             let t = crate::timing::start();
             let made = device.newRenderPipelineStateWithDescriptor_error(&desc);
             crate::timing::add(crate::timing::Part::Compile, t);
+            log_compile(
+                "render pipeline",
+                &format!("vertex {:#x} pixel {:#x}", key.vertex, key.pixel),
+                0,
+                queued,
+                start,
+                Some(ready),
+            );
             made.map_err(|e| {
                 late_report(format!(
                     "render pipeline failed: {}",
@@ -4017,7 +4124,7 @@ impl Metal {
                 .ok_or("HTILE check")?;
             clear = None;
         }
-        let pipeline = self.pipeline(&key, vertex_function, &pixel);
+        let pipeline = self.pipeline(&key, vertex_function.clone(), &pixel);
         let mut redrawn =
             !vertex.translated.writes_memory && !pixel.translated.writes_memory && !compile_wait();
         let surfaces: Vec<_> = targets
@@ -4049,9 +4156,24 @@ impl Metal {
             Some(p) => p,
             // A target drawn every frame shows this draw from a later frame on.
             None if redrawn => {
+                if vertex.frame < self.epoch || pixel.frame < self.epoch {
+                    vertex_function.hurry();
+                    pixel.function.hurry();
+                }
                 // The clear rides on the pass and would be lost with the draw.
                 if clear.is_some() {
                     self.pass(&targets, depth, clear).ok_or("render pass")?;
+                }
+                if compile_log() {
+                    eprintln!(
+                        "ps5slop: compile: {:.3} s skipped draw in frame {} vertex {:#x} pixel {:#x} targets {:x?} count {:?}",
+                        log_clock(),
+                        self.epoch,
+                        vertex.address,
+                        pixel.address,
+                        targets.iter().map(|t| (t.0, t.1.width(), t.1.height())).collect::<Vec<_>>(),
+                        draw
+                    );
                 }
                 return Err("compiling");
             }
@@ -4788,6 +4910,47 @@ fn compile(device: &Device, msl: &str, entry: &str) -> Option<Retained<Function>
     }
 }
 
+/// `PS5SLOP_COMPILE_LOG`: one line per translation and per compile job.
+fn compile_log() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("PS5SLOP_COMPILE_LOG").is_some())
+}
+
+/// Seconds since the first compile log line.
+fn log_clock() -> f64 {
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
+}
+
+/// Logs a compile job: its time in the queue, then (for pipelines) waiting
+/// for its functions from `start` to `ready`, then its own work.
+fn log_compile(
+    kind: &str,
+    label: &str,
+    bytes: usize,
+    queued: std::time::Instant,
+    start: std::time::Instant,
+    ready: Option<std::time::Instant>,
+) {
+    if !compile_log() {
+        return;
+    }
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
+    let now = std::time::Instant::now();
+    let ready = ready.unwrap_or(start);
+    eprintln!(
+        "ps5slop: compile: {:.3} s {kind} {label} bytes {bytes} queued {:.1} ms waited {:.1} ms ran {:.1} ms on {}",
+        log_clock(),
+        ms(start - queued),
+        ms(ready - start),
+        ms(now - ready),
+        std::thread::current().name().unwrap_or("?")
+    );
+}
+
 /// Reports a failure from the compile threads, the first [`REPORTS`] times.
 fn late_report(what: String) {
     static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -4958,6 +5121,16 @@ fn color_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
         (16, 0) => P::B5G6R5Unorm,
         _ => return None,
     })
+}
+
+/// The mip levels read of a sampled image: its whole chain in tiled
+/// layouts, as far as Metal allows for its size; level 0 alone otherwise.
+fn sampled_levels(image: Image, layout: Layout) -> u32 {
+    if layout.mode == TileMode::Linear || image.base_level != 0 {
+        return 1;
+    }
+    let full = 32 - image.width.max(image.height).leading_zeros();
+    (image.last_level + 1).clamp(1, full)
 }
 
 /// A 3D image of one texel, whose layout cannot differ from a 2D one.
@@ -5682,6 +5855,95 @@ mod tests {
         assert_eq!(parent(&rewritten), Some(volume));
         let read = metal.image(&mem, flat, TextureKind::Tex2d).unwrap();
         assert_eq!(parent(&read), Some(volume));
+    }
+
+    #[test]
+    fn nested_loops_with_early_exits_run_as_on_hardware() {
+        let Some(mut metal) = Metal::new() else {
+            return;
+        };
+        let mem = Mem::new(1 << 20);
+        let code: [u32; 18] = [
+            0xBE85_0380, // s_mov_b32 s5, 0
+            0xBE86_0383, // s_mov_b32 s6, 3
+            0xBE87_0384, // outer: s_mov_b32 s7, 4
+            0x8005_8105, // inner: s_add_u32 s5, s5, 1
+            0xBF06_8206, // s_cmp_eq_u32 s6, 2
+            0xBF84_0002, // s_cbranch_scc0 (to cont)
+            0xBF06_8207, // s_cmp_eq_u32 s7, 2
+            0xBF85_0003, // s_cbranch_scc1 (out of inner)
+            0x8087_8107, // cont: s_sub_u32 s7, s7, 1
+            0xBF07_8007, // s_cmp_lg_u32 s7, 0
+            0xBF85_FFF8, // s_cbranch_scc1 (to inner)
+            0x8086_8106, // s_sub_u32 s6, s6, 1
+            0xBF07_8006, // s_cmp_lg_u32 s6, 0
+            0xBF85_FFF4, // s_cbranch_scc1 (to outer)
+            0x7E04_0205, // v_mov_b32 v2, s5
+            0xE070_0000,
+            0x8000_0200, // buffer_store_dword v2, off, s[0:3], 0
+            0xBF81_0000, // s_endpgm
+        ];
+        for (i, w) in code.iter().enumerate() {
+            mem.write(0x1000 + 4 * i as u64, &w.to_le_bytes());
+        }
+        let (c, u) = (vec![0u32; 0x400], vec![0u32; 0x400]);
+        let mut sh = vec![0u32; 0x400];
+        sh[sh::COMPUTE_PGM_LO] = 0x10;
+        sh[sh::COMPUTE_PGM_RSRC2] = 4 << 1;
+        sh[sh::COMPUTE_NUM_THREAD_X] = 1;
+        sh[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + 4]
+            .copy_from_slice(&[0x8000, 0, 8, 0x5204]);
+        let state = State {
+            context: &c,
+            sh: &sh,
+            uconfig: &u,
+            color_control_written: false,
+        };
+        metal.dispatch(&mem, &state, [1, 1, 1]);
+        assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
+        metal.flush_and_wait();
+        assert_eq!(word(&mem, 0x8000), 11);
+    }
+
+    #[test]
+    fn packing_halves_rounds_toward_zero() {
+        let Some(mut metal) = Metal::new() else {
+            return;
+        };
+        let mem = Mem::new(1 << 20);
+        let code: [u32; 11] = [
+            0xBE85_03FF,
+            0x4974_2400, // s_mov_b32 s5, 1e6
+            0xBE86_03FF,
+            0x3F80_1FFF, // s_mov_b32 s6, just under 1 + 2^-10
+            0xD52F_0002,
+            0x0000_0C05, // v_cvt_pkrtz_f16_f32 v2, s5, s6
+            0xE070_0000,
+            0x8000_0200, // buffer_store_dword v2, off, s[0:3], 0
+            0xBF81_0000, // s_endpgm
+            0,
+            0,
+        ];
+        for (i, w) in code.iter().enumerate() {
+            mem.write(0x1000 + 4 * i as u64, &w.to_le_bytes());
+        }
+        let (c, u) = (vec![0u32; 0x400], vec![0u32; 0x400]);
+        let mut sh = vec![0u32; 0x400];
+        sh[sh::COMPUTE_PGM_LO] = 0x10;
+        sh[sh::COMPUTE_PGM_RSRC2] = 4 << 1;
+        sh[sh::COMPUTE_NUM_THREAD_X] = 1;
+        sh[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + 4]
+            .copy_from_slice(&[0x8000, 0, 8, 0x5204]);
+        let state = State {
+            context: &c,
+            sh: &sh,
+            uconfig: &u,
+            color_control_written: false,
+        };
+        metal.dispatch(&mem, &state, [1, 1, 1]);
+        assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
+        metal.flush_and_wait();
+        assert_eq!(word(&mem, 0x8000), 0x3C00_7BFF);
     }
 
     #[test]
