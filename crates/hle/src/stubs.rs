@@ -330,7 +330,7 @@ pub static STUBS: &[Function] = &[
     Function {
         library: "libSceNpEntitlementAccess",
         name: "sceNpEntitlementAccessGetAddcontEntitlementInfoList",
-        func: write_zero_u32::<3>,
+        func: addcont_entitlement_list,
     },
     zero(
         "libSceUserServicePlatformPrivacyWs1",
@@ -725,6 +725,43 @@ fn app_param_int(env: &mut Env) -> Result<Outcome, CallError> {
         }
     };
     env.mem.write(env.arg(1), &value.to_le_bytes())?;
+    Ok(Outcome::Return(0))
+}
+
+/// Add-on entitlements a title's own package includes, by title id: labels,
+/// all of package type 3 (PSAL) with download status 4 (installed). GTA V
+/// unlocks Story Mode with these three (SharpEmu-mac's list, which checked
+/// PPSA04264; our PPSA04263 compares label hashes with the same three).
+const ADDCONT_ENTITLEMENTS: &[(&str, &[&str])] = &[
+    ("PPSA01721", GTA_V_ENTITLEMENTS),
+    ("PPSA03420", GTA_V_ENTITLEMENTS),
+    ("PPSA04263", GTA_V_ENTITLEMENTS),
+    ("PPSA04264", GTA_V_ENTITLEMENTS),
+];
+const GTA_V_ENTITLEMENTS: &[&str] = &["85y-je", "5d5c48", "_mtqu6"];
+const ADDCONT_INFO_SIZE: u64 = 28;
+
+/// `sceNpEntitlementAccessGetAddcontEntitlementInfoList(service, list,
+/// list_len, &hits)`: entries of a 17-byte label, 3 padding bytes, the
+/// package type and the download status (layout from SharpEmu-mac).
+fn addcont_entitlement_list(env: &mut Env) -> Result<Outcome, CallError> {
+    let (list, len, hits) = (env.arg(1), env.arg(2) as u32, env.arg(3));
+    if hits == 0 || (list == 0 && len != 0) {
+        return Ok(Outcome::Return(crate::dmem::sce_error(crate::errno::EINVAL)));
+    }
+    let id = env.kernel.title_id.get().map(String::as_str);
+    let labels = ADDCONT_ENTITLEMENTS
+        .iter()
+        .find(|(t, _)| Some(*t) == id)
+        .map_or(&[][..], |(_, l)| *l);
+    env.mem.write(hits, &(labels.len() as u32).to_le_bytes())?;
+    for (i, label) in labels.iter().take(len as usize).enumerate() {
+        let mut e = [0u8; ADDCONT_INFO_SIZE as usize];
+        e[..label.len()].copy_from_slice(label.as_bytes());
+        e[20..24].copy_from_slice(&3u32.to_le_bytes());
+        e[24..28].copy_from_slice(&4u32.to_le_bytes());
+        env.mem.write(list + i as u64 * ADDCONT_INFO_SIZE, &e)?;
+    }
     Ok(Outcome::Return(0))
 }
 

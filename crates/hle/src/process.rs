@@ -205,6 +205,8 @@ pub struct Kernel {
     pub(crate) agc: crate::agc::Agc,
     pub(crate) gnm: crate::gnm::Gnm,
     pub(crate) started: std::time::Instant,
+    /// The running title's id (`PPSA01234`), when the host knows it.
+    pub(crate) title_id: std::sync::OnceLock<String>,
     /// Every thread pointer `new_tls` handed out.
     pub(crate) tcbs: Mutex<Vec<u64>>,
     /// Names guest code gave its threads, by thread pointer.
@@ -298,6 +300,7 @@ impl Kernel {
             videoout: Default::default(),
             rtld: Default::default(),
             jit: AtomicBool::new(false),
+            title_id: std::sync::OnceLock::new(),
             libc: Default::default(),
             vfs,
             saves: Default::default(),
@@ -365,6 +368,11 @@ impl Kernel {
             jit::report(&self.memory());
             crate::report_calls();
         }
+    }
+
+    /// Records the running title's id. Set before the guest starts.
+    pub fn set_title_id(&self, id: String) {
+        let _ = self.title_id.set(id);
     }
 
     /// Runs guest code in the JIT (translated, inside a VM) instead of the

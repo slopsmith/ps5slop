@@ -117,6 +117,7 @@ fn main() -> ExitCode {
         }
     }
     let label = title.label();
+    let title_id = title.id();
     eprintln!("ps5slop: running {label}");
     let data = data.or_else(|| default_data(&title));
     let temp = data.as_ref().map(|d| beside(d, "temp"));
@@ -152,6 +153,9 @@ fn main() -> ExitCode {
         )
         .and_then(|booted| {
             booted.kernel.use_jit(!interpreter);
+            if let Some(id) = title_id {
+                booted.kernel.set_title_id(id);
+            }
             if let Some(out) = dump_frame {
                 dump_after(booted.kernel.clone(), out, after);
             }
