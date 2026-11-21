@@ -465,3 +465,15 @@ Compute programs with a backward branch give up after 16,384 backward branches p
 
 Mappings of direct memory now use the physical offset: two mappings of one range see the same bytes, and an allocation zeroes its range ([hle-kernel.md](hle-kernel.md)). This reverses the decision of 2026-11-20 to keep fresh pages per mapping. Reason: GTA V maps the same physical pages at two addresses in its Story Mode load; the Minecraft breakage that stopped an earlier attempt did not show (title, and the other regression titles, draw as before), though Minecraft in a world was not tried. It did not cure GTA V's faults.
 
+## 2026-11-21: Submissions that do not end a frame do not wait for the GPU
+
+Their releases, memory writes and the queue's interrupt take effect when Metal reports their command buffers done, polled by the GPU thread, instead of after a commit and wait at the end of each submission; `DMA_DATA` fills of up to 64 bytes are queued with them. Frames still end with a wait. Reason: Superliminal's GPU thread spent about 90% of its time waiting for Metal, about 85 times a frame ([gpu.md](gpu.md#fewer-waits-for-the-gpu-2026-11-21)). Labels and interrupts now arrive when the GPU work is done rather than when it was encoded, which is closer to the console.
+
+## 2026-11-21: The renderer waits only for work that may write what it reads, and checks HTILE on the GPU
+
+The translator reports the V#s of every buffer store; CPU reads of HTILE, CMASK, DCC and unaligned indices wait only when encoded work may write there, and HTILE words a program may write are checked by a one-thread program and a conditional full-screen depth write instead. Reason: these waits were most of what was left of Superliminal's GPU waits. `DMA_DATA` as Metal blits was tried and dropped (Astro Bot's queues timed out on labels the blits wrote late).
+
+## 2026-11-21: Threads about to block give their vCPU to threads that have none
+
+HVF allows 64 vCPUs per VM and Astro Bot starts about 70 threads; its loading thread was one of those left in the interpreter. A thread about to block in a host function now gives its vCPU back while a running thread has none. Reason: Astro Bot's title came up about twice as fast ([jit.md](jit.md)). The cost, a vCPU destroyed and made again, is paid only while more than 64 threads run at once.
+
