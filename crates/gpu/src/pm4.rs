@@ -124,10 +124,16 @@ fn unhandled(what: std::fmt::Arguments) {
 fn trace(what: std::fmt::Arguments) {
     if trace_sync() {
         eprintln!(
-            "ps5slop: GPU sync [{}]: {what}",
+            "ps5slop: GPU sync {:.3} [{}]: {what}",
+            crate::seconds(),
             std::thread::current().name().unwrap_or("?")
         );
     }
+}
+
+/// `PS5SLOP_GPU_TRACE_SYNC`: a line in the sync trace from outside the command processors.
+pub fn trace_sync_event(what: std::fmt::Arguments) {
+    trace(what);
 }
 
 /// Destination selects that mean memory in WRITE_DATA.
@@ -911,7 +917,8 @@ impl Processor {
                 let user = &self.sh[crate::regs::sh::COMPUTE_USER_DATA_0
                     ..crate::regs::sh::COMPUTE_USER_DATA_0 + 16];
                 eprintln!(
-                    "ps5slop: GPU watch: {at:#x} {:#x?} -> {now:#x} after {} on {} (compute user {user:x?})",
+                    "ps5slop: GPU watch {:.3}: {at:#x} {:#x?} -> {now:#x} after {} on {} (compute user {user:x?})",
+                    crate::seconds(),
                     self.watched,
                     what(),
                     std::thread::current().name().unwrap_or("?")

@@ -338,6 +338,11 @@ fn rewind_patch_state(env: &mut Env) -> Result<Outcome, CallError> {
         REWIND_VALID,
         if valid { REWIND_VALID } else { 0 },
     )?;
+    gpu::trace_sync_event(format_args!(
+        "CPU sets REWIND {:#x} {}",
+        body - 4,
+        if valid { "valid" } else { "invalid" }
+    ));
     status(true)
 }
 

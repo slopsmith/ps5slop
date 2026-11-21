@@ -14,7 +14,7 @@ pub mod regs;
 pub mod tiling;
 pub mod timing;
 
-pub use pm4::{Processor, Stats};
+pub use pm4::{Processor, Stats, trace_sync_event};
 
 /// The register banks as a draw sees them.
 pub struct State<'a> {
@@ -112,6 +112,15 @@ impl Backend for SharedBackend {
     fn summary(&self) -> String {
         self.lock().summary()
     }
+}
+
+/// Seconds since the GPU side first asked, for timestamps in traces.
+pub fn seconds() -> f64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
 }
 
 /// Runs `f` inside an Objective-C autorelease pool where the platform has one.

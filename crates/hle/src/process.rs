@@ -274,6 +274,7 @@ impl Kernel {
         stderr: Box<dyn Write + Send>,
         vfs: crate::Vfs,
     ) -> Arc<Self> {
+        gpu::seconds();
         Arc::new_cyclic(|me| Self {
             hle,
             mem: Mutex::new(mem),

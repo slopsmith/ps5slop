@@ -164,6 +164,9 @@ fn main() -> ExitCode {
             if let Ok(script) = std::env::var("PS5SLOP_INPUT") {
                 play_input(booted.kernel.clone(), script);
             }
+            if let Ok(ms) = std::env::var("PS5SLOP_CHECK_CODE") {
+                check_code(booted.kernel.memory(), ms.parse().unwrap_or(100));
+            }
             ps5slop::control::serve(booted.kernel.clone(), control.clone());
             if let Some(spec) = std::env::var_os("PS5SLOP_CALLS") {
                 let spec = spec.to_string_lossy().into_owned();
@@ -197,6 +200,62 @@ fn run(booted: ps5slop::Booted, headless: bool, label: String) -> Result<i32, ps
 #[cfg(not(all(target_os = "macos", feature = "window")))]
 fn run(booted: ps5slop::Booted, _headless: bool, _label: String) -> Result<i32, ps5slop::Error> {
     booted.run()
+}
+
+/// `PS5SLOP_CHECK_CODE=MS`: compares every non-writable region (code and
+/// read-only data) with its contents at start every MS milliseconds, and
+/// reports changes.
+fn check_code(mem: memory::Memory, ms: u64) {
+    let start = std::time::Instant::now();
+    let mut code: Vec<(u64, Vec<u8>)> = mem
+        .region_spans()
+        .into_iter()
+        .filter(|r| {
+            !r.trap && r.prot != memory::Prot::NONE && !r.prot.allows(memory::Access::Write)
+        })
+        .filter_map(|r| {
+            let mut b = vec![0; (r.end - r.start) as usize];
+            read_any(&mem, r.start, &mut b).then_some((r.start, b))
+        })
+        .collect();
+    let total: usize = code.iter().map(|(_, b)| b.len()).sum();
+    eprintln!(
+        "ps5slop: checking {} code regions ({} MiB) every {ms} ms",
+        code.len(),
+        total >> 20
+    );
+    std::thread::spawn(move || {
+        let mut now = vec![0u8; 1 << 14];
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+            for (base, old) in &mut code {
+                for (k, page) in old.chunks_mut(1 << 14).enumerate() {
+                    let at = *base + (k << 14) as u64;
+                    let now = &mut now[..page.len()];
+                    if !read_any(&mem, at, now) || now == page {
+                        continue;
+                    }
+                    let first = page.iter().zip(&*now).position(|(a, b)| a != b).unwrap();
+                    let last = page.iter().zip(&*now).rposition(|(a, b)| a != b).unwrap();
+                    let differ = page.iter().zip(&*now).filter(|(a, b)| a != b).count();
+                    let show = first..(first + 32).min(page.len());
+                    eprintln!(
+                        "ps5slop: code changed at {:.3} s: {:#x}..{:#x} ({differ} bytes differ)\n  was {:02x?}\n  now {:02x?}",
+                        start.elapsed().as_secs_f64(),
+                        at + first as u64,
+                        at + last as u64 + 1,
+                        &page[show.clone()],
+                        &now[show],
+                    );
+                    page.copy_from_slice(now);
+                }
+            }
+        }
+    });
+}
+
+fn read_any(mem: &memory::Memory, addr: u64, buf: &mut [u8]) -> bool {
+    mem.read(addr, buf).is_ok() || mem.fetch(addr, buf).is_ok()
 }
 
 /// After `seconds`, writes the screen to `out` and ends the process.
