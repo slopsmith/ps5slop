@@ -79,6 +79,8 @@ pub mod sh {
 pub mod uconfig {
     pub const VGT_PRIMITIVE_TYPE: usize = 0x242;
     pub const VGT_INDEX_TYPE: usize = 0x243;
+    /// Added to every vertex index, also those of auto draws.
+    pub const GE_INDX_OFFSET: usize = 0x24A;
 }
 
 /// A color target's channel layout, number type and component order

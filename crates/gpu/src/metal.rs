@@ -2490,24 +2490,28 @@ impl Metal {
             6 => MTLPrimitiveType::TriangleStrip,
             _ => return Err("primitive type"),
         };
+        let start = u[uconfig::GE_INDX_OFFSET];
         match draw {
+            Draw::Auto { .. } if rect && start != 0 => return Err("rectangle list with an index offset"),
             Draw::Auto { count, instances } if rect => unsafe {
                 enc.drawPrimitives_vertexStart_vertexCount_instanceCount(primitive, 0, (count / 3 * 6) as usize, instances.max(1) as usize);
             },
             Draw::Indexed { .. } if rect => return Err("indexed rectangle list"),
             Draw::Auto { count, instances } => unsafe {
-                enc.drawPrimitives_vertexStart_vertexCount_instanceCount(primitive, 0, count as usize, instances.max(1) as usize);
+                enc.drawPrimitives_vertexStart_vertexCount_instanceCount(primitive, start as usize, count as usize, instances.max(1) as usize);
             },
             Draw::Indexed { count, instances, .. } => {
                 let ((buf, offset), wide) = index.ok_or("index buffer")?;
                 unsafe {
-                    enc.drawIndexedPrimitives_indexCount_indexType_indexBuffer_indexBufferOffset_instanceCount(
+                    enc.drawIndexedPrimitives_indexCount_indexType_indexBuffer_indexBufferOffset_instanceCount_baseVertex_baseInstance(
                         primitive,
                         count as usize,
                         if wide { MTLIndexType::UInt32 } else { MTLIndexType::UInt16 },
                         &buf,
                         offset,
                         instances.max(1) as usize,
+                        start as i32 as isize,
+                        0,
                     );
                 }
             }
