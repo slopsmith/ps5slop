@@ -421,6 +421,18 @@ As for depth, the first dword of a target's CMASK or DCC is checked before a dra
 
 Reason: GTA V's PS5 build unlocks Story Mode only when these entitlements are listed (seen in its code: it hashes each listed label and compares it with three constants); a full-game license includes them on a console (assumed, not checked). With an empty list its landing page offers "Buy Story Mode" and Story Mode cannot start. Handing every title these labels is wrong (SharpEmu-mac saw another title treat them as its own DLC), so the list is keyed by title id. Separately sold add-ons stay unowned.
 
+## 2026-11-21: The viewport scissor needs `VPORT_SCISSOR_ENABLE`
+
+`PA_SC_VPORT_SCISSOR_0` is intersected into a draw's scissor only when `PA_SC_MODE_CNTL_0` bit 1 is set, as on the hardware (the bit's name is from Mesa's register database). Reason: Astro Bot leaves a 1x1 viewport scissor behind with the bit clear, and its final pass and logo were clipped to one pixel. Balatro, Isaac, Minecraft and Superliminal draw the same as before.
+
+## 2026-11-21: Vertex and pixel loops are cut off after 1024 backward branches
+
+Translated vertex and pixel programs give up (discard, or return the vertex as it is) after 1024 backward branches. Reason: one GPU hang makes macOS ignore all of the process's later Metal work, so a loop that does not end, however it came about, costs the whole session; a few wrong pixels cost less. Astro Bot's logo program hung this way on a GPU-built linked list. Compute programs are left out, since threads waiting at a barrier for one that left could hang anyway. The limit hides the real bug behind the list, which stays open ([gpu.md](gpu.md#astro-bots-title-2026-11-21)).
+
+## 2026-11-21: Depth textures are sampled only while depth used the address last
+
+A sampled image at the address of a depth target reads the depth texture only if no colour target or storage image used the address since that depth target was. Reason: Astro Bot reuses the memory of a 960x540 depth buffer for a bloom level of the same size within the frame, and the bloom read depth values. Superliminal's and Minecraft's depth sampling (shadow maps, the water depth copy) use the depth target right before, so they keep reading depth.
+
 ## 2026-11-21: REWIND waits for its valid bit; WRITE_DATA stays queued
 
 The command processor now stops at a `REWIND` until the CPU marks it valid and then reads the rest of the buffer again, instead of skipping the packet. Reason: GTA V chains each graphics buffer to the next by patching an INDIRECT_BUFFER behind a REWIND and only then setting the REWIND valid; skipping it lost that work ([gpu.md](gpu.md)). The wait has no time limit, as on the hardware; it ends with the process and prints a note after 5 s.
