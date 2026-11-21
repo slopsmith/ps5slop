@@ -477,3 +477,21 @@ fn flat_and_global_loads_read_guest_memory() {
     assert!(t.msl.contains("flat_load_raw(mem, long(((ulong(s0) | (ulong(s1) << 32)) + ulong(v4)) + ulong(long(16))"));
     compile(&t.msl);
 }
+
+#[test]
+fn typed_buffer_loads_take_the_instruction_format_and_fma_mix_reads_halves() {
+    let code = [
+        0xEA6B_2000, 0x8000_0200, // tbuffer_load_format_xyzw v[2:5], v0, s[0:3], 0 format:[BUF_FMT_32_32_32_32_FLOAT] idxen
+        0xCC20_4006, 0x0C12_0702, // v_fma_mix_f32 v6, v2, v3, v4 op_sel_hi:[1,0,1]
+        0xCC21_C807, 0x5BCA_0702, // v_fma_mixlo_f16 v7, v2, -v3, 1.0 op_sel:[1,0,0] op_sel_hi:[1,1,1] clamp
+        0xCC22_0107, 0x1412_0702, // v_fma_mixhi_f16 v7, |v2|, v3, v4 op_sel_hi:[0,1,0]
+        0xE078_2000, 0x8000_0400, // buffer_store_dwordx4 v[4:7], v0, s[0:3], 0 idxen
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 4, 4 << 1);
+    assert!(t.msl.contains(&format!("& ~0x7f000u) | {}u)", 77 << 12)));
+    assert!(t.msl.contains("fma(float(as_type<half2>(v2).x), F(v3), float(as_type<half2>(v4).x))"));
+    assert!(t.msl.contains("saturate(fma(float(as_type<half2>(v2).y), (-float(as_type<half2>(v3).x)), F("));
+    assert!(t.msl.contains("fma(fabs(F(v2)), float(as_type<half2>(v3).x), F(v4))"));
+    compile(&t.msl);
+}

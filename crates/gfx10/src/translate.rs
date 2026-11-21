@@ -549,8 +549,14 @@ impl<'a> Tx<'a> {
                 vsrc,
                 ..
             } => self.exp(pc, en, target, compr, done, vsrc),
-            Kind::Mubuf(b) => self.mubuf(pc, name, &b),
+            Kind::Mubuf(b) => self.mubuf(pc, name, &b, None),
             Kind::Flat(f) => self.flat(pc, name, &f),
+            Kind::Mtbuf(b) => match name.strip_prefix('t') {
+                Some(plain) if plain.starts_with("buffer_load_format_") || plain.starts_with("buffer_store_format_") => {
+                    self.mubuf(pc, plain, &b, Some(b.format))
+                }
+                _ => Err(err(pc, format!("unsupported instruction {name}"))),
+            },
             Kind::Ds {
                 offset0,
                 offset1,
@@ -568,7 +574,6 @@ impl<'a> Tx<'a> {
                 [addr as u16, data0 as u16, data1 as u16, vdst as u16],
             ),
             Kind::Mimg(m) => self.mimg(pc, name, &m),
-            _ => Err(err(pc, format!("unsupported instruction {name}"))),
         }
     }
 
@@ -1110,6 +1115,9 @@ impl<'a> Tx<'a> {
         if name == "v_mad_u64_u32" || name == "v_mad_i64_i32" {
             return self.mad64(pc, inst, v);
         }
+        if matches!(name, "v_fma_mix_f32" | "v_fma_mixlo_f16" | "v_fma_mixhi_f16") {
+            return self.fma_mix(pc, inst, v);
+        }
         let f = |t: &mut Self, i: usize| t.fsrc(pc, inst, v, i);
         let u = |t: &mut Self, i: usize| t.usrc(pc, inst, v, i);
         let k = || format!("F(0x{:x}u)", inst.literal.unwrap_or(0));
@@ -1465,6 +1473,43 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
+    /// `v_fma_mix*`: each source is a float, or with its `op_sel_hi` bit the
+    /// half `op_sel` picks; `neg_hi` is its abs. Inline constants keep their
+    /// value as halves.
+    fn fma_mix(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
+        let mut srcs = Vec::new();
+        for i in 0..3 {
+            let u = self.usrc(pc, inst, v, i)?;
+            let inline = (240..=248).contains(&v.src[i]);
+            let mut e = if v.opsel_hi >> i & 1 != 0 && !inline {
+                let half = if v.opsel >> i & 1 != 0 { "y" } else { "x" };
+                format!("float(as_type<half2>({u}).{half})")
+            } else {
+                format!("F({u})")
+            };
+            if v.neg_hi >> i & 1 != 0 {
+                e = format!("fabs({e})");
+            }
+            if v.neg >> i & 1 != 0 {
+                e = format!("(-{e})");
+            }
+            srcs.push(e);
+        }
+        let mut r = format!("fma({}, {}, {})", srcs[0], srcs[1], srcs[2]);
+        if v.clamp {
+            r = format!("saturate({r})");
+        }
+        let d = self.v(v.vdst as u16);
+        self.regs.insert(format!("v{}", v.vdst));
+        let stmt = match inst.op.name {
+            "v_fma_mix_f32" => format!("{d} = U({r});"),
+            "v_fma_mixlo_f16" => format!("{d} = ({d} & 0xffff0000u) | uint(as_type<ushort>(half({r})));"),
+            _ => format!("{d} = ({d} & 0xffffu) | (uint(as_type<ushort>(half({r}))) << 16);"),
+        };
+        self.guard(&stmt);
+        Ok(())
+    }
+
     fn output_mods(&self, v: &Valu, e: &str) -> String {
         let mut e = format!("({e})");
         match v.omod {
@@ -1725,6 +1770,7 @@ impl<'a> Tx<'a> {
         pc: usize,
         name: &str,
         b: &crate::decode::Buf,
+        format: Option<u8>,
     ) -> Result<(), TranslateError> {
         if name == "buffer_gl0_inv" || name == "buffer_gl1_inv" {
             return Ok(());
@@ -1734,7 +1780,10 @@ impl<'a> Tx<'a> {
         }
         self.mem = true;
         let r = b.srsrc as u16;
-        let vs: Vec<String> = (0..4).map(|i| self.s(r + i)).collect();
+        let mut vs: Vec<String> = (0..4).map(|i| self.s(r + i)).collect();
+        if let Some(f) = format {
+            vs[3] = format!("(({} & ~0x7f000u) | {}u)", vs[3], (f as u32 & 0x7f) << 12);
+        }
         let index = if b.idxen {
             self.v(b.vaddr as u16)
         } else {
