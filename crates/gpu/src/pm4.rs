@@ -117,6 +117,10 @@ pub struct Stats {
     pub deferred_waits: u64,
     /// Dispatches skipped for their size ([`MAX_GROUPS`]).
     pub huge_dispatches: u64,
+    /// The longest time between two flips.
+    pub longest_flip_gap: Duration,
+    /// Times between two flips over a second, for the next report to print.
+    pub long_flip_gaps: Vec<Duration>,
     /// Packets by opcode (and NOP code, as `0x100 | code`).
     pub opcodes: BTreeMap<u32, u64>,
 }
@@ -807,7 +811,15 @@ impl Processor {
             std::thread::sleep(wait);
             crate::timing::add(crate::timing::Part::Pacing, t);
         }
-        self.last_flip = Some(Instant::now());
+        let now = Instant::now();
+        if let Some(last) = self.last_flip {
+            let gap = now - last;
+            self.stats.longest_flip_gap = self.stats.longest_flip_gap.max(gap);
+            if gap > Duration::from_secs(1) && self.stats.long_flip_gaps.len() < 64 {
+                self.stats.long_flip_gaps.push(gap);
+            }
+        }
+        self.last_flip = Some(now);
         self.stats.flips += 1;
         host.flip(flip);
     }

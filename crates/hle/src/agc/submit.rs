@@ -153,7 +153,7 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>, backend: Arc<OnceLock<Option<gpu:
             last_report = std::time::Instant::now();
             let s = &processor.stats;
             eprintln!(
-                "ps5slop: GPU {name}: {} submissions, {} packets, {} draws, {} dispatches, {} flips, {} interrupts, {} wait timeouts, {} waits met by pending releases, {} memory writes",
+                "ps5slop: GPU {name}: {} submissions, {} packets, {} draws, {} dispatches, {} flips, {} interrupts, {} wait timeouts, {} waits met by pending releases, {} memory writes, longest flip gap {} ms",
                 s.submissions,
                 s.packets,
                 s.draws,
@@ -162,13 +162,18 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>, backend: Arc<OnceLock<Option<gpu:
                 s.interrupts,
                 s.timeouts,
                 s.deferred_waits,
-                s.opcodes.get(&0x37).unwrap_or(&0) + s.opcodes.get(&0x115).unwrap_or(&0)
+                s.opcodes.get(&0x37).unwrap_or(&0) + s.opcodes.get(&0x115).unwrap_or(&0),
+                s.longest_flip_gap.as_millis()
             );
+            if !processor.stats.long_flip_gaps.is_empty() {
+                let gaps: Vec<u128> = processor.stats.long_flip_gaps.drain(..).map(|g| g.as_millis()).collect();
+                eprintln!("ps5slop: GPU {name}: flip gaps over 1 s since the last report (ms): {gaps:?}");
+            }
             if let Some(b) = processor.backend.as_ref().filter(|_| name == "graphics") {
                 eprintln!("ps5slop: GPU: Metal: {}", b.summary());
             }
             if std::env::var_os("PS5SLOP_GPU_OPCODES").is_some() {
-                eprintln!("ps5slop: GPU: packets by opcode: {:x?}", s.opcodes);
+                eprintln!("ps5slop: GPU: packets by opcode: {:x?}", processor.stats.opcodes);
             }
         }
         if host.kernel.has_exited() {
