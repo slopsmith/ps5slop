@@ -1642,7 +1642,7 @@ impl<'a> Tx<'a> {
             "v_cvt_flr_i32_f32" => format!("uint(int(floor({})))", f(self, 0)?),
             "v_cvt_rpi_i32_f32" => format!("uint(int(floor({} + 0.5f)))", f(self, 0)?),
             "v_cvt_pkrtz_f16_f32" => format!(
-                "as_type<uint>(half2(half({}), half({})))",
+                "as_type<uint>(half2(half_rtz({}), half_rtz({})))",
                 f(self, 0)?,
                 f(self, 1)?
             ),
@@ -3716,6 +3716,14 @@ static inline float med3(float a, float b, float c) {
 
 static inline int med3_i(int a, int b, int c) {
     return max(min(a, b), min(max(a, b), c));
+}
+
+// Float to half, rounding toward zero: values past the largest half become
+// +-65504, not infinity.
+static inline half half_rtz(float x) {
+    half h = half(x);
+    if (abs(float(h)) > abs(x)) h = as_type<half>(ushort(as_type<ushort>(h) - 1u));
+    return h;
 }
 
 // `mem` covers [base, end); a second window over [base2, end2) lies
