@@ -601,3 +601,18 @@ fn row_dpp_permlanes_readlane_and_bpermute_use_simd_shuffles() {
     assert!(t.msl.contains("simd_shuffle(v3, ushort(((v2 + 4u) >> 2) & 31u))"));
     compile(&t.msl);
 }
+
+#[test]
+fn pixel_loops_give_up_after_too_many_branches_back() {
+    let code = [
+        0x7E00_0200, // v_mov_b32 v0, s0
+        0xBF84_FFFE, // s_cbranch_scc0 -2 (to 0)
+        0x7E02_0201, // v_mov_b32 v1, s1
+        0xF800_180F, 0x0302_0100, // exp mrt0 v0, v1, v2, v3 done vm
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = pixel(&code, 2);
+    let limit = gfx10::translate::MAX_BACK_BRANCHES;
+    assert!(t.msl.contains(&format!("if (++back > {limit}u) {{ discard_fragment(); return o; }} pc = 0; continue;")));
+    compile(&t.msl);
+}

@@ -33,6 +33,7 @@ pub mod context {
     pub const PA_SC_GENERIC_SCISSOR_BR: usize = 0x091;
     pub const PA_SC_VPORT_SCISSOR_0_TL: usize = 0x094;
     pub const PA_SC_VPORT_SCISSOR_0_BR: usize = 0x095;
+    pub const PA_SC_MODE_CNTL_0: usize = 0x292;
     pub const PA_SC_VPORT_ZMIN_0: usize = 0x0B4;
     pub const PA_SC_VPORT_ZMAX_0: usize = 0x0B5;
     pub const CB_BLEND_RED: usize = 0x105;
@@ -333,6 +334,7 @@ pub fn depth_range(c: &[u32], gl_clip: bool) -> (f32, f32) {
 
 /// The scissor rectangle a draw is clipped to: the intersection of the
 /// screen, window, generic and viewport-0 scissors, as `(x0, y0, x1, y1)`.
+/// The viewport scissor counts only with `PA_SC_MODE_CNTL_0.VPORT_SCISSOR_ENABLE`.
 /// An empty one counts as unset: our register banks start at zero, while
 /// the hardware's reset values are full-screen, and titles that rely on
 /// those (Isaac) never write them.
@@ -347,12 +349,14 @@ pub fn scissor(c: &[u32]) -> (u32, u32, u32, u32) {
         r.2 = r.2.min(b.0 + offset.0);
         r.3 = r.3.min(b.1 + offset.1);
     };
-    for (t, b) in [
+    let vport = c[PA_SC_MODE_CNTL_0] & 2 != 0;
+    let pairs = [
         (PA_SC_SCREEN_SCISSOR_TL, PA_SC_SCREEN_SCISSOR_BR),
         (PA_SC_WINDOW_SCISSOR_TL, PA_SC_WINDOW_SCISSOR_BR),
         (PA_SC_GENERIC_SCISSOR_TL, PA_SC_GENERIC_SCISSOR_BR),
         (PA_SC_VPORT_SCISSOR_0_TL, PA_SC_VPORT_SCISSOR_0_BR),
-    ] {
+    ];
+    for &(t, b) in &pairs[..if vport { 4 } else { 3 }] {
         let (a, bb) = (tl(c[t]), br(c[b]));
         if bb.0 > a.0 && bb.1 > a.1 {
             clip(a, bb, (0, 0));
@@ -482,5 +486,15 @@ mod tests {
         let b = Blend::read(&c, 0);
         assert!(b.enable);
         assert_eq!((b.color_src, b.color_dst, b.alpha_src, b.alpha_dst), (4, 5, 1, 5));
+    }
+
+    #[test]
+    fn viewport_scissor_applies_only_when_enabled() {
+        let mut c = vec![0u32; 0x400];
+        c[context::PA_SC_SCREEN_SCISSOR_BR] = 0x0870_0f00;
+        c[context::PA_SC_VPORT_SCISSOR_0_BR] = 0x0001_0001;
+        assert_eq!(scissor(&c), (0, 0, 3840, 2160));
+        c[context::PA_SC_MODE_CNTL_0] = 2;
+        assert_eq!(scissor(&c), (0, 0, 1, 1));
     }
 }

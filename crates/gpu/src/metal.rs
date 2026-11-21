@@ -156,6 +156,26 @@ pub fn read_rgba(texture: &SharedTexture) -> Option<(u32, u32, Vec<u8>)> {
     Some((w as u32, h as u32, px))
 }
 
+/// The texels of a 2D texture as stored, row by row with no padding.
+fn read_raw(t: &Texture) -> Option<Vec<u8>> {
+    let bpp = texel_bytes(t.pixelFormat())?;
+    let (w, h) = (t.width(), t.height());
+    let device = t.device();
+    let queue = device.newCommandQueue()?;
+    let buffer = device.newBufferWithLength_options(w * h * bpp, MTLResourceOptions::StorageModeShared)?;
+    let cb = queue.commandBuffer()?;
+    let blit = cb.blitCommandEncoder()?;
+    unsafe {
+        blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage(
+            t, 0, 0, MTLOrigin { x: 0, y: 0, z: 0 }, MTLSize { width: w, height: h, depth: 1 }, &buffer, 0, w * bpp, w * h * bpp,
+        );
+    }
+    blit.endEncoding();
+    cb.commit();
+    cb.waitUntilCompleted();
+    Some(unsafe { std::slice::from_raw_parts(buffer.contents().as_ptr() as *const u8, w * h * bpp) }.to_vec())
+}
+
 fn read_converted(t: &Texture) -> Option<(u32, u32, Vec<u8>)> {
     if t.textureType() != MTLTextureType::Type2D || is_compressed(t.pixelFormat()) {
         return None;
@@ -316,6 +336,9 @@ pub struct Metal {
     /// Depth-layout images a program wrote since their depth texture was
     /// last used: the depth texture takes their contents first.
     depth_stores: std::collections::HashSet<u64>,
+    /// Addresses a colour target or storage image wrote after any depth target
+    /// there, so sampling them must not read the depth texture.
+    color_newer: std::collections::HashSet<u64>,
     shown: HashMap<u64, Retained<Texture>>,
     swizzles: HashMap<(usize, [u8; 4]), Retained<Texture>>,
     depth_states: HashMap<(DepthState, bool), Retained<ProtocolObject<dyn MTLDepthStencilState>>>,
@@ -326,6 +349,11 @@ pub struct Metal {
     /// Work encoded since the last wait writes guest memory, so the CPU must
     /// wait for it before reading guest memory for later work (see `settle`).
     wrote_memory: bool,
+    /// The uncommitted main command buffer holds work that writes guest
+    /// memory, so detiles from guest memory must run after it, not before.
+    pending_writes: bool,
+    /// Command buffers Metal reported as failed.
+    failed_commands: u64,
     /// Shared memory handed out front to back for data copied for the GPU,
     /// and how much of it is used; replaced when full.
     scratch: Option<(Retained<Buffer>, usize)>,
@@ -508,12 +536,15 @@ impl Metal {
             snap: None,
             depths: HashMap::new(),
             depth_stores: Default::default(),
+            color_newer: Default::default(),
             shown: HashMap::new(),
             swizzles: HashMap::new(),
             depth_states: HashMap::new(),
             windows: Vec::new(),
             area: None,
             wrote_memory: false,
+            pending_writes: false,
+            failed_commands: 0,
             missing_inputs: HashMap::new(),
             scratch: None,
             gds: None,
@@ -560,20 +591,31 @@ impl Metal {
 
     fn command(&mut self) -> Retained<CommandBuffer> {
         if self.command.is_none() {
-            self.command = self.queue.commandBuffer();
+            self.command = self.new_command_buffer();
         }
         self.command.clone().expect("Metal hands out command buffers")
+    }
+
+    /// A command buffer; with `PS5SLOP_GPU_ENCODER_STATUS`, one whose errors say which encoder failed.
+    fn new_command_buffer(&self) -> Option<Retained<CommandBuffer>> {
+        static STATUS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*STATUS.get_or_init(|| std::env::var_os("PS5SLOP_GPU_ENCODER_STATUS").is_some()) {
+            return self.queue.commandBuffer();
+        }
+        let d = objc2_metal::MTLCommandBufferDescriptor::new();
+        d.setErrorOptions(objc2_metal::MTLCommandBufferErrorOption::EncoderExecutionStatus);
+        self.queue.commandBufferWithDescriptor(&d)
     }
 
     /// The command buffer for a texture upload the next draw needs.
     fn upload_command(&mut self) -> Retained<CommandBuffer> {
         static INLINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *INLINE.get_or_init(|| std::env::var_os("PS5SLOP_GPU_INLINE_UPLOADS").is_some()) {
+        if self.pending_writes || *INLINE.get_or_init(|| std::env::var_os("PS5SLOP_GPU_INLINE_UPLOADS").is_some()) {
             self.end_pass();
             return self.command();
         }
         if self.upload.is_none() {
-            self.upload = self.queue.commandBuffer();
+            self.upload = self.new_command_buffer();
         }
         self.upload.clone().expect("Metal hands out command buffers")
     }
@@ -585,6 +627,35 @@ impl Metal {
                 self.snap_pass(&addresses, &colors, depth);
             }
         }
+    }
+
+    /// For `gpusnap`: copies the 2D textures a pixel program samples, as they are just before its draw.
+    fn snap_inputs(&mut self, program: u64, bound: &Bound) {
+        self.end_pass();
+        let command = self.command();
+        let Some(snap) = self.snap.as_mut() else { return };
+        if snap.passes < snap.from {
+            return;
+        }
+        let Some(blit) = command.blitCommandEncoder() else { return };
+        for (slot, t) in &bound.textures {
+            let size = (t.width() * t.height() * texel_bytes(t.pixelFormat()).unwrap_or(16)) as u64;
+            if t.textureType() != MTLTextureType::Type2D || snap.bytes + size > SNAP_BYTES || is_compressed(t.pixelFormat()) {
+                continue;
+            }
+            let d = unsafe { MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(t.pixelFormat(), t.width(), t.height(), false) };
+            d.setUsage(MTLTextureUsage::ShaderRead);
+            d.setStorageMode(MTLStorageMode::Private);
+            let Some(copy) = self.device.newTextureWithDescriptor(&d) else { continue };
+            unsafe {
+                blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
+                    t, 0, 0, MTLOrigin { x: 0, y: 0, z: 0 }, MTLSize { width: t.width(), height: t.height(), depth: 1 }, &copy, 0, 0, MTLOrigin { x: 0, y: 0, z: 0 },
+                );
+            }
+            snap.bytes += size;
+            snap.copies.push((format!("{:03}-in-{program:x}-t{slot}", snap.passes + 1), copy));
+        }
+        blit.endEncoding();
     }
 
     /// Copies the attachments of the pass that just ended for `gpusnap`.
@@ -662,6 +733,11 @@ impl Metal {
             let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
             ppm.extend(px.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]));
             let _ = std::fs::write(snap.dir.join(format!("{name}.ppm")), ppm);
+            if std::env::var_os("PS5SLOP_SNAP_RAW").is_some()
+                && let Some(raw) = read_raw(&shared.0)
+            {
+                let _ = std::fs::write(snap.dir.join(format!("{name}-{}x{}-{}.raw", w, h, shared.0.pixelFormat().0)), raw);
+            }
         }
         eprintln!("ps5slop: GPU: gpusnap wrote {n} attachments of {} passes to {}", snap.passes, snap.dir.display());
     }
@@ -972,6 +1048,7 @@ impl Metal {
     /// The texture backing color target `t`, made (and filled from guest memory) on first use.
     fn target(&mut self, host: &dyn Host, t: &ColorTarget) -> Option<(Retained<Texture>, MTLPixelFormat)> {
         let format = color_format(t.format)?;
+        self.color_newer.insert(t.address);
         let slices = t.slices.max(t.slice + 1).min(MAX_TARGET_SLICES);
         let layered = slices > 1;
         if let Some(existing) = self.targets.get(&t.address)
@@ -1013,7 +1090,9 @@ impl Metal {
     /// target at that address, or a copy of guest memory refreshed once per frame.
     fn image(&mut self, host: &dyn Host, image: Image, kind: TextureKind) -> Option<Retained<Texture>> {
         let (format, bpe) = image_format(image.format)?;
+        let depth_current = !self.color_newer.contains(&image.address);
         if kind == TextureKind::Cube
+            && depth_current
             && let Some(d) = self.depths.get(&image.address).cloned()
             && d.width() as u32 == image.width
             && d.height() as u32 == image.height
@@ -1033,6 +1112,7 @@ impl Metal {
             };
         }
         if matches!(kind, TextureKind::Tex2d | TextureKind::Tex2dArray)
+            && depth_current
             && let Some(d) = self.depths.get(&image.address)
             && d.width() as u32 == image.width
             && d.height() as u32 == image.height
@@ -1117,7 +1197,8 @@ impl Metal {
                 // Memory reused for another surface: read guest memory below.
                 if t.pixel_format == format || view_compatible(t.pixel_format, format) {
                     let found = if t.pixel_format == format { Some(tex.clone()) } else { tex.newTextureViewWithPixelFormat(format) };
-                    self.note(|| format!("      {:#x} from a render target", image.address));
+                    let ptr = Retained::as_ptr(tex) as usize;
+                    self.note(|| format!("      {:#x} from a render target {ptr:#x}", image.address));
                     return found;
                 }
                 let have = t.pixel_format;
@@ -1670,6 +1751,7 @@ impl Metal {
     /// that way before drawing water); new ones start cleared.
     fn depth(&mut self, d: &DepthTarget, width: u32, height: u32) -> Option<(Retained<Texture>, MTLPixelFormat, bool)> {
         let (t, format, fresh) = self.depth_texture(d, width, height)?;
+        self.color_newer.remove(&d.address);
         if !self.depth_stores.remove(&d.address) {
             return Some((t, format, fresh));
         }
@@ -1929,6 +2011,7 @@ impl Metal {
     /// render target, so later reads of that address see what was written.
     fn storage_image(&mut self, host: &dyn Host, image: Image, kind: TextureKind) -> Option<Retained<Texture>> {
         let (format, bpe) = image_format(image.format)?;
+        self.color_newer.insert(image.address);
         if is_depth_layout(image.raw_tile) {
             self.depth_stores.insert(image.address);
         }
@@ -2346,6 +2429,21 @@ impl Metal {
         Some(buffer)
     }
 
+    /// `PS5SLOP_TRACE_USER_MEMORY`: what pointer-like user data pairs point at (256 bytes; V# bases too unless `strict`).
+    fn trace_user_memory(&mut self, host: &dyn Host, user: &[u32], strict: bool) {
+        if self.trace.is_none() || std::env::var_os("PS5SLOP_TRACE_USER_MEMORY").is_none() {
+            return;
+        }
+        for pair in user.windows(2) {
+            let ptr = pair[0] as u64 | ((pair[1] & 0xFFFF) as u64) << 32;
+            let mut b = [0u8; 256];
+            if (!strict || pair[1] >> 16 == 0) && ptr >> 32 != 0 && host.read(ptr, &mut b) {
+                let words: Vec<u32> = b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect();
+                self.note(|| format!("      at {ptr:#x}: {words:08x?}"));
+            }
+        }
+    }
+
     fn try_dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]) -> Result<(), &'static str> {
         let s = state.sh;
         let address = ((s[sh::COMPUTE_PGM_LO] as u64) | (s[sh::COMPUTE_PGM_LO + 1] as u64) << 32) << 8;
@@ -2359,16 +2457,7 @@ impl Metal {
         let user = &s[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + sh::COMPUTE_USER_DATA_COUNT];
         let program = self.typed_program(host, state, Stage::Compute, address, users, false, 0, user).ok_or("compute program")?;
         self.note(|| format!("compute {address:#x} groups {groups:?} user {:x?}", &user[..users as usize]));
-        if self.trace.is_some() && std::env::var_os("PS5SLOP_TRACE_USER_MEMORY").is_some() {
-            for pair in user[..users as usize].windows(2) {
-                let ptr = pair[0] as u64 | ((pair[1] & 0xFFFF) as u64) << 32;
-                let mut b = [0u8; 64];
-                if ptr >> 32 != 0 && host.read(ptr, &mut b) {
-                    let words: Vec<u32> = b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect();
-                    self.note(|| format!("      at {ptr:#x}: {words:08x?}"));
-                }
-            }
-        }
+        self.trace_user_memory(host, &user[..users as usize], false);
         let id = Arc::as_ptr(&program) as u64;
         let pipeline = match self.computes.get(&id) {
             Some(p) => p.clone(),
@@ -2408,6 +2497,7 @@ impl Metal {
                 },
             );
             self.wrote_memory |= program.translated.writes_memory;
+            self.pending_writes |= program.translated.writes_memory;
         }
         enc.endEncoding();
         if bound.is_some() { Ok(()) } else { Err("resources") }
@@ -2457,21 +2547,15 @@ impl Metal {
         let pixel = self.typed_program(host, state, Stage::Pixel, ps_addr, ps_users, false, col_format, ps_data).ok_or("pixel program")?;
         self.note(|| format!("vertex user {:x?}", &vs_data[..vs_users as usize]));
         self.note(|| format!("pixel user {:x?}", &ps_data[..ps_users as usize]));
-        if self.trace.is_some() && std::env::var_os("PS5SLOP_TRACE_USER_MEMORY").is_some() {
-            for pair in vs_data[..vs_users as usize].windows(2) {
-                let ptr = pair[0] as u64 | ((pair[1] & 0xFFFF) as u64) << 32;
-                let mut b = [0u8; 64];
-                if pair[1] >> 16 == 0 && ptr >> 32 != 0 && host.read(ptr, &mut b) {
-                    let words: Vec<u32> = b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect();
-                    self.note(|| format!("      at {ptr:#x}: {words:08x?}"));
-                }
-            }
-        }
+        self.trace_user_memory(host, &vs_data[..vs_users as usize], true);
+        self.trace_user_memory(host, &ps_data[..ps_users as usize], false);
         self.note(|| {
             format!(
-                "{:?} scissor {:?} clip_cntl {:#x} vte_cntl {:#x}",
+                "{:?} scissor {:?} from {:x?} mode_cntl_0 {:#x} clip_cntl {:#x} vte_cntl {:#x}",
                 Viewport::read(c),
                 regs::scissor(c),
+                [0x0C, 0x0D, 0x81, 0x82, 0x90, 0x91, 0x94, 0x95].map(|r| c[r]),
+                c[context::PA_SC_MODE_CNTL_0],
                 c[context::PA_CL_CLIP_CNTL],
                 c[context::PA_CL_VTE_CNTL]
             )
@@ -2515,6 +2599,7 @@ impl Metal {
                 return Err("draw to a mip level above 0");
             }
             let (tex, format) = self.target(host, &t).ok_or("color target format")?;
+            self.note(|| format!("      texture {:p}", Retained::as_ptr(&tex)));
             self.fast_clear(host, &t, &tex);
             key.formats[targets.len()] = format.0;
             key.blends[targets.len()] = (Blend::read(c, n), write_mask(write, t.format.swap) as u8);
@@ -2559,6 +2644,9 @@ impl Metal {
         };
         let vs_bound = self.resolve(host, &vertex, vs_data).ok_or("resources")?;
         let ps_bound = self.resolve(host, &pixel, ps_data).ok_or("resources")?;
+        if self.snap.is_some() && std::env::var_os("PS5SLOP_SNAP_INPUTS").is_some() {
+            self.snap_inputs(ps_addr, &ps_bound);
+        }
         let index = match draw {
             Draw::Indexed { count, address, .. } if !rect => {
                 let wide = u[uconfig::VGT_INDEX_TYPE] & 3 == 1;
@@ -2593,6 +2681,9 @@ impl Metal {
             }
         }
         enc.setRenderPipelineState(&pipeline);
+        if crate::timing::labels() {
+            enc.insertDebugSignpost(&NSString::from_str(&format!("draw {vs_addr:#x} {ps_addr:#x}")));
+        }
         if depth_bound {
             let ds = self.depth_state(depth_state, true).ok_or("depth state")?;
             enc.setDepthStencilState(Some(&ds));
@@ -2636,6 +2727,10 @@ impl Metal {
         });
         Self::apply(Slot::Vertex(&enc), &vs_bound, vs_data);
         Self::apply(Slot::Fragment(&enc), &ps_bound, ps_data);
+        for (slot, t) in &ps_bound.textures {
+            let (ptr, w, h) = (Retained::as_ptr(t) as usize, t.width(), t.height());
+            self.note(|| format!("bound t{slot} {ptr:#x} {w}x{h}"));
+        }
         let primitive = match u[uconfig::VGT_PRIMITIVE_TYPE] {
             1 => MTLPrimitiveType::Point,
             2 => MTLPrimitiveType::Line,
@@ -2671,6 +2766,7 @@ impl Metal {
             }
         }
         self.wrote_memory |= vertex.translated.writes_memory || pixel.translated.writes_memory;
+        self.pending_writes |= vertex.translated.writes_memory || pixel.translated.writes_memory;
         Ok(())
     }
 
@@ -2728,6 +2824,7 @@ impl Metal {
             cb.commit();
             self.inflight.push((cb, now));
         }
+        self.pending_writes = false;
         if let Some(cb) = self.command.take() {
             cb.commit();
             self.inflight.push((cb, now));
@@ -2743,13 +2840,37 @@ impl Metal {
             crate::timing::add_raw(crate::timing::Part::Submission, ns(cb.kernelStartTime() - committed));
             crate::timing::add_raw(crate::timing::Part::WakeUp, ns(woken - cb.GPUEndTime()));
             if let Some(e) = cb.error() {
-                self.report(format!("command buffer failed: {}", e.localizedDescription()));
+                self.failed_commands += 1;
+                if self.failed_commands <= 8 {
+                    eprintln!("ps5slop: GPU: command buffer failed: {}", e.localizedDescription());
+                    report_encoders(&e);
+                }
             }
             let busy = cb.GPUEndTime() - cb.GPUStartTime();
             let scheduled = cb.GPUStartTime() - cb.kernelStartTime();
             crate::timing::add_raw(crate::timing::Part::Scheduling, (scheduled.max(0.0) * 1e9) as u64);
             crate::timing::add_raw(crate::timing::Part::GpuBusy, (busy * 1e9) as u64);
             crate::timing::add_raw(crate::timing::Part::Syncs, 1_000_000);
+        }
+    }
+}
+
+/// Prints the encoders a failed command buffer reports as faulted or pending
+/// (`PS5SLOP_GPU_ENCODER_STATUS`), with their labels and signposts.
+fn report_encoders(e: &objc2_foundation::NSError) {
+    use objc2_metal::{MTLCommandBufferEncoderInfo, MTLCommandBufferEncoderInfoErrorKey, MTLCommandEncoderErrorState as State};
+    let info = e.userInfo();
+    // SAFETY: Metal documents this key's value as an array of MTLCommandBufferEncoderInfo.
+    let Some(list) = (unsafe { info.objectForKey(MTLCommandBufferEncoderInfoErrorKey) }) else { return };
+    let list: Retained<objc2_foundation::NSArray<ProtocolObject<dyn MTLCommandBufferEncoderInfo>>> = unsafe { Retained::cast_unchecked(list) };
+    for enc in list.iter() {
+        let state = enc.errorState();
+        if state == State::Faulted || state == State::Pending {
+            // SAFETY: `debugSignposts` returns an array of strings, or nil when there are none.
+            let posts: Option<Retained<objc2_foundation::NSArray<NSString>>> = unsafe { objc2::msg_send![&*enc, debugSignposts] };
+            let posts: Vec<String> = posts.map(|p| p.iter().map(|s| s.to_string()).collect()).unwrap_or_default();
+            let n = posts.len();
+            eprintln!("ps5slop: GPU:   encoder {:?} {} {:?}", state.0, enc.label(), &posts[n.saturating_sub(4)..]);
         }
     }
 }
@@ -2810,10 +2931,11 @@ impl Backend for Metal {
         let image_bytes: u64 = self.images.values().map(|(_, t)| mib(t)).sum();
         let target_bytes: u64 = self.targets.values().map(|t| mib(&t.texture)).sum();
         format!(
-            "{} drawn, {} dispatched, {} skipped {reasons:?}; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines",
+            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} command buffers failed; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines",
             self.draws,
             self.dispatches,
             self.skipped,
+            self.failed_commands,
             self.images.len(),
             image_bytes >> 20,
             self.targets.len(),
@@ -2847,6 +2969,10 @@ impl Backend for Metal {
                 blit.endEncoding();
             }
             self.flush_and_wait();
+            if self.tracing() {
+                let (a, b) = (Retained::as_ptr(&src) as usize, Retained::as_ptr(&copy) as usize);
+                eprintln!("ps5slop: trace: shown {addr:#x} copied from {a:#x} into {b:#x}");
+            }
             if let Ok(mut f) = frames().lock() {
                 f.insert(addr, SharedTexture(copy));
             }

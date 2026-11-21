@@ -188,6 +188,10 @@ pub mod binding {
     pub const GDS: u32 = 27;
 }
 
+/// Backward branches a vertex or pixel invocation may take before it gives up: a
+/// GPU hang makes macOS ignore all of the process's later Metal work.
+pub const MAX_BACK_BRANCHES: u32 = 1024;
+
 fn err(pc: usize, message: impl Into<String>) -> TranslateError {
     TranslateError {
         pc: Some(pc),
@@ -535,7 +539,7 @@ impl<'a> Tx<'a> {
         self.insts = insts;
         if structured {
             self.body = format!(
-                "    uint pc = 0;\n    for (;;) {{\n    switch (pc) {{\n{}    default: {}\n    }}\n    }}\n",
+                "    uint pc = 0;\n    uint back = 0;\n    for (;;) {{\n    switch (pc) {{\n{}    default: {}\n    }}\n    }}\n",
                 self.body,
                 if self.req.stage == Stage::Compute { "return;" } else { "return o;" }
             );
@@ -619,7 +623,8 @@ impl<'a> Tx<'a> {
             }
             "s_branch" => {
                 let t = branch_target(pc, inst).unwrap();
-                self.line(&format!("pc = {t}; continue;"));
+                let guard = self.loop_guard(pc, t);
+                self.line(&format!("{guard}pc = {t}; continue;"));
             }
             n if n.starts_with("s_cbranch") => {
                 let t = branch_target(pc, inst).unwrap();
@@ -641,11 +646,26 @@ impl<'a> Tx<'a> {
                 if cond.contains("scc") {
                     self.regs.insert("scc".into());
                 }
-                self.line(&format!("if ({cond}) {{ pc = {t}; continue; }}"));
+                let guard = self.loop_guard(pc, t);
+                self.line(&format!("if ({cond}) {{ {guard}pc = {t}; continue; }}"));
             }
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         }
         Ok(())
+    }
+
+    /// Code that ends a vertex or pixel invocation after [`MAX_BACK_BRANCHES`] backward branches;
+    /// compute is left alone, as a thread leaving early could strand others at a barrier.
+    fn loop_guard(&self, pc: usize, target: usize) -> String {
+        if target > pc {
+            return String::new();
+        }
+        let bail = match self.req.stage {
+            Stage::Pixel => "discard_fragment(); return o;",
+            Stage::Vertex => "return o;",
+            Stage::Compute => return String::new(),
+        };
+        format!("if (++back > {MAX_BACK_BRANCHES}u) {{ {bail} }} ")
     }
 
     fn end_program(&mut self) {

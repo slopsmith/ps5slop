@@ -103,6 +103,9 @@ impl Kernel {
         };
         #[cfg(target_os = "macos")]
         if let Some(texture) = gpu::metal::frame(addr) {
+            if std::env::var_os("PS5SLOP_TRACE_SHOT").is_some() {
+                eprintln!("ps5slop: frame {addr:#x} texture {:p}", &*texture.0);
+            }
             return Some(Frame {
                 width: layout.width,
                 height: layout.height,
@@ -484,10 +487,15 @@ fn delete_flip_event(env: &mut Env) -> Result<Outcome, CallError> {
     })
 }
 
-/// `sceVideoOutGetOutputStatus(handle, status)`: first field 1, which
-/// Minecraft reads as 1080p; the rest of the layout is unknown.
+/// `sceVideoOutGetOutputStatus(handle, status)`: 48 bytes in SharpEmu-mac's
+/// layout. Resolution class 1 (Minecraft reads it as 1080p), dynamic range 1
+/// (SDR, 2 is HDR), refresh-rate code 3 (59.94 Hz), HDR flag 0, as we present SDR.
 fn output_status(env: &mut Env) -> Result<Outcome, CallError> {
-    env.mem.write(env.arg(1), &1u32.to_le_bytes())?;
+    let mut b = [0u8; 0x30];
+    b[0..4].copy_from_slice(&1u32.to_le_bytes());
+    b[4..8].copy_from_slice(&1u32.to_le_bytes());
+    b[8..16].copy_from_slice(&3u64.to_le_bytes());
+    env.mem.write(env.arg(1), &b)?;
     Ok(Outcome::Return(0))
 }
 
