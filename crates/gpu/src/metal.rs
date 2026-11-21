@@ -1041,6 +1041,11 @@ impl Metal {
         if image.tile.is_none() && is_depth_layout(image.raw_tile) && kind == TextureKind::Tex2d {
             return self.blank_texture(image, kind, format);
         }
+        if kind == TextureKind::Tex3d
+            && let Some(t) = self.standard_volume(host, image, format, bpe)
+        {
+            return Some(t);
+        }
         let slices = match kind {
             TextureKind::Tex2d => 1,
             TextureKind::Cube => 6,
@@ -1176,6 +1181,68 @@ impl Metal {
         blit.endEncoding();
         self.images.insert((image, TextureKind::Tex3d), (self.epoch, volume.clone()));
         Some(volume)
+    }
+
+    /// A 3D image of one-byte texels in `SW_4KB_S` that fits one 4 KiB
+    /// block (16x16x16), or of one texel of any size, read from guest
+    /// memory once a frame. Address bits
+    /// are x0 x1 z0 y0 z1 y1 x2 z2 y2 x3 z3 y3: the z bits were confirmed on
+    /// Superliminal's 4x4x16 dither mask (its slices hold 0 to 16 set
+    /// texels in order), the x and y order is assumed.
+    fn standard_volume(&mut self, host: &dyn Host, image: Image, format: MTLPixelFormat, bpe: u32) -> Option<Retained<Texture>> {
+        const BITS: [(usize, u32); 12] = [(0, 0), (0, 1), (2, 0), (1, 0), (2, 1), (1, 1), (0, 2), (2, 2), (1, 2), (0, 3), (2, 3), (1, 3)];
+        let (w, h, d) = (image.width as usize, image.height as usize, image.depth as usize);
+        let one = w == 1 && h == 1 && d == 1;
+        if image.kind != 10 || image.last_level != 0 || !one && (image.raw_tile != 5 || bpe != 1 || w > 16 || h > 16 || d > 16) {
+            return None;
+        }
+        if let Some((epoch, tex)) = self.images.get(&(image, TextureKind::Tex3d))
+            && *epoch == self.epoch
+        {
+            return Some(tex.clone());
+        }
+        let mut block = vec![0u8; if one { bpe as usize } else { 4096 }];
+        if !host.read(image.address, &mut block) {
+            return None;
+        }
+        let mut linear = if one { block.clone() } else { vec![0u8; w * h * d] };
+        for z in (0..d).filter(|_| !one) {
+            for y in 0..h {
+                for x in 0..w {
+                    let at = BITS.iter().enumerate().fold(0, |a, (bit, &(axis, n))| a | ([x, y, z][axis] >> n & 1) << bit);
+                    linear[(z * h + y) * w + x] = block[at];
+                }
+            }
+        }
+        let tex = match self.images.get(&(image, TextureKind::Tex3d)) {
+            Some((_, t)) => t.clone(),
+            None => {
+                let desc = MTLTextureDescriptor::new();
+                desc.setPixelFormat(format);
+                desc.setTextureType(MTLTextureType::Type3D);
+                unsafe {
+                    desc.setWidth(w);
+                    desc.setHeight(h);
+                    desc.setDepth(d);
+                }
+                desc.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::PixelFormatView);
+                desc.setStorageMode(MTLStorageMode::Shared);
+                self.device.newTextureWithDescriptor(&desc)?
+            }
+        };
+        unsafe {
+            tex.replaceRegion_mipmapLevel_slice_withBytes_bytesPerRow_bytesPerImage(
+                MTLRegion { origin: MTLOrigin { x: 0, y: 0, z: 0 }, size: MTLSize { width: w, height: h, depth: d } },
+                0,
+                0,
+                NonNull::new(linear.as_mut_ptr())?.cast(),
+                w * bpe as usize,
+                w * h * bpe as usize,
+            );
+        }
+        self.note(|| format!("      {:#x} a one-block standard 3D image", image.address));
+        self.images.insert((image, TextureKind::Tex3d), (self.epoch, tex.clone()));
+        Some(tex)
     }
 
     /// `tex` with an image descriptor's channel selects (`DST_SEL_X..W`) applied.
