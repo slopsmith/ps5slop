@@ -277,6 +277,7 @@ pub fn translate(req: &Request) -> Result<Translated, TranslateError> {
     let syms = dry.sgpr_sources();
     let mut tx = Tx::new(req, insts);
     tx.syms = Some(syms);
+    tx.mem_write = dry.mem_write;
     tx.atomic_textures = dry
         .textures
         .iter()
@@ -2227,6 +2228,7 @@ impl<'a> Tx<'a> {
                 match width {
                     "8" => write!(s, " mem[o] = uchar({v});").unwrap(),
                     "16" => write!(s, " *(device ushort*)(mem + o) = ushort({v});").unwrap(),
+                    _ if b.glc => write!(s, " store_atomic(mem, o + {}, {v});", 4 * i).unwrap(),
                     _ => write!(s, " *(device uint*)(mem + o + {}) = {v};", 4 * i).unwrap(),
                 }
             }
@@ -2269,7 +2271,16 @@ impl<'a> Tx<'a> {
             "buffer_load_sshort" => (1, "buffer_load_sshort"),
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
-        let mut s = format!("uint4 r = {call}(mem, {args});");
+        let mut s = if b.glc && call == "buffer_load_raw" {
+            let coherent = if self.mem_write {
+                "buffer_load_atomic"
+            } else {
+                "buffer_load_volatile"
+            };
+            format!("uint4 r = {coherent}(mem, {args}, {n}u);")
+        } else {
+            format!("uint4 r = {call}(mem, {args});")
+        };
         for i in 0..n {
             let d = self.v(vd + i);
             write!(s, " {d} = r[{i}];").unwrap();
@@ -3634,6 +3645,30 @@ static inline uint4 buffer_load_raw(device const uchar* mem, Win mem_base, uint4
     if (o == OOB_OFF) return uint4(0u);
     device const uint* p = (device const uint*)(mem + o);
     return uint4(p[0], p[1], p[2], p[3]);
+}
+
+// GLC loads and stores, which other groups may be polling or writing while
+// this one runs: atomics, so the compiler keeps them in loops and in order.
+static inline uint4 buffer_load_atomic(device uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen, uint n) {
+    long o = buffer_offset(mem_base, vs, index, offset, idxen);
+    uint4 r = uint4(0u);
+    if (o == OOB_OFF) return r;
+    if ((o & 3) != 0) return buffer_load_raw(mem, mem_base, vs, index, offset, idxen);
+    for (uint i = 0u; i < n; i++) r[i] = atomic_load_explicit((device atomic_uint*)(mem + o) + i, memory_order_relaxed);
+    return r;
+}
+
+static inline uint4 buffer_load_volatile(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen, uint n) {
+    long o = buffer_offset(mem_base, vs, index, offset, idxen);
+    uint4 r = uint4(0u);
+    if (o == OOB_OFF) return r;
+    for (uint i = 0u; i < n; i++) r[i] = ((volatile device const uint*)(mem + o))[i];
+    return r;
+}
+
+static inline void store_atomic(device uchar* mem, long o, uint v) {
+    if ((o & 3) != 0) { *(device uint*)(mem + o) = v; return; }
+    atomic_store_explicit((device atomic_uint*)(mem + o), v, memory_order_relaxed);
 }
 
 static inline uint4 buffer_load_ubyte(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {

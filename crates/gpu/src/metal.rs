@@ -5517,6 +5517,59 @@ mod tests {
         assert_eq!(results, [0x1234, 0]);
     }
 
+    // The poll is a guarded loop, so a broken translation ends with a guard
+    // trip instead of hanging the GPU.
+    #[test]
+    fn a_group_polling_a_glc_flag_sees_another_group_set_it() {
+        let Some(mut metal) = Metal::new() else {
+            return;
+        };
+        let mem = Mem::new(1 << 20);
+        let code: [u32; 16] = [
+            0xBF06_8004, // s_cmp_eq_u32 s4, 0
+            0xBF85_000A, // s_cbranch_scc1 (to the store)
+            0xE030_4000,
+            0x8000_0100, // buffer_load_dword v1, off, s[0:3], 0 glc
+            0xBF8C_3F70, // s_waitcnt vmcnt(0)
+            0x7E0A_0501, // v_readfirstlane_b32 s5, v1
+            0xBF06_8005, // s_cmp_eq_u32 s5, 0
+            0xBF85_FFFA, // s_cbranch_scc1 (to the load)
+            0x7E04_0282, // v_mov_b32 v2, 2
+            0xE070_0004,
+            0x8000_0200, // buffer_store_dword v2, off, s[0:3], 0 offset:4
+            0xBF81_0000, // s_endpgm
+            0x7E04_0281, // v_mov_b32 v2, 1
+            0xE070_4000,
+            0x8000_0200, // buffer_store_dword v2, off, s[0:3], 0 glc
+            0xBF81_0000, // s_endpgm
+        ];
+        for (i, w) in code.iter().enumerate() {
+            mem.write(0x1000 + 4 * i as u64, &w.to_le_bytes());
+        }
+        let (c, u) = (vec![0u32; 0x400], vec![0u32; 0x400]);
+        let mut sh = vec![0u32; 0x400];
+        sh[sh::COMPUTE_PGM_LO] = 0x10;
+        sh[sh::COMPUTE_PGM_RSRC2] = 4 << 1 | 1 << 7;
+        sh[sh::COMPUTE_NUM_THREAD_X] = 1;
+        sh[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + 4]
+            .copy_from_slice(&[0x8000, 0, 8, 0x5204]);
+        let state = State {
+            context: &c,
+            sh: &sh,
+            uconfig: &u,
+            color_control_written: false,
+        };
+        metal.dispatch(&mem, &state, [2, 1, 1]);
+        assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
+        metal.flush_and_wait();
+        metal.check_guards();
+        assert_eq!(
+            (word(&mem, 0x8000), word(&mem, 0x8004), metal.guard_trips),
+            (1, 2, 0),
+            "the polling group never saw the flag"
+        );
+    }
+
     #[test]
     fn detiling_a_render_target_on_the_gpu_matches_the_cpu_layout() {
         let Some(mut metal) = Metal::new() else {
