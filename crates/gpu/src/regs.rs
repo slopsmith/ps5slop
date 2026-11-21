@@ -200,7 +200,7 @@ pub struct DepthTarget {
     pub width: u32,
     pub height: u32,
     /// The array slice drawn to and the last slice of the view
-    /// (`DB_DEPTH_VIEW`).
+    /// (`DB_DEPTH_VIEW`; field layout from Mesa's `gfx103.json`).
     pub slice: u32,
     pub slice_max: u32,
 }
@@ -226,8 +226,8 @@ impl DepthTarget {
             stencil: c[DB_STENCIL_INFO] & 1 != 0,
             width: w,
             height: h,
-            slice: (c[DB_DEPTH_VIEW] & 0x7FF) | ((c[DB_DEPTH_VIEW] >> 25 & 3) << 11),
-            slice_max: ((c[DB_DEPTH_VIEW] >> 13) & 0x7FF) | ((c[DB_DEPTH_VIEW] >> 27 & 3) << 11),
+            slice: c[DB_DEPTH_VIEW] & 0x1FFF,
+            slice_max: ((c[DB_DEPTH_VIEW] >> 13) & 0x7FF) | (c[DB_DEPTH_VIEW] >> 30) << 11,
         })
     }
 }
@@ -475,6 +475,20 @@ impl Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn depth_views_keep_read_only_bits_out_of_the_slice() {
+        let mut c = vec![0u32; 0x400];
+        c[context::DB_Z_INFO] = 3;
+        c[context::DB_Z_WRITE_BASE] = 0x1000;
+        // Slice 2 to 5, stencil read-only, mip 1; then slice 0x1801, max 0x1802.
+        c[context::DB_DEPTH_VIEW] = 2 | 5 << 13 | 1 << 25 | 1 << 26;
+        let d = DepthTarget::read(&c).unwrap();
+        assert_eq!((d.slice, d.slice_max), (2, 5));
+        c[context::DB_DEPTH_VIEW] = 0x1801 | 2 << 13 | 3 << 30;
+        let d = DepthTarget::read(&c).unwrap();
+        assert_eq!((d.slice, d.slice_max), (0x1801, 0x1802));
+    }
 
     #[test]
     fn balatro_canvas_descriptor_decodes() {
