@@ -148,7 +148,7 @@ pub fn read_rgba(texture: &SharedTexture) -> Option<(u32, u32, Vec<u8>)> {
             MTLPixelFormat::RGBA8Unorm | MTLPixelFormat::RGBA8Unorm_sRGB
         )
     {
-        return read_converted(t);
+        return read_converted(t, false);
     }
     let device = t.device();
     let queue = device.newCommandQueue()?;
@@ -207,7 +207,17 @@ fn read_raw(t: &Texture) -> Option<Vec<u8>> {
     )
 }
 
-fn read_converted(t: &Texture) -> Option<(u32, u32, Vec<u8>)> {
+/// A flipped frame's pixels as RGBA8, like [`read_rgba`], encoded as sRGB
+/// first when the frame holds linear light.
+pub fn read_frame(texture: &SharedTexture, linear: bool) -> Option<(u32, u32, Vec<u8>)> {
+    if linear {
+        read_converted(&texture.0, true)
+    } else {
+        read_rgba(texture)
+    }
+}
+
+fn read_converted(t: &Texture, srgb: bool) -> Option<(u32, u32, Vec<u8>)> {
     if t.textureType() != MTLTextureType::Type2D || is_compressed(t.pixelFormat()) {
         return None;
     }
@@ -217,8 +227,13 @@ fn read_converted(t: &Texture) -> Option<(u32, u32, Vec<u8>)> {
         Number::Uint => ("uint", "1.0 / 65535.0"),
         Number::Sint => ("int", "1.0 / 32767.0"),
     };
+    let encode = if srgb {
+        "v.rgb = select(1.055 * pow(v.rgb, 1.0 / 2.4) - 0.055, v.rgb * 12.92, v.rgb <= 0.0031308);"
+    } else {
+        ""
+    };
     let msl = format!(
-        "#include <metal_stdlib>\nusing namespace metal;\nkernel void convert(texture2d<{elem}, access::read> src [[texture(0)]], device uchar4* dst [[buffer(0)]], uint2 id [[thread_position_in_grid]]) {{\n    if (id.x >= src.get_width() || id.y >= src.get_height()) return;\n    float4 v = clamp(float4(src.read(id)) * {scale}, 0.0, 1.0);\n    dst[id.y * src.get_width() + id.x] = uchar4(v * 255.0 + 0.5);\n}}\n"
+        "#include <metal_stdlib>\nusing namespace metal;\nkernel void convert(texture2d<{elem}, access::read> src [[texture(0)]], device uchar4* dst [[buffer(0)]], uint2 id [[thread_position_in_grid]]) {{\n    if (id.x >= src.get_width() || id.y >= src.get_height()) return;\n    float4 v = clamp(float4(src.read(id)) * {scale}, 0.0, 1.0);\n    {encode}\n    dst[id.y * src.get_width() + id.x] = uchar4(v * 255.0 + 0.5);\n}}\n"
     );
     let device = t.device();
     let lib = device
@@ -416,6 +431,9 @@ pub struct Metal {
     /// One window from the start of the host's GPU area (see
     /// [`Host::gpu_area`]) up to what programs have pointed into so far.
     area: Option<Window>,
+    /// The furthest programs have pointed into the GPU area, so a window
+    /// made again after a mapping change reaches as far as earlier ones.
+    area_reach: u64,
     /// The command buffer last reported as stuck, so each is reported once.
     reported_stuck: Option<usize>,
     /// Guest memory that work encoded since the last wait may write, so the
@@ -662,6 +680,7 @@ impl Metal {
             depth_states: HashMap::new(),
             windows: Vec::new(),
             area: None,
+            area_reach: 0,
             reported_stuck: None,
             written: Written::Nothing,
             settles: Default::default(),
@@ -3569,7 +3588,10 @@ impl Metal {
                 (Some((w, start)), outside.and_then(|r| region(self, r)))
             }
             Some((start, end)) => {
-                let need = self.area.as_ref().map_or(end, |w| w.end);
+                let need = self
+                    .area
+                    .as_ref()
+                    .map_or(self.area_reach.max(start + 1), |w| w.end);
                 let a = self.area_window(host, start, end, need).map(|w| (w, start));
                 (region(self, (lo, hi)), a)
             }
@@ -3591,8 +3613,9 @@ impl Metal {
         })
     }
 
-    /// The window over the GPU area `[start, end)` reaching at least `need`,
-    /// made again (in 1 GiB steps) when it does not reach that far.
+    /// The window over the GPU area `[start, end)` reaching at least `need`
+    /// and as far as any window before it, made again (in 1 GiB steps) when
+    /// it does not reach that far.
     fn area_window(
         &mut self,
         host: &dyn Host,
@@ -3600,13 +3623,18 @@ impl Metal {
         end: u64,
         need: u64,
     ) -> Option<Retained<Buffer>> {
+        self.area_reach = self.area_reach.max(need);
         if let Some(w) = &self.area
             && need <= w.end
         {
             return Some(w.buffer.clone());
         }
         let max = self.device.maxBufferLength() as u64 & !(PAGE - 1);
-        let stop = need.next_multiple_of(1 << 30).min(end).min(start + max);
+        let stop = self
+            .area_reach
+            .next_multiple_of(1 << 30)
+            .min(end)
+            .min(start + max);
         if need > stop || !host.back(start, stop) {
             return None;
         }
@@ -3622,10 +3650,16 @@ impl Metal {
                     None,
                 )
         }?;
-        self.report(format!(
-            "GPU area window of {} MiB at {start:#x}",
-            (stop - start) >> 20
-        ));
+        // Made again after mapping changes: report only growth, so the
+        // window does not use up the reports.
+        static LARGEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        if LARGEST.fetch_max(stop - start, std::sync::atomic::Ordering::Relaxed) < stop - start {
+            self.report(format!(
+                "GPU area window of {} MiB at {start:#x}",
+                (stop - start) >> 20
+            ));
+        }
+        self.note(|| format!("      new GPU area window of {} MiB", (stop - start) >> 20));
         self.area = Some(Window {
             start,
             end: stop,
@@ -3698,6 +3732,14 @@ impl Metal {
             return Err("threadgroup too large");
         }
         let bound = self.resolve(host, &program, user);
+        if let Some(m) = bound.as_ref().and_then(|b| b.memory.as_ref()) {
+            let (a, b) = (
+                Retained::as_ptr(&m.buffer) as usize,
+                m.second.as_ref().map(|b| Retained::as_ptr(b) as usize),
+            );
+            let win = m.win;
+            self.note(|| format!("      windows {a:#x} {b:x?} {win:x?}"));
+        }
         self.end_pass();
         let command = self.command();
         let enc = command.computeCommandEncoder().ok_or("compute encoder")?;

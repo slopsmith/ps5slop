@@ -30,8 +30,14 @@ vertex V vs(uint id [[vertex_id]]) {
     return o;
 }
 
-fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]]) {
-    return float4(t.sample(s, in.uv).rgb, 1);
+fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]],
+                   constant uint& linear [[buffer(0)]]) {
+    float3 c = t.sample(s, in.uv).rgb;
+    if (linear != 0) {
+        c = clamp(c, 0.0, 1.0);
+        c = select(1.055 * pow(c, 1.0 / 2.4) - 0.055, c * 12.92, c <= 0.0031308);
+    }
+    return float4(c, 1);
 }
 "#;
 
@@ -49,6 +55,8 @@ pub struct Presenter {
     texture: Option<Retained<Texture>>,
     /// Whether `texture` is ours to upload into, rather than the GPU's.
     uploadable: bool,
+    /// Whether `texture` holds linear light, to be encoded as sRGB.
+    linear_light: bool,
     picture: (u32, u32),
     last: Option<Retained<CommandBuffer>>,
 }
@@ -109,6 +117,7 @@ impl Presenter {
             nearest,
             texture: None,
             uploadable: false,
+            linear_light: false,
             picture: (0, 0),
             last: None,
         };
@@ -128,10 +137,12 @@ impl Presenter {
         (s.width as u32, s.height as u32)
     }
 
-    /// Shows a texture the GPU rendered, from the next draw on.
-    pub fn show(&mut self, texture: &Texture) {
+    /// Shows a texture the GPU rendered, from the next draw on; `linear`
+    /// when it holds linear light.
+    pub fn show(&mut self, texture: &Texture, linear: bool) {
         self.picture = (texture.width() as u32, texture.height() as u32);
         self.texture = Some(texture.retain());
+        self.linear_light = linear;
         self.uploadable = false;
     }
 
@@ -140,6 +151,7 @@ impl Presenter {
         if w == 0 || h == 0 || pixels.len() < (w * h * 4) as usize {
             return;
         }
+        self.linear_light = false;
         if self.picture != (w, h) || self.texture.is_none() || !self.uploadable {
             let desc = unsafe {
                 MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
@@ -214,8 +226,14 @@ impl Presenter {
                 znear: 0.0,
                 zfar: 1.0,
             });
+            let linear = u32::from(self.linear_light);
             unsafe {
                 enc.setFragmentTexture_atIndex(Some(tex), 0);
+                enc.setFragmentBytes_length_atIndex(
+                    NonNull::from(&linear).cast(),
+                    std::mem::size_of::<u32>(),
+                    0,
+                );
                 enc.setFragmentSamplerState_atIndex(
                     Some(if nearest { &self.nearest } else { &self.linear }),
                     0,

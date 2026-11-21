@@ -227,7 +227,7 @@ impl App {
         self.size = Some((frame.width, frame.height));
         if let (Some(p), Some(w)) = (&mut self.presenter, &self.window) {
             match &frame.texture {
-                Some(t) => p.show(&t.0),
+                Some(t) => p.show(&t.0, frame.linear),
                 None => p.upload(&frame.rgba, frame.width, frame.height),
             }
             w.request_redraw();

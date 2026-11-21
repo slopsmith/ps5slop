@@ -25,7 +25,7 @@ What each title does under ps5slop, from our own runs on an Apple Silicon Mac.
 | PPSA21402 | Balatro | ⭐ Perfect | 01.015.000: plays normally with sound. |
 | PPSA17221 | Minecraft | 🟢 Playable | v26.10: worlds and Vibrant Visuals render (VV about 20 fps, particle and far-water glitches); sound plays. |
 | PPSA03311 | The Binding of Isaac: Repentance | 🟢 Playable | 01.000: plays at about 52 fps. Screen filter setting not rechecked. |
-| PPSA06084 | Superliminal | 🟡 Ingame | 01.010 (.pkg): lit menu after ~20 s at 40-55 fps; New Game reaches level 1 (25-45 fps). |
+| PPSA06084 | Superliminal | 🟡 Ingame | 01.010 (.pkg): menu after ~20 s at 40-55 fps; level 1 draws steadily (25-45 fps); intro advert video black. |
 | PPSA21564 | Astro Bot | 🟠 Menus | v1.019 (.pkg): title after 80-160 s; ship and Astro missing, input untested. Needs `scripts/fetch-fonts`. |
 | PPSA04263 | Grand Theft Auto V | 🟠 Menus | EU v1.011.001 (.pkg): Story Mode load reaches the prologue card, then a CPU fault. No game audio. |
 | CUSA52463 | Deltarune (PS4) | ⚫ Nothing | v1.12 (patch over base .pkg): game loop runs; nothing drawn, PS4 Gnm rendering is out of scope. |

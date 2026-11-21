@@ -32,6 +32,15 @@ pub struct Layout {
     pub height: u32,
     /// Tiling mode 0, which ScreenTester5 fills in 128x128-pixel tiles.
     pub tiled: bool,
+    /// The pixels are linear light, which the display encodes (see [`linear_format`]).
+    pub linear: bool,
+}
+
+/// Whether video-out pixel format `format` holds linear light. Superliminal
+/// registers `0xC001000600000000` with an RGBA16Float buffer, and its final
+/// pass decodes sRGB before writing it; other float formats are assumed alike.
+pub fn linear_format(format: u64) -> bool {
+    format >> 56 == 0xC0
 }
 
 #[derive(Default)]
@@ -70,6 +79,8 @@ pub struct Frame {
     pub rgba: Vec<u8>,
     /// Counts flips, so the host can tell new frames from old ones.
     pub flips: u64,
+    /// The texture holds linear light; the host encodes it as sRGB to show it.
+    pub linear: bool,
     /// The GPU's texture for the buffer, when the GPU rendered it; `rgba`
     /// is empty then.
     #[cfg(target_os = "macos")]
@@ -115,6 +126,7 @@ impl Kernel {
                 height: layout.height,
                 rgba: Vec::new(),
                 flips,
+                linear: layout.linear,
                 texture: Some(texture),
             });
         }
@@ -130,6 +142,7 @@ impl Kernel {
             height: layout.height,
             rgba,
             flips,
+            linear: false,
             #[cfg(target_os = "macos")]
             texture: None,
         })
@@ -324,10 +337,12 @@ fn read_attribute(env: &Env, attr: u64) -> Result<Option<Layout>, CallError> {
     if word(0) != ATTRIBUTE_TAG {
         return Ok(None);
     }
+    let format = u64::from_le_bytes(b[8..16].try_into().expect("8 bytes"));
     let layout = Layout {
         width: word(20),
         height: word(24),
         tiled: word(16) == 0,
+        linear: linear_format(format),
     };
     Ok((layout.width > 0 && layout.height > 0).then_some(layout))
 }
@@ -560,6 +575,7 @@ mod tests {
             width: 200,
             height: 130,
             tiled: true,
+            linear: false,
         };
         let mut raw = vec![0u8; buffer_len(layout)];
         let points = [(0usize, 0usize), (199, 0), (5, 129), (130, 70)];

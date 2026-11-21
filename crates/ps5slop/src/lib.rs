@@ -352,7 +352,11 @@ pub fn write_frames(kernel: std::sync::Arc<Kernel>, dir: std::path::PathBuf, cou
 
 fn write_ppm(mut f: hle::Frame, out: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    if let Some((w, h, px)) = f.texture.as_ref().and_then(hle::gpu::metal::read_rgba) {
+    if let Some((w, h, px)) = f
+        .texture
+        .as_ref()
+        .and_then(|t| hle::gpu::metal::read_frame(t, f.linear))
+    {
         (f.width, f.height, f.rgba) = (w, h, px);
     }
     let mut ppm = format!("P6\n{} {}\n255\n", f.width, f.height).into_bytes();

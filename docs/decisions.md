@@ -485,3 +485,12 @@ A `WRITE_DATA` from the command stream (and its NOP form) is now a blit into the
 ## 2026-11-21: Programs do not store into module images
 
 Stores and atomics of translated programs skip the image of the loaded module or executable that their memory window covers. Reason: GTA V's programs live in its executable, so their window covers its code and globals, and a store through a wrong descriptor overwrote the game's code. Assumed, not verified: the console's GPU does not write module images (no title is known to). The guard costs one compare per store.
+
+## 2026-11-21: The GPU-area window never shrinks
+
+When the window over the GPU area is made again after a mapping change, it reaches at least as far as any window before it in the run, not only as far as the current program's user data points. Reason: programs load descriptors from memory and reach buffers through them, so user data does not bound what they read, and reads past the window return 0; Superliminal lost its geometry every third or sixth frame in about half its runs ([gpu.md](gpu.md#superliminals-flicker-and-dark-picture-2026-11-21)). A window over the whole 16 GiB area, or up to the highest mapping, fixed it too but cut Superliminal's and Minecraft's frame rates by half or more, and a reach that expired after 64 to 128 frames still flickered. A program whose pointers lie outside the area no longer asks for the whole area when no window exists. Memory that no program's user data ever pointed into is still out of reach.
+
+## 2026-11-21: Float video-out formats are shown as linear light
+
+Frames whose video-out format has top byte `0xC0` (Superliminal's `0xC001000600000000`, RGBA16Float) are encoded as sRGB in the window, `shot` and `frames`. Reason: Superliminal's last pass decodes sRGB before it writes the buffer, so the buffer holds linear light, and showing it as stored made every scene far too dark. No public source names the format; other float formats are assumed alike, and the PS4's float format is left as it was.
+
