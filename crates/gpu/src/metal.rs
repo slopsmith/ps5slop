@@ -358,6 +358,8 @@ pub struct Metal {
     /// One window from the start of the host's GPU area (see
     /// [`Host::gpu_area`]) up to what programs have pointed into so far.
     area: Option<Window>,
+    /// The command buffer last reported as stuck, so each is reported once.
+    reported_stuck: Option<usize>,
     /// Work encoded since the last wait writes guest memory, so the CPU must
     /// wait for it before reading guest memory for later work (see `settle`).
     wrote_memory: bool,
@@ -366,6 +368,19 @@ pub struct Metal {
     pending_writes: bool,
     /// Command buffers Metal reported as failed.
     failed_commands: u64,
+    /// Loop guard words of compute dispatches (see [`GUARD_SLOTS`]), the
+    /// next slot, the slots of dispatches not yet checked with their program,
+    /// and how many dispatches gave up.
+    guard: Option<Retained<Buffer>>,
+    /// With `PS5SLOP_GPU_FENCE`, orders encoders that read guest memory after
+    /// those that wrote it (see [`Metal::wait_memory`]); whether one updated
+    /// it yet, and whether the open pass writes guest memory.
+    fence: Option<Retained<ProtocolObject<dyn MTLFence>>>,
+    fence_updated: bool,
+    pass_memory: bool,
+    guard_next: usize,
+    guarded: Vec<(usize, u64, [u32; 16])>,
+    guard_trips: u64,
     /// Shared memory handed out front to back for data copied for the GPU,
     /// and how much of it is used; replaced when full.
     scratch: Option<(Retained<Buffer>, usize)>,
@@ -536,6 +551,7 @@ impl Metal {
     pub fn new() -> Option<Self> {
         let device = MTLCreateSystemDefaultDevice()?;
         let queue = device.newCommandQueue()?;
+        let fence = std::env::var_os("PS5SLOP_GPU_FENCE").and_then(|_| device.newFence());
         let resident = std::env::var_os("PS5SLOP_GPU_RESIDENCY_SET").is_some()
             .then(|| device.newResidencySetWithDescriptor_error(&MTLResidencySetDescriptor::new()).ok())
             .flatten();
@@ -560,9 +576,17 @@ impl Metal {
             depth_states: HashMap::new(),
             windows: Vec::new(),
             area: None,
+            reported_stuck: None,
             wrote_memory: false,
             pending_writes: false,
             failed_commands: 0,
+            guard: None,
+            fence,
+            fence_updated: false,
+            pass_memory: false,
+            guard_next: 0,
+            guarded: Vec::new(),
+            guard_trips: 0,
             missing_inputs: HashMap::new(),
             scratch: None,
             gds: None,
@@ -648,8 +672,20 @@ impl Metal {
         self.upload.clone().expect("Metal hands out command buffers")
     }
 
+    /// The fence encoders that read guest memory wait for, once a writer updated it:
+    /// Metal orders work only within one buffer, and our windows are several.
+    fn wait_memory(&self) -> Option<&ProtocolObject<dyn MTLFence>> {
+        self.fence.as_deref().filter(|_| self.fence_updated)
+    }
+
     fn end_pass(&mut self) {
         if let Some((enc, addresses, colors, depth)) = self.pass.take() {
+            if let Some(f) = self.fence.as_deref()
+                && std::mem::take(&mut self.pass_memory)
+            {
+                enc.updateFence_afterStages(f, MTLRenderStages::Fragment);
+                self.fence_updated = true;
+            }
             enc.endEncoding();
             if self.snap.is_some() {
                 self.snap_pass(&addresses, &colors, depth);
@@ -1777,6 +1813,9 @@ impl Metal {
             }
         }
         let enc = command.renderCommandEncoderWithDescriptor(&pass)?;
+        if let Some(f) = self.wait_memory() {
+            enc.waitForFence_beforeStages(f, MTLRenderStages::Vertex);
+        }
         if crate::timing::labels() {
             let what: Vec<String> = addresses.iter().map(|a| format!("{a:#x}")).collect();
             enc.setLabel(Some(&NSString::from_str(&format!("pass {}", what.join(" ")))));
@@ -2293,6 +2332,42 @@ impl Metal {
         self.gds.clone()
     }
 
+    /// A zeroed slot of loop guard words for the next dispatch, as a byte offset.
+    fn guard_slot(&mut self, program: u64, user: &[u32]) -> Option<(Retained<Buffer>, usize)> {
+        if self.guard.is_none() {
+            self.guard = Some(self.device.newBufferWithLength_options(GUARD_SLOTS * 8, MTLResourceOptions::StorageModeShared)?);
+        }
+        let buffer = self.guard.clone()?;
+        if self.guarded.len() >= GUARD_SLOTS / 2 {
+            self.check_guards();
+        }
+        let slot = self.guard_next;
+        self.guard_next = (slot + 1) % GUARD_SLOTS;
+        // SAFETY: a shared buffer stays mapped; the dispatch that used this
+        // slot before is long done, and a late one could only gain budget.
+        unsafe { buffer.contents().as_ptr().cast::<u64>().add(slot).write_volatile(0) };
+        let mut words = [0; 16];
+        words.copy_from_slice(&user[..16]);
+        self.guarded.push((slot, program, words));
+        Some((buffer, slot * 8))
+    }
+
+    /// Reports dispatches whose loops gave up since the last check.
+    fn check_guards(&mut self) {
+        let Some(buffer) = &self.guard else { return };
+        let words = buffer.contents().as_ptr().cast::<u32>();
+        for (slot, program, user) in std::mem::take(&mut self.guarded) {
+            // SAFETY: the slot is inside the shared buffer, which stays mapped.
+            let (units, gave_up) = unsafe { (words.add(2 * slot).read_volatile(), words.add(2 * slot + 1).read_volatile()) };
+            if gave_up != 0 {
+                self.guard_trips += 1;
+                if self.guard_trips <= 16 {
+                    eprintln!("ps5slop: GPU: compute program {program:#x}: {gave_up} threads gave up their loops ({units} of {} branch units), user data {user:x?}", gfx10::translate::GUARD_BUDGET);
+                }
+            }
+        }
+    }
+
     // Before the CPU reads guest memory: waits for encoded work that wrote it.
     fn settle(&mut self) {
         if self.wrote_memory {
@@ -2521,9 +2596,21 @@ impl Metal {
         if crate::timing::labels() {
             enc.setLabel(Some(&NSString::from_str(&format!("dispatch {:#x} {groups:?}", program.address))));
         }
+        let memory = program.translated.guest_memory && bound.is_some();
+        if memory && let Some(f) = self.wait_memory() {
+            enc.waitForFence(f);
+        }
         enc.setComputePipelineState(&pipeline);
+        let guard = if program.translated.loop_guard { self.guard_slot(program.address, user) } else { None };
+        if program.translated.loop_guard && guard.is_none() {
+            enc.endEncoding();
+            return Err("loop guard buffer");
+        }
         if let Some(b) = &bound {
             Self::apply(Slot::Compute(&enc), b, user);
+            if let Some((g, offset)) = &guard {
+                Slot::Compute(&enc).buffer(g, *offset, binding::GUARD as usize);
+            }
             enc.dispatchThreadgroups_threadsPerThreadgroup(
                 MTLSize {
                     width: groups[0] as usize,
@@ -2538,6 +2625,10 @@ impl Metal {
             );
             self.wrote_memory |= program.translated.writes_memory;
             self.pending_writes |= program.translated.writes_memory;
+        }
+        if memory && program.translated.writes_memory && let Some(f) = self.fence.as_deref() {
+            enc.updateFence(f);
+            self.fence_updated = true;
         }
         enc.endEncoding();
         if crate::timing::labels() {
@@ -2850,6 +2941,7 @@ impl Metal {
                 }
             }
         }
+        self.pass_memory |= vertex.translated.writes_memory || pixel.translated.writes_memory;
         self.wrote_memory |= vertex.translated.writes_memory || pixel.translated.writes_memory;
         self.pending_writes |= vertex.translated.writes_memory || pixel.translated.writes_memory;
         Ok(())
@@ -2913,6 +3005,19 @@ impl Metal {
             cb.commit();
             self.inflight.push((cb, now));
         }
+        if self.inflight.len() > 32 {
+            self.inflight.retain(|(cb, _)| cb.status() != MTLCommandBufferStatus::Completed);
+            if self.inflight.len() > 48 {
+                wait_reporting_hangs(&self.inflight[0].0);
+            }
+            if let Some((cb, at)) = self.inflight.first()
+                && now - at > 2.0
+                && self.reported_stuck != Some(Retained::as_ptr(cb) as usize)
+            {
+                self.reported_stuck = Some(Retained::as_ptr(cb) as usize);
+                eprintln!("ps5slop: GPU: command buffer {:?} still running after 2 s (status {:?})", cb.label().map(|l| l.to_string()), cb.status());
+            }
+        }
     }
 
     fn flush_and_wait(&mut self) {
@@ -2936,6 +3041,7 @@ impl Metal {
             crate::timing::add_raw(crate::timing::Part::GpuBusy, (busy * 1e9) as u64);
             crate::timing::add_raw(crate::timing::Part::Syncs, 1_000_000);
         }
+        self.check_guards();
     }
 }
 
@@ -2975,6 +3081,9 @@ fn report_encoders(e: &objc2_foundation::NSError) {
 
 /// The global data share's size on GFX10.
 const GDS_BYTES: usize = 64 << 10;
+/// Dispatches that can hold a slot of loop guard words at once; a slot is
+/// zeroed when handed out again.
+const GUARD_SLOTS: usize = 1 << 16;
 
 impl Backend for Metal {
     fn with_gds(&mut self, f: &mut dyn FnMut(&mut [u8])) -> bool {
@@ -3029,11 +3138,12 @@ impl Backend for Metal {
         let image_bytes: u64 = self.images.values().map(|(_, t)| mib(t)).sum();
         let target_bytes: u64 = self.targets.values().map(|t| mib(&t.texture)).sum();
         format!(
-            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} command buffers failed; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms)",
+            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms)",
             self.draws,
             self.dispatches,
             self.skipped,
             self.failed_commands,
+            self.guard_trips,
             self.images.len(),
             image_bytes >> 20,
             self.targets.len(),
@@ -3510,6 +3620,82 @@ mod tests {
         }
         c[context::SPI_SHADER_COL_FORMAT] = 0x944;
         assert_eq!(export_formats(&c), 0x947);
+    }
+
+    /// Runs a compute program whose loop counts s2 up to the bound in s0 and
+    /// then appends to GDS; returns how many threads got there, how many
+    /// dispatches gave up, and the GPU time.
+    fn run_bounded_loop(metal: &mut Metal, mem: &Mem, code: &[u32], at: u64, groups: u32, bound: u32) -> (u32, u64, f64) {
+        for (i, w) in code.iter().enumerate() {
+            mem.write(at + 4 * i as u64, &w.to_le_bytes());
+        }
+        metal.with_gds(&mut |g| g.fill(0));
+        let (c, u) = (vec![0u32; 0x400], vec![0u32; 0x400]);
+        let mut sh = vec![0u32; 0x400];
+        sh[sh::COMPUTE_PGM_LO] = (at >> 8) as u32;
+        sh[sh::COMPUTE_PGM_RSRC2] = 1 << 1;
+        sh[sh::COMPUTE_NUM_THREAD_X] = 64;
+        sh[sh::COMPUTE_USER_DATA_0] = bound;
+        let state = State { context: &c, sh: &sh, uconfig: &u, color_control_written: false };
+        let trips = metal.guard_trips;
+        metal.dispatch(mem, &state, [groups, 1, 1]);
+        assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
+        metal.commit();
+        let start = std::time::Instant::now();
+        let mut gpu = 0.0;
+        for (cb, _) in std::mem::take(&mut metal.inflight) {
+            while !matches!(cb.status(), MTLCommandBufferStatus::Completed | MTLCommandBufferStatus::Error) {
+                assert!(start.elapsed() < std::time::Duration::from_secs(5), "the loop did not end within 5 s");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            assert!(cb.error().is_none());
+            gpu += cb.GPUEndTime() - cb.GPUStartTime();
+        }
+        metal.check_guards();
+        let mut done = 0;
+        metal.with_gds(&mut |g| done = u32::from_le_bytes(g[..4].try_into().unwrap()));
+        (done, metal.guard_trips - trips, gpu)
+    }
+
+    // Each loop is also bounded by its user SGPR, so a guard that fails cannot
+    // hang the GPU: without the guard every case ends in well under a second.
+    #[test]
+    fn runaway_compute_loops_end_on_their_own() {
+        let Some(mut metal) = Metal::new() else { return };
+        let mem = Mem::new(1 << 20);
+        const HEAD: [u32; 3] = [
+            0xBEFC_0380, // s_mov_b32 m0, 0
+            0xBE82_0380, // s_mov_b32 s2, 0
+            0x8002_8102, // s_add_u32 s2, s2, 1
+        ];
+        const TAIL: [u32; 5] = [
+            0xBF0A_0002, // s_cmp_lt_u32 s2, s0
+            0xBF85_FFFD, // s_cbranch_scc1 (to s_add_u32)
+            0xD8FA_0000, 0x0100_0000, // ds_append v1 gds
+            0xBF81_0000, // s_endpgm
+        ];
+        let plain: Vec<u32> = HEAD.iter().chain(&TAIL).copied().collect();
+        let mut barrier = HEAD.to_vec();
+        barrier.push(0xBF8A_0000); // s_barrier
+        barrier.extend(TAIL);
+        barrier[5] = 0xBF85_FFFC;
+
+        let (done, trips, gpu) = run_bounded_loop(&mut metal, &mem, &plain, 0x1000, 4, 1 << 12);
+        assert_eq!((done, trips), (256, 0), "an honest loop runs to its end");
+        eprintln!("honest: {gpu:.4} s");
+        let (done, trips, gpu) = run_bounded_loop(&mut metal, &mem, &plain, 0x1000, 1, 1 << 25);
+        assert_eq!((done, trips), (0, 1), "a long loop in one group gives up");
+        assert!(gpu < 0.1, "{gpu} s");
+        eprintln!("one group: {gpu:.4} s");
+        let (done, trips, gpu) = run_bounded_loop(&mut metal, &mem, &plain, 0x1000, 1 << 14, 1 << 13);
+        assert_eq!(trips, 1);
+        assert!(done < (1 << 20) / 2, "the dispatch's budget stops most of {} threads, {done} finished", 1 << 20);
+        assert!(gpu < 1.0, "{gpu} s");
+        eprintln!("large grid: {gpu:.4} s, {done} finished");
+        let (done, trips, gpu) = run_bounded_loop(&mut metal, &mem, &barrier, 0x2000, 2, 1 << 25);
+        assert_eq!((done, trips), (0, 1), "groups with a barrier leave together");
+        assert!(gpu < 0.1, "{gpu} s");
+        eprintln!("barrier: {gpu:.4} s");
     }
 
     #[test]

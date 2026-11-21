@@ -85,6 +85,22 @@ fn sync_dispatches() -> bool {
     *SYNC.get_or_init(|| std::env::var_os("PS5SLOP_GPU_SYNC_DISPATCHES").is_some())
 }
 
+/// `PS5SLOP_GPU_PROBE=ADDR`: dispatches of the compute program at ADDR are
+/// printed with their groups and user data.
+fn probed(program: u64) -> bool {
+    static PROBE: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *PROBE.get_or_init(|| std::env::var("PS5SLOP_GPU_PROBE").ok().and_then(|v| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok())) == Some(program)
+}
+
+/// Reports a packet form the processor drops, once per form and register.
+fn unhandled(what: std::fmt::Arguments) {
+    static SEEN: std::sync::Mutex<Option<std::collections::HashSet<String>>> = std::sync::Mutex::new(None);
+    let what = what.to_string();
+    if SEEN.lock().unwrap().get_or_insert_default().insert(what.clone()) {
+        eprintln!("ps5slop: GPU: {what} dropped");
+    }
+}
+
 fn trace(what: std::fmt::Arguments) {
     if trace_sync() {
         eprintln!("ps5slop: GPU sync [{}]: {what}", std::thread::current().name().unwrap_or("?"));
@@ -142,6 +158,7 @@ pub struct Processor {
     /// Releases and memory writes whose earlier GPU work is committed but
     /// not known to be done, in command order.
     pending: Vec<Pending>,
+    watched: Option<u64>,
     /// A register table wrote `CB_COLOR_CONTROL` since the last draw.
     color_control_written: bool,
 }
@@ -183,6 +200,7 @@ impl Default for Processor {
             instances: 1,
             gds: vec![0; GDS_BYTES],
             pending: Vec::new(),
+            watched: None,
             last_flip: None,
             color_control_written: false,
         }
@@ -379,6 +397,8 @@ impl Processor {
                 let control = p[0];
                 if WRITE_DATA_MEMORY.contains(&((control >> 8) & 0xF)) {
                     self.write_values(host, addr(p[1], p[2]), &p[3..], control & (1 << 16) != 0);
+                } else {
+                    unhandled(format_args!("WRITE_DATA to select {} at {:#x}", (control >> 8) & 0xF, p[1]));
                 }
             }
             IT_WAIT_REG_MEM if p.len() >= 5 && p[0] & 0x10 != 0 => {
@@ -486,6 +506,7 @@ impl Processor {
         let wide = control & (1 << 16) != 0;
         let n = if wide { 2 } else { 1 };
         if !matches!(dst_sel, 1 | 2 | 5) {
+            unhandled(format_args!("COPY_DATA from select {src_sel} to select {dst_sel} at {:#x}", p[3]));
             return;
         }
         let dest = addr(p[3], p[4]);
@@ -672,6 +693,10 @@ impl Processor {
         let total = groups.iter().map(|&g| g as u64).product::<u64>();
         let program = (self.sh[crate::regs::sh::COMPUTE_PGM_LO] as u64 | (self.sh[crate::regs::sh::COMPUTE_PGM_LO + 1] as u64) << 32) << 8;
         trace(format_args!("dispatch {groups:?} program {program:#x}"));
+        if probed(program) {
+            let user = &self.sh[crate::regs::sh::COMPUTE_USER_DATA_0..crate::regs::sh::COMPUTE_USER_DATA_0 + 16];
+            eprintln!("ps5slop: GPU probe [{}]: dispatch {groups:?} of {program:#x}, user data {user:x?}", std::thread::current().name().unwrap_or("?"));
+        }
         if total > MAX_GROUPS {
             self.stats.huge_dispatches += 1;
             if self.stats.huge_dispatches <= 16 {
@@ -689,6 +714,32 @@ impl Processor {
             self.sync();
             trace(format_args!("dispatch done"));
         }
+        self.gpu_watch(host, || format!("dispatch {groups:?} of {program:#x}"));
+    }
+
+    /// `PS5SLOP_GPU_WATCH=ADDR`: waits for each draw and dispatch and reports
+    /// those that change the 64-bit word at ADDR.
+    fn gpu_watch(&mut self, host: &dyn Host, what: impl FnOnce() -> String) {
+        static AT: std::sync::OnceLock<Option<(u64, Instant)>> = std::sync::OnceLock::new();
+        let Some((at, from)) = *AT.get_or_init(|| {
+            let v = std::env::var("PS5SLOP_GPU_WATCH").ok()?;
+            let (addr, secs) = v.split_once('@').unwrap_or((&v, "0"));
+            Some((u64::from_str_radix(addr.trim_start_matches("0x"), 16).ok()?, Instant::now() + Duration::from_secs(secs.parse().ok()?)))
+        }) else {
+            return;
+        };
+        if Instant::now() < from {
+            return;
+        }
+        self.sync();
+        let now = read_u64(host, at);
+        if self.watched != Some(now) {
+            if self.watched.is_some() {
+                let user = &self.sh[crate::regs::sh::COMPUTE_USER_DATA_0..crate::regs::sh::COMPUTE_USER_DATA_0 + 16];
+                eprintln!("ps5slop: GPU watch: {at:#x} {:#x?} -> {now:#x} after {} on {} (compute user {user:x?})", self.watched, what(), std::thread::current().name().unwrap_or("?"));
+            }
+            self.watched = Some(now);
+        }
     }
 
     fn draw(&mut self, host: &dyn Host, op: u32, p: &[u32], draw: Draw) {
@@ -701,6 +752,7 @@ impl Processor {
             crate::timing::add(crate::timing::Part::Draw, t);
         }
         self.color_control_written = false;
+        self.gpu_watch(host, || format!("draw {op:#x}"));
     }
 
     fn sync(&mut self) {

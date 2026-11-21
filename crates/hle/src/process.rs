@@ -391,7 +391,8 @@ impl Kernel {
             ("memcpy", jit::Native::Memmove),
             ("memmove", jit::Native::Memmove),
         ];
-        for (name, native) in natives {
+        let natives = if std::env::var_os("PS5SLOP_JIT_NO_NATIVES").is_some() { &natives[..0] } else { &natives[..] };
+        for &(name, native) in natives {
             if let Some(addr) = self.hle.bound(crate::libc::LIBRARY, name) {
                 jit::set_native(addr, native);
             }

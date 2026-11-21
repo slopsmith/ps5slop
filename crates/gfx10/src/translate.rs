@@ -151,6 +151,9 @@ pub struct Translated {
     pub lds_bytes: u32,
     /// The program uses the global data share, bound at `[[buffer(27)]]`.
     pub gds: bool,
+    /// Compute stage: the program loops, and gives up after too many backward
+    /// branches, counted in the words bound at `[[buffer(25)]]` (zeroed per dispatch).
+    pub loop_guard: bool,
 }
 
 /// Why a program could not be translated.
@@ -186,11 +189,24 @@ pub mod binding {
     pub const SAMPLER_WORDS: u32 = 32;
     /// `device atomic_uint* gds`: the 64 KiB global data share.
     pub const GDS: u32 = 27;
+    /// `device atomic_uint* guard`: two words per dispatch for the loop guard
+    /// of compute programs ([`super::Translated::loop_guard`]): backward
+    /// branches taken so far in [`super::GUARD_UNIT`]s, and threads that gave up.
+    pub const GUARD: u32 = 25;
 }
 
 /// Backward branches a vertex or pixel invocation may take before it gives up: a
 /// GPU hang makes macOS ignore all of the process's later Metal work.
 pub const MAX_BACK_BRANCHES: u32 = 1024;
+
+/// The same for a compute thread. Persistent loops take a turn per batch of
+/// work, so this is higher.
+pub const MAX_COMPUTE_BACK_BRANCHES: u32 = 1 << 14;
+
+/// Backward branches all threads of one dispatch may take together, in units
+/// of [`GUARD_UNIT`], so a runaway in a large grid also ends quickly.
+pub const GUARD_BUDGET: u32 = 1 << 20;
+pub const GUARD_UNIT: u32 = 1024;
 
 fn err(pc: usize, message: impl Into<String>) -> TranslateError {
     TranslateError {
@@ -294,6 +310,9 @@ enum Interp {
 struct Tx<'a> {
     req: &'a Request<'a>,
     insts: Vec<(usize, Inst)>,
+    has_barrier: bool,
+    /// A compute program with backward branches (see [`Translated::loop_guard`]).
+    guarded: bool,
     body: String,
     regs: BTreeSet<String>,
     /// SGPRs each instruction writes, by dword offset.
@@ -367,6 +386,8 @@ impl<'a> Tx<'a> {
         Tx {
             req,
             insts,
+            has_barrier: false,
+            guarded: false,
             body: String::new(),
             regs: BTreeSet::new(),
             writes: BTreeMap::new(),
@@ -526,6 +547,9 @@ impl<'a> Tx<'a> {
             }
         }
         let structured = leaders.len() > 1;
+        self.has_barrier = self.insts.iter().any(|(_, i)| i.op.name == "s_barrier");
+        self.guarded = self.req.stage == Stage::Compute
+            && self.insts.iter().any(|(pc, i)| branch_target(*pc, i).is_some_and(|t| t <= *pc));
         let insts = std::mem::take(&mut self.insts);
         for (pc, inst) in &insts {
             if structured && leaders.contains(pc) {
@@ -619,6 +643,9 @@ impl<'a> Tx<'a> {
             "s_barrier" => {
                 if self.req.stage == Stage::Compute {
                     self.line("threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);");
+                    if self.guarded {
+                        self.line("{ bool leave = tg_bail; threadgroup_barrier(mem_flags::mem_threadgroup); if (leave) return; }");
+                    }
                 }
             }
             "s_branch" => {
@@ -654,18 +681,18 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
-    /// Code that ends a vertex or pixel invocation after [`MAX_BACK_BRANCHES`] backward branches;
-    /// compute is left alone, as a thread leaving early could strand others at a barrier.
+    /// Code that ends an invocation stuck in a loop (see `GUARD_PRELUDE`); with a
+    /// barrier, the group leaves together at the next one.
     fn loop_guard(&self, pc: usize, target: usize) -> String {
         if target > pc {
             return String::new();
         }
-        let bail = match self.req.stage {
-            Stage::Pixel => "discard_fragment(); return o;",
-            Stage::Vertex => "return o;",
-            Stage::Compute => return String::new(),
-        };
-        format!("if (++back > {MAX_BACK_BRANCHES}u) {{ {bail} }} ")
+        match self.req.stage {
+            Stage::Pixel => format!("if (++back > {MAX_BACK_BRANCHES}u) {{ discard_fragment(); return o; }} "),
+            Stage::Vertex => format!("if (++back > {MAX_BACK_BRANCHES}u) {{ return o; }} "),
+            Stage::Compute if self.has_barrier => "if (guard_leave(guard, ++back, bail_at, tg_bail)) { return; } ".into(),
+            Stage::Compute => "if (guard_stop(guard, ++back)) { return; } ".into(),
+        }
     }
 
     fn end_program(&mut self) {
@@ -2789,6 +2816,7 @@ impl<'a> Tx<'a> {
             writes_memory: self.mem_write,
             lds_bytes: if self.lds { self.lds_bytes() } else { 0 },
             gds: self.gds,
+            loop_guard: self.guarded,
         }
     }
 
@@ -2803,6 +2831,11 @@ impl<'a> Tx<'a> {
         let mut out = String::from(PRELUDE);
         if self.lds {
             out.push_str(&format!("#define LDS_BYTES {}u\n{LDS_PRELUDE}", self.lds_bytes()));
+        }
+        if self.guarded {
+            out.push_str(&format!(
+                "#define GUARD_LIMIT {MAX_COMPUTE_BACK_BRANCHES}u\n#define GUARD_BUDGET {GUARD_BUDGET}u\n#define GUARD_UNIT {GUARD_UNIT}u\n{GUARD_PRELUDE}"
+            ));
         }
         let stage = self.req.stage;
         let mem_ty = if self.mem_write { "device uchar*" } else { "device const uchar*" };
@@ -2829,6 +2862,9 @@ impl<'a> Tx<'a> {
             params.push("device atomic_uint* gds".into());
             args.push("gds".into());
             entry_params.push(format!("device atomic_uint* gds [[buffer({})]]", binding::GDS));
+        }
+        if self.guarded {
+            entry_params.push(format!("device atomic_uint* guard [[buffer({})]]", binding::GUARD));
         }
         for (i, &(_, kind, _, access)) in self.textures.iter().enumerate() {
             let base = match kind {
@@ -2998,11 +3034,15 @@ impl<'a> Tx<'a> {
             }
             Stage::Compute => {
                 init.push_str(&self.cs_inputs());
-                let lds = if self.lds {
+                let mut lds = if self.lds {
                     "    threadgroup uint lds[LDS_BYTES / 4];\n"
                 } else {
                     ""
-                };
+                }
+                .to_string();
+                if self.guarded && self.has_barrier {
+                    lds.push_str("    threadgroup bool tg_bail;\n    uint bail_at = 0;\n    if (all(lid == 0)) tg_bail = false;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n");
+                }
                 out.push_str(&format!(
                     "kernel void gen5_cs({}, uint3 lid [[thread_position_in_threadgroup]], uint3 gid [[threadgroup_position_in_grid]]) {{\n{lds}{init}{}}}\n",
                     entry_params.join(", "),
@@ -3124,6 +3164,29 @@ fn fcmp(op: &str, a: &str, b: &str) -> Option<String> {
         _ => format!("({a}) {} ({b})", cmp_op(op)?),
     })
 }
+
+/// The compute loop guard (see `Tx::loop_guard`). A thread checks the
+/// dispatch's budget at its first backward branch and adds to it every unit.
+const GUARD_PRELUDE: &str = r#"
+static inline bool guard_stop(device atomic_uint* g, uint back) {
+    bool stop = back > GUARD_LIMIT;
+    if (back % GUARD_UNIT == 0u) {
+        stop = atomic_fetch_add_explicit(&g[0], 1u, memory_order_relaxed) >= GUARD_BUDGET || stop;
+    } else if (back == 1u) {
+        stop = atomic_load_explicit(&g[0], memory_order_relaxed) >= GUARD_BUDGET || stop;
+    }
+    if (stop) atomic_fetch_add_explicit(&g[1], 1u, memory_order_relaxed);
+    return stop;
+}
+
+static inline bool guard_leave(device atomic_uint* g, uint back, thread uint& bail_at, threadgroup bool& tg_bail) {
+    if (bail_at == 0u && guard_stop(g, back)) {
+        bail_at = back;
+        tg_bail = true;
+    }
+    return bail_at != 0u && back - bail_at > GUARD_UNIT;
+}
+"#;
 
 const PRELUDE: &str = r#"#include <metal_stdlib>
 using namespace metal;

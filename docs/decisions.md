@@ -452,3 +452,16 @@ Reason: a cold Metal cache stopped the GPU thread for seconds (Superliminal: no 
 ## 2026-11-21: Graphics submissions wait for the previous frame
 
 `sceAgcDriverSubmitDcb` and the other graphics submits return only once every submission up to the last flip before it has run and its Metal work is done, unless the GPU thread is polling memory or 5 s pass. Reason: Isaac reuses a frame's command and vertex memory two frames later without waiting for the GPU, which is safe on a console that keeps up and not with our GPU thread, which can lag; its room backdrops were drawn from the next frame's data ([gpu.md](gpu.md#isaacs-black-rooms-2026-11-21)). Throttling every submission cost Superliminal a third of its frame rate, so frames are found from the flip packets our builders write. The polling exception keeps titles whose GPU work waits for the CPU from stalling. Titles that flip from the CPU are not throttled.
+
+## 2026-11-21: Compute loops are cut off too, with a budget per dispatch
+
+Compute programs with a backward branch give up after 16,384 backward branches per thread or 2^30 per dispatch; in programs with `s_barrier` the group leaves together at the next barrier ([shaders.md](shaders.md)). This replaces the rule that compute programs are left alone. Reason: GTA V's culling program looped on the GPU after its process was killed and the Mac needed a reboot; a thread that leaves early can leave others waiting at a barrier, but a loop that never ends is certain to hang, and leaving together at the barrier avoids the strand in the common case. The budget per dispatch is there because a per-thread limit alone lets a runaway in a large grid run for minutes. Checked on the GPU with loops that also end at a bound from user data, so the test cannot hang the GPU if the guard fails.
+
+## 2026-11-21: Guest memory ordering across windows is opt-in
+
+`PS5SLOP_GPU_FENCE=1` makes every encoder that reads guest memory wait (`MTLFence`) for the last one that wrote it; it is off by default. Reason: Metal orders work only within one buffer object and our windows are several buffers over the same memory, which may be why GTA V's culling program reads incomplete input when batched, but that is not shown, and the fence costs Minecraft's title about 18% of its frames.
+
+## 2026-11-21: Direct memory mappings share their physical pages
+
+Mappings of direct memory now use the physical offset: two mappings of one range see the same bytes, and an allocation zeroes its range ([hle-kernel.md](hle-kernel.md)). This reverses the decision of 2026-11-20 to keep fresh pages per mapping. Reason: GTA V maps the same physical pages at two addresses in its Story Mode load; the Minecraft breakage that stopped an earlier attempt did not show (title, and the other regression titles, draw as before), though Minecraft in a world was not tried. It did not cure GTA V's faults.
+

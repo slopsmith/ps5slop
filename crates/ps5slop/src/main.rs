@@ -163,6 +163,13 @@ fn main() -> ExitCode {
                 play_input(booted.kernel.clone(), script);
             }
             ps5slop::control::serve(booted.kernel.clone(), control.clone());
+            if let Some(spec) = std::env::var_os("PS5SLOP_CALLS") {
+                let spec = spec.to_string_lossy().into_owned();
+                let (path, filter) = spec.split_once(':').unwrap_or((&spec, ""));
+                if let Ok(f) = std::fs::File::create(path) {
+                    hle::trace_calls(Some(f), filter.to_owned());
+                }
+            }
             run(booted, headless, label)
         });
     let _ = std::fs::remove_file(&control);

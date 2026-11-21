@@ -616,3 +616,30 @@ fn pixel_loops_give_up_after_too_many_branches_back() {
     assert!(t.msl.contains(&format!("if (++back > {limit}u) {{ discard_fragment(); return o; }} pc = 0; continue;")));
     compile(&t.msl);
 }
+
+#[test]
+fn compute_loops_give_up_alone_or_together_at_a_barrier() {
+    let looping = [
+        0x7E00_0200, // v_mov_b32 v0, s0
+        0xBF84_FFFE, // s_cbranch_scc0 -2 (to 0)
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&looping, 1, 0);
+    assert!(t.loop_guard);
+    assert!(t.msl.contains("if (guard_stop(guard, ++back)) { return; } pc = 0; continue;"));
+    assert!(t.msl.contains("device atomic_uint* guard [[buffer(25)]]"));
+    compile(&t.msl);
+    let with_barrier = [
+        0x7E00_0200, // v_mov_b32 v0, s0
+        0xBF8A_0000, // s_barrier
+        0xBF84_FFFD, // s_cbranch_scc0 -3 (to 0)
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&with_barrier, 1, 0);
+    assert!(t.msl.contains("guard_leave(guard, ++back, bail_at, tg_bail)"));
+    assert!(t.msl.contains("bool leave = tg_bail; threadgroup_barrier(mem_flags::mem_threadgroup); if (leave) return;"));
+    compile(&t.msl);
+    let straight = [0x7E00_0200, 0xBF81_0000];
+    let t = compute(&straight, 1, 0);
+    assert!(!t.loop_guard && !t.msl.contains("guard"));
+}
