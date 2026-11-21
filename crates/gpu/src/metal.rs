@@ -423,6 +423,14 @@ pub struct Metal {
     written: Written,
     /// Waits [`Metal::settle_for`] made.
     settles: u64,
+    /// HTILE words checked on the GPU since work that may write them was
+    /// last encoded or waited for: later draws find them expanded.
+    gpu_htiles: std::collections::HashSet<u64>,
+    /// HTILE checks made on the GPU.
+    htile_checks: u64,
+    htile_helpers: Option<HtileHelpers>,
+    /// By colour formats, depth format and stencil.
+    htile_pipelines: HashMap<([usize; 8], usize, bool), Retained<RenderPipeline>>,
     /// The uncommitted main command buffer holds work that writes guest
     /// memory, so detiles from guest memory must run after it, not before.
     pending_writes: bool,
@@ -652,6 +660,10 @@ impl Metal {
             reported_stuck: None,
             written: Written::Nothing,
             settles: 0,
+            gpu_htiles: Default::default(),
+            htile_checks: 0,
+            htile_helpers: None,
+            htile_pipelines: HashMap::new(),
             pending_writes: false,
             failed_commands: 0,
             guard: None,
@@ -2393,17 +2405,18 @@ impl Metal {
     /// (Mesa's radv writes HTILE this way). Only the slice's first HTILE
     /// dword is checked, and it is then marked expanded (ZMask 0xF), as
     /// drawing would leave it. HTILE slices are taken to be 4 bytes per
-    /// 8x8 tile rounded up to 64 KiB (seen for 1024x1024 cube faces).
-    fn htile_cleared(&mut self, host: &dyn Host, c: &[u32], d: &DepthTarget) -> bool {
+    /// 8x8 tile rounded up to 64 KiB (seen for 1024x1024 cube faces). When
+    /// encoded work may write the word, the GPU checks it ([`Htile::OnGpu`]).
+    fn htile(&mut self, host: &dyn Host, c: &[u32], d: &DepthTarget) -> Htile {
         const TILE_SURFACE_ENABLE: u32 = 1 << 29;
         if c[context::DB_Z_INFO] & TILE_SURFACE_ENABLE == 0 {
-            return false;
+            return Htile::Kept;
         }
         let base = ((c[context::DB_HTILE_DATA_BASE] as u64)
             | ((c[context::DB_HTILE_DATA_BASE_HI] as u64 & 0xFF) << 32))
             << 8;
         if base == 0 {
-            return false;
+            return Htile::Kept;
         }
         let (w, h) = if d.width != 0 {
             (d.width, d.height)
@@ -2413,10 +2426,16 @@ impl Metal {
         let slice_bytes =
             (w.div_ceil(8) as u64 * h.div_ceil(8) as u64 * 4).next_multiple_of(64 << 10);
         let at = base + d.slice as u64 * slice_bytes;
+        if self.gpu_htiles.contains(&at) {
+            return Htile::Kept;
+        }
+        if self.written.covers(at, 4) && !htile_on_cpu() {
+            return Htile::OnGpu(at);
+        }
         self.settle_for(at, 4);
         let mut word = [0u8; 4];
         if !host.read(at, &mut word) || u32::from_le_bytes(word) & 0xF != 0 {
-            return false;
+            return Htile::Kept;
         }
         host.write(at, &(u32::from_le_bytes(word) | 0xF).to_le_bytes());
         self.note(|| {
@@ -2425,7 +2444,164 @@ impl Metal {
                 d.address, d.slice
             )
         });
-        true
+        Htile::Cleared
+    }
+
+    /// Checks the HTILE word at `at` on the GPU, after the work that may write
+    /// it: a one-thread program reads it, marks it expanded and sets the vertex
+    /// count of an indirect full-screen draw opening the pass that writes the clear values.
+    fn htile_on_gpu(
+        &mut self,
+        host: &dyn Host,
+        at: u64,
+        targets: &[(u64, Retained<Texture>, u32)],
+        depth: &(u64, Retained<Texture>, bool, u32),
+        clear: Option<(f32, u32)>,
+        values: (f32, u32),
+    ) -> Option<()> {
+        // The buffer the programs that write it used, so Metal orders the two.
+        let (word, word_at) = match host.gpu_area() {
+            Some((start, end)) if (start..end).contains(&at) => (
+                self.area_window(host, start, end, at + 4)?,
+                (at - start) as usize,
+            ),
+            _ => self.window(host, at, 4)?,
+        };
+        let (flag, flag_at) = self.scratch(16)?;
+        let helpers = self.htile_helpers()?;
+        self.end_pass();
+        let command = self.command();
+        let enc = command.computeCommandEncoder()?;
+        enc.setComputePipelineState(&helpers.check);
+        unsafe {
+            enc.setBuffer_offset_atIndex(Some(&word), word_at, 0);
+            enc.setBuffer_offset_atIndex(Some(&flag), flag_at, 1);
+        }
+        let one = MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        };
+        enc.dispatchThreadgroups_threadsPerThreadgroup(one, one);
+        enc.endEncoding();
+        let enc = self.pass(targets, Some(depth.clone()), clear)?;
+        let mut formats = [0usize; 8];
+        for (f, t) in formats.iter_mut().zip(targets) {
+            *f = t.1.pixelFormat().0;
+        }
+        let stencil = depth.2;
+        let key = (formats, depth.1.pixelFormat().0, stencil);
+        let pipeline = match self.htile_pipelines.get(&key) {
+            Some(p) => p.clone(),
+            None => {
+                let desc = MTLRenderPipelineDescriptor::new();
+                desc.setVertexFunction(Some(&helpers.vertex));
+                desc.setFragmentFunction(Some(&helpers.fragment));
+                for (i, &raw) in formats.iter().enumerate().filter(|f| *f.1 != 0) {
+                    let att = unsafe { desc.colorAttachments().objectAtIndexedSubscript(i) };
+                    att.setPixelFormat(MTLPixelFormat(raw));
+                    att.setWriteMask(MTLColorWriteMask(0));
+                }
+                desc.setDepthAttachmentPixelFormat(MTLPixelFormat(key.1));
+                if stencil {
+                    desc.setStencilAttachmentPixelFormat(MTLPixelFormat(key.1));
+                }
+                let p = self
+                    .device
+                    .newRenderPipelineStateWithDescriptor_error(&desc)
+                    .ok()?;
+                self.htile_pipelines.insert(key, p.clone());
+                p
+            }
+        };
+        let (w, h) = targets
+            .iter()
+            .map(|t| &t.1)
+            .chain([&depth.1])
+            .fold((usize::MAX, usize::MAX), |(w, h), t| {
+                (w.min(t.width()), h.min(t.height()))
+            });
+        enc.setRenderPipelineState(&pipeline);
+        enc.setDepthStencilState(Some(&helpers.states[stencil as usize]));
+        enc.setStencilReferenceValue(values.1);
+        enc.setCullMode(MTLCullMode::None);
+        enc.setViewport(MTLViewport {
+            originX: 0.0,
+            originY: 0.0,
+            width: w as f64,
+            height: h as f64,
+            znear: 0.0,
+            zfar: 1.0,
+        });
+        enc.setScissorRect(MTLScissorRect {
+            x: 0,
+            y: 0,
+            width: w,
+            height: h,
+        });
+        unsafe {
+            enc.setFragmentBytes_length_atIndex(
+                NonNull::from(&values.0).cast(),
+                std::mem::size_of::<f32>(),
+                0,
+            );
+            enc.drawPrimitives_indirectBuffer_indirectBufferOffset(
+                MTLPrimitiveType::Triangle,
+                &flag,
+                flag_at,
+            );
+        }
+        enc.setDepthStencilState(Some(&helpers.states[2]));
+        self.gpu_htiles.insert(at);
+        self.htile_checks += 1;
+        self.note(|| {
+            format!(
+                "      depth {:#x} HTILE at {at:#x} checked on the GPU",
+                depth.0
+            )
+        });
+        Some(())
+    }
+
+    fn htile_helpers(&mut self) -> Option<HtileHelpers> {
+        if self.htile_helpers.is_none() {
+            let lib = self
+                .device
+                .newLibraryWithSource_options_error(&NSString::from_str(HTILE_MSL), None)
+                .ok()?;
+            let f = |name: &str| lib.newFunctionWithName(&NSString::from_str(name));
+            let kernel = f("htile_check")?;
+            let check = self
+                .device
+                .newComputePipelineStateWithFunction_error(&kernel)
+                .ok()?;
+            let state = |write: bool, stencil: bool| {
+                let d = MTLDepthStencilDescriptor::new();
+                if write {
+                    d.setDepthCompareFunction(MTLCompareFunction::Always);
+                    d.setDepthWriteEnabled(true);
+                }
+                if stencil {
+                    let f = MTLStencilDescriptor::new();
+                    f.setStencilCompareFunction(MTLCompareFunction::Always);
+                    f.setDepthStencilPassOperation(MTLStencilOperation::Replace);
+                    d.setFrontFaceStencil(Some(&f));
+                    d.setBackFaceStencil(Some(&f));
+                }
+                self.device.newDepthStencilStateWithDescriptor(&d)
+            };
+            self.htile_helpers = Some(HtileHelpers {
+                check,
+                vertex: f("htile_vs")?,
+                fragment: f("htile_fs")?,
+                states: [
+                    state(true, false)?,
+                    state(true, true)?,
+                    state(false, false)?,
+                ],
+            });
+        }
+        self.htile_helpers.clone()
     }
 
     /// Applies a colour fast clear made through `t`'s CMASK or DCC, judged by
@@ -3176,7 +3352,7 @@ impl Metal {
 
     /// Adds what a program encoded with user data `user` may write to `written`.
     fn note_writes(&mut self, host: &dyn Host, program: &gfx10::Translated, user: &[u32]) {
-        if !program.writes_memory || matches!(self.written, Written::Anything) {
+        if !program.writes_memory {
             return;
         }
         let ranges: Option<Vec<(u64, u64)>> = program.store_buffers.as_ref().and_then(|list| {
@@ -3187,6 +3363,12 @@ impl Metal {
                 })
                 .collect()
         });
+        match &ranges {
+            Some(r) => self
+                .gpu_htiles
+                .retain(|&a| !r.iter().any(|&(s, e)| s < a + 4 && a < e)),
+            None => self.gpu_htiles.clear(),
+        }
         self.written = match (
             std::mem::replace(&mut self.written, Written::Anything),
             ranges,
@@ -3720,6 +3902,7 @@ impl Metal {
             .map(|t| (t.1.width() as u32, t.1.height() as u32));
         let mut depth = None;
         let mut clear = None;
+        let mut gpu_htile = None;
         if let Some(d) = DepthTarget::read(c)
             && (wants_depth || c[context::DB_RENDER_CONTROL] & 3 != 0)
         {
@@ -3728,22 +3911,34 @@ impl Metal {
             if let Some((tex, format, fresh)) = self.depth(&d, dw, dh) {
                 key.depth = format.0;
                 key.stencil = d.stencil;
-                let clearing =
-                    c[context::DB_RENDER_CONTROL] & 3 != 0 || self.htile_cleared(host, c, &d);
-                if clearing || fresh {
-                    let z = if clearing {
-                        let (zs, zo) = regs::depth_range(c, gl_clip);
-                        (f32::from_bits(c[context::DB_DEPTH_CLEAR]) * zs + zo).clamp(0.0, 1.0)
-                    } else {
-                        1.0
+                let (zs, zo) = regs::depth_range(c, gl_clip);
+                let values = (
+                    (f32::from_bits(c[context::DB_DEPTH_CLEAR]) * zs + zo).clamp(0.0, 1.0),
+                    c[context::DB_STENCIL_CLEAR] & 0xFF,
+                );
+                let clearing = c[context::DB_RENDER_CONTROL] & 3 != 0
+                    || match self.htile(host, c, &d) {
+                        Htile::Cleared => true,
+                        Htile::Kept => false,
+                        Htile::OnGpu(at) => {
+                            gpu_htile = Some((at, values));
+                            false
+                        }
                     };
-                    clear = Some((z, c[context::DB_STENCIL_CLEAR] & 0xFF));
+                if clearing || fresh {
+                    let z = if clearing { values.0 } else { 1.0 };
+                    clear = Some((z, values.1));
                 }
                 depth = Some((d.address, tex, d.stencil, d.slice));
             }
         }
         if targets.is_empty() && depth.is_none() {
             return Err("no color target");
+        }
+        if let (Some((at, values)), Some(d)) = (gpu_htile, &depth) {
+            self.htile_on_gpu(host, at, &targets, d, clear, values)
+                .ok_or("HTILE check")?;
+            clear = None;
         }
         let pipeline = self.pipeline(&key, vertex_function, &pixel);
         let mut redrawn =
@@ -4043,6 +4238,7 @@ impl Metal {
     fn flush_and_wait(&mut self) {
         self.commit();
         self.written = Written::Nothing;
+        self.gpu_htiles.clear();
         for (cb, committed, _) in std::mem::take(&mut self.inflight) {
             wait_reporting_hangs(&cb);
             self.account(&cb, committed, true);
@@ -4088,18 +4284,67 @@ impl Metal {
                 report_encoders(&e);
             }
         }
-        let busy = cb.GPUEndTime() - cb.GPUStartTime();
-        let scheduled = cb.GPUStartTime() - cb.kernelStartTime();
-        crate::timing::add_raw(
-            crate::timing::Part::Scheduling,
-            (scheduled.max(0.0) * 1e9) as u64,
-        );
-        crate::timing::add_raw(crate::timing::Part::GpuBusy, (busy * 1e9) as u64);
+        if cb.GPUStartTime() > 0.0 && cb.kernelStartTime() > 0.0 {
+            let busy = cb.GPUEndTime() - cb.GPUStartTime();
+            let scheduled = cb.GPUStartTime() - cb.kernelStartTime();
+            crate::timing::add_raw(
+                crate::timing::Part::Scheduling,
+                (scheduled.max(0.0) * 1e9) as u64,
+            );
+            crate::timing::add_raw(crate::timing::Part::GpuBusy, (busy * 1e9) as u64);
+        }
         if waited {
             crate::timing::add_raw(crate::timing::Part::Syncs, 1_000_000);
         }
     }
 }
+
+/// What a draw's HTILE word says (see [`Metal::htile`]).
+enum Htile {
+    /// Fast-cleared: the pass clears depth and stencil.
+    Cleared,
+    Kept,
+    /// Encoded work may write the word at this address, so the GPU checks it.
+    OnGpu(u64),
+}
+
+/// Whether HTILE words that programs may write are read on the CPU after
+/// waiting for them, as before 2026-11-21 (`PS5SLOP_GPU_HTILE_CPU`).
+fn htile_on_cpu() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("PS5SLOP_GPU_HTILE_CPU").is_some())
+}
+
+/// The programs and depth states of the GPU-side HTILE check.
+#[derive(Clone)]
+struct HtileHelpers {
+    check: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    vertex: Retained<Function>,
+    fragment: Retained<Function>,
+    /// Writing depth, writing depth and stencil, and leaving both alone.
+    states: [Retained<ProtocolObject<dyn MTLDepthStencilState>>; 3],
+}
+
+const HTILE_MSL: &str = r#"#include <metal_stdlib>
+using namespace metal;
+kernel void htile_check(device uint* word [[buffer(0)]], device uint* draw [[buffer(1)]]) {
+    uint w = *word;
+    bool cleared = (w & 0xfu) == 0u;
+    draw[0] = cleared ? 3u : 0u;
+    draw[1] = 1u;
+    draw[2] = 0u;
+    draw[3] = 0u;
+    if (cleared) *word = w | 0xfu;
+}
+vertex float4 htile_vs(uint id [[vertex_id]]) {
+    float2 p = float2(float((id << 1) & 2u), float(id & 2u));
+    return float4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+struct HtileOut { float depth [[depth(any)]]; };
+fragment HtileOut htile_fs(constant float& z [[buffer(0)]]) {
+    return { z };
+}
+"#;
 
 /// Guest memory that encoded work may write.
 enum Written {
@@ -4263,7 +4508,7 @@ impl Backend for Metal {
         let image_bytes: u64 = self.images.values().map(|(_, t)| mib(t)).sum();
         let target_bytes: u64 = self.targets.values().map(|t| mib(&t.texture)).sum();
         format!(
-            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms); {} waits to read memory programs wrote",
+            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms); {} waits to read memory programs wrote, {} HTILE checks on the GPU",
             self.draws,
             self.dispatches,
             self.skipped,
@@ -4283,7 +4528,8 @@ impl Backend for Metal {
             self.compile_waits[0].1.as_millis(),
             self.compile_waits[1].0,
             self.compile_waits[1].1.as_millis(),
-            self.settles
+            self.settles,
+            self.htile_checks
         )
     }
 
@@ -4866,6 +5112,46 @@ mod tests {
         assert!(!w.covers(0x10_0000_0ffc, 4));
         assert!(!Written::Nothing.covers(0, u64::MAX / 2));
         assert!(Written::Anything.covers(0, 1));
+    }
+
+    #[test]
+    fn the_htile_check_marks_cleared_words_and_sets_the_draw() {
+        let Some(mut metal) = Metal::new() else {
+            return;
+        };
+        let mem = Mem::new(1 << 20);
+        mem.write(0x1000, &0x40u32.to_le_bytes());
+        mem.write(0x1004, &0x45u32.to_le_bytes());
+        let helpers = metal.htile_helpers().expect("the HTILE helpers compile");
+        let (window, at) = metal.window(&mem, 0x1000, 8).unwrap();
+        let (draws, d) = metal.scratch(32).unwrap();
+        let cb = metal.command();
+        let enc = cb.computeCommandEncoder().unwrap();
+        enc.setComputePipelineState(&helpers.check);
+        let one = MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        };
+        for k in 0..2 {
+            unsafe {
+                enc.setBuffer_offset_atIndex(Some(&window), at + 4 * k, 0);
+                enc.setBuffer_offset_atIndex(Some(&draws), d + 16 * k, 1);
+            }
+            enc.dispatchThreadgroups_threadsPerThreadgroup(one, one);
+        }
+        enc.endEncoding();
+        metal.flush_and_wait();
+        let read = |a: u64| {
+            let mut b = [0u8; 4];
+            mem.read(a, &mut b);
+            u32::from_le_bytes(b)
+        };
+        assert_eq!((read(0x1000), read(0x1004)), (0x4f, 0x45));
+        let words = unsafe {
+            std::slice::from_raw_parts(draws.contents().as_ptr().cast::<u32>().add(d / 4), 8)
+        };
+        assert_eq!(words, [3, 1, 0, 0, 0, 1, 0, 0]);
     }
 
     #[test]
