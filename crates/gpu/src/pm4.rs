@@ -162,6 +162,8 @@ pub struct Stats {
     pub long_flip_gaps: Vec<Duration>,
     /// Packets by opcode (and NOP code, as `0x100 | code`).
     pub opcodes: BTreeMap<u32, u64>,
+    /// Waits for the GPU by the packet that needed them.
+    pub gpu_waits: BTreeMap<&'static str, u64>,
 }
 
 /// One GPU queue's command processor and its register state.
@@ -440,8 +442,7 @@ impl Processor {
                 }
                 if (header >> 8) & 0xFF == IT_COND_EXEC && payload.len() >= 4 {
                     *self.stats.opcodes.entry(IT_COND_EXEC).or_default() += 1;
-                    self.drain(host);
-                    self.sync();
+                    self.wait_gpu(host, "COND_EXEC");
                     let flag =
                         read_dwords(host, addr(payload[0] & !3, payload[1]), 1).map_or(0, |w| w[0]);
                     at += len;
@@ -642,8 +643,7 @@ impl Processor {
         let values = match src_sel {
             5 => vec![p[1], p[2]][..n].to_vec(),
             1 | 2 => {
-                self.drain(host);
-                self.sync();
+                self.wait_gpu(host, "COPY_DATA");
                 read_dwords(host, addr(p[1], p[2]) & !3, n).unwrap_or_else(|_| vec![0; n])
             }
             9 => {
@@ -662,8 +662,7 @@ impl Processor {
         let wide = p[0] & 0x20 != 0;
         let command = (p[0] >> 8) & 0xF;
         let (address, source, compare) = (addr(p[1], p[2]), addr(p[3], p[4]), addr(p[5], p[6]));
-        self.drain(host);
-        self.sync();
+        self.wait_gpu(host, "ATOMIC_MEM");
         let start = Instant::now();
         let mut polling = None;
         loop {
@@ -687,8 +686,7 @@ impl Processor {
         let select = p[2] >> 29;
         match select {
             6 => {
-                self.drain(host);
-                self.sync();
+                self.wait_gpu(host, "MEM_SEMAPHORE signal");
                 let set = p[2] & (1 << 20) != 0;
                 atomic(host, address, true, |v| {
                     (true, if set { 1 } else { v.wrapping_add(1) })
@@ -750,8 +748,7 @@ impl Processor {
     /// `n` argument dwords of an indirect draw or dispatch at `offset` past
     /// the indirect base, read once earlier GPU work (which may write them) is done.
     fn indirect_args(&mut self, host: &dyn Host, offset: u32, n: usize) -> Vec<u32> {
-        self.drain(host);
-        self.sync();
+        self.wait_gpu(host, "indirect arguments");
         read_dwords(host, self.indirect_base + offset as u64, n).unwrap_or_else(|_| vec![0; n])
     }
 
@@ -788,8 +785,7 @@ impl Processor {
             self.write_values(host, dst, &vec![p[1]; n], dst_fixed);
             return;
         }
-        self.drain(host);
-        self.sync();
+        self.wait_gpu(host, "DMA_DATA");
         let mut data = vec![0u8; bytes];
         match src_sel {
             2 => {
@@ -941,6 +937,14 @@ impl Processor {
         }
         self.color_control_written = false;
         self.gpu_watch(host, || format!("draw {op:#x}"));
+    }
+
+    /// Waits for the GPU work so far and makes pending releases take effect,
+    /// before `why` reads what that work may have written.
+    fn wait_gpu(&mut self, host: &dyn Host, why: &'static str) {
+        *self.stats.gpu_waits.entry(why).or_default() += 1;
+        self.drain_now(host);
+        self.sync();
     }
 
     fn sync(&mut self) {
@@ -1265,6 +1269,15 @@ impl Processor {
         if self.pending.is_empty() && self.retiring.is_empty() {
             return;
         }
+        *self
+            .stats
+            .gpu_waits
+            .entry("releases before a poll or flip")
+            .or_default() += 1;
+        self.drain_now(host);
+    }
+
+    fn drain_now(&mut self, host: &dyn Host) {
         self.sync();
         for (_, list) in std::mem::take(&mut self.retiring) {
             for p in list {

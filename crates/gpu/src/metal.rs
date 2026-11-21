@@ -421,8 +421,8 @@ pub struct Metal {
     /// Guest memory that work encoded since the last wait may write, so the
     /// CPU must wait for it before reading there (see `settle_for`).
     written: Written,
-    /// Waits [`Metal::settle_for`] made.
-    settles: u64,
+    /// Waits [`Metal::settle_for`] made, by what read the memory.
+    settles: std::collections::BTreeMap<&'static str, u64>,
     /// HTILE words checked on the GPU since work that may write them was
     /// last encoded or waited for: later draws find them expanded.
     gpu_htiles: std::collections::HashSet<u64>,
@@ -659,7 +659,7 @@ impl Metal {
             area: None,
             reported_stuck: None,
             written: Written::Nothing,
-            settles: 0,
+            settles: Default::default(),
             gpu_htiles: Default::default(),
             htile_checks: 0,
             htile_helpers: None,
@@ -2432,7 +2432,7 @@ impl Metal {
         if self.written.covers(at, 4) && !htile_on_cpu() {
             return Htile::OnGpu(at);
         }
-        self.settle_for(at, 4);
+        self.settle_for(at, 4, "HTILE");
         let mut word = [0u8; 4];
         if !host.read(at, &mut word) || u32::from_le_bytes(word) & 0xF != 0 {
             return Htile::Kept;
@@ -2447,6 +2447,23 @@ impl Metal {
         Htile::Cleared
     }
 
+    /// The buffer and offset for `len` bytes of guest memory at `at`: the one
+    /// programs use there, so Metal orders other work on it with theirs.
+    fn memory_buffer(
+        &mut self,
+        host: &dyn Host,
+        at: u64,
+        len: u64,
+    ) -> Option<(Retained<Buffer>, usize)> {
+        match host.gpu_area() {
+            Some((start, end)) if (start..end).contains(&at) && at + len <= end => Some((
+                self.area_window(host, start, end, at + len)?,
+                (at - start) as usize,
+            )),
+            _ => self.window(host, at, len),
+        }
+    }
+
     /// Checks the HTILE word at `at` on the GPU, after the work that may write
     /// it: a one-thread program reads it, marks it expanded and sets the vertex
     /// count of an indirect full-screen draw opening the pass that writes the clear values.
@@ -2459,14 +2476,7 @@ impl Metal {
         clear: Option<(f32, u32)>,
         values: (f32, u32),
     ) -> Option<()> {
-        // The buffer the programs that write it used, so Metal orders the two.
-        let (word, word_at) = match host.gpu_area() {
-            Some((start, end)) if (start..end).contains(&at) => (
-                self.area_window(host, start, end, at + 4)?,
-                (at - start) as usize,
-            ),
-            _ => self.window(host, at, 4)?,
-        };
+        let (word, word_at) = self.memory_buffer(host, at, 4)?;
         let (flag, flag_at) = self.scratch(16)?;
         let helpers = self.htile_helpers()?;
         self.end_pass();
@@ -2609,7 +2619,7 @@ impl Metal {
     fn fast_clear(&mut self, host: &dyn Host, t: &ColorTarget, tex: &Texture) {
         let mut word = [0u8; 4];
         if let Some((cmask, words)) = t.fast_clear {
-            self.settle_for(cmask, 4);
+            self.settle_for(cmask, 4, "CMASK");
             if host.read(cmask, &mut word) && u32::from_le_bytes(word) & 0xF == 0 {
                 host.write(cmask, &(u32::from_le_bytes(word) | 0xF).to_le_bytes());
                 self.fill_raw(t, tex, words);
@@ -2622,7 +2632,7 @@ impl Metal {
             }
         }
         if let Some(dcc) = t.dcc {
-            self.settle_for(dcc, 4);
+            self.settle_for(dcc, 4, "DCC");
             if !host.read(dcc, &mut word) {
                 return;
             }
@@ -3343,9 +3353,9 @@ impl Metal {
 
     /// Before the CPU reads `len` bytes of guest memory at `at`: waits for
     /// encoded work that may write there.
-    fn settle_for(&mut self, at: u64, len: u64) {
+    fn settle_for(&mut self, at: u64, len: u64, why: &'static str) {
         if self.written.covers(at, len) {
-            self.settles += 1;
+            *self.settles.entry(why).or_default() += 1;
             self.flush_and_wait();
         }
     }
@@ -3363,6 +3373,11 @@ impl Metal {
                 })
                 .collect()
         });
+        self.note_ranges(ranges);
+    }
+
+    /// Adds `ranges` (`None`: anywhere) to what encoded work may write.
+    fn note_ranges(&mut self, ranges: Option<Vec<(u64, u64)>>) {
         match &ranges {
             Some(r) => self
                 .gpu_htiles
@@ -4006,7 +4021,7 @@ impl Metal {
                     self.window(host, address, len).ok_or("index buffer")?
                 } else {
                     // Metal needs index buffer offsets to be multiples of 4.
-                    self.settle_for(address, len);
+                    self.settle_for(address, len, "indices");
                     let (_, hi) = host.extent(address).ok_or("index buffer")?;
                     let src = host.host_pointer(address).ok_or("index buffer")?;
                     let n = (len as usize).min((hi - address) as usize);
@@ -4508,7 +4523,7 @@ impl Backend for Metal {
         let image_bytes: u64 = self.images.values().map(|(_, t)| mib(t)).sum();
         let target_bytes: u64 = self.targets.values().map(|t| mib(&t.texture)).sum();
         format!(
-            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms); {} waits to read memory programs wrote, {} HTILE checks on the GPU",
+            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms); waits to read memory programs wrote {:?}, {} HTILE checks on the GPU",
             self.draws,
             self.dispatches,
             self.skipped,
