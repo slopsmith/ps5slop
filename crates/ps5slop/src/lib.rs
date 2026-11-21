@@ -316,9 +316,41 @@ fn unit_inits(u: &Unit, image: &Image) -> Vec<u64> {
 
 /// Writes the screen to `out` as a binary PPM.
 pub fn write_frame(kernel: &Kernel, out: &std::path::Path) -> Result<(), String> {
-    let Some(mut f) = kernel.frame() else {
+    let Some(f) = kernel.frame() else {
         return Err("no frame on screen to dump".into());
     };
+    write_ppm(f, out)
+}
+
+/// Writes the next `count` frames the guest flips as `DIR/FLIP.ppm`, on a
+/// new thread; flip numbers missing from the names were not caught.
+pub fn write_frames(kernel: std::sync::Arc<Kernel>, dir: std::path::PathBuf, count: usize) {
+    std::thread::spawn(move || {
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("ps5slop: frames: {}: {e}", dir.display());
+            return;
+        }
+        let mut last = kernel.frame().map(|f| f.flips);
+        let (mut written, started) = (0, std::time::Instant::now());
+        while written < count && started.elapsed().as_secs() < 600 {
+            match kernel.frame() {
+                Some(f) if Some(f.flips) != last => {
+                    last = Some(f.flips);
+                    let out = dir.join(format!("{:06}.ppm", f.flips));
+                    if let Err(e) = write_ppm(f, &out) {
+                        eprintln!("ps5slop: frames: {e}");
+                        return;
+                    }
+                    written += 1;
+                }
+                _ => std::thread::sleep(std::time::Duration::from_millis(1)),
+            }
+        }
+        eprintln!("ps5slop: frames: wrote {written} to {}", dir.display());
+    });
+}
+
+fn write_ppm(mut f: hle::Frame, out: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     if let Some((w, h, px)) = f.texture.as_ref().and_then(hle::gpu::metal::read_rgba) {
         (f.width, f.height, f.rgba) = (w, h, px);

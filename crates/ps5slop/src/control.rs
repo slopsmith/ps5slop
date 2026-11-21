@@ -27,6 +27,7 @@ trace off                   stop tracing
 calls PATH [FILTER]         append every host call (whose name contains FILTER) to PATH
 calls off                   stop logging calls
 shot PATH                   write the screen as PPM
+frames DIR N                write the next N flipped frames as DIR/FLIP.ppm (N decimal)
 profile on|off              start a fresh profile window, or stop profiling
 profile [N]                 report the window so far (top N rows, default 20)
 gputrace N                  trace every draw of the next N frames on stderr (decimal)
@@ -90,7 +91,7 @@ fn bytes(arg: Option<&str>) -> Option<Vec<u8>> {
         .collect()
 }
 
-fn run(kernel: &Kernel, line: &str) -> String {
+fn run(kernel: &Arc<Kernel>, line: &str) -> String {
     let mut it = line.split_whitespace();
     let cmd = it.next().unwrap_or("");
     let mem = kernel.memory();
@@ -236,6 +237,13 @@ fn run(kernel: &Kernel, line: &str) -> String {
                 Err(e) => e,
             },
             None => "usage: shot PATH".into(),
+        },
+        "frames" => match (it.next(), it.next().and_then(|n| n.parse().ok())) {
+            (Some(dir), Some(n)) => {
+                crate::write_frames(kernel.clone(), dir.into(), n);
+                format!("writing the next {n} frames to {dir}")
+            }
+            _ => "usage: frames DIR N".into(),
         },
         #[cfg(target_os = "macos")]
         "gputrace" => match it.next().and_then(|n| n.parse().ok()) {

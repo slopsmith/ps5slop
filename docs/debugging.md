@@ -29,6 +29,7 @@ The protocol is the one 86slopper uses: one command per line, and each answer en
 | `gpuskip [ADDR...]` | Skips every draw and dispatch that uses one of these program addresses (vertex, pixel or compute); with none, skips nothing. Comparing screenshots with and without a pass shows which pass causes a bug |
 | `gpureload` | Translates every program again at the end of the frame, reading `PS5SLOP_MSL_OVERRIDE` files again |
 | `shot PATH` | Writes the screen as PPM; with `press`, this drives menus step by step |
+| `frames DIR N` | Writes the next N frames the guest flips as `DIR/FLIP.ppm` (N decimal), in the background; a flip number missing from the names was not caught. Shows flicker and one-frame glitches that single shots miss |
 | `rates` | The guest's instructions per second, translated and interpreted, since the last `rates`, as the window title shows them (the first call starts the window) |
 | `quit` | Ends the guest |
 
