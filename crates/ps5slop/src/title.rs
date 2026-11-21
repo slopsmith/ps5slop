@@ -480,7 +480,10 @@ mod tests {
     impl ImageFs for Tree {
         fn stat(&self, path: &str) -> Option<ImageStat> {
             if self.0.contains(&path) {
-                return Some(ImageStat { dir: false, len: path.len() as u64 });
+                return Some(ImageStat {
+                    dir: false,
+                    len: path.len() as u64,
+                });
             }
             let dir = path.is_empty() || self.0.iter().any(|f| f.starts_with(&format!("{path}/")));
             dir.then_some(ImageStat { dir: true, len: 0 })
@@ -490,7 +493,11 @@ mod tests {
             if !self.stat(path)?.dir {
                 return None;
             }
-            let prefix = if path.is_empty() { String::new() } else { format!("{path}/") };
+            let prefix = if path.is_empty() {
+                String::new()
+            } else {
+                format!("{path}/")
+            };
             let mut out: Vec<(String, bool)> = Vec::new();
             for f in self.0.iter().filter_map(|f| f.strip_prefix(&prefix)) {
                 let entry = match f.split_once('/') {
@@ -505,7 +512,10 @@ mod tests {
         }
 
         fn open(&self, path: &str) -> Option<Arc<dyn ImageFile>> {
-            self.0.iter().find(|f| **f == path).map(|f| Arc::new(Bytes(f)) as Arc<dyn ImageFile>)
+            self.0
+                .iter()
+                .find(|f| **f == path)
+                .map(|f| Arc::new(Bytes(f)) as Arc<dyn ImageFile>)
         }
     }
 
@@ -534,7 +544,12 @@ mod tests {
         games.sort();
         let names: Vec<&str> = games.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["game.win", "new.ogg", "old.ogg"]);
-        assert!(layered.list("").unwrap().contains(&("eboot.bin".to_owned(), false)));
+        assert!(
+            layered
+                .list("")
+                .unwrap()
+                .contains(&("eboot.bin".to_owned(), false))
+        );
         assert!(layered.stat("eboot.bin").is_some());
         assert!(layered.open("games/old.ogg").is_some());
         assert!(layered.open("missing").is_none());

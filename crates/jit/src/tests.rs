@@ -181,7 +181,11 @@ fn same_as_interpreter(code: &[u8], data: &[u8]) {
         assert_eq!(exit, x86::Exit::Trap(TRAP), "{tier2:?}");
         assert_eq!(got.regs, want.regs, "{tier2:?}");
         assert_eq!(got.rip, want.rip, "{tier2:?}");
-        assert_eq!(got.rflags & flags::ARITH, want.rflags & flags::ARITH, "{tier2:?}");
+        assert_eq!(
+            got.rflags & flags::ARITH,
+            want.rflags & flags::ARITH,
+            "{tier2:?}"
+        );
         assert_eq!(
             (got.fsw, got.fcw, got.ftag, got.st),
             (want.fsw, want.fcw, want.ftag, want.st),
@@ -578,7 +582,8 @@ fn native_thread_functions_read_the_thread_pointer() {
     let (mem, mut cpu) = program(THREAD_NATIVES);
     let tcb = STACK + 0x100;
     cpu.fs_base = tcb;
-    mem.write_u64(tcb + 0x400 + 8 * 3, 0x1234_5678_9abc).unwrap();
+    mem.write_u64(tcb + 0x400 + 8 * 3, 0x1234_5678_9abc)
+        .unwrap();
     let specific = Native::Getspecific {
         specific: 0x400,
         keys: 128,
@@ -700,7 +705,16 @@ const LANES_AND_FMA: &[u8] = &[
 #[test]
 fn packed_fma_lanes_and_widening_match_the_interpreter() {
     let mut data: Vec<u8> = (0..0x80u32).map(|k| (k * 29 + 0x35) as u8).collect();
-    let singles = [1.5f32, -2.0, 3.25, f32::from_bits(0x7fc0_0001), 0.5, 1e30, -1e30, 7.0];
+    let singles = [
+        1.5f32,
+        -2.0,
+        3.25,
+        f32::from_bits(0x7fc0_0001),
+        0.5,
+        1e30,
+        -1e30,
+        7.0,
+    ];
     for (k, v) in singles.iter().enumerate() {
         data[4 * k..][..4].copy_from_slice(&v.to_le_bytes());
     }
@@ -724,7 +738,8 @@ const LIST_WALK: &[u8] = &[
 #[test]
 fn list_walk_matches_the_interpreter() {
     let mut data = vec![0u8; 0x200];
-    let nodes: [(u64, u64, u64); 3] = [(0x400400 + 0x88, 5, 4), (0x400400 + 0xc8, 9, 10), (0, 3, 3)];
+    let nodes: [(u64, u64, u64); 3] =
+        [(0x400400 + 0x88, 5, 4), (0x400400 + 0xc8, 9, 10), (0, 3, 3)];
     for (k, (next, a, b)) in nodes.iter().enumerate() {
         let at = 0x40 + 0x40 * k;
         data[at + 8..at + 16].copy_from_slice(&next.to_le_bytes());
@@ -765,13 +780,34 @@ const ROUNDING: &[u8] = &[
 fn rounding_data() -> Vec<u8> {
     let mut data = vec![0u8; 0x80];
     let singles = [
-        2.5f32, -2.5, 1.5, -0.5, 0.49999997, f32::from_bits(0x7fc0_1234), -3.7, 8388609.0,
-        f32::from_bits(0x7f80_0042), f32::INFINITY, -0.0, 1e30, 3.7, f32::from_bits(1), -1.5, 0.5,
+        2.5f32,
+        -2.5,
+        1.5,
+        -0.5,
+        0.49999997,
+        f32::from_bits(0x7fc0_1234),
+        -3.7,
+        8388609.0,
+        f32::from_bits(0x7f80_0042),
+        f32::INFINITY,
+        -0.0,
+        1e30,
+        3.7,
+        f32::from_bits(1),
+        -1.5,
+        0.5,
     ];
     for (k, v) in singles.iter().enumerate() {
         data[4 * k..][..4].copy_from_slice(&v.to_le_bytes());
     }
-    let doubles = [2.5f64, -0.5, f64::from_bits(0x7ff0_0000_0000_0007), -7.5, 1e300, 4503599627370497.0];
+    let doubles = [
+        2.5f64,
+        -0.5,
+        f64::from_bits(0x7ff0_0000_0000_0007),
+        -7.5,
+        1e300,
+        4503599627370497.0,
+    ];
     for (k, v) in doubles.iter().enumerate() {
         data[0x40 + 8 * k..][..8].copy_from_slice(&v.to_le_bytes());
     }
@@ -1140,7 +1176,10 @@ const HORIZONTAL_MASKS_RECIPROCALS: &[u8] = &[
 #[test]
 fn horizontal_masks_reciprocals_and_cmpxchg16b_match_the_interpreter() {
     let mut data = compare_data();
-    for (k, v) in [0x0000_0001u32, 0x8000_0400, 0x7f80_0000, 0xff80_0000].iter().enumerate() {
+    for (k, v) in [0x0000_0001u32, 0x8000_0400, 0x7f80_0000, 0xff80_0000]
+        .iter()
+        .enumerate()
+    {
         data[0x30 + 4 * k..][..4].copy_from_slice(&v.to_le_bytes());
     }
     same_as_interpreter(HORIZONTAL_MASKS_RECIPROCALS, &data);

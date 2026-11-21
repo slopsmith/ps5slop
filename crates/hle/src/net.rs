@@ -116,7 +116,11 @@ fn netctl_info(env: &mut Env) -> Result<Outcome, CallError> {
         3 => info[..4].copy_from_slice(&1500u32.to_le_bytes()),
         14..=18 => info[..8].copy_from_slice(b"0.0.0.0\0"),
         1 | 4..=13 | 19..=21 => {}
-        _ => return Ok(Outcome::Return(crate::dmem::sce_error(crate::errno::EINVAL))),
+        _ => {
+            return Ok(Outcome::Return(crate::dmem::sce_error(
+                crate::errno::EINVAL,
+            )));
+        }
     }
     env.mem.write(env.arg(1), &info)?;
     Ok(Outcome::Return(0))
@@ -132,8 +136,14 @@ fn inet_pton(env: &mut Env) -> Result<Outcome, CallError> {
     let text = crate::libc::cstr(env, env.arg(1))?;
     let text = String::from_utf8_lossy(&text);
     let bytes = match family {
-        AF_INET => text.parse::<std::net::Ipv4Addr>().ok().map(|a| a.octets().to_vec()),
-        AF_INET6 => text.parse::<std::net::Ipv6Addr>().ok().map(|a| a.octets().to_vec()),
+        AF_INET => text
+            .parse::<std::net::Ipv4Addr>()
+            .ok()
+            .map(|a| a.octets().to_vec()),
+        AF_INET6 => text
+            .parse::<std::net::Ipv6Addr>()
+            .ok()
+            .map(|a| a.octets().to_vec()),
         _ => return env.fail(crate::errno::EAFNOSUPPORT),
     };
     match bytes {
@@ -147,7 +157,12 @@ fn inet_pton(env: &mut Env) -> Result<Outcome, CallError> {
 
 /// `inet_ntop(family, addr, out, size)`: `out`, or null when it is too small.
 fn inet_ntop(env: &mut Env) -> Result<Outcome, CallError> {
-    let (family, addr, out, size) = (env.arg(0) as u32 as u64, env.arg(1), env.arg(2), env.arg(3) as u32 as usize);
+    let (family, addr, out, size) = (
+        env.arg(0) as u32 as u64,
+        env.arg(1),
+        env.arg(2),
+        env.arg(3) as u32 as usize,
+    );
     let text = match family {
         AF_INET => {
             let mut b = [0u8; 4];

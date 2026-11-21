@@ -169,11 +169,20 @@ impl ColorTarget {
             slice: r(CB_COLOR0_VIEW) & 0x1FFF,
             slices: (attrib3 & 0x1FFF) + 1,
             fast_clear: {
-                let cmask = ((r(CB_COLOR0_CMASK) as u64) | ((c[CB_COLOR0_CMASK_BASE_EXT + n] as u64 & 0xFF) << 32)) << 8;
-                (info & 1 << 13 != 0 && cmask != 0).then(|| (cmask, [r(CB_COLOR0_CLEAR_WORD0), r(CB_COLOR0_CLEAR_WORD0 + 1)]))
+                let cmask = ((r(CB_COLOR0_CMASK) as u64)
+                    | ((c[CB_COLOR0_CMASK_BASE_EXT + n] as u64 & 0xFF) << 32))
+                    << 8;
+                (info & 1 << 13 != 0 && cmask != 0).then(|| {
+                    (
+                        cmask,
+                        [r(CB_COLOR0_CLEAR_WORD0), r(CB_COLOR0_CLEAR_WORD0 + 1)],
+                    )
+                })
             },
             dcc: {
-                let dcc = ((r(CB_COLOR0_DCC_BASE) as u64) | ((c[CB_COLOR0_DCC_BASE_EXT + n] as u64 & 0xFF) << 32)) << 8;
+                let dcc = ((r(CB_COLOR0_DCC_BASE) as u64)
+                    | ((c[CB_COLOR0_DCC_BASE_EXT + n] as u64 & 0xFF) << 32))
+                    << 8;
                 (info & 1 << 28 != 0 && dcc != 0).then_some(dcc)
             },
         })
@@ -200,12 +209,17 @@ impl DepthTarget {
     pub fn read(c: &[u32]) -> Option<Self> {
         use context::*;
         let format = c[DB_Z_INFO] & 3;
-        let address = ((c[DB_Z_WRITE_BASE] as u64) | ((c[DB_Z_WRITE_BASE_HI] as u64 & 0xFF) << 32)) << 8;
+        let address =
+            ((c[DB_Z_WRITE_BASE] as u64) | ((c[DB_Z_WRITE_BASE_HI] as u64 & 0xFF) << 32)) << 8;
         if format == 0 || address == 0 {
             return None;
         }
         let size = c[DB_DEPTH_SIZE_XY];
-        let (w, h) = if size == 0 { (0, 0) } else { ((size & 0x3FFF) + 1, ((size >> 16) & 0x3FFF) + 1) };
+        let (w, h) = if size == 0 {
+            (0, 0)
+        } else {
+            ((size & 0x3FFF) + 1, ((size >> 16) & 0x3FFF) + 1)
+        };
         Some(Self {
             address,
             format,
@@ -315,7 +329,11 @@ impl Viewport {
 /// such ranges in one depth buffer.
 pub fn depth_range(c: &[u32], gl_clip: bool) -> (f32, f32) {
     let vp = Viewport::read(c);
-    let near = if gl_clip { vp.z_offset - vp.z_scale } else { vp.z_offset };
+    let near = if gl_clip {
+        vp.z_offset - vp.z_scale
+    } else {
+        vp.z_offset
+    };
     let far = vp.z_offset + vp.z_scale;
     let (mut lo, mut hi) = (near.min(far), near.max(far));
     let (zmin, zmax) = (
@@ -460,7 +478,16 @@ mod tests {
 
     #[test]
     fn balatro_canvas_descriptor_decodes() {
-        let t = Image::read(&[0x108f_7900, 0xc380_0000, 0x010d_c1df, 0x91b0_0fac, 0, 0x70_0000, 0, 0]);
+        let t = Image::read(&[
+            0x108f_7900,
+            0xc380_0000,
+            0x010d_c1df,
+            0x91b0_0fac,
+            0,
+            0x70_0000,
+            0,
+            0,
+        ]);
         assert_eq!(t.address, 0x10_8f79_0000);
         assert_eq!((t.width, t.height, t.format), (1920, 1080, 56));
         assert_eq!(t.swizzle, [4, 5, 6, 7]);
@@ -480,12 +507,22 @@ mod tests {
         let t = ColorTarget::read(&c, 0).unwrap();
         assert_eq!(t.address, 0x10_8001_0000);
         assert_eq!((t.width, t.height), (1920, 1080));
-        assert_eq!(t.format, ColorFormat { layout: 10, number: 0, swap: 1 });
+        assert_eq!(
+            t.format,
+            ColorFormat {
+                layout: 10,
+                number: 0,
+                swap: 1
+            }
+        );
         assert_eq!(t.tile, Some(TileMode::RenderTarget));
         c[context::CB_BLEND0_CONTROL] = 0x6501_0504;
         let b = Blend::read(&c, 0);
         assert!(b.enable);
-        assert_eq!((b.color_src, b.color_dst, b.alpha_src, b.alpha_dst), (4, 5, 1, 5));
+        assert_eq!(
+            (b.color_src, b.color_dst, b.alpha_src, b.alpha_dst),
+            (4, 5, 1, 5)
+        );
     }
 
     #[test]

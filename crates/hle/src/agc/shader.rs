@@ -232,7 +232,11 @@ pub(super) fn create_interpolant_mapping(env: &mut Env) -> Result<Outcome, CallE
         let outputs = env.mem.read_u64(geometry + OUTPUT_SEMANTICS)?;
         let mut n = [0u8; 2];
         env.mem.read(geometry + NUM_OUTPUT_SEMANTICS, &mut n)?;
-        let n = if outputs == 0 { 0 } else { u16::from_le_bytes(n) as u64 };
+        let n = if outputs == 0 {
+            0
+        } else {
+            u16::from_le_bytes(n) as u64
+        };
         let gs: Vec<u32> = (0..n)
             .map(|i| read_u32(env, outputs + 4 * i))
             .collect::<Result<_, _>>()?;
@@ -287,7 +291,13 @@ fn copy_pair(env: &Env, from: u64, to: u64) -> Result<(), CallError> {
 /// (shader stages, GS output primitive) and uconfig pairs (GE control, user
 /// VGPRs, primitive type) for drawing `prim` with these shaders.
 pub(super) fn create_prim_state(env: &mut Env) -> Result<Outcome, CallError> {
-    let (cx, uc, hull, geometry, prim) = (env.arg(0), env.arg(1), env.arg(2), env.arg(3), env.arg(4) as u32);
+    let (cx, uc, hull, geometry, prim) = (
+        env.arg(0),
+        env.arg(1),
+        env.arg(2),
+        env.arg(3),
+        env.arg(4) as u32,
+    );
     if cx == 0 && uc == 0 {
         return ret(0);
     }
@@ -327,7 +337,11 @@ pub(super) fn create_prim_state(env: &mut Env) -> Result<Outcome, CallError> {
     }
     if uc != 0 {
         copy_pair(env, specials + SPECIAL_GE_CNTL, uc)?;
-        let vgprs = if hull_specials != 0 { hull_specials } else { specials };
+        let vgprs = if hull_specials != 0 {
+            hull_specials
+        } else {
+            specials
+        };
         copy_pair(env, vgprs + SPECIAL_GE_USER_VGPR_EN, uc + 8)?;
         write_u32(env, uc + 16, VGT_PRIMITIVE_TYPE)?;
         write_u32(env, uc + 20, prim)?;
@@ -383,7 +397,11 @@ fn interpolant2(ps: u32, gs: Option<u32>) -> u32 {
     f = match gs {
         Some(m) => {
             f = (f & 0xFFFF_FFE0) | ((m >> 8) & 0x1F);
-            let flat = if ps & 0x0040_0000 != 0 { 0x400 } else { (ps >> 14) & 0x400 };
+            let flat = if ps & 0x0040_0000 != 0 {
+                0x400
+            } else {
+                (ps >> 14) & 0x400
+            };
             (f & 0xFFFF_FBFF) | flat
         }
         None => f & 0xFFFF_FBE0,
@@ -401,7 +419,10 @@ pub(super) fn create_interpolant_mapping2(env: &mut Env) -> Result<Outcome, Call
     let mut values: Vec<u32> = (0..INTERPOLANTS as u32).collect();
     let (inputs, count) = match pixel {
         0 => (0, 0),
-        p => (env.mem.read_u64(p + INPUT_SEMANTICS)?, read_u32(env, p + NUM_INPUT_SEMANTICS)? as usize),
+        p => (
+            env.mem.read_u64(p + INPUT_SEMANTICS)?,
+            read_u32(env, p + NUM_INPUT_SEMANTICS)? as usize,
+        ),
     };
     if count != 0 {
         if inputs == 0 || geometry == 0 || count > INTERPOLANTS {

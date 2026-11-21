@@ -33,7 +33,8 @@ impl Rng {
     fn value(&mut self) -> u64 {
         match self.below(6) {
             0 => self.below(64),
-            1 => [0, u64::MAX, 1 << 63, 0x8000_0000, 0xffff_ffff, 0x7fff_ffff][self.below(6) as usize],
+            1 => [0, u64::MAX, 1 << 63, 0x8000_0000, 0xffff_ffff, 0x7fff_ffff]
+                [self.below(6) as usize],
             _ => self.next(),
         }
     }
@@ -42,7 +43,9 @@ impl Rng {
     /// and byte compares see matches and terminators.
     fn text(&mut self) -> u64 {
         const ALPHABET: [u8; 8] = [0, 0, b' ', b'a', b'b', b'A', b'-', 0xff];
-        (0..8).fold(0, |v, i| v | (ALPHABET[self.below(8) as usize] as u64) << (i * 8))
+        (0..8).fold(0, |v, i| {
+            v | (ALPHABET[self.below(8) as usize] as u64) << (i * 8)
+        })
     }
 
     fn reg(&mut self) -> u8 {
@@ -235,17 +238,27 @@ fn describe(want: &State, got: &State, before: &State) -> String {
     let mut d = Vec::new();
     for i in 0..16 {
         if i != 4 && want.r[i] != got.r[i] {
-            d.push(format!("r{i}: want {:#x} got {:#x} (was {:#x})", want.r[i], got.r[i], before.r[i]));
+            d.push(format!(
+                "r{i}: want {:#x} got {:#x} (was {:#x})",
+                want.r[i], got.r[i], before.r[i]
+            ));
         }
     }
     for i in 0..16 {
         if want.y[i] != got.y[i] {
-            d.push(format!("ymm{i}: want {:x?} got {:x?} (was {:x?})", want.y[i], got.y[i], before.y[i]));
+            d.push(format!(
+                "ymm{i}: want {:x?} got {:x?} (was {:x?})",
+                want.y[i], got.y[i], before.y[i]
+            ));
         }
     }
     let f = (want.flags ^ got.flags) & ARITH_FLAGS;
     if f != 0 {
-        d.push(format!("flags: want {:#x} got {:#x} (differ {f:#x})", want.flags & ARITH_FLAGS, got.flags & ARITH_FLAGS));
+        d.push(format!(
+            "flags: want {:#x} got {:#x} (differ {f:#x})",
+            want.flags & ARITH_FLAGS,
+            got.flags & ARITH_FLAGS
+        ));
     }
     d.join("; ")
 }
@@ -260,13 +273,20 @@ fn build_harness(dir: &Path) -> Result<PathBuf, String> {
         .status()
         .map_err(|e| e.to_string())?
         .success();
-    if ok { Ok(bin) } else { Err("cannot build the harness".into()) }
+    if ok {
+        Ok(bin)
+    } else {
+        Err("cannot build the harness".into())
+    }
 }
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let states: u32 = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(8);
-    let seed: u64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(0x5eed_1234_abcd_0001);
+    let seed: u64 = args
+        .get(2)
+        .and_then(|a| a.parse().ok())
+        .unwrap_or(0x5eed_1234_abcd_0001);
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/fuzz");
     std::fs::create_dir_all(&dir).expect("make target/fuzz");
     let harness = match build_harness(&dir) {
@@ -277,15 +297,19 @@ fn main() -> ExitCode {
         }
     };
     let mem = Memory::new(1 << 32).expect("reserve guest memory");
-    mem.map(CODE, PAGE_SIZE, Prot::new(true, true, true), "code").unwrap();
-    mem.map(0, PAGE_SIZE, Prot::new(true, true, false), "stack").unwrap();
+    mem.map(CODE, PAGE_SIZE, Prot::new(true, true, true), "code")
+        .unwrap();
+    mem.map(0, PAGE_SIZE, Prot::new(true, true, false), "stack")
+        .unwrap();
     let mut rng = Rng(seed);
     let mut cases = Vec::new();
     let mut input = Vec::new();
     let mut unimplemented: BTreeMap<String, u32> = BTreeMap::new();
     for enc in encodings(&mut rng) {
         let fetch = |i: usize| enc.get(i).copied().ok_or(());
-        let Ok(insn) = x86::decode::decode(fetch) else { continue };
+        let Ok(insn) = x86::decode::decode(fetch) else {
+            continue;
+        };
         let code = enc[..insn.len as usize].to_vec();
         let before: Vec<State> = (0..states).map(|_| State::random(&mut rng)).collect();
         let mut head = [0u8; 16];
@@ -300,7 +324,12 @@ fn main() -> ExitCode {
     }
     let (inp, outp) = (dir.join("cases.bin"), dir.join("results.bin"));
     std::fs::write(&inp, &input).expect("write cases");
-    let ran = Command::new("arch").arg("-x86_64").arg(&harness).arg(&inp).arg(&outp).status();
+    let ran = Command::new("arch")
+        .arg("-x86_64")
+        .arg(&harness)
+        .arg(&inp)
+        .arg(&outp)
+        .status();
     if !ran.is_ok_and(|s| s.success()) {
         eprintln!("ps5slop-fuzz: the harness failed");
         return ExitCode::FAILURE;
@@ -308,12 +337,23 @@ fn main() -> ExitCode {
     let results = std::fs::read(&outp).expect("read results");
     let mut at = 0;
     let mut report = Vec::new();
-    let (mut value_bad, mut flag_bad, mut same, mut accepted_invalid, mut rejected_valid, mut other) = (0, 0, 0, 0, 0, 0);
+    let (
+        mut value_bad,
+        mut flag_bad,
+        mut same,
+        mut accepted_invalid,
+        mut rejected_valid,
+        mut other,
+    ) = (0, 0, 0, 0, 0, 0);
     let mut both_reject = 0;
     'cases: for (code, before) in &cases {
         let start = at + 20;
         at = start + before.len() * STATE_SIZE;
-        let hex: String = code.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+        let hex: String = code
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         let mut first: Option<String> = None;
         let mut flags_only = true;
         for (i, s) in before.iter().enumerate() {
@@ -359,8 +399,15 @@ fn main() -> ExitCode {
         }
         match first {
             Some(d) => {
-                if flags_only { flag_bad += 1 } else { value_bad += 1 }
-                report.push(format!("{hex}: {}{d}", if flags_only { "[flags] " } else { "" }));
+                if flags_only {
+                    flag_bad += 1
+                } else {
+                    value_bad += 1
+                }
+                report.push(format!(
+                    "{hex}: {}{d}",
+                    if flags_only { "[flags] " } else { "" }
+                ));
             }
             None => same += 1,
         }

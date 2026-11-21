@@ -118,7 +118,11 @@ impl Capture {
             2 => Stage::Compute,
             _ => return None,
         };
-        let (masks, at) = if w[1] >= 2 { ([*w.get(12)?, *w.get(13)?], 14) } else { ([0, 0], 12) };
+        let (masks, at) = if w[1] >= 2 {
+            ([*w.get(12)?, *w.get(13)?], 14)
+        } else {
+            ([0, 0], 12)
+        };
         let n = *w.get(at)? as usize;
         let cntl = w.get(at + 1..at + 1 + n)?.to_vec();
         let mut code_at = at + 1 + n;

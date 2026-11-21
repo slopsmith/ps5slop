@@ -419,10 +419,7 @@ fn wait(env: &mut Env, deadline: Option<Instant>) -> Result<Outcome, CallError> 
         held
     };
     let mut timed_out = false;
-    while *generation == start
-        && !env.kernel.has_exited()
-        && !crate::exception::interrupted(env)
-    {
+    while *generation == start && !env.kernel.has_exited() && !crate::exception::interrupted(env) {
         let wait = match deadline {
             Some(d) => match d.checked_duration_since(Instant::now()) {
                 Some(left) => left.min(POLL),
@@ -649,7 +646,12 @@ fn setspecific(env: &mut Env) -> Result<Outcome, CallError> {
         return ret(EINVAL);
     }
     let tcb = env.thread.tcb;
-    if key < SPECIFIC_KEYS && env.mem.write_u64(specific_slot(tcb, key), env.arg(1)).is_ok() {
+    if key < SPECIFIC_KEYS
+        && env
+            .mem
+            .write_u64(specific_slot(tcb, key), env.arg(1))
+            .is_ok()
+    {
         return ret(0);
     }
     lock(&env.kernel.objects.specific).insert((tcb, key), env.arg(1));

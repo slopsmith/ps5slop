@@ -46,7 +46,11 @@ const fn f(name: &'static str, func: crate::HostFn) -> Function {
 }
 
 fn ret(errno: i32) -> Result<Outcome, CallError> {
-    Ok(Outcome::Return(if errno == 0 { 0 } else { sce_error(errno) }))
+    Ok(Outcome::Return(if errno == 0 {
+        0
+    } else {
+        sce_error(errno)
+    }))
 }
 
 /// `sceKernelInstallExceptionHandler(signal, handler)`.
@@ -170,6 +174,9 @@ mod tests {
         cpu.rip = 0x40_1234;
         let b = context_bytes(&cpu);
         let at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
-        assert_eq!((at(72), at(184), at(224), at(248)), (1, 15, 0x40_1234, 0x7000));
+        assert_eq!(
+            (at(72), at(184), at(224), at(248)),
+            (1, 15, 0x40_1234, 0x7000)
+        );
     }
 }

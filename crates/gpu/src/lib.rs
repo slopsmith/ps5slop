@@ -28,8 +28,15 @@ pub struct State<'a> {
 /// A draw's vertex source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Draw {
-    Auto { count: u32, instances: u32 },
-    Indexed { count: u32, address: u64, instances: u32 },
+    Auto {
+        count: u32,
+        instances: u32,
+    },
+    Indexed {
+        count: u32,
+        address: u64,
+        instances: u32,
+    },
 }
 
 /// Where draws and dispatches are carried out.

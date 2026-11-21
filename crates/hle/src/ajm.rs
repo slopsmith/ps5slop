@@ -127,7 +127,11 @@ fn job_set_gapless(env: &mut Env) -> Result<Outcome, CallError> {
 
 /// Instance ids are never 0; anything else is taken as valid.
 fn status(instance: u64) -> i32 {
-    if instance as u32 == 0 { RESULT_INVALID_PARAMETER } else { 0 }
+    if instance as u32 == 0 {
+        RESULT_INVALID_PARAMETER
+    } else {
+        0
+    }
 }
 
 /// `sceAjmBatchJobDecode(info, instance, input, in_size, output, out_size,

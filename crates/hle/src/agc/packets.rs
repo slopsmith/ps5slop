@@ -559,7 +559,13 @@ fn dcb_context_state_op(env: &mut Env) -> Result<Outcome, CallError> {
         return ret(emit(
             env,
             buffer,
-            &[pm4(3, IT_CONTEXT_CONTROL, 0), 0, 0x8001_8001, pm4(2, IT_CLEAR_STATE, 0), 1],
+            &[
+                pm4(3, IT_CONTEXT_CONTROL, 0),
+                0,
+                0x8001_8001,
+                pm4(2, IT_CLEAR_STATE, 0),
+                1,
+            ],
         )?);
     }
     let mut packet = vec![pm4(5, IT_NOP, NOP_CONTEXT_STATE), op, 0, 0, 0];

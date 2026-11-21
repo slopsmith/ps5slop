@@ -134,9 +134,7 @@ impl TriggerEffect {
 /// `ScePadTriggerEffectParam`: a trigger mask (bit 0 L2, bit 1 R2), 7 bytes
 /// of padding, then a command for L2 and one for R2. Returns the new effects
 /// for the triggers the mask selects.
-fn decode_trigger_param(
-    d: &[u8; TRIGGER_PARAM_SIZE],
-) -> Option<[Option<TriggerEffect>; 2]> {
+fn decode_trigger_param(d: &[u8; TRIGGER_PARAM_SIZE]) -> Option<[Option<TriggerEffect>; 2]> {
     let mask = d[0];
     if mask & !3 != 0 {
         return None;
@@ -493,7 +491,13 @@ mod tests {
 
     #[test]
     fn unknown_trigger_modes_and_mask_bits_are_rejected() {
-        assert_eq!(decode_trigger_param(&trigger_param(1, (7, &[]), (0, &[]))), None);
-        assert_eq!(decode_trigger_param(&trigger_param(4, (0, &[]), (0, &[]))), None);
+        assert_eq!(
+            decode_trigger_param(&trigger_param(1, (7, &[]), (0, &[]))),
+            None
+        );
+        assert_eq!(
+            decode_trigger_param(&trigger_param(4, (0, &[]), (0, &[]))),
+            None
+        );
     }
 }

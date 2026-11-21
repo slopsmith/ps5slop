@@ -89,21 +89,34 @@ fn sync_dispatches() -> bool {
 /// printed with their groups and user data.
 fn probed(program: u64) -> bool {
     static PROBE: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
-    *PROBE.get_or_init(|| std::env::var("PS5SLOP_GPU_PROBE").ok().and_then(|v| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok())) == Some(program)
+    *PROBE.get_or_init(|| {
+        std::env::var("PS5SLOP_GPU_PROBE")
+            .ok()
+            .and_then(|v| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+    }) == Some(program)
 }
 
 /// Reports a packet form the processor drops, once per form and register.
 fn unhandled(what: std::fmt::Arguments) {
-    static SEEN: std::sync::Mutex<Option<std::collections::HashSet<String>>> = std::sync::Mutex::new(None);
+    static SEEN: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
+        std::sync::Mutex::new(None);
     let what = what.to_string();
-    if SEEN.lock().unwrap().get_or_insert_default().insert(what.clone()) {
+    if SEEN
+        .lock()
+        .unwrap()
+        .get_or_insert_default()
+        .insert(what.clone())
+    {
         eprintln!("ps5slop: GPU: {what} dropped");
     }
 }
 
 fn trace(what: std::fmt::Arguments) {
     if trace_sync() {
-        eprintln!("ps5slop: GPU sync [{}]: {what}", std::thread::current().name().unwrap_or("?"));
+        eprintln!(
+            "ps5slop: GPU sync [{}]: {what}",
+            std::thread::current().name().unwrap_or("?")
+        );
     }
 }
 
@@ -164,22 +177,48 @@ pub struct Processor {
 }
 
 enum Pending {
-    Release { data: u32, interrupt: u32, dest: u64, value: u64, context: u32 },
-    Write { dest: u64, values: Vec<u32>, fixed: bool },
+    Release {
+        data: u32,
+        interrupt: u32,
+        dest: u64,
+        value: u64,
+        context: u32,
+    },
+    Write {
+        dest: u64,
+        values: Vec<u32>,
+        fixed: bool,
+    },
 }
 
 impl Pending {
     /// The 32-bit value this leaves at `address`, if it writes there.
     fn word_at(&self, address: u64) -> Option<u32> {
         match *self {
-            Pending::Release { data: 1 | 2, dest, value, .. } if dest == address => Some(value as u32),
-            Pending::Release { data: 2, dest, value, .. } if dest + 4 == address => Some((value >> 32) as u32),
-            Pending::Write { dest, ref values, fixed } => {
+            Pending::Release {
+                data: 1 | 2,
+                dest,
+                value,
+                ..
+            } if dest == address => Some(value as u32),
+            Pending::Release {
+                data: 2,
+                dest,
+                value,
+                ..
+            } if dest + 4 == address => Some((value >> 32) as u32),
+            Pending::Write {
+                dest,
+                ref values,
+                fixed,
+            } => {
                 if fixed {
                     values.last().copied().filter(|_| dest == address)
                 } else {
                     let i = address.checked_sub(dest)?;
-                    (i % 4 == 0).then(|| values.get((i / 4) as usize).copied()).flatten()
+                    (i % 4 == 0)
+                        .then(|| values.get((i / 4) as usize).copied())
+                        .flatten()
                 }
             }
             _ => None,
@@ -228,7 +267,11 @@ fn read_dwords(host: &dyn Host, addr: u64, n: usize) -> Result<Vec<u32>, Error> 
     if !host.read(addr, &mut b) {
         return Err(Error::Unreadable(addr));
     }
-    Ok(b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect())
+    Ok(b.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| u32::from_le_bytes(*c))
+        .collect())
 }
 
 fn read_u64(host: &dyn Host, addr: u64) -> u64 {
@@ -288,7 +331,12 @@ fn atomic_op(op: u32, current: u64, source: u64, compare: u64) -> (bool, u64) {
 
 /// Applies `f` to the 32- or 64-bit value at `address` atomically where the
 /// host maps it, and returns what `f` said about it.
-fn atomic(host: &dyn Host, address: u64, wide: bool, f: impl Fn(u64) -> (bool, u64)) -> Option<bool> {
+fn atomic(
+    host: &dyn Host,
+    address: u64,
+    wide: bool,
+    f: impl Fn(u64) -> (bool, u64),
+) -> Option<bool> {
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::SeqCst};
     let size = if wide { 8 } else { 4 };
     let mut probe = [0u8; 8];
@@ -316,7 +364,11 @@ fn atomic(host: &dyn Host, address: u64, wide: bool, f: impl Fn(u64) -> (bool, u
             });
         }
         None => {
-            let (ok, new) = f(if wide { u64::from_le_bytes(probe) } else { u32::from_le_bytes(probe[..4].try_into().unwrap()) as u64 });
+            let (ok, new) = f(if wide {
+                u64::from_le_bytes(probe)
+            } else {
+                u32::from_le_bytes(probe[..4].try_into().unwrap()) as u64
+            });
             result = ok;
             host.write(address, &new.to_le_bytes()[..size as usize]);
         }
@@ -354,7 +406,10 @@ impl Processor {
                     return Err(Error::Truncated { addr: here, header });
                 }
                 let payload = &words[at + 1..at + len];
-                if (header >> 8) & 0xFF == IT_INDIRECT_BUFFER && payload.len() >= 3 && payload[2] & (1 << 20) != 0 {
+                if (header >> 8) & 0xFF == IT_INDIRECT_BUFFER
+                    && payload.len() >= 3
+                    && payload[2] & (1 << 20) != 0
+                {
                     base = (payload[0] & !3) as u64 | ((payload[1] & 0xFFFF) as u64) << 32;
                     dwords = payload[2] & 0xF_FFFF;
                     continue 'chain;
@@ -371,7 +426,8 @@ impl Processor {
                     *self.stats.opcodes.entry(IT_COND_EXEC).or_default() += 1;
                     self.drain(host);
                     self.sync();
-                    let flag = read_dwords(host, addr(payload[0] & !3, payload[1]), 1).map_or(0, |w| w[0]);
+                    let flag =
+                        read_dwords(host, addr(payload[0] & !3, payload[1]), 1).map_or(0, |w| w[0]);
                     at += len;
                     if flag == 0 {
                         at += (payload[3] & 0x3FFF) as usize;
@@ -389,7 +445,11 @@ impl Processor {
         let op = (header >> 8) & 0xFF;
         let code = (header >> 2) & 0x3F;
         self.stats.packets += 1;
-        let key = if op == IT_NOP && code != 0 { 0x100 | code } else { op };
+        let key = if op == IT_NOP && code != 0 {
+            0x100 | code
+        } else {
+            op
+        };
         *self.stats.opcodes.entry(key).or_default() += 1;
         match op {
             IT_NOP => self.nop(host, code, p),
@@ -398,7 +458,11 @@ impl Processor {
                 if WRITE_DATA_MEMORY.contains(&((control >> 8) & 0xF)) {
                     self.write_values(host, addr(p[1], p[2]), &p[3..], control & (1 << 16) != 0);
                 } else {
-                    unhandled(format_args!("WRITE_DATA to select {} at {:#x}", (control >> 8) & 0xF, p[1]));
+                    unhandled(format_args!(
+                        "WRITE_DATA to select {} at {:#x}",
+                        (control >> 8) & 0xF,
+                        p[1]
+                    ));
                 }
             }
             IT_WAIT_REG_MEM if p.len() >= 5 && p[0] & 0x10 != 0 => {
@@ -407,7 +471,14 @@ impl Processor {
             }
             IT_WAIT_REG_MEM_64 if p.len() >= 7 && p[0] & 0x10 != 0 => {
                 let address = (p[1] & !7) as u64 | ((p[2] & 0x3FFFF) as u64) << 32;
-                self.wait(host, p[0], address, addr(p[3], p[4]), addr(p[5], p[6]), true);
+                self.wait(
+                    host,
+                    p[0],
+                    address,
+                    addr(p[3], p[4]),
+                    addr(p[5], p[6]),
+                    true,
+                );
             }
             IT_INDIRECT_BUFFER if p.len() >= 3 => {
                 let target = (p[0] & !3) as u64 | ((p[1] & 0xFFFF) as u64) << 32;
@@ -439,8 +510,12 @@ impl Processor {
             IT_MEM_SEMAPHORE if p.len() >= 3 => self.mem_semaphore(host, p),
             IT_SET_CONTEXT_REG => Self::set_registers(&mut self.context, p),
             IT_SET_SH_REG => Self::set_registers(&mut self.sh, p),
-            IT_SET_UCONFIG_REG | IT_SET_UCONFIG_REG_INDEX => Self::set_registers(&mut self.uconfig, p),
-            IT_SET_CONTEXT_REG_INDIRECT | IT_SET_SH_REG_INDIRECT | IT_SET_UCONFIG_REG_INDIRECT if p.len() >= 4 => {
+            IT_SET_UCONFIG_REG | IT_SET_UCONFIG_REG_INDEX => {
+                Self::set_registers(&mut self.uconfig, p)
+            }
+            IT_SET_CONTEXT_REG_INDIRECT | IT_SET_SH_REG_INDIRECT | IT_SET_UCONFIG_REG_INDIRECT
+                if p.len() >= 4 =>
+            {
                 let table = (p[0] & !3) as u64 | (p[1] as u64) << 32;
                 let entries = read_dwords(host, table, 2 * (p[3] & 0x3FFF) as usize)?;
                 let bank = match op {
@@ -452,7 +527,9 @@ impl Processor {
                     if e[0] == u32::MAX {
                         continue;
                     }
-                    if op == IT_SET_CONTEXT_REG_INDIRECT && e[0] & !TABLE_SELECTOR == CB_COLOR_CONTROL {
+                    if op == IT_SET_CONTEXT_REG_INDIRECT
+                        && e[0] & !TABLE_SELECTOR == CB_COLOR_CONTROL
+                    {
                         self.color_control_written = true;
                     }
                     if let Some(r) = bank.get_mut((e[0] & !TABLE_SELECTOR) as usize) {
@@ -462,17 +539,31 @@ impl Processor {
             }
             IT_INDEX_BASE if p.len() >= 2 => self.index_base = addr(p[0], p[1]),
             IT_NUM_INSTANCES if !p.is_empty() => self.instances = p[0].max(1),
-            IT_DRAW_INDEX_AUTO if !p.is_empty() => {
-                self.draw(host, op, p, Draw::Auto { count: p[0], instances: self.instances })
-            }
+            IT_DRAW_INDEX_AUTO if !p.is_empty() => self.draw(
+                host,
+                op,
+                p,
+                Draw::Auto {
+                    count: p[0],
+                    instances: self.instances,
+                },
+            ),
             IT_DRAW_INDEX_2 if p.len() >= 4 => {
-                let draw = Draw::Indexed { count: p[3], address: addr(p[1], p[2]), instances: self.instances };
+                let draw = Draw::Indexed {
+                    count: p[3],
+                    address: addr(p[1], p[2]),
+                    instances: self.instances,
+                };
                 self.draw(host, op, p, draw)
             }
             IT_DRAW_INDEX_OFFSET_2 if p.len() >= 3 => {
                 let size = if self.uconfig[0x243] & 3 == 1 { 4 } else { 2 };
                 let address = self.index_base + p[1] as u64 * size;
-                let draw = Draw::Indexed { count: p[2], address, instances: self.instances };
+                let draw = Draw::Indexed {
+                    count: p[2],
+                    address,
+                    instances: self.instances,
+                };
                 self.draw(host, op, p, draw)
             }
             IT_SET_BASE if p.len() >= 3 && p[0] & 0xF == 1 => self.indirect_base = addr(p[1], p[2]),
@@ -481,13 +572,32 @@ impl Processor {
                 let a = self.indirect_args(host, p[0], 5);
                 let size = if self.uconfig[0x243] & 3 == 1 { 4 } else { 2 };
                 let address = self.index_base + a[2] as u64 * size;
-                self.draw(host, op, p, Draw::Indexed { count: a[0], address, instances: a[1].max(1) })
+                self.draw(
+                    host,
+                    op,
+                    p,
+                    Draw::Indexed {
+                        count: a[0],
+                        address,
+                        instances: a[1].max(1),
+                    },
+                )
             }
             IT_DRAW_INDIRECT if !p.is_empty() => {
                 let a = self.indirect_args(host, p[0], 4);
-                self.draw(host, op, p, Draw::Auto { count: a[0], instances: a[1].max(1) })
+                self.draw(
+                    host,
+                    op,
+                    p,
+                    Draw::Auto {
+                        count: a[0],
+                        instances: a[1].max(1),
+                    },
+                )
             }
-            IT_DRAW_INDIRECT_MULTI | IT_DRAW_INDEX_INDIRECT_MULTI | IT_DRAW_INDEX_MULTI_AUTO => self.stats.draws += 1,
+            IT_DRAW_INDIRECT_MULTI | IT_DRAW_INDEX_INDIRECT_MULTI | IT_DRAW_INDEX_MULTI_AUTO => {
+                self.stats.draws += 1
+            }
             IT_DISPATCH_DIRECT if p.len() >= 3 => self.dispatch(host, [p[0], p[1], p[2]]),
             IT_DISPATCH_INDIRECT if !p.is_empty() => {
                 let a = self.indirect_args(host, p[0], 3);
@@ -506,7 +616,10 @@ impl Processor {
         let wide = control & (1 << 16) != 0;
         let n = if wide { 2 } else { 1 };
         if !matches!(dst_sel, 1 | 2 | 5) {
-            unhandled(format_args!("COPY_DATA from select {src_sel} to select {dst_sel} at {:#x}", p[3]));
+            unhandled(format_args!(
+                "COPY_DATA from select {src_sel} to select {dst_sel} at {:#x}",
+                p[3]
+            ));
             return;
         }
         let dest = addr(p[3], p[4]);
@@ -561,13 +674,16 @@ impl Processor {
                 self.drain(host);
                 self.sync();
                 let set = p[2] & (1 << 20) != 0;
-                atomic(host, address, true, |v| (true, if set { 1 } else { v.wrapping_add(1) }));
+                atomic(host, address, true, |v| {
+                    (true, if set { 1 } else { v.wrapping_add(1) })
+                });
             }
             7 => {
                 self.drain(host);
                 let start = Instant::now();
                 let mut polling = None;
-                while atomic(host, address, true, |v| (v != 0, v.saturating_sub(1))) == Some(false) {
+                while atomic(host, address, true, |v| (v != 0, v.saturating_sub(1))) == Some(false)
+                {
                     polling.get_or_insert_with(|| Polling::start(host));
                     if host.exiting() {
                         return;
@@ -603,7 +719,11 @@ impl Processor {
         while !valid(host) && !host.exiting() {
             if !warned && start.elapsed() > WAIT_LIMIT {
                 warned = true;
-                eprintln!("ps5slop: GPU: REWIND at {:#x} still not valid after {} s", body - 4, WAIT_LIMIT.as_secs());
+                eprintln!(
+                    "ps5slop: GPU: REWIND at {:#x} still not valid after {} s",
+                    body - 4,
+                    WAIT_LIMIT.as_secs()
+                );
             }
             let t = crate::timing::start();
             std::thread::sleep(Duration::from_micros(50));
@@ -665,7 +785,15 @@ impl Processor {
             }
         }
         if std::env::var_os("PS5SLOP_TRACE_DMA").is_some() {
-            eprintln!("ps5slop: DMA_DATA src_sel {src_sel} {src:#x} dst_sel {dst_sel} {dst:#x} {bytes:#x} bytes, first word {:#x}", u32::from_le_bytes([data[0], *data.get(1).unwrap_or(&0), *data.get(2).unwrap_or(&0), *data.get(3).unwrap_or(&0)]));
+            eprintln!(
+                "ps5slop: DMA_DATA src_sel {src_sel} {src:#x} dst_sel {dst_sel} {dst:#x} {bytes:#x} bytes, first word {:#x}",
+                u32::from_le_bytes([
+                    data[0],
+                    *data.get(1).unwrap_or(&0),
+                    *data.get(2).unwrap_or(&0),
+                    *data.get(3).unwrap_or(&0)
+                ])
+            );
         }
         if dst_fixed {
             let n = data.len().min(4);
@@ -691,21 +819,34 @@ impl Processor {
     fn dispatch(&mut self, host: &dyn Host, groups: [u32; 3]) {
         self.stats.dispatches += 1;
         let total = groups.iter().map(|&g| g as u64).product::<u64>();
-        let program = (self.sh[crate::regs::sh::COMPUTE_PGM_LO] as u64 | (self.sh[crate::regs::sh::COMPUTE_PGM_LO + 1] as u64) << 32) << 8;
+        let program = (self.sh[crate::regs::sh::COMPUTE_PGM_LO] as u64
+            | (self.sh[crate::regs::sh::COMPUTE_PGM_LO + 1] as u64) << 32)
+            << 8;
         trace(format_args!("dispatch {groups:?} program {program:#x}"));
         if probed(program) {
-            let user = &self.sh[crate::regs::sh::COMPUTE_USER_DATA_0..crate::regs::sh::COMPUTE_USER_DATA_0 + 16];
-            eprintln!("ps5slop: GPU probe [{}]: dispatch {groups:?} of {program:#x}, user data {user:x?}", std::thread::current().name().unwrap_or("?"));
+            let user = &self.sh
+                [crate::regs::sh::COMPUTE_USER_DATA_0..crate::regs::sh::COMPUTE_USER_DATA_0 + 16];
+            eprintln!(
+                "ps5slop: GPU probe [{}]: dispatch {groups:?} of {program:#x}, user data {user:x?}",
+                std::thread::current().name().unwrap_or("?")
+            );
         }
         if total > MAX_GROUPS {
             self.stats.huge_dispatches += 1;
             if self.stats.huge_dispatches <= 16 {
-                eprintln!("ps5slop: GPU: dispatch of {groups:?} groups of the program at {program:#x} skipped");
+                eprintln!(
+                    "ps5slop: GPU: dispatch of {groups:?} groups of the program at {program:#x} skipped"
+                );
             }
             return;
         }
         if let Some(b) = self.backend.as_mut() {
-            let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig, color_control_written: self.color_control_written };
+            let state = State {
+                context: &self.context,
+                sh: &self.sh,
+                uconfig: &self.uconfig,
+                color_control_written: self.color_control_written,
+            };
             let t = crate::timing::start();
             b.dispatch(host, &state, groups);
             crate::timing::add(crate::timing::Part::Dispatch, t);
@@ -724,7 +865,10 @@ impl Processor {
         let Some((at, from)) = *AT.get_or_init(|| {
             let v = std::env::var("PS5SLOP_GPU_WATCH").ok()?;
             let (addr, secs) = v.split_once('@').unwrap_or((&v, "0"));
-            Some((u64::from_str_radix(addr.trim_start_matches("0x"), 16).ok()?, Instant::now() + Duration::from_secs(secs.parse().ok()?)))
+            Some((
+                u64::from_str_radix(addr.trim_start_matches("0x"), 16).ok()?,
+                Instant::now() + Duration::from_secs(secs.parse().ok()?),
+            ))
         }) else {
             return;
         };
@@ -735,8 +879,14 @@ impl Processor {
         let now = read_u64(host, at);
         if self.watched != Some(now) {
             if self.watched.is_some() {
-                let user = &self.sh[crate::regs::sh::COMPUTE_USER_DATA_0..crate::regs::sh::COMPUTE_USER_DATA_0 + 16];
-                eprintln!("ps5slop: GPU watch: {at:#x} {:#x?} -> {now:#x} after {} on {} (compute user {user:x?})", self.watched, what(), std::thread::current().name().unwrap_or("?"));
+                let user = &self.sh[crate::regs::sh::COMPUTE_USER_DATA_0
+                    ..crate::regs::sh::COMPUTE_USER_DATA_0 + 16];
+                eprintln!(
+                    "ps5slop: GPU watch: {at:#x} {:#x?} -> {now:#x} after {} on {} (compute user {user:x?})",
+                    self.watched,
+                    what(),
+                    std::thread::current().name().unwrap_or("?")
+                );
             }
             self.watched = Some(now);
         }
@@ -746,7 +896,12 @@ impl Processor {
         self.stats.draws += 1;
         self.dump_draw(op, p);
         if let Some(b) = self.backend.as_mut() {
-            let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig, color_control_written: self.color_control_written };
+            let state = State {
+                context: &self.context,
+                sh: &self.sh,
+                uconfig: &self.uconfig,
+                color_control_written: self.color_control_written,
+            };
             let t = crate::timing::start();
             b.draw(host, &state, draw);
             crate::timing::add(crate::timing::Part::Draw, t);
@@ -767,12 +922,18 @@ impl Processor {
         static LEFT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(i64::MIN);
         use std::sync::atomic::Ordering::Relaxed;
         if LEFT.load(Relaxed) == i64::MIN {
-            let n = std::env::var("PS5SLOP_GPU_DUMP").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            let n = std::env::var("PS5SLOP_GPU_DUMP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
             LEFT.store(n, Relaxed);
         }
         static SKIP: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(i64::MIN);
         if SKIP.load(Relaxed) == i64::MIN {
-            let n = std::env::var("PS5SLOP_GPU_DUMP_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            let n = std::env::var("PS5SLOP_GPU_DUMP_SKIP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
             SKIP.store(n, Relaxed);
         }
         if SKIP.load(Relaxed) > 0 {
@@ -786,20 +947,65 @@ impl Processor {
         let sh = &self.sh;
         let u = &self.uconfig;
         eprintln!("DRAW op={op:#x} payload={:x?}", p);
-        for (name, lo) in [("PS", 0x08usize), ("VS", 0x48), ("GS", 0x88), ("ES", 0xC8), ("HS", 0x108), ("LS", 0x148)] {
+        for (name, lo) in [
+            ("PS", 0x08usize),
+            ("VS", 0x48),
+            ("GS", 0x88),
+            ("ES", 0xC8),
+            ("HS", 0x108),
+            ("LS", 0x148),
+        ] {
             if sh[lo] != 0 || sh[lo + 1] != 0 {
-                eprintln!("  {name} pgm={:#x} rsrc1={:#x} rsrc2={:#x} user={:x?}", (sh[lo] as u64 | (sh[lo + 1] as u64) << 32) << 8, sh[lo + 2], sh[lo + 3], &sh[lo + 4..lo + 20]);
+                eprintln!(
+                    "  {name} pgm={:#x} rsrc1={:#x} rsrc2={:#x} user={:x?}",
+                    (sh[lo] as u64 | (sh[lo + 1] as u64) << 32) << 8,
+                    sh[lo + 2],
+                    sh[lo + 3],
+                    &sh[lo + 4..lo + 20]
+                );
             }
         }
-        eprintln!("  stages={:#x} prim={:#x} idx={:#x} cb0 base={:#x} ext={:#x} view={:#x} info={:#x} attrib={:#x} attrib2={:#x} attrib3={:#x} target_mask={:#x} color_ctl={:#x} blend0={:#x}",
-            c[0x2D5], u[0x242], u[0x243], c[0x318], c[0x390], c[0x31B], c[0x31C], c[0x31D], c[0x3B0], c[0x3B8], c[0x8E], c[0x202], c[0x1E0]);
-        eprintln!("  vport scale/off={:?} scissor={:#x}/{:#x} vte={:#x} spi_ps_in={:#x}/{:#x} col_fmt={:#x} z_info={:#x} depth_ctl={:#x} ps_input_cntl0={:#x} vs_out={:#x} pos_fmt={:#x}",
-            c[0x10F..0x115].iter().map(|&v| f32::from_bits(v)).collect::<Vec<_>>(), c[0x90], c[0x91], c[0x206], c[0x1B3], c[0x1B4], c[0x1C5], c[0x10], c[0x200], c[0x191], c[0x1B1], c[0x1C3]);
+        eprintln!(
+            "  stages={:#x} prim={:#x} idx={:#x} cb0 base={:#x} ext={:#x} view={:#x} info={:#x} attrib={:#x} attrib2={:#x} attrib3={:#x} target_mask={:#x} color_ctl={:#x} blend0={:#x}",
+            c[0x2D5],
+            u[0x242],
+            u[0x243],
+            c[0x318],
+            c[0x390],
+            c[0x31B],
+            c[0x31C],
+            c[0x31D],
+            c[0x3B0],
+            c[0x3B8],
+            c[0x8E],
+            c[0x202],
+            c[0x1E0]
+        );
+        eprintln!(
+            "  vport scale/off={:?} scissor={:#x}/{:#x} vte={:#x} spi_ps_in={:#x}/{:#x} col_fmt={:#x} z_info={:#x} depth_ctl={:#x} ps_input_cntl0={:#x} vs_out={:#x} pos_fmt={:#x}",
+            c[0x10F..0x115]
+                .iter()
+                .map(|&v| f32::from_bits(v))
+                .collect::<Vec<_>>(),
+            c[0x90],
+            c[0x91],
+            c[0x206],
+            c[0x1B3],
+            c[0x1B4],
+            c[0x1C5],
+            c[0x10],
+            c[0x200],
+            c[0x191],
+            c[0x1B1],
+            c[0x1C3]
+        );
     }
 
     /// SET_*_REG: a register offset (relative to the bank), then values.
     fn set_registers(bank: &mut [u32], p: &[u32]) {
-        let Some((&first, values)) = p.split_first() else { return };
+        let Some((&first, values)) = p.split_first() else {
+            return;
+        };
         let start = (first & 0xFFFF) as usize;
         for (i, &v) in values.iter().enumerate() {
             if let Some(r) = bank.get_mut(start + i) {
@@ -831,7 +1037,14 @@ impl Processor {
                 let control = p[1];
                 let interrupt = (control >> 24) & 0xFF;
                 let data = (control >> 16) & 0xFF;
-                self.release(host, data, interrupt, addr(p[2], p[3]), addr(p[4], p[5]), p[6] & 0x07FF_FFFF);
+                self.release(
+                    host,
+                    data,
+                    interrupt,
+                    addr(p[2], p[3]),
+                    addr(p[4], p[5]),
+                    p[6] & 0x07FF_FFFF,
+                );
             }
             NOP_WAIT_MEMORY_32 if p.len() >= 5 => {
                 let (mask, reference, control) = if p.len() == 5 {
@@ -839,10 +1052,24 @@ impl Processor {
                 } else {
                     (p[2], p[3], p[4])
                 };
-                self.wait(host, control, addr(p[0], p[1]), reference as u64, mask as u64, false);
+                self.wait(
+                    host,
+                    control,
+                    addr(p[0], p[1]),
+                    reference as u64,
+                    mask as u64,
+                    false,
+                );
             }
             NOP_WAIT_MEMORY_64 if p.len() >= 7 => {
-                self.wait(host, p[6], addr(p[0], p[1]), addr(p[4], p[5]), addr(p[2], p[3]), true);
+                self.wait(
+                    host,
+                    p[6],
+                    addr(p[0], p[1]),
+                    addr(p[4], p[5]),
+                    addr(p[2], p[3]),
+                    true,
+                );
             }
             NOP_WAIT_FLIP_DONE => {}
             _ => {}
@@ -898,9 +1125,16 @@ impl Processor {
     }
 
     fn write_values(&mut self, host: &dyn Host, dest: u64, values: &[u32], fixed: bool) {
-        trace(format_args!("write {dest:#x} {:x?}", &values[..values.len().min(4)]));
+        trace(format_args!(
+            "write {dest:#x} {:x?}",
+            &values[..values.len().min(4)]
+        ));
         if self.backend.is_some() && !synchronous_releases() {
-            self.pending.push(Pending::Write { dest, values: values.to_vec(), fixed });
+            self.pending.push(Pending::Write {
+                dest,
+                values: values.to_vec(),
+                fixed,
+            });
             return;
         }
         Self::apply_write(host, dest, values, fixed);
@@ -917,10 +1151,26 @@ impl Processor {
     /// 3 and 4 a clock; interrupt selects 1 and 2 raise an interrupt.
     // Selectors 5 and 6 write nothing and interrupt only while the label at
     // `dest` is at or below `value` (SharpEmu-mac's `InterruptDecision`).
-    fn release(&mut self, host: &dyn Host, data: u32, interrupt: u32, dest: u64, value: u64, context: u32) {
-        trace(format_args!("release data {data} interrupt {interrupt} {dest:#x} = {value:#x}"));
+    fn release(
+        &mut self,
+        host: &dyn Host,
+        data: u32,
+        interrupt: u32,
+        dest: u64,
+        value: u64,
+        context: u32,
+    ) {
+        trace(format_args!(
+            "release data {data} interrupt {interrupt} {dest:#x} = {value:#x}"
+        ));
         if self.backend.is_some() && !synchronous_releases() {
-            self.pending.push(Pending::Release { data, interrupt, dest, value, context });
+            self.pending.push(Pending::Release {
+                data,
+                interrupt,
+                dest,
+                value,
+                context,
+            });
         } else {
             self.sync();
             self.apply_release(host, data, interrupt, dest, value, context);
@@ -943,15 +1193,31 @@ impl Processor {
         self.sync();
         for p in std::mem::take(&mut self.pending) {
             match p {
-                Pending::Release { data, interrupt, dest, value, context } => {
-                    self.apply_release(host, data, interrupt, dest, value, context)
-                }
-                Pending::Write { dest, values, fixed } => Self::apply_write(host, dest, &values, fixed),
+                Pending::Release {
+                    data,
+                    interrupt,
+                    dest,
+                    value,
+                    context,
+                } => self.apply_release(host, data, interrupt, dest, value, context),
+                Pending::Write {
+                    dest,
+                    values,
+                    fixed,
+                } => Self::apply_write(host, dest, &values, fixed),
             }
         }
     }
 
-    fn apply_release(&mut self, host: &dyn Host, data: u32, interrupt: u32, dest: u64, value: u64, context: u32) {
+    fn apply_release(
+        &mut self,
+        host: &dyn Host,
+        data: u32,
+        interrupt: u32,
+        dest: u64,
+        value: u64,
+        context: u32,
+    ) {
         let raise = match interrupt {
             1 | 2 | 4 => true,
             5 => dest != 0 && (read_u64(host, dest) as u32) <= value as u32,
@@ -970,7 +1236,9 @@ impl Processor {
                     host.write(dest, &gpu_clock().to_le_bytes());
                 }
                 7 => {
-                    atomic(host, dest, false, |v| (true, v.wrapping_add(value & 0xFFFF_FFFF)));
+                    atomic(host, dest, false, |v| {
+                        (true, v.wrapping_add(value & 0xFFFF_FFFF))
+                    });
                 }
                 _ => {}
             }
@@ -983,8 +1251,19 @@ impl Processor {
 
     /// Polls guest memory until the masked value passes the comparison in
     /// `control`, the process exits, or [`WAIT_LIMIT`] passes.
-    fn wait(&mut self, host: &dyn Host, control: u32, address: u64, reference: u64, mask: u64, wide: bool) {
-        trace(format_args!("wait {address:#x} & {mask:#x} function {} {reference:#x}", control & 7));
+    fn wait(
+        &mut self,
+        host: &dyn Host,
+        control: u32,
+        address: u64,
+        reference: u64,
+        mask: u64,
+        wide: bool,
+    ) {
+        trace(format_args!(
+            "wait {address:#x} & {mask:#x} function {} {reference:#x}",
+            control & 7
+        ));
         // GPU work runs in order, so a wait on a label that a pending release
         // will satisfy passes without waiting for the GPU.
         let word = |at: u64| self.pending.iter().rev().find_map(|p| p.word_at(at));
@@ -1047,13 +1326,17 @@ mod tests {
     impl Host for Fake {
         fn read(&self, addr: u64, buf: &mut [u8]) -> bool {
             let mem = self.mem.borrow();
-            let Some(src) = mem.get(addr as usize..addr as usize + buf.len()) else { return false };
+            let Some(src) = mem.get(addr as usize..addr as usize + buf.len()) else {
+                return false;
+            };
             buf.copy_from_slice(src);
             true
         }
         fn write(&self, addr: u64, data: &[u8]) -> bool {
             let mut mem = self.mem.borrow_mut();
-            let Some(dst) = mem.get_mut(addr as usize..addr as usize + data.len()) else { return false };
+            let Some(dst) = mem.get_mut(addr as usize..addr as usize + data.len()) else {
+                return false;
+            };
             dst.copy_from_slice(data);
             true
         }
@@ -1114,7 +1397,15 @@ mod tests {
         let host = Fake::default();
         host.mem.replace(vec![0; 0x1000]);
         host.write(0xA08, &[2, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0]);
-        let packets = [header(4, IT_SET_BASE, 0), 1, 0xA00, 0, header(3, IT_DISPATCH_INDIRECT, 0), 8, 0];
+        let packets = [
+            header(4, IT_SET_BASE, 0),
+            1,
+            0xA00,
+            0,
+            header(3, IT_DISPATCH_INDIRECT, 0),
+            8,
+            0,
+        ];
         let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
         host.write(0x100, &bytes);
         struct Groups(std::sync::Arc<std::sync::Mutex<Vec<[u32; 3]>>>);
@@ -1127,18 +1418,38 @@ mod tests {
             fn frame_done(&mut self, _: Option<u64>) {}
         }
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let mut p = Processor { backend: Some(Box::new(Groups(seen.clone()))), ..Processor::default() };
+        let mut p = Processor {
+            backend: Some(Box::new(Groups(seen.clone()))),
+            ..Processor::default()
+        };
         p.run(&host, 0x100, packets.len() as u32).unwrap();
         assert_eq!(*seen.lock().unwrap(), vec![[2, 3, 1]]);
     }
 
     #[test]
     fn queued_writes_and_releases_report_what_they_leave_in_memory() {
-        let w = Pending::Write { dest: 0x100, values: vec![1, 2, 3], fixed: false };
-        assert_eq!((w.word_at(0x104), w.word_at(0x10c), w.word_at(0x102)), (Some(2), None, None));
-        let f = Pending::Write { dest: 0x100, values: vec![1, 2, 3], fixed: true };
+        let w = Pending::Write {
+            dest: 0x100,
+            values: vec![1, 2, 3],
+            fixed: false,
+        };
+        assert_eq!(
+            (w.word_at(0x104), w.word_at(0x10c), w.word_at(0x102)),
+            (Some(2), None, None)
+        );
+        let f = Pending::Write {
+            dest: 0x100,
+            values: vec![1, 2, 3],
+            fixed: true,
+        };
         assert_eq!((f.word_at(0x100), f.word_at(0x104)), (Some(3), None));
-        let r = Pending::Release { data: 2, interrupt: 0, dest: 0x200, value: 0x5_0000_0007, context: 0 };
+        let r = Pending::Release {
+            data: 2,
+            interrupt: 0,
+            dest: 0x200,
+            value: 0x5_0000_0007,
+            context: 0,
+        };
         assert_eq!((r.word_at(0x200), r.word_at(0x204)), (Some(7), Some(5)));
     }
 
@@ -1171,9 +1482,28 @@ mod tests {
         let host = Fake::default();
         host.mem.replace(vec![0; 0x1000]);
         let inner = [header(4, IT_SET_SH_REG, 0), 0x8, 0x1234, 0x5678];
-        host.write(0x400, &inner.iter().flat_map(|d| d.to_le_bytes()).collect::<Vec<u8>>());
-        let outer = [header(4, IT_INDIRECT_BUFFER, 0), 0x400, 0, 4, header(2, IT_DRAW_INDEX_AUTO, 0), 3];
-        host.write(0x100, &outer.iter().flat_map(|d| d.to_le_bytes()).collect::<Vec<u8>>());
+        host.write(
+            0x400,
+            &inner
+                .iter()
+                .flat_map(|d| d.to_le_bytes())
+                .collect::<Vec<u8>>(),
+        );
+        let outer = [
+            header(4, IT_INDIRECT_BUFFER, 0),
+            0x400,
+            0,
+            4,
+            header(2, IT_DRAW_INDEX_AUTO, 0),
+            3,
+        ];
+        host.write(
+            0x100,
+            &outer
+                .iter()
+                .flat_map(|d| d.to_le_bytes())
+                .collect::<Vec<u8>>(),
+        );
         let mut p = Processor::default();
         p.run(&host, 0x100, outer.len() as u32).unwrap();
         assert_eq!((p.sh[8], p.sh[9]), (0x1234, 0x5678));
@@ -1189,10 +1519,20 @@ mod tests {
             let at = 0x100 + 0x100 * k;
             let mut seg = vec![header(2, IT_DRAW_INDEX_AUTO, 0), 3];
             if k + 1 < segments {
-                seg.extend([header(4, IT_INDIRECT_BUFFER, 0), (at + 0x100) as u32, 0, 7 | 1 << 20]);
+                seg.extend([
+                    header(4, IT_INDIRECT_BUFFER, 0),
+                    (at + 0x100) as u32,
+                    0,
+                    7 | 1 << 20,
+                ]);
                 seg.extend([header(2, IT_DRAW_INDEX_AUTO, 0), 3]);
             }
-            host.write(at, &seg.iter().flat_map(|d| d.to_le_bytes()).collect::<Vec<u8>>());
+            host.write(
+                at,
+                &seg.iter()
+                    .flat_map(|d| d.to_le_bytes())
+                    .collect::<Vec<u8>>(),
+            );
         }
         let mut p = Processor::default();
         p.run(&host, 0x100, 8).unwrap();
@@ -1204,13 +1544,26 @@ mod tests {
         let host = Fake::default();
         host.mem.replace(vec![0; 0x1000]);
         let first = [header(2, IT_REWIND, 0), REWIND_VALID];
-        host.write(0x100, &first.iter().flat_map(|d| d.to_le_bytes()).collect::<Vec<u8>>());
+        host.write(
+            0x100,
+            &first
+                .iter()
+                .flat_map(|d| d.to_le_bytes())
+                .collect::<Vec<u8>>(),
+        );
         let late = [header(5, IT_WRITE_DATA, 0), 5 << 8, 0x800, 0, 9];
         struct Late<'a>(&'a Fake, [u32; 5]);
         impl Host for Late<'_> {
             fn read(&self, addr: u64, buf: &mut [u8]) -> bool {
                 if addr == 0x108 {
-                    self.0.write(0x108, &self.1.iter().flat_map(|d| d.to_le_bytes()).collect::<Vec<u8>>());
+                    self.0.write(
+                        0x108,
+                        &self
+                            .1
+                            .iter()
+                            .flat_map(|d| d.to_le_bytes())
+                            .collect::<Vec<u8>>(),
+                    );
                 }
                 self.0.read(addr, buf)
             }
@@ -1281,7 +1634,10 @@ mod tests {
             0,
             0,
         ]);
-        assert_eq!((word(&host, 0x800), word(&host, 0x808), word(&host, 0x810)), (0x7A, 1, 5));
+        assert_eq!(
+            (word(&host, 0x800), word(&host, 0x808), word(&host, 0x810)),
+            (0x7A, 1, 5)
+        );
     }
 
     #[test]
@@ -1290,7 +1646,13 @@ mod tests {
         host.mem.replace(vec![0; 0x1000]);
         host.write(0x808, &2u64.to_le_bytes());
         let packets = [header(4, IT_MEM_SEMAPHORE, 0), 0x808, 0, 7 << 29];
-        host.write(0x100, &packets.iter().flat_map(|d| d.to_le_bytes()).collect::<Vec<u8>>());
+        host.write(
+            0x100,
+            &packets
+                .iter()
+                .flat_map(|d| d.to_le_bytes())
+                .collect::<Vec<u8>>(),
+        );
         let mut p = Processor::default();
         p.run(&host, 0x100, 4).unwrap();
         assert_eq!((word(&host, 0x808), p.stats.timeouts), (1, 0));

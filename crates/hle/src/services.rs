@@ -59,7 +59,11 @@ pub static FUNCTIONS: &[Function] = &[
     f("libSceRtc", "sceRtcSetTick", rtc_set_tick),
     f("libSceRtc", "sceRtcGetTick", rtc_get_tick),
     f("libSceRtc", "sceRtcGetCurrentClock", rtc_current_clock),
-    f("libSceRtc", "sceRtcGetCurrentClockLocalTime", rtc_current_clock_local),
+    f(
+        "libSceRtc",
+        "sceRtcGetCurrentClockLocalTime",
+        rtc_current_clock_local,
+    ),
     f("libSceRtc", "sceRtcConvertUtcToLocalTime", rtc_utc_to_local),
     f("libSceRtc", "sceRtcGetTime_t", rtc_get_time_t),
     f("libSceRtc", "sceRtcSetTime_t", rtc_set_time_t),
@@ -85,7 +89,11 @@ pub static STUBS: &[Function] = &[
         "sceSystemServiceReceiveEvent",
         no_system_event,
     ),
-    f("libSceUserService", "sceUserServiceGetAgeLevel", setting_zero),
+    f(
+        "libSceUserService",
+        "sceUserServiceGetAgeLevel",
+        setting_zero,
+    ),
     f(
         "libSceUserService",
         "sceUserServiceGetAccessibilityVibration",
@@ -249,9 +257,16 @@ fn write_date_time(env: &mut Env, out: u64, tick: u64) -> Result<Outcome, CallEr
     let (year, month, day) = civil_from_days((secs / 86_400) as i64 - 719_162);
     let in_day = secs % 86_400;
     let mut b = [0u8; 16];
-    for (k, v) in [year as u64, month, day, in_day / 3600, in_day / 60 % 60, in_day % 60]
-        .into_iter()
-        .enumerate()
+    for (k, v) in [
+        year as u64,
+        month,
+        day,
+        in_day / 3600,
+        in_day / 60 % 60,
+        in_day % 60,
+    ]
+    .into_iter()
+    .enumerate()
     {
         b[2 * k..2 * k + 2].copy_from_slice(&(v as u16).to_le_bytes());
     }
@@ -268,11 +283,20 @@ fn read_date_time(env: &Env, at: u64) -> Result<Option<u64>, CallError> {
     let f = |k: usize| u16::from_le_bytes([b[2 * k], b[2 * k + 1]]) as u64;
     let (year, month, day, hour, minute, second) = (f(0), f(1), f(2), f(3), f(4), f(5));
     let micros = u32::from_le_bytes([b[12], b[13], b[14], b[15]]) as u64;
-    if year == 0 || !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 59 || micros >= 1_000_000 {
+    if year == 0
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 59
+        || micros >= 1_000_000
+    {
         return Ok(None);
     }
     let days = (days_from_civil(year as i64, month, day) + 719_162) as u64;
-    Ok(Some(((days * 86_400 + hour * 3600 + minute * 60 + second) * 1_000_000) + micros))
+    Ok(Some(
+        ((days * 86_400 + hour * 3600 + minute * 60 + second) * 1_000_000) + micros,
+    ))
 }
 
 /// `sceRtcGetTick(&date_time, &tick)`.
@@ -324,7 +348,11 @@ fn rtc_set_time_t(env: &mut Env) -> Result<Outcome, CallError> {
     if secs < 0 {
         return ret(rtc_invalid());
     }
-    write_date_time(env, env.arg(0), (secs as u64 + RTC_EPOCH_OFFSET) * 1_000_000)
+    write_date_time(
+        env,
+        env.arg(0),
+        (secs as u64 + RTC_EPOCH_OFFSET) * 1_000_000,
+    )
 }
 
 /// Days from 1970-01-01 to the given date (proleptic Gregorian calendar).

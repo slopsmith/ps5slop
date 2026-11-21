@@ -70,14 +70,21 @@ fn start(s: usize) -> usize {
 /// (`DISPATCH` or `VERIFY_EXIT`).
 pub(crate) fn local_exit(place: usize, exit: usize) -> usize {
     let s = start((place - layout::CODE_CACHE) / SEGMENT);
-    if exit == crate::DISPATCH { s } else { s + LOCAL_VERIFY }
+    if exit == crate::DISPATCH {
+        s
+    } else {
+        s + LOCAL_VERIFY
+    }
 }
 
 /// Writes every segment's stubs: `dispatcher` and `verify_exit` copies.
 pub(crate) fn write_stubs(rt: &mut [u8], dispatcher: &[u32], verify_exit: &[u32]) {
     assert!(dispatcher.len() * 4 <= LOCAL_VERIFY && LOCAL_VERIFY + verify_exit.len() * 4 <= STUBS);
     for s in 0..SEGMENTS {
-        for (at, code) in [(start(s), dispatcher), (start(s) + LOCAL_VERIFY, verify_exit)] {
+        for (at, code) in [
+            (start(s), dispatcher),
+            (start(s) + LOCAL_VERIFY, verify_exit),
+        ] {
             for (i, w) in code.iter().enumerate() {
                 rt[at + i * 4..at + i * 4 + 4].copy_from_slice(&w.to_le_bytes());
             }
@@ -170,7 +177,9 @@ impl Machine {
             return;
         };
         if EVICTIONS.fetch_add(1, Ordering::Relaxed) == 0 {
-            eprintln!("ps5slop: the JIT's code cache is full; evicting its coldest segments from now on");
+            eprintln!(
+                "ps5slop: the JIT's code cache is full; evicting its coldest segments from now on"
+            );
         }
         self.evict(s);
     }
@@ -188,7 +197,10 @@ impl Machine {
             self.blocks.remove(&rip);
             self.forget_lookup(rip, place);
         }
-        crate::profile::LIVE_BLOCKS.store(self.blocks.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        crate::profile::LIVE_BLOCKS.store(
+            self.blocks.len() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let regions: Vec<(u64, usize)> = self
             .regions
             .iter()
@@ -199,7 +211,11 @@ impl Machine {
             self.regions.remove(&rip);
             self.forget_lookup(rip, place);
         }
-        let places: Vec<usize> = self.by_place.range(range.clone()).map(|(&p, _)| p).collect();
+        let places: Vec<usize> = self
+            .by_place
+            .range(range.clone())
+            .map(|(&p, _)| p)
+            .collect();
         for p in places {
             self.by_place.remove(&p);
         }
@@ -209,7 +225,11 @@ impl Machine {
             .flat_map(|(_, v)| v.iter().copied())
             .collect();
         sites.extend(self.patched.keys().copied().filter(|p| range.contains(p)));
-        let targets: Vec<usize> = self.chained_to.range(range.clone()).map(|(&t, _)| t).collect();
+        let targets: Vec<usize> = self
+            .chained_to
+            .range(range.clone())
+            .map(|(&t, _)| t)
+            .collect();
         for t in targets {
             self.chained_to.remove(&t);
         }
@@ -240,13 +260,20 @@ impl Machine {
     /// address in.
     pub(crate) fn reclaim(&mut self) {
         let sc = Ordering::SeqCst;
-        let held: Vec<u64> = SHARED.slots.iter().map(|s| s.old_pc.load(sc)).filter(|&p| p != 0).collect();
+        let held: Vec<u64> = SHARED
+            .slots
+            .iter()
+            .map(|s| s.old_pc.load(sc))
+            .filter(|&p| p != 0)
+            .collect();
         for (s, samples) in SAMPLES.iter().enumerate() {
             if self.segments.state[s] != State::Draining {
                 continue;
             }
             let (lo, hi) = (layout::va(start(s)), layout::va(end(s)));
-            let left = self.segments.wait[s].iter().all(|&(v, n)| SHARED.slots[v].exits.load(sc) > n);
+            let left = self.segments.wait[s]
+                .iter()
+                .all(|&(v, n)| SHARED.slots[v].exits.load(sc) > n);
             if left && !held.iter().any(|&p| (lo..hi).contains(&p)) {
                 self.segments.state[s] = State::Free;
                 self.segments.score[s] = 0;

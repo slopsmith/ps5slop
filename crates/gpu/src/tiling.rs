@@ -42,27 +42,175 @@ const fn y(shift: u8, mask: u32) -> Term {
 }
 
 static STANDARD_64K: [&[Term]; 5] = [
-    &[x(0, 0x0f), x(5, 0x200), x(6, 0x800), x(7, 0x2000), x(8, 0x8000), y(4, 0x1f0), y(5, 0x400), y(6, 0x1000), y(7, 0x4000)],
-    &[x(1, 0x00e), x(4, 0x080), x(5, 0x200), x(6, 0x800), x(7, 0x2000), x(8, 0x8000), y(4, 0x070), y(5, 0x100), y(6, 0x400), y(7, 0x1000), y(8, 0x4000)],
-    &[x(2, 0x00c), x(5, 0x080), x(6, 0x200), x(7, 0x800), x(8, 0x2000), x(9, 0x8000), y(4, 0x070), y(5, 0x100), y(6, 0x400), y(7, 0x1000), y(8, 0x4000)],
-    &[x(3, 0x008), x(5, 0x0c0), x(6, 0x200), x(7, 0x800), x(8, 0x2000), x(9, 0x8000), y(4, 0x030), y(6, 0x100), y(7, 0x400), y(8, 0x1000), y(9, 0x4000)],
-    &[x(6, 0x0c0), x(7, 0x200), x(8, 0x800), x(9, 0x2000), x(10, 0x8000), y(4, 0x030), y(6, 0x100), y(7, 0x400), y(8, 0x1000), y(9, 0x4000)],
+    &[
+        x(0, 0x0f),
+        x(5, 0x200),
+        x(6, 0x800),
+        x(7, 0x2000),
+        x(8, 0x8000),
+        y(4, 0x1f0),
+        y(5, 0x400),
+        y(6, 0x1000),
+        y(7, 0x4000),
+    ],
+    &[
+        x(1, 0x00e),
+        x(4, 0x080),
+        x(5, 0x200),
+        x(6, 0x800),
+        x(7, 0x2000),
+        x(8, 0x8000),
+        y(4, 0x070),
+        y(5, 0x100),
+        y(6, 0x400),
+        y(7, 0x1000),
+        y(8, 0x4000),
+    ],
+    &[
+        x(2, 0x00c),
+        x(5, 0x080),
+        x(6, 0x200),
+        x(7, 0x800),
+        x(8, 0x2000),
+        x(9, 0x8000),
+        y(4, 0x070),
+        y(5, 0x100),
+        y(6, 0x400),
+        y(7, 0x1000),
+        y(8, 0x4000),
+    ],
+    &[
+        x(3, 0x008),
+        x(5, 0x0c0),
+        x(6, 0x200),
+        x(7, 0x800),
+        x(8, 0x2000),
+        x(9, 0x8000),
+        y(4, 0x030),
+        y(6, 0x100),
+        y(7, 0x400),
+        y(8, 0x1000),
+        y(9, 0x4000),
+    ],
+    &[
+        x(6, 0x0c0),
+        x(7, 0x200),
+        x(8, 0x800),
+        x(9, 0x2000),
+        x(10, 0x8000),
+        y(4, 0x030),
+        y(6, 0x100),
+        y(7, 0x400),
+        y(8, 0x1000),
+        y(9, 0x4000),
+    ],
 ];
 
 static STANDARD_4K: [&[Term]; 5] = [
-    &[x(0, 0x0f), x(5, 0x200), x(6, 0x800), y(4, 0x1f0), y(5, 0x400)],
-    &[x(1, 0x00e), x(4, 0x080), x(5, 0x200), x(6, 0x800), y(4, 0x070), y(5, 0x100), y(6, 0x400)],
-    &[x(2, 0x00c), x(5, 0x080), x(6, 0x200), x(7, 0x800), y(4, 0x070), y(5, 0x100), y(6, 0x400)],
-    &[x(3, 0x008), x(5, 0x0c0), x(6, 0x200), x(7, 0x800), y(4, 0x030), y(6, 0x100), y(7, 0x400)],
-    &[x(6, 0x0c0), x(7, 0x200), x(8, 0x800), y(4, 0x030), y(6, 0x100), y(7, 0x400)],
+    &[
+        x(0, 0x0f),
+        x(5, 0x200),
+        x(6, 0x800),
+        y(4, 0x1f0),
+        y(5, 0x400),
+    ],
+    &[
+        x(1, 0x00e),
+        x(4, 0x080),
+        x(5, 0x200),
+        x(6, 0x800),
+        y(4, 0x070),
+        y(5, 0x100),
+        y(6, 0x400),
+    ],
+    &[
+        x(2, 0x00c),
+        x(5, 0x080),
+        x(6, 0x200),
+        x(7, 0x800),
+        y(4, 0x070),
+        y(5, 0x100),
+        y(6, 0x400),
+    ],
+    &[
+        x(3, 0x008),
+        x(5, 0x0c0),
+        x(6, 0x200),
+        x(7, 0x800),
+        y(4, 0x030),
+        y(6, 0x100),
+        y(7, 0x400),
+    ],
+    &[
+        x(6, 0x0c0),
+        x(7, 0x200),
+        x(8, 0x800),
+        y(4, 0x030),
+        y(6, 0x100),
+        y(7, 0x400),
+    ],
 ];
 
 static RENDER_TARGET: [&[Term]; 5] = [
-    &[y(2, 0x008), y(4, 0x010), y(3, 0x0a0), y(5, 0xf00), y(6, 0x1000), y(7, 0x4000), x(0, 0x007), x(3, 0x040), x(5, 0x300), x(4, 0x400), x(6, 0x800), x(7, 0x2000), x(8, 0x8000)],
-    &[y(4, 0x070), y(5, 0xf00), y(8, 0x5000), x(1, 0x00e), x(4, 0x480), x(5, 0x300), x(6, 0x800), x(7, 0x2000), x(8, 0x8000)],
-    &[y(4, 0x070), y(5, 0xf00), y(9, 0x1000), y(8, 0x4000), x(2, 0x00c), x(5, 0x380), x(4, 0x400), x(6, 0x800), x(9, 0xa000)],
-    &[y(4, 0x010), y(6, 0x080), y(5, 0xf00), y(10, 0x5000), x(3, 0x008), x(4, 0x460), x(5, 0x300), x(6, 0x800), x(10, 0x2000), x(9, 0x8000)],
-    &[x(4, 0x410), x(5, 0x340), x(6, 0x800), x(11, 0xa000), y(5, 0xf20), y(6, 0x080), y(10, 0x1000), y(11, 0x4000)],
+    &[
+        y(2, 0x008),
+        y(4, 0x010),
+        y(3, 0x0a0),
+        y(5, 0xf00),
+        y(6, 0x1000),
+        y(7, 0x4000),
+        x(0, 0x007),
+        x(3, 0x040),
+        x(5, 0x300),
+        x(4, 0x400),
+        x(6, 0x800),
+        x(7, 0x2000),
+        x(8, 0x8000),
+    ],
+    &[
+        y(4, 0x070),
+        y(5, 0xf00),
+        y(8, 0x5000),
+        x(1, 0x00e),
+        x(4, 0x480),
+        x(5, 0x300),
+        x(6, 0x800),
+        x(7, 0x2000),
+        x(8, 0x8000),
+    ],
+    &[
+        y(4, 0x070),
+        y(5, 0xf00),
+        y(9, 0x1000),
+        y(8, 0x4000),
+        x(2, 0x00c),
+        x(5, 0x380),
+        x(4, 0x400),
+        x(6, 0x800),
+        x(9, 0xa000),
+    ],
+    &[
+        y(4, 0x010),
+        y(6, 0x080),
+        y(5, 0xf00),
+        y(10, 0x5000),
+        x(3, 0x008),
+        x(4, 0x460),
+        x(5, 0x300),
+        x(6, 0x800),
+        x(10, 0x2000),
+        x(9, 0x8000),
+    ],
+    &[
+        x(4, 0x410),
+        x(5, 0x340),
+        x(6, 0x800),
+        x(11, 0xa000),
+        y(5, 0xf20),
+        y(6, 0x080),
+        y(10, 0x1000),
+        y(11, 0x4000),
+    ],
 ];
 
 /// log2 of a 64 KiB thin block's width and height, by log2 of the element size.
@@ -139,10 +287,16 @@ impl Layout {
         let tail_max = 12;
         let first_tail = (0..levels)
             .find(|&l| {
-                self.width.div_ceil(1 << l) <= bw / 2 && self.height.div_ceil(1 << l) <= bh && levels - l <= tail_max
+                self.width.div_ceil(1 << l) <= bw / 2
+                    && self.height.div_ceil(1 << l) <= bh
+                    && levels - l <= tail_max
             })
             .unwrap_or(levels);
-        let mut offset = if first_tail < levels { self.block_bytes() } else { 0 };
+        let mut offset = if first_tail < levels {
+            self.block_bytes()
+        } else {
+            0
+        };
         for l in 1..first_tail {
             let pw = self.width.div_ceil(1 << l).max(1).next_multiple_of(bw) as u64;
             let ph = self.height.div_ceil(1 << l).max(1).next_multiple_of(bh) as u64;
@@ -167,7 +321,11 @@ impl Layout {
     }
 
     pub fn block_bytes(&self) -> u64 {
-        if self.mode == TileMode::Standard4K { 0x1000 } else { 0x10000 }
+        if self.mode == TileMode::Standard4K {
+            0x1000
+        } else {
+            0x10000
+        }
     }
 
     /// MSL for `ulong surface_offset(uint x, uint y, uint pitch)`, the same
@@ -201,10 +359,30 @@ mod tests {
     fn screentester_offset(px: u32, py: u32) -> u64 {
         let bit = |v: u32, b: u32| (v >> b) & 1;
         let mut o = 0u32;
-        for (xb, ob) in [(0, 2), (1, 3), (2, 7), (3, 8), (4, 9), (4, 13), (5, 11), (6, 10), (6, 15)] {
+        for (xb, ob) in [
+            (0, 2),
+            (1, 3),
+            (2, 7),
+            (3, 8),
+            (4, 9),
+            (4, 13),
+            (5, 11),
+            (6, 10),
+            (6, 15),
+        ] {
             o ^= bit(px, xb) << ob;
         }
-        for (yb, ob) in [(0, 4), (1, 5), (2, 6), (3, 8), (3, 12), (4, 9), (5, 10), (6, 11), (6, 14)] {
+        for (yb, ob) in [
+            (0, 4),
+            (1, 5),
+            (2, 6),
+            (3, 8),
+            (3, 12),
+            (4, 9),
+            (5, 10),
+            (6, 11),
+            (6, 14),
+        ] {
             o ^= bit(py, yb) << ob;
         }
         o as u64
@@ -223,7 +401,11 @@ mod tests {
 
     #[test]
     fn every_block_offset_is_used_once() {
-        for mode in [TileMode::Standard4K, TileMode::Standard64K, TileMode::RenderTarget] {
+        for mode in [
+            TileMode::Standard4K,
+            TileMode::Standard64K,
+            TileMode::RenderTarget,
+        ] {
             for bpe in [1, 2, 4, 8, 16] {
                 let l = Layout::new(mode, bpe, 256, 256).unwrap();
                 let (bw, bh) = Layout::block(mode, bpe);

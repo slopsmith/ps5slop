@@ -91,7 +91,11 @@ impl Kernel {
     /// The guest address of registered display buffer `index`.
     pub fn display_buffer(&self, index: i32) -> Option<u64> {
         let port = lock(&self.videoout.port);
-        port.buffers.get(usize::try_from(index).ok()?).copied().flatten().map(|(addr, _)| addr)
+        port.buffers
+            .get(usize::try_from(index).ok()?)
+            .copied()
+            .flatten()
+            .map(|(addr, _)| addr)
     }
 
     /// The buffer on screen, read from guest memory and untiled.
@@ -508,8 +512,15 @@ fn flip_status(env: &mut Env) -> Result<Outcome, CallError> {
     let start = env.kernel.videoout.start;
     let (count, arg, time, front) = {
         let port = lock(&env.kernel.videoout.port);
-        let time = port.last_flip.map_or(0, |t| t.duration_since(start).as_micros() as u64);
-        (port.flips, port.last_arg, time, port.front.map_or(-1, |i| i as i32))
+        let time = port
+            .last_flip
+            .map_or(0, |t| t.duration_since(start).as_micros() as u64);
+        (
+            port.flips,
+            port.last_arg,
+            time,
+            port.front.map_or(-1, |i| i as i32),
+        )
     };
     let mut b = [0u8; 0x40];
     b[0..8].copy_from_slice(&count.to_le_bytes());

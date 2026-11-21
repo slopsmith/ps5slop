@@ -28,34 +28,96 @@ static SIGNIN: AtomicU32 = AtomicU32::new(NONE);
 static SAVE: AtomicU32 = AtomicU32::new(NONE);
 
 const fn f(library: &'static str, name: &'static str, func: crate::HostFn) -> Function {
-    Function { library, name, func }
+    Function {
+        library,
+        name,
+        func,
+    }
 }
 
 pub static FUNCTIONS: &[Function] = &[
-    f("libSceMsgDialog.native", "sceMsgDialogInitialize", |_| set(&MSG, INITIALIZED)),
-    f("libSceMsgDialog.native", "sceMsgDialogTerminate", |_| set(&MSG, NONE)),
-    f("libSceMsgDialog.native", "sceMsgDialogOpen", msg_open),
-    f("libSceMsgDialog.native", "sceMsgDialogUpdateStatus", |_| status(&MSG)),
-    f("libSceMsgDialog.native", "sceMsgDialogGetStatus", |_| status(&MSG)),
-    f("libSceMsgDialog.native", "sceMsgDialogGetResult", msg_result),
-    f("libSceMsgDialog.native", "sceMsgDialogClose", |_| set(&MSG, FINISHED)),
-    f("libSceSigninDialog", "sceSigninDialogInitialize", |_| set(&SIGNIN, INITIALIZED)),
-    f("libSceSigninDialog", "sceSigninDialogTerminate", |_| set(&SIGNIN, NONE)),
-    f("libSceSigninDialog", "sceSigninDialogOpen", signin_open),
-    f("libSceSigninDialog", "sceSigninDialogUpdateStatus", |_| status(&SIGNIN)),
-    f("libSceSigninDialog", "sceSigninDialogGetStatus", |_| status(&SIGNIN)),
-    f("libSceSigninDialog", "sceSigninDialogGetResult", signin_result),
-    f("libSceSigninDialog", "sceSigninDialogClose", |_| set(&SIGNIN, FINISHED)),
-    f("libSceSaveDataDialog.native", "sceSaveDataDialogInitialize", |_| set(&SAVE, INITIALIZED)),
-    f("libSceSaveDataDialog.native", "sceSaveDataDialogTerminate", |_| set(&SAVE, NONE)),
-    f("libSceSaveDataDialog.native", "sceSaveDataDialogOpen", save_open),
-    f("libSceSaveDataDialog.native", "sceSaveDataDialogUpdateStatus", |_| status(&SAVE)),
-    f("libSceSaveDataDialog.native", "sceSaveDataDialogGetStatus", |_| status(&SAVE)),
-    f("libSceSaveDataDialog.native", "sceSaveDataDialogGetResult", |_| Ok(Outcome::Return(0))),
-    f("libSceSaveDataDialog.native", "sceSaveDataDialogClose", |_| set(&SAVE, FINISHED)),
-    f("libSceSaveDataDialog.native", "sceSaveDataDialogProgressBarSetValue", |_| {
-        Ok(Outcome::Return(0))
+    f("libSceMsgDialog.native", "sceMsgDialogInitialize", |_| {
+        set(&MSG, INITIALIZED)
     }),
+    f("libSceMsgDialog.native", "sceMsgDialogTerminate", |_| {
+        set(&MSG, NONE)
+    }),
+    f("libSceMsgDialog.native", "sceMsgDialogOpen", msg_open),
+    f("libSceMsgDialog.native", "sceMsgDialogUpdateStatus", |_| {
+        status(&MSG)
+    }),
+    f("libSceMsgDialog.native", "sceMsgDialogGetStatus", |_| {
+        status(&MSG)
+    }),
+    f(
+        "libSceMsgDialog.native",
+        "sceMsgDialogGetResult",
+        msg_result,
+    ),
+    f("libSceMsgDialog.native", "sceMsgDialogClose", |_| {
+        set(&MSG, FINISHED)
+    }),
+    f("libSceSigninDialog", "sceSigninDialogInitialize", |_| {
+        set(&SIGNIN, INITIALIZED)
+    }),
+    f("libSceSigninDialog", "sceSigninDialogTerminate", |_| {
+        set(&SIGNIN, NONE)
+    }),
+    f("libSceSigninDialog", "sceSigninDialogOpen", signin_open),
+    f("libSceSigninDialog", "sceSigninDialogUpdateStatus", |_| {
+        status(&SIGNIN)
+    }),
+    f("libSceSigninDialog", "sceSigninDialogGetStatus", |_| {
+        status(&SIGNIN)
+    }),
+    f(
+        "libSceSigninDialog",
+        "sceSigninDialogGetResult",
+        signin_result,
+    ),
+    f("libSceSigninDialog", "sceSigninDialogClose", |_| {
+        set(&SIGNIN, FINISHED)
+    }),
+    f(
+        "libSceSaveDataDialog.native",
+        "sceSaveDataDialogInitialize",
+        |_| set(&SAVE, INITIALIZED),
+    ),
+    f(
+        "libSceSaveDataDialog.native",
+        "sceSaveDataDialogTerminate",
+        |_| set(&SAVE, NONE),
+    ),
+    f(
+        "libSceSaveDataDialog.native",
+        "sceSaveDataDialogOpen",
+        save_open,
+    ),
+    f(
+        "libSceSaveDataDialog.native",
+        "sceSaveDataDialogUpdateStatus",
+        |_| status(&SAVE),
+    ),
+    f(
+        "libSceSaveDataDialog.native",
+        "sceSaveDataDialogGetStatus",
+        |_| status(&SAVE),
+    ),
+    f(
+        "libSceSaveDataDialog.native",
+        "sceSaveDataDialogGetResult",
+        |_| Ok(Outcome::Return(0)),
+    ),
+    f(
+        "libSceSaveDataDialog.native",
+        "sceSaveDataDialogClose",
+        |_| set(&SAVE, FINISHED),
+    ),
+    f(
+        "libSceSaveDataDialog.native",
+        "sceSaveDataDialogProgressBarSetValue",
+        |_| Ok(Outcome::Return(0)),
+    ),
 ];
 
 fn set(state: &AtomicU32, to: u32) -> Result<Outcome, CallError> {
@@ -114,6 +176,7 @@ fn signin_open(_: &mut Env) -> Result<Outcome, CallError> {
 /// `sceSigninDialogGetResult(result)`: the result comes first (layout
 /// unverified).
 fn signin_result(env: &mut Env) -> Result<Outcome, CallError> {
-    env.mem.write(env.arg(0), &RESULT_USER_CANCELED.to_le_bytes())?;
+    env.mem
+        .write(env.arg(0), &RESULT_USER_CANCELED.to_le_bytes())?;
     Ok(Outcome::Return(0))
 }

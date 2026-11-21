@@ -113,7 +113,10 @@ fn json_parse(env: &mut Env) -> Result<Outcome, CallError> {
     let size = (env.arg(2) as usize).min(256);
     let mut text = vec![0u8; size];
     if env.mem.read(env.arg(1), &mut text).is_ok() {
-        eprintln!("ps5slop: sce::Json::Parser::parse({:?})", String::from_utf8_lossy(&text));
+        eprintln!(
+            "ps5slop: sce::Json::Parser::parse({:?})",
+            String::from_utf8_lossy(&text)
+        );
     }
     Ok(Outcome::Return(0))
 }
@@ -506,7 +509,10 @@ pub static STUBS: &[Function] = &[
         "sceNpUniversalDataSystemDestroyEventPropertyObject",
     ),
     zero("libSceNpTrophy2", "sceNpTrophy2RegisterUnlockCallback"),
-    zero("libSceNpSessionSignaling", "sceNpSessionSignalingInitialize"),
+    zero(
+        "libSceNpSessionSignaling",
+        "sceNpSessionSignalingInitialize",
+    ),
     zero("libSceNpGameIntent", "sceNpGameIntentInitialize"),
     zero("libSceNpGameIntent", "sceNpGameIntentTerminate"),
     out_id::<0>("libSceNpTrophy2", "sceNpTrophy2CreateContext"),
@@ -526,15 +532,27 @@ pub static STUBS: &[Function] = &[
     zero("libSceVideoRecordingP", "sceVideoRecordingSetInfo"),
     zero("libSceGameLiveStreaming", "sceGameLiveStreamingInitialize"),
     zero("libSceGameLiveStreaming", "sceGameLiveStreamingTerminate"),
-    zero("libSceGameLiveStreaming", "sceGameLiveStreamingSetGuardAreas"),
-    zero("libSceGameLiveStreaming", "sceGameLiveStreamingEnableLiveStreaming"),
-    zero("libSceGameLiveStreaming", "sceGameLiveStreamingPermitLiveStreaming"),
+    zero(
+        "libSceGameLiveStreaming",
+        "sceGameLiveStreamingSetGuardAreas",
+    ),
+    zero(
+        "libSceGameLiveStreaming",
+        "sceGameLiveStreamingEnableLiveStreaming",
+    ),
+    zero(
+        "libSceGameLiveStreaming",
+        "sceGameLiveStreamingPermitLiveStreaming",
+    ),
     zero("libSceShare", "sceShareFeaturePermit"),
     zero("libSceShare", "sceShareFeatureProhibit"),
     zero("libSceShare", "sceShareTerminate"),
     zero("libSceSharePlay", "sceSharePlayInitialize"),
     zero("libSceSharePlay", "sceSharePlayTerminate"),
-    zero("libSceNpManager", "sceNpRegisterNpReachabilityStateCallback"),
+    zero(
+        "libSceNpManager",
+        "sceNpRegisterNpReachabilityStateCallback",
+    ),
     zero("libSceNpManager", "sceNpRegisterPremiumEventCallback"),
     zero("libSceNpManager", "sceNpUnregisterPremiumEventCallback"),
     zero("libSceNpManager", "sceNpAbortRequest"),
@@ -747,7 +765,9 @@ const ADDCONT_INFO_SIZE: u64 = 28;
 fn addcont_entitlement_list(env: &mut Env) -> Result<Outcome, CallError> {
     let (list, len, hits) = (env.arg(1), env.arg(2) as u32, env.arg(3));
     if hits == 0 || (list == 0 && len != 0) {
-        return Ok(Outcome::Return(crate::dmem::sce_error(crate::errno::EINVAL)));
+        return Ok(Outcome::Return(crate::dmem::sce_error(
+            crate::errno::EINVAL,
+        )));
     }
     let id = env.kernel.title_id.get().map(String::as_str);
     let labels = ADDCONT_ENTITLEMENTS

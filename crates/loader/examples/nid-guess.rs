@@ -15,9 +15,34 @@ const SUFFIX: [u8; 16] = [
     0x51, 0x8d, 0x64, 0xa6, 0x35, 0xde, 0xd8, 0xc1, 0xe6, 0xb0, 0x39, 0xb1, 0xc3, 0xe5, 0x52, 0x30,
 ];
 const VERBS: &[&str] = &[
-    "Get", "Set", "Create", "Delete", "Open", "Close", "Init", "Initialize", "Term", "Terminate",
-    "Is", "Add", "Remove", "Register", "Unregister", "Start", "Stop", "Read", "Write", "Map",
-    "Unmap", "Allocate", "Release", "Check", "Wait", "Query", "Load", "Unload",
+    "Get",
+    "Set",
+    "Create",
+    "Delete",
+    "Open",
+    "Close",
+    "Init",
+    "Initialize",
+    "Term",
+    "Terminate",
+    "Is",
+    "Add",
+    "Remove",
+    "Register",
+    "Unregister",
+    "Start",
+    "Stop",
+    "Read",
+    "Write",
+    "Map",
+    "Unmap",
+    "Allocate",
+    "Release",
+    "Check",
+    "Wait",
+    "Query",
+    "Load",
+    "Unload",
 ];
 
 struct Options {
@@ -75,7 +100,9 @@ fn own_names(root: &Path) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     let mut dirs = vec![root.join("crates/hle/src")];
     while let Some(dir) = dirs.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in entries.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -106,7 +133,11 @@ fn own_prefixes(names: &BTreeSet<String>) -> BTreeSet<String> {
             continue;
         }
         out.insert(format!("sce{}", parts[1]));
-        if let Some(v) = parts.iter().skip(2).position(|p| VERBS.contains(&p.as_str())) {
+        if let Some(v) = parts
+            .iter()
+            .skip(2)
+            .position(|p| VERBS.contains(&p.as_str()))
+        {
             out.insert(parts[..v + 2].concat());
         }
     }
@@ -114,7 +145,9 @@ fn own_prefixes(names: &BTreeSet<String>) -> BTreeSet<String> {
 }
 
 fn usage() -> ! {
-    eprintln!("usage: nid-guess [-p PREFIX] [-w FILE] [-s FILE] [-x SUFFIX] [-n N] [--own|--no-own] [-j N] NID...");
+    eprintln!(
+        "usage: nid-guess [-p PREFIX] [-w FILE] [-s FILE] [-x SUFFIX] [-n N] [--own|--no-own] [-j N] NID..."
+    );
     std::process::exit(2);
 }
 
@@ -177,7 +210,8 @@ fn main() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let names = own_names(&root);
         for n in &names {
-            o.words.extend(camel_parts(n).into_iter().filter(|p| p != "sce"));
+            o.words
+                .extend(camel_parts(n).into_iter().filter(|p| p != "sce"));
         }
         if o.prefixes.is_empty() {
             o.prefixes = own_prefixes(&names);
@@ -189,7 +223,9 @@ fn main() {
     let words: Vec<&[u8]> = o.words.iter().map(|w| w.as_bytes()).collect();
     let prefixes: Vec<&[u8]> = o.prefixes.iter().map(|p| p.as_bytes()).collect();
     let wanted: Vec<u64> = o.nids.iter().map(|n| n.1).collect();
-    let per_prefix: u128 = (1..=o.max_words as u32).map(|k| (words.len() as u128).pow(k)).sum();
+    let per_prefix: u128 = (1..=o.max_words as u32)
+        .map(|k| (words.len() as u128).pow(k))
+        .sum();
     let total = per_prefix * prefixes.len() as u128 * o.suffixes.len() as u128;
     let rate = 10_000_000 * o.jobs as u128;
     eprintln!(
@@ -231,7 +267,10 @@ fn main() {
                             for sfx in &o.suffixes {
                                 name.truncate(stem);
                                 name.extend_from_slice(sfx.as_bytes());
-                                let d = Sha1::new().chain_update(&name).chain_update(SUFFIX).finalize();
+                                let d = Sha1::new()
+                                    .chain_update(&name)
+                                    .chain_update(SUFFIX)
+                                    .finalize();
                                 let v = u64::from_le_bytes(d[..8].try_into().unwrap());
                                 if wanted.contains(&v) {
                                     let n = String::from_utf8_lossy(&name).into_owned();
@@ -261,7 +300,10 @@ fn main() {
             });
         }
     });
-    eprintln!("nid-guess: done in {:.1} s", started.elapsed().as_secs_f64());
+    eprintln!(
+        "nid-guess: done in {:.1} s",
+        started.elapsed().as_secs_f64()
+    );
     let found = found.into_inner().unwrap();
     for (nid, v) in &o.nids {
         if !found.iter().any(|f| f.0 == *v) {

@@ -4,8 +4,8 @@
 
 use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Set on a site that is the return address of a host function call, not
 /// the writing instruction itself.
@@ -123,7 +123,12 @@ pub fn log(lo: u64, hi: u64) -> (Vec<(u64, Site)>, Vec<Hit>, u64) {
     }
     let mut sites: Vec<_> = sites.into_iter().collect();
     sites.sort_by_key(|&(_, v)| std::cmp::Reverse(v.count));
-    let recent = s.recent.iter().filter(|h| h.addr < hi && lo < h.addr + h.len as u64).cloned().collect();
+    let recent = s
+        .recent
+        .iter()
+        .filter(|h| h.addr < hi && lo < h.addr + h.len as u64)
+        .cloned()
+        .collect();
     (sites, recent, s.total)
 }
 
@@ -135,10 +140,14 @@ pub(crate) fn note(addr: u64, data: &[u8]) {
     }
     let site = SITE.with(Cell::get);
     s.total += 1;
-    let e = s.sites.get_or_insert_with(HashMap::new).entry((site, addr >> 16)).or_insert(Site {
-        lowest: u64::MAX,
-        ..Site::default()
-    });
+    let e = s
+        .sites
+        .get_or_insert_with(HashMap::new)
+        .entry((site, addr >> 16))
+        .or_insert(Site {
+            lowest: u64::MAX,
+            ..Site::default()
+        });
     e.count += 1;
     e.bytes += data.len() as u64;
     e.lowest = e.lowest.min(addr);

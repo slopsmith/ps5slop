@@ -143,7 +143,9 @@ impl DirectMemory {
             for (&v, &(v_end, delta)) in mapped.iter() {
                 let (p, p_end) = (v.wrapping_add(delta), v_end.wrapping_add(delta));
                 if p < offset + len && p_end > offset {
-                    eprintln!("ps5slop: alias: {addr:#x}+{len:#x} maps direct {offset:#x}, already mapped at {v:#x}..{v_end:#x} (direct {p:#x}..{p_end:#x})");
+                    eprintln!(
+                        "ps5slop: alias: {addr:#x}+{len:#x} maps direct {offset:#x}, already mapped at {v:#x}..{v_end:#x} (direct {p:#x}..{p_end:#x})"
+                    );
                 }
             }
         }
@@ -304,7 +306,11 @@ pub fn report(kernel: &crate::Kernel) -> String {
         mib(heap_size)
     ));
     if let Some((resident, footprint)) = host_memory() {
-        out.push(format!("host process: {} resident, {} footprint", mib(resident), mib(footprint)));
+        out.push(format!(
+            "host process: {} resident, {} footprint",
+            mib(resident),
+            mib(footprint)
+        ));
     }
     let failures = lock(&kernel.dmem.failures);
     if !failures.is_empty() {
@@ -319,7 +325,11 @@ fn host_memory() -> Option<(u64, u64)> {
     let mut info = std::mem::MaybeUninit::<libc::rusage_info_v4>::zeroed();
     // SAFETY: RUSAGE_INFO_V4 fills a `rusage_info_v4`.
     let r = unsafe {
-        libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, info.as_mut_ptr().cast())
+        libc::proc_pid_rusage(
+            std::process::id() as i32,
+            libc::RUSAGE_INFO_V4,
+            info.as_mut_ptr().cast(),
+        )
     };
     // SAFETY: zero-initialised and filled by the call on success.
     let info = unsafe { info.assume_init() };
@@ -423,7 +433,11 @@ fn allocate_main(env: &mut Env) -> Result<Outcome, CallError> {
 fn release(env: &mut Env) -> Result<Outcome, CallError> {
     let (start, len) = (env.arg(0), env.arg(1));
     if !env.kernel.dmem.covers(start, len) {
-        failure(env, "release of unallocated direct memory", format_args!("{len:#x} bytes at {start:#x}"));
+        failure(
+            env,
+            "release of unallocated direct memory",
+            format_args!("{len:#x} bytes at {start:#x}"),
+        );
     }
     release_and_unmap(env, start, len);
     ret(0)
@@ -453,8 +467,14 @@ fn release_and_unmap(env: &Env, start: u64, len: u64) {
 /// `sceKernelMapDirectMemory(*addr, len, prot, flags, direct_start, align)`;
 /// GPU access is granted as CPU access.
 fn map(env: &mut Env) -> Result<Outcome, CallError> {
-    let (addr_at, len, prot, flags, offset, align) =
-        (env.arg(0), env.arg(1), env.arg(2), env.arg(3), env.arg(4), env.arg(5));
+    let (addr_at, len, prot, flags, offset, align) = (
+        env.arg(0),
+        env.arg(1),
+        env.arg(2),
+        env.arg(3),
+        env.arg(4),
+        env.arg(5),
+    );
     let wanted = env.mem.read_u64(addr_at)?;
     match map_direct(env, wanted, len, prot, flags, offset, align) {
         Ok(at) => {
@@ -471,33 +491,73 @@ fn gpu_as_cpu(prot: u64) -> Prot {
     Prot::new(read, write, prot & PROT_CPU_EXEC != 0)
 }
 
-fn map_direct(env: &Env, wanted: u64, len: u64, prot: u64, flags: u64, offset: u64, align: u64) -> Result<u64, i32> {
+fn map_direct(
+    env: &Env,
+    wanted: u64,
+    len: u64,
+    prot: u64,
+    flags: u64,
+    offset: u64,
+    align: u64,
+) -> Result<u64, i32> {
     if !valid(len, align) {
         return Err(errno::EINVAL);
     }
     let bits = prot;
     let prot = gpu_as_cpu(prot);
-    if flags & MAP_FIXED != 0 && std::env::var_os("PS5SLOP_TRACE_ALIAS").is_some() && len <= 0x10_0000 {
+    if flags & MAP_FIXED != 0
+        && std::env::var_os("PS5SLOP_TRACE_ALIAS").is_some()
+        && len <= 0x10_0000
+    {
         let mut old = vec![0u8; len as usize];
         if env.mem.read(wanted, &mut old).is_ok() {
-            let live = old.as_chunks::<8>().0.iter().filter(|q| **q != [0; 8] && **q != [0xff; 8]).count();
-            eprintln!("ps5slop: dremap: {wanted:#x}+{len:#x} over {live} qwords that are neither 0 nor all ones");
+            let live = old
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .filter(|q| **q != [0; 8] && **q != [0xff; 8])
+                .count();
+            eprintln!(
+                "ps5slop: dremap: {wanted:#x}+{len:#x} over {live} qwords that are neither 0 nor all ones"
+            );
         }
     }
     let physical = |fixed: bool| {
         if fixed {
-            env.mem.map_physical(wanted, len, prot, "direct memory", offset, DIRECT_MEMORY_SIZE).map(|()| wanted)
+            env.mem
+                .map_physical(
+                    wanted,
+                    len,
+                    prot,
+                    "direct memory",
+                    offset,
+                    DIRECT_MEMORY_SIZE,
+                )
+                .map(|()| wanted)
         } else {
-            env.mem.map_free_physical(wanted.max(MAP_AREA), len, align, prot, "direct memory", (offset, DIRECT_MEMORY_SIZE))
+            env.mem.map_free_physical(
+                wanted.max(MAP_AREA),
+                len,
+                align,
+                prot,
+                "direct memory",
+                (offset, DIRECT_MEMORY_SIZE),
+            )
         }
     };
     let fixed = flags & MAP_FIXED != 0;
     let mapped = match physical(fixed) {
-        Err(MapError::OutOfRange) if offset.saturating_add(len) > DIRECT_MEMORY_SIZE || !offset.is_multiple_of(PAGE_SIZE) => {
+        Err(MapError::OutOfRange)
+            if offset.saturating_add(len) > DIRECT_MEMORY_SIZE
+                || !offset.is_multiple_of(PAGE_SIZE) =>
+        {
             if fixed {
-                env.mem.map_over(wanted, len, prot, "direct memory").map(|()| wanted)
+                env.mem
+                    .map_over(wanted, len, prot, "direct memory")
+                    .map(|()| wanted)
             } else {
-                env.mem.map_free(wanted.max(MAP_AREA), len, align, prot, "direct memory")
+                env.mem
+                    .map_free(wanted.max(MAP_AREA), len, align, prot, "direct memory")
             }
         }
         r => r,
@@ -505,12 +565,22 @@ fn map_direct(env: &Env, wanted: u64, len: u64, prot: u64, flags: u64, offset: u
     let at = match mapped {
         Ok(at) => at,
         Err(e) => {
-            failure(env, "direct memory map failed", format_args!("{len:#x} bytes at {wanted:#x}, flags {flags:#x}, alignment {align:#x}: {e:?}"));
+            failure(
+                env,
+                "direct memory map failed",
+                format_args!(
+                    "{len:#x} bytes at {wanted:#x}, flags {flags:#x}, alignment {align:#x}: {e:?}"
+                ),
+            );
             return Err(errno::ENOMEM);
         }
     };
     if !env.kernel.dmem.covers(offset, len) {
-        failure(env, "map of unallocated direct memory", format_args!("{len:#x} bytes at {offset:#x} to {at:#x}"));
+        failure(
+            env,
+            "map of unallocated direct memory",
+            format_args!("{len:#x} bytes at {offset:#x} to {at:#x}"),
+        );
     }
     env.kernel.dmem.note_map(at, len, offset);
     env.kernel.dmem.note_prot(at, len, bits);
@@ -634,7 +704,11 @@ fn map_flexible(env: &mut Env) -> Result<Outcome, CallError> {
     let at = match mapped {
         Ok(at) => at,
         Err(e) => {
-            failure(env, "flexible memory map failed", format_args!("{len:#x} bytes at {wanted:#x}, flags {flags:#x}: {e:?}"));
+            failure(
+                env,
+                "flexible memory map failed",
+                format_args!("{len:#x} bytes at {wanted:#x}, flags {flags:#x}: {e:?}"),
+            );
             return ret(sce_error(errno::ENOMEM));
         }
     };
@@ -662,7 +736,13 @@ fn reserve(env: &mut Env) -> Result<Outcome, CallError> {
     let at = match reserved {
         Ok(at) => at,
         Err(e) => {
-            failure(env, "virtual range reservation failed", format_args!("{len:#x} bytes at {wanted:#x}, flags {flags:#x}, alignment {align:#x}: {e:?}"));
+            failure(
+                env,
+                "virtual range reservation failed",
+                format_args!(
+                    "{len:#x} bytes at {wanted:#x}, flags {flags:#x}, alignment {align:#x}: {e:?}"
+                ),
+            );
             return ret(sce_error(errno::ENOMEM));
         }
     };
@@ -696,8 +776,14 @@ fn virtual_query(env: &mut Env) -> Result<Outcome, CallError> {
         | (r.name.contains("stack") as u8) << 2
         | ((prot != 0) as u8) << 4;
     let dmem = &env.kernel.dmem;
-    let offset = direct.then(|| dmem.offset_at(r.start)).flatten().unwrap_or(0);
-    let kind = direct.then(|| dmem.query(offset, false)).flatten().map_or(0, |q| q.2);
+    let offset = direct
+        .then(|| dmem.offset_at(r.start))
+        .flatten()
+        .unwrap_or(0);
+    let kind = direct
+        .then(|| dmem.query(offset, false))
+        .flatten()
+        .map_or(0, |q| q.2);
     let mut b = [0u8; 72];
     b[0..8].copy_from_slice(&r.start.to_le_bytes());
     b[8..16].copy_from_slice(&r.end.to_le_bytes());
@@ -743,12 +829,19 @@ mod tests {
     #[test]
     fn allocations_respect_range_alignment_and_release() {
         let d = DirectMemory::default();
-        let a = d.allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x4000, 0).unwrap();
-        let b = d.allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x10000, 0).unwrap();
+        let a = d
+            .allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x4000, 0)
+            .unwrap();
+        let b = d
+            .allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x10000, 0)
+            .unwrap();
         assert_eq!((a, b), (0, 0x10000));
         assert_eq!(d.allocate(0, 0x8000, 0x8000, 0x4000, 0), None);
         d.release(a, 0x4000);
-        assert_eq!(d.allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x4000, 0), Some(0));
+        assert_eq!(
+            d.allocate(0, DIRECT_MEMORY_SIZE, 0x4000, 0x4000, 0),
+            Some(0)
+        );
     }
 
     #[test]
@@ -756,8 +849,14 @@ mod tests {
         let d = DirectMemory::default();
         assert_eq!(d.allocate(0, 1 << 30, 0x200_0000, 0x1_0000, 0), Some(0));
         d.release(0x4d_0000, 0x3_0000);
-        assert_eq!(d.allocate(0, 1 << 30, 0x1_0000, 0x1_0000, 0), Some(0x4d_0000));
-        assert_eq!(d.allocate(0, 1 << 30, 0x3_0000, 0x1_0000, 0), Some(0x200_0000));
+        assert_eq!(
+            d.allocate(0, 1 << 30, 0x1_0000, 0x1_0000, 0),
+            Some(0x4d_0000)
+        );
+        assert_eq!(
+            d.allocate(0, 1 << 30, 0x3_0000, 0x1_0000, 0),
+            Some(0x200_0000)
+        );
     }
 
     #[test]
@@ -805,7 +904,13 @@ mod tests {
         d.note_map(0x10_2000_0000, 0x1_0000, 0x80_0000);
         let mut hits = d.take_mappings_of(0x12_0000, 0x4_0000);
         hits.sort();
-        assert_eq!(hits, [(0x10_0002_0000, 0x10_0004_0000), (0x10_1000_0000, 0x10_1001_0000)]);
+        assert_eq!(
+            hits,
+            [
+                (0x10_0002_0000, 0x10_0004_0000),
+                (0x10_1000_0000, 0x10_1001_0000)
+            ]
+        );
         assert_eq!(d.offset_at(0x10_0001_0000), Some(0x11_0000));
         assert_eq!(d.offset_at(0x10_0002_0000), None);
         assert_eq!(d.offset_at(0x10_2000_0000), Some(0x80_0000));
@@ -814,8 +919,10 @@ mod tests {
     #[test]
     fn stats_count_allocated_bytes_and_the_largest_hole() {
         let d = DirectMemory::default();
-        d.allocate(0, DIRECT_MEMORY_SIZE, 0x1_0000, 0x4000, 0).unwrap();
-        d.allocate(0x10_0000, DIRECT_MEMORY_SIZE, 0x1_0000, 0x4000, 0).unwrap();
+        d.allocate(0, DIRECT_MEMORY_SIZE, 0x1_0000, 0x4000, 0)
+            .unwrap();
+        d.allocate(0x10_0000, DIRECT_MEMORY_SIZE, 0x1_0000, 0x4000, 0)
+            .unwrap();
         let s = d.stats();
         assert_eq!((s.allocated, s.allocations), (0x2_0000, 2));
         assert_eq!(s.free, DIRECT_MEMORY_SIZE - 0x2_0000);

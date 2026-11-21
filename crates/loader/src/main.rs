@@ -38,7 +38,11 @@ enum Command {
     },
     /// Writes the file bytes of segment `index` to `out`, for local analysis
     /// of a title's own code (see docs/legal.md).
-    Segment { file: PathBuf, index: usize, out: PathBuf },
+    Segment {
+        file: PathBuf,
+        index: usize,
+        out: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {

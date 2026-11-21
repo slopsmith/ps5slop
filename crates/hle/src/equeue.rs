@@ -211,13 +211,27 @@ const EVFILT_WRITE: i16 = -2;
 /// `sceKernelAdd{Read,Write}Event(queue, fd, size, udata)`: registered, but
 /// never triggered (no descriptor we provide becomes ready this way).
 fn add_fd_event(env: &Env, filter: i16) -> Result<Outcome, CallError> {
-    let ok = env.kernel.equeues.add(env.arg(0), env.arg(1) as u32 as u64, filter, env.arg(3));
-    Ok(Outcome::Return(if ok { 0 } else { sce_error(errno::EBADF) }))
+    let ok = env
+        .kernel
+        .equeues
+        .add(env.arg(0), env.arg(1) as u32 as u64, filter, env.arg(3));
+    Ok(Outcome::Return(if ok {
+        0
+    } else {
+        sce_error(errno::EBADF)
+    }))
 }
 
 fn delete_fd_event(env: &Env, filter: i16) -> Result<Outcome, CallError> {
-    let ok = env.kernel.equeues.remove(env.arg(0), env.arg(1) as u32 as u64, filter);
-    Ok(Outcome::Return(if ok { 0 } else { sce_error(errno::ENOENT) }))
+    let ok = env
+        .kernel
+        .equeues
+        .remove(env.arg(0), env.arg(1) as u32 as u64, filter);
+    Ok(Outcome::Return(if ok {
+        0
+    } else {
+        sce_error(errno::ENOENT)
+    }))
 }
 
 fn add_read_event(env: &mut Env) -> Result<Outcome, CallError> {

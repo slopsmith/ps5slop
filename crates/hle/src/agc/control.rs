@@ -245,18 +245,24 @@ fn ib_control(base: u32, cache_policy: u32, dwords: u32) -> u32 {
 /// policy, target, dwords)`: point a built INDIRECT_BUFFER somewhere else,
 /// keeping its chain bit (SharpEmu's observed ABI). GTA V calls the first.
 fn ib_patch_target(env: &mut Env) -> Result<Outcome, CallError> {
-    let (packet, policy, target, dwords) = (env.arg(0), env.arg(1) as u32, env.arg(2), env.arg(3) as u32);
+    let (packet, policy, target, dwords) =
+        (env.arg(0), env.arg(1) as u32, env.arg(2), env.arg(3) as u32);
     let Some(h) = header(env, packet)? else {
         return status(false);
     };
-    if policy > 3 || dwords > 0xF_FFFF || opcode(h) != IT_INDIRECT_BUFFER || (h >> 16) & 0x3FFF != 2 {
+    if policy > 3 || dwords > 0xF_FFFF || opcode(h) != IT_INDIRECT_BUFFER || (h >> 16) & 0x3FFF != 2
+    {
         return status(false);
     }
     let patched = (|| {
         let control = read_dword(env, packet + 12)?;
         write_dword(env, packet + 4, target as u32)?;
         write_dword(env, packet + 8, (target >> 32) as u32 & 0xFFFF)?;
-        write_dword(env, packet + 12, (control & !0x300F_FFFF) | ib_control(0, policy, dwords))
+        write_dword(
+            env,
+            packet + 12,
+            (control & !0x300F_FFFF) | ib_control(0, policy, dwords),
+        )
     })();
     match patched {
         Ok(()) => status(true),

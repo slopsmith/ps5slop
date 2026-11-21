@@ -471,7 +471,8 @@ impl Translator {
                 }
                 self.a.ldr_q(XA, CTX, ymm(src1, 0));
                 self.a.str_q(XA, CTX, ymm(i.reg, 0));
-                self.a.str(Width::H, A, CTX, ymm(i.reg, 0) + 2 * (i.imm as i32 & 7));
+                self.a
+                    .str(Width::H, A, CTX, ymm(i.reg, 0) + 2 * (i.imm as i32 & 7));
             }
             0x30e => {
                 for h in 0..halves {
@@ -998,7 +999,16 @@ impl Translator {
                     }
                     a.umov_b(B, XR, 0);
                     a.umov_b(T, XR, 8);
-                    a.logic_shift(Logic::Orr, false, Size::W, B, B, T, a64::Shift::Lsl, lanes / 2);
+                    a.logic_shift(
+                        Logic::Orr,
+                        false,
+                        Size::W,
+                        B,
+                        B,
+                        T,
+                        a64::Shift::Lsl,
+                        lanes / 2,
+                    );
                     if h == 0 {
                         a.mov(Size::W, A, B);
                     } else {
@@ -1043,7 +1053,8 @@ impl Translator {
                 a.dup_gen(size, XB, B);
                 for h in 0..halves {
                     self.a.ldr_q(XA, CTX, ymm(src1, h));
-                    self.a.vec3(true, op & 0xf0 != 0xe0, size, 0b01000, XR, XA, XB);
+                    self.a
+                        .vec3(true, op & 0xf0 != 0xe0, size, 0b01000, XR, XA, XB);
                     self.a.str_q(XR, CTX, ymm(i.reg, h));
                 }
             }
@@ -1444,7 +1455,15 @@ impl Translator {
         }
         if flags {
             a.cmp_imm(s, A, 0);
-            a.cset(Size::X, B, if i.ext() == 3 { a64::Cond::Eq } else { a64::Cond::Ne });
+            a.cset(
+                Size::X,
+                B,
+                if i.ext() == 3 {
+                    a64::Cond::Eq
+                } else {
+                    a64::Cond::Ne
+                },
+            );
             a.tst(s, T, T);
             a.mrs(super::U, a64::sysreg::NZCV);
             a.bfi(Size::X, super::U, B, 29, 1);

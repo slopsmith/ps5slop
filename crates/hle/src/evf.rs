@@ -54,7 +54,11 @@ const fn f(name: &'static str, func: crate::HostFn) -> Function {
 }
 
 fn ret(errno: i32) -> Result<Outcome, CallError> {
-    Ok(Outcome::Return(if errno == 0 { 0 } else { sce_error(errno) }))
+    Ok(Outcome::Return(if errno == 0 {
+        0
+    } else {
+        sce_error(errno)
+    }))
 }
 
 fn flag(env: &Env) -> Option<Arc<Flag>> {
@@ -271,6 +275,9 @@ mod tests {
         assert!(valid_mode(1, WAITMODE_AND));
         assert!(!valid_mode(1, WAITMODE_AND | WAITMODE_OR));
         assert!(!valid_mode(0, WAITMODE_OR));
-        assert!(!valid_mode(1, WAITMODE_OR | WAITMODE_CLEAR_ALL | WAITMODE_CLEAR_PAT));
+        assert!(!valid_mode(
+            1,
+            WAITMODE_OR | WAITMODE_CLEAR_ALL | WAITMODE_CLEAR_PAT
+        ));
     }
 }

@@ -100,7 +100,9 @@ fn valid_dir_name(name: &[u8]) -> bool {
     !name.is_empty()
         && name.len() <= DIR_NAME_MAX
         && name[0] != b'.'
-        && name.iter().all(|&c| c.is_ascii_graphic() && c != b'/' && c != b'\\')
+        && name
+            .iter()
+            .all(|&c| c.is_ascii_graphic() && c != b'/' && c != b'\\')
 }
 
 /// `sceSaveDataMount3(param, result)`.
@@ -355,7 +357,9 @@ fn param_file(env: &Env, at: u64, kind: u64) -> Result<Option<std::path::PathBuf
         return Ok(None);
     };
     let mounted = lock(&env.kernel.saves.mounted);
-    Ok(mounted[slot].as_ref().map(|m| m.host.join("sce_sys").join(format!("param{kind}.bin"))))
+    Ok(mounted[slot]
+        .as_ref()
+        .map(|m| m.host.join("sce_sys").join(format!("param{kind}.bin"))))
 }
 
 /// `sceSaveDataSetParam(mount_point, kind, buf, size)`: the bytes are kept
@@ -367,7 +371,11 @@ fn set_param(env: &mut Env) -> Result<Outcome, CallError> {
     };
     let mut data = vec![0u8; size];
     env.mem.read(buf, &mut data)?;
-    let written = file.parent().map(std::fs::create_dir_all).transpose().and_then(|_| std::fs::write(&file, &data));
+    let written = file
+        .parent()
+        .map(std::fs::create_dir_all)
+        .transpose()
+        .and_then(|_| std::fs::write(&file, &data));
     if written.is_err() {
         return Err(CallError::Abort("cannot write save data parameters"));
     }
@@ -377,7 +385,12 @@ fn set_param(env: &mut Env) -> Result<Outcome, CallError> {
 /// `sceSaveDataGetParam(mount_point, kind, buf, size, &got)`: what
 /// `SetParam` stored, zero-filled when there is none.
 fn get_param(env: &mut Env) -> Result<Outcome, CallError> {
-    let (kind, buf, size, got) = (env.arg(1), env.arg(2), env.arg(3).min(0x10000) as usize, env.arg(4));
+    let (kind, buf, size, got) = (
+        env.arg(1),
+        env.arg(2),
+        env.arg(3).min(0x10000) as usize,
+        env.arg(4),
+    );
     let Some(file) = param_file(env, env.arg(0), kind)? else {
         return ret(ERROR_NOT_MOUNTED);
     };
@@ -403,7 +416,9 @@ fn icon_file(env: &Env, at: u64) -> Result<Option<std::path::PathBuf>, CallError
         return Ok(None);
     };
     let mounted = lock(&env.kernel.saves.mounted);
-    Ok(mounted[slot].as_ref().map(|m| m.host.join("sce_sys").join("icon0.png")))
+    Ok(mounted[slot]
+        .as_ref()
+        .map(|m| m.host.join("sce_sys").join("icon0.png")))
 }
 
 /// `sceSaveDataSaveIcon(mount_point, icon)`.
@@ -414,7 +429,8 @@ fn save_icon(env: &mut Env) -> Result<Outcome, CallError> {
     let icon = env.arg(1);
     let size = env.mem.read_u64(icon + ICON_DATA_SIZE)?.min(16 << 20) as usize;
     let mut data = vec![0u8; size];
-    env.mem.read(env.mem.read_u64(icon + ICON_BUF)?, &mut data)?;
+    env.mem
+        .read(env.mem.read_u64(icon + ICON_BUF)?, &mut data)?;
     let _ = file.parent().map(std::fs::create_dir_all);
     std::fs::write(file, data).map_err(|_| CallError::Abort("cannot write a save icon"))?;
     ret(0)
@@ -447,15 +463,17 @@ fn load_icon(env: &mut Env) -> Result<Outcome, CallError> {
     let icon = env.arg(1);
     data.truncate(env.mem.read_u64(icon + ICON_BUF_SIZE)? as usize);
     env.mem.write(env.mem.read_u64(icon + ICON_BUF)?, &data)?;
-    env.mem.write_u64(icon + ICON_DATA_SIZE, data.len() as u64)?;
+    env.mem
+        .write_u64(icon + ICON_DATA_SIZE, data.len() as u64)?;
     ret(0)
 }
 
 /// `sceSaveDataDelete(del)`: removes an unmounted save folder.
 fn delete(env: &mut Env) -> Result<Outcome, CallError> {
-    let name = env
-        .mem
-        .read_cstr(env.mem.read_u64(env.arg(0) + DELETE_DIR_NAME)?, DIR_NAME_MAX + 1)?;
+    let name = env.mem.read_cstr(
+        env.mem.read_u64(env.arg(0) + DELETE_DIR_NAME)?,
+        DIR_NAME_MAX + 1,
+    )?;
     if !valid_dir_name(&name) {
         return ret(ERROR_PARAMETER);
     }
@@ -463,7 +481,11 @@ fn delete(env: &mut Env) -> Result<Outcome, CallError> {
     let Some(root) = env.kernel.vfs.saves.clone() else {
         return ret(ERROR_NOT_FOUND);
     };
-    if lock(&env.kernel.saves.mounted).iter().flatten().any(|m| m.name == name) {
+    if lock(&env.kernel.saves.mounted)
+        .iter()
+        .flatten()
+        .any(|m| m.name == name)
+    {
         return ret(ERROR_BUSY);
     }
     match std::fs::remove_dir_all(root.join(&name)) {

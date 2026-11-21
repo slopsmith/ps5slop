@@ -92,10 +92,12 @@ fn return_addresses(mem: &Memory, mut rbp: u64) -> Vec<String> {
         let (Ok(next), Ok(ret)) = (mem.read_u64(rbp), mem.read_u64(rbp + 8)) else {
             break;
         };
-        out.push(match regions.iter().find(|r| (r.start..r.end).contains(&ret)) {
-            Some(r) => format!("{ret:#x} ({}+{:#x})", r.name, ret - r.start),
-            None => format!("{ret:#x}"),
-        });
+        out.push(
+            match regions.iter().find(|r| (r.start..r.end).contains(&ret)) {
+                Some(r) => format!("{ret:#x} ({}+{:#x})", r.name, ret - r.start),
+                None => format!("{ret:#x}"),
+            },
+        );
         if next <= rbp {
             break;
         }
@@ -391,7 +393,11 @@ impl Kernel {
             ("memcpy", jit::Native::Memmove),
             ("memmove", jit::Native::Memmove),
         ];
-        let natives = if std::env::var_os("PS5SLOP_JIT_NO_NATIVES").is_some() { &natives[..0] } else { &natives[..] };
+        let natives = if std::env::var_os("PS5SLOP_JIT_NO_NATIVES").is_some() {
+            &natives[..0]
+        } else {
+            &natives[..]
+        };
         for &(name, native) in natives {
             if let Some(addr) = self.hle.bound(crate::libc::LIBRARY, name) {
                 jit::set_native(addr, native);
@@ -425,7 +431,9 @@ impl Kernel {
     pub(crate) fn execute(&self, cpu: &mut Cpu, mem: &Memory) -> Exit {
         if self.jit.load(Ordering::Relaxed) {
             let tcb = cpu.fs_base;
-            jit::run(cpu, mem, &|| self.has_exited() || self.exception_pending(tcb))
+            jit::run(cpu, mem, &|| {
+                self.has_exited() || self.exception_pending(tcb)
+            })
         } else {
             jit::interpret(cpu, mem, SLICE)
         }
@@ -555,14 +563,17 @@ impl Kernel {
                         kernel: self,
                         thread,
                     };
-                    let args = TRACING.load(Ordering::Relaxed).then(|| {
-                        [RDI, RSI, RDX, RCX, R8, R9].map(|r| env.cpu.regs[r])
-                    });
+                    let args = TRACING
+                        .load(Ordering::Relaxed)
+                        .then(|| [RDI, RSI, RDX, RCX, R8, R9].map(|r| env.cpu.regs[r]));
                     let started = jit::profile::start();
                     let outcome = self.hle.call(addr, &mut env);
                     jit::profile::add_host(addr, started);
                     if let Some(a) = args {
-                        let name = self.hle.describe(addr).unwrap_or_else(|| format!("{addr:#x}"));
+                        let name = self
+                            .hle
+                            .describe(addr)
+                            .unwrap_or_else(|| format!("{addr:#x}"));
                         let mut log = CALL_LOG.lock().unwrap_or_else(|e| e.into_inner());
                         if let Some((w, filter)) = log.as_mut()
                             && call_matches(filter, &name, caller)
@@ -616,12 +627,19 @@ impl Kernel {
                     }
                     let frames = return_addresses(&mem, cpu.regs[RBP]);
                     if !frames.is_empty() {
-                        eprintln!("ps5slop: return addresses by frame pointer: {}", frames.join(" "));
+                        eprintln!(
+                            "ps5slop: return addresses by frame pointer: {}",
+                            frames.join(" ")
+                        );
                     }
                     let recent = jit::recent_blocks();
                     if std::env::var_os("PS5SLOP_JIT_TRACE").is_some() && !recent.is_empty() {
                         let list: Vec<String> = recent.iter().map(|r| format!("{r:#x}")).collect();
-                        note = Some(format!("{}; blocks before: {}", note.unwrap_or_default(), list.join(" ")));
+                        note = Some(format!(
+                            "{}; blocks before: {}",
+                            note.unwrap_or_default(),
+                            list.join(" ")
+                        ));
                     }
                     if std::env::var_os("PS5SLOP_HOLD_ON_FAULT").is_some() {
                         eprintln!(

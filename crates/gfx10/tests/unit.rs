@@ -11,18 +11,29 @@ fn text(words: &[u32]) -> String {
 fn prints_llvm_syntax() {
     assert_eq!(text(&[0x7E00_0000]), "v_nop");
     assert_eq!(text(&[0x7E02_0302]), "v_mov_b32_e32 v1, v2");
-    assert_eq!(text(&[0xD541_0001, 0x0412_0702]), "v_mad_f32 v1, v2, v3, v4");
+    assert_eq!(
+        text(&[0xD541_0001, 0x0412_0702]),
+        "v_mad_f32 v1, v2, v3, v4"
+    );
     assert_eq!(text(&[0xBF8C_3F70]), "s_waitcnt vmcnt(0)");
-    assert_eq!(text(&[0xF800_180F, 0x0403_0201]), "exp mrt0 v1, v2, v3, v4 done vm");
+    assert_eq!(
+        text(&[0xF800_180F, 0x0403_0201]),
+        "exp mrt0 v1, v2, v3, v4 done vm"
+    );
 }
 
 #[cfg(target_os = "macos")]
 fn compile(msl: &str) {
     use objc2_foundation::NSString;
     use objc2_metal::{MTLCreateSystemDefaultDevice, MTLDevice};
-    let Some(device) = MTLCreateSystemDefaultDevice() else { return };
+    let Some(device) = MTLCreateSystemDefaultDevice() else {
+        return;
+    };
     if let Err(e) = device.newLibraryWithSource_options_error(&NSString::from_str(msl), None) {
-        panic!("Metal rejected the MSL: {}\n{msl}", e.localizedDescription());
+        panic!(
+            "Metal rejected the MSL: {}\n{msl}",
+            e.localizedDescription()
+        );
     }
 }
 
@@ -84,8 +95,16 @@ fn textured_pixel_shader_binds_user_sgpr_descriptors() {
     assert_eq!(
         t.resources,
         vec![
-            Resource::Texture { slot: 0, source: Source::UserSgpr(0), kind: TextureKind::Tex2d, access: Access::Sample },
-            Resource::Sampler { slot: 0, source: Source::UserSgpr(8) },
+            Resource::Texture {
+                slot: 0,
+                source: Source::UserSgpr(0),
+                kind: TextureKind::Tex2d,
+                access: Access::Sample
+            },
+            Resource::Sampler {
+                slot: 0,
+                source: Source::UserSgpr(8)
+            },
         ]
     );
     assert!(t.msl.contains("[[user(locn0), center_perspective]]"));
@@ -119,7 +138,10 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
     })
     .unwrap();
     assert_eq!(t.msl.matches("[[user(locn0)").count(), 1);
-    assert!(t.msl.contains("PsIn in = { raw.pos, raw.front, raw.a0, raw.a0 };"));
+    assert!(
+        t.msl
+            .contains("PsIn in = { raw.pos, raw.front, raw.a0, raw.a0 };")
+    );
 }
 
 fn compute(code: &[u32], user_sgprs: u32, rsrc2: u32) -> gfx10::Translated {
@@ -144,16 +166,22 @@ fn compute(code: &[u32], user_sgprs: u32, rsrc2: u32) -> gfx10::Translated {
 #[test]
 fn compute_program_uses_group_ids_lds_barriers_stores_and_atomics() {
     let code = [
-        0xD746_0002, 0x0401_0C04, // v_lshl_add_u32 v2, s4, 6, v0
+        0xD746_0002,
+        0x0401_0C04, // v_lshl_add_u32 v2, s4, 6, v0
         0x3406_0082, // v_lshlrev_b32_e32 v3, 2, v0
-        0xD834_0000, 0x0000_0203, // ds_write_b32 v3, v2
+        0xD834_0000,
+        0x0000_0203, // ds_write_b32 v3, v2
         0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
         0xBF8A_0000, // s_barrier
-        0xD8D8_0004, 0x0400_0003, // ds_read_b32 v4, v3 offset:4
-        0xD800_0000, 0x0000_0203, // ds_add_u32 v3, v2
+        0xD8D8_0004,
+        0x0400_0003, // ds_read_b32 v4, v3 offset:4
+        0xD800_0000,
+        0x0000_0203, // ds_add_u32 v3, v2
         0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
-        0xE070_2000, 0x8000_0402, // buffer_store_dword v4, v2, s[0:3], 0 idxen
-        0xE0C8_6000, 0x8000_0402, // buffer_atomic_add v4, v2, s[0:3], 0 idxen glc
+        0xE070_2000,
+        0x8000_0402, // buffer_store_dword v4, v2, s[0:3], 0 idxen
+        0xE0C8_6000,
+        0x8000_0402, // buffer_atomic_add v4, v2, s[0:3], 0 idxen glc
         0xBF81_0000, // s_endpgm
     ];
     // Four user SGPRs, TGID_X_EN, LDS_SIZE of 2 (1 KiB).
@@ -170,29 +198,47 @@ fn compute_program_uses_group_ids_lds_barriers_stores_and_atomics() {
 #[test]
 fn descriptors_loaded_through_user_pointers_become_memory_sources() {
     let code = [
-        0xF404_0101, 0xFA00_0010, // s_load_dwordx2 s[4:5], s[2:3], 0x10
+        0xF404_0101,
+        0xFA00_0010, // s_load_dwordx2 s[4:5], s[2:3], 0x10
         0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
-        0xF40C_0202, 0xFA00_0020, // s_load_dwordx8 s[8:15], s[4:5], 0x20
-        0xF408_0401, 0xFA00_0000, // s_load_dwordx4 s[16:19], s[2:3], 0x0
+        0xF40C_0202,
+        0xFA00_0020, // s_load_dwordx8 s[8:15], s[4:5], 0x20
+        0xF408_0401,
+        0xFA00_0000, // s_load_dwordx4 s[16:19], s[2:3], 0x0
         0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
-        0xF080_0F08, 0x0082_0200, // image_sample v[2:5], v[0:1], s[8:15], s[16:19] dmask:0xf dim:2D
-        0xF038_0308, 0x0002_0600, // image_get_resinfo v[6:7], v0, s[8:15] dmask:0x3 dim:2D
+        0xF080_0F08,
+        0x0082_0200, // image_sample v[2:5], v[0:1], s[8:15], s[16:19] dmask:0xf dim:2D
+        0xF038_0308,
+        0x0002_0600, // image_get_resinfo v[6:7], v0, s[8:15] dmask:0x3 dim:2D
         0xBF8C_3F70, // s_waitcnt vmcnt(0)
-        0xF800_180F, 0x0504_0302, // exp mrt0 v2, v3, v4, v5 done vm
+        0xF800_180F,
+        0x0504_0302, // exp mrt0 v2, v3, v4, v5 done vm
         0xBF81_0000, // s_endpgm
     ];
     let t = pixel(&code, 4);
-    let table = Source::Memory { pointer: Box::new(Source::UserSgpr(2)), offset: 0x10 };
+    let table = Source::Memory {
+        pointer: Box::new(Source::UserSgpr(2)),
+        offset: 0x10,
+    };
     assert_eq!(
         t.resources,
         vec![
             Resource::Texture {
                 slot: 0,
-                source: Source::Memory { pointer: Box::new(table), offset: 0x20 },
+                source: Source::Memory {
+                    pointer: Box::new(table),
+                    offset: 0x20
+                },
                 kind: TextureKind::Tex2d,
                 access: Access::Sample,
             },
-            Resource::Sampler { slot: 0, source: Source::Memory { pointer: Box::new(Source::UserSgpr(2)), offset: 0 } },
+            Resource::Sampler {
+                slot: 0,
+                source: Source::Memory {
+                    pointer: Box::new(Source::UserSgpr(2)),
+                    offset: 0
+                }
+            },
         ]
     );
     assert!(t.msl.contains("get_width"));
@@ -202,9 +248,11 @@ fn descriptors_loaded_through_user_pointers_become_memory_sources() {
 #[test]
 fn image_load_and_store_bind_read_and_write_textures() {
     let code = [
-        0xF000_0F08, 0x0000_0200, // image_load v[2:5], v[0:1], s[0:7] dmask:0xf dim:2D
+        0xF000_0F08,
+        0x0000_0200, // image_load v[2:5], v[0:1], s[0:7] dmask:0xf dim:2D
         0xBF8C_3F70, // s_waitcnt vmcnt(0)
-        0xF020_0F08, 0x0002_0200, // image_store v[2:5], v[0:1], s[8:15] dmask:0xf dim:2D
+        0xF020_0F08,
+        0x0002_0200, // image_store v[2:5], v[0:1], s[8:15] dmask:0xf dim:2D
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&code, 16, 16 << 1);
@@ -224,16 +272,25 @@ fn image_load_and_store_bind_read_and_write_textures() {
 #[test]
 fn carry_arithmetic_quad_broadcasts_and_cube_ops_translate() {
     let code = [
-        0xD70F_6A02, 0x0002_0300, // v_add_co_u32 v2, vcc, v0, v1
-        0xD528_0403, 0x01AA_0300, // v_add_co_ci_u32_e64 v3, s[4:5], v0, v1, vcc
+        0xD70F_6A02,
+        0x0002_0300, // v_add_co_u32 v2, vcc, v0, v1
+        0xD528_0403,
+        0x01AA_0300, // v_add_co_ci_u32_e64 v3, s[4:5], v0, v1, vcc
         0x5208_0300, // v_sub_co_ci_u32_e32 v4, vcc, v0, v1, vcc
-        0x7E0A_02FA, 0xFF08_5500, // v_mov_b32_dpp v5, v0 quad_perm:[1,1,1,1] row_mask:0xf bank_mask:0xf bound_ctrl:1
-        0x080C_02FA, 0xFF00_AA00, // v_sub_f32_dpp v6, v0, v1 quad_perm:[2,2,2,2] row_mask:0xf bank_mask:0xf
-        0xD547_0007, 0x040A_0300, // v_cubema_f32 v7, v0, v1, v2
-        0xD544_0008, 0x040A_0300, // v_cubeid_f32 v8, v0, v1, v2
-        0xD558_0009, 0x040A_0300, // v_med3_i32 v9, v0, v1, v2
-        0xD56C_000A, 0x0002_0300, // v_mul_hi_i32 v10, v0, v1
-        0xF800_180F, 0x0504_0302, // exp mrt0 v2, v3, v4, v5 done vm
+        0x7E0A_02FA,
+        0xFF08_5500, // v_mov_b32_dpp v5, v0 quad_perm:[1,1,1,1] row_mask:0xf bank_mask:0xf bound_ctrl:1
+        0x080C_02FA,
+        0xFF00_AA00, // v_sub_f32_dpp v6, v0, v1 quad_perm:[2,2,2,2] row_mask:0xf bank_mask:0xf
+        0xD547_0007,
+        0x040A_0300, // v_cubema_f32 v7, v0, v1, v2
+        0xD544_0008,
+        0x040A_0300, // v_cubeid_f32 v8, v0, v1, v2
+        0xD558_0009,
+        0x040A_0300, // v_med3_i32 v9, v0, v1, v2
+        0xD56C_000A,
+        0x0002_0300, // v_mul_hi_i32 v10, v0, v1
+        0xF800_180F,
+        0x0504_0302, // exp mrt0 v2, v3, v4, v5 done vm
         0xBF81_0000, // s_endpgm
     ];
     let t = pixel(&code, 0);
@@ -246,9 +303,11 @@ fn carry_arithmetic_quad_broadcasts_and_cube_ops_translate() {
 #[test]
 fn gather_from_a_texture_array() {
     let code = [
-        0xF11C_0128, 0x0040_0200, // image_gather4_lz v[2:5], v[0:2], s[0:7], s[8:11] dmask:0x1 dim:2D_ARRAY
+        0xF11C_0128,
+        0x0040_0200, // image_gather4_lz v[2:5], v[0:2], s[0:7], s[8:11] dmask:0x1 dim:2D_ARRAY
         0xBF8C_3F70, // s_waitcnt vmcnt(0)
-        0xF800_180F, 0x0504_0302, // exp mrt0 v2, v3, v4, v5 done vm
+        0xF800_180F,
+        0x0504_0302, // exp mrt0 v2, v3, v4, v5 done vm
         0xBF81_0000, // s_endpgm
     ];
     let t = pixel(&code, 12);
@@ -260,7 +319,8 @@ fn gather_from_a_texture_array() {
 #[test]
 fn integer_colour_formats_export_integers() {
     let code = [
-        0xF800_180F, 0x0302_0100, // exp mrt0 v0, v1, v2, v3 done vm
+        0xF800_180F,
+        0x0302_0100, // exp mrt0 v0, v1, v2, v3 done vm
         0xBF81_0000, // s_endpgm
     ];
     let mut req = Request {
@@ -290,9 +350,11 @@ fn integer_colour_formats_export_integers() {
 #[test]
 fn integer_texture_slots_read_and_write_integers() {
     let code = [
-        0xF000_0F08, 0x0000_0200, // image_load v[2:5], v[0:1], s[0:7] dmask:0xf dim:2D
+        0xF000_0F08,
+        0x0000_0200, // image_load v[2:5], v[0:1], s[0:7] dmask:0xf dim:2D
         0xBF8C_3F70, // s_waitcnt vmcnt(0)
-        0xF020_0F08, 0x0002_0200, // image_store v[2:5], v[0:1], s[8:15] dmask:0xf dim:2D
+        0xF020_0F08,
+        0x0002_0200, // image_store v[2:5], v[0:1], s[8:15] dmask:0xf dim:2D
         0xBF81_0000, // s_endpgm
     ];
     let request = |uint_textures, sint_textures| Request {
@@ -321,11 +383,28 @@ fn integer_texture_slots_read_and_write_integers() {
 #[test]
 fn version_1_captures_still_load() {
     let code = [0xBF81_0000u32];
-    let mut words = vec![u32::from_le_bytes(*b"g10c"), 1, 2, 0, 0, 0, 0, 0, 0, 64, 1, 1, 0];
+    let mut words = vec![
+        u32::from_le_bytes(*b"g10c"),
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        64,
+        1,
+        1,
+        0,
+    ];
     words.extend_from_slice(&code);
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
     let c = gfx10::capture::Capture::from_bytes(&bytes).unwrap();
-    assert_eq!((c.threads, c.uint_textures, c.code.as_slice()), ([64, 1, 1], 0, &code[..]));
+    assert_eq!(
+        (c.threads, c.uint_textures, c.code.as_slice()),
+        ([64, 1, 1], 0, &code[..])
+    );
     let again = gfx10::capture::Capture::from_bytes(&c.to_bytes()).unwrap();
     assert_eq!((again.threads, again.code), (c.threads, c.code));
 }
@@ -347,14 +426,20 @@ fn sdwa_writes_to_a_word_keep_or_clear_the_rest() {
     let t = pixel(&code, 2);
     assert!(t.msl.contains("switch"), "{}", t.msl);
     compile(&t.msl);
-    assert!(t.msl.contains("v1 = ((sdwa_old2 & ~(0xffffu << 16u)) | ((v1 & 0xffffu) << 16u));"), "{}", t.msl);
+    assert!(
+        t.msl
+            .contains("v1 = ((sdwa_old2 & ~(0xffffu << 16u)) | ((v1 & 0xffffu) << 16u));"),
+        "{}",
+        t.msl
+    );
     assert!(t.msl.contains("v2 = ((v2 & 0xffu) << 8u);"), "{}", t.msl);
 }
 
 #[test]
 fn gds_appends_count_through_the_bound_global_data_share() {
     let code = [
-        0xD8FA_0008, 0x0100_0000, // ds_append v1 offset:8 gds
+        0xD8FA_0008,
+        0x0100_0000, // ds_append v1 offset:8 gds
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&code, 0, 0);
@@ -393,7 +478,8 @@ fn getpc_gives_the_address_of_the_next_instruction() {
 #[test]
 fn sixty_four_bit_integer_ops_compile() {
     let code = [
-        0xD576_0402, 0x040A_0300, // v_mad_u64_u32 v[2:3], s[4:5], v0, v1, v[2:3]
+        0xD576_0402,
+        0x040A_0300, // v_mad_u64_u32 v[2:3], s[4:5], v0, v1, v[2:3]
         0x7DC8_0902, // v_cmp_gt_u64_e32 vcc, v[2:3], v[4:5]
         0x9282_0504, // s_bfm_b64 s[2:3], s4, s5
         0xBE82_1D04, // s_bitset1_b32 s2, s4
@@ -405,8 +491,10 @@ fn sixty_four_bit_integer_ops_compile() {
 #[test]
 fn typed_buffer_stores_and_d16_image_stores_pack_their_data() {
     let code = [
-        0xE014_2000, 0x8000_0200, // buffer_store_format_xy v[2:3], v0, s[0:3], 0 idxen
-        0xF020_0308, 0x8002_0102, // image_store v1, v[2:3], s[8:15] dmask:0x3 dim:SQ_RSRC_IMG_2D d16
+        0xE014_2000,
+        0x8000_0200, // buffer_store_format_xy v[2:3], v0, s[0:3], 0 idxen
+        0xF020_0308,
+        0x8002_0102, // image_store v1, v[2:3], s[8:15] dmask:0x3 dim:SQ_RSRC_IMG_2D d16
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&code, 16, 16 << 1);
@@ -418,7 +506,8 @@ fn typed_buffer_stores_and_d16_image_stores_pack_their_data() {
 #[test]
 fn depth_compare_samples_read_the_compare_function_from_the_sampler() {
     let code = [
-        0xF0BC_0108, 0x0082_0102, // image_sample_c_lz v1, v[2:4], s[8:15], s[16:19] dmask:0x1
+        0xF0BC_0108,
+        0x0082_0102, // image_sample_c_lz v1, v[2:4], s[8:15], s[16:19] dmask:0x1
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&code, 20, 20 << 1);
@@ -429,7 +518,8 @@ fn depth_compare_samples_read_the_compare_function_from_the_sampler() {
 #[test]
 fn quad_permutations_shuffle_within_the_quad() {
     let code = [
-        0x7E02_02FA, 0xFF00_B100, // v_mov_b32_dpp v1, v0 quad_perm:[1,0,3,2]
+        0x7E02_02FA,
+        0xFF00_B100, // v_mov_b32_dpp v1, v0 quad_perm:[1,0,3,2]
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&code, 0, 0);
@@ -439,59 +529,98 @@ fn quad_permutations_shuffle_within_the_quad() {
 
 #[test]
 fn sampler_adjust_samples_decode_as_their_base_form() {
-    assert_eq!(text(&[0xF080_0109, 0x00C0_0904]), text(&[0xF080_0108, 0x00C0_0904]));
-    assert_eq!(text(&[0xF0A0_0109, 0x00C0_0904]), text(&[0xF0A0_0108, 0x00C0_0904]));
+    assert_eq!(
+        text(&[0xF080_0109, 0x00C0_0904]),
+        text(&[0xF080_0108, 0x00C0_0904])
+    );
+    assert_eq!(
+        text(&[0xF0A0_0109, 0x00C0_0904]),
+        text(&[0xF0A0_0108, 0x00C0_0904])
+    );
 }
 
 #[test]
 fn samplers_from_indexed_buffer_loads_and_constants_resolve() {
     let code = [
         0x8F6A_8402, // s_lshl_b32 vcc_lo, s2, 4
-        0xF428_0202, 0xD400_0000, // s_buffer_load_dwordx4 s[8:11], s[4:7], vcc_lo
-        0xBE8E_04FF, 0x0650_0000, // s_mov_b64 s[14:15], 0x6500000
+        0xF428_0202,
+        0xD400_0000, // s_buffer_load_dwordx4 s[8:11], s[4:7], vcc_lo
+        0xBE8E_04FF,
+        0x0650_0000, // s_mov_b64 s[14:15], 0x6500000
         0xB00C_0092, // s_movk_i32 s12, 0x92
         0x920D_8C8C, // s_bfm_b32 s13, 12, 12
         0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
-        0xF080_0F08, 0x0044_0000, // image_sample v[0:3], v[0:1], s[16:23], s[8:11] dmask:0xf dim:2D
-        0xF080_0F08, 0x0064_0400, // image_sample v[4:7], v[0:1], s[16:23], s[12:15] dmask:0xf dim:2D
+        0xF080_0F08,
+        0x0044_0000, // image_sample v[0:3], v[0:1], s[16:23], s[8:11] dmask:0xf dim:2D
+        0xF080_0F08,
+        0x0064_0400, // image_sample v[4:7], v[0:1], s[16:23], s[12:15] dmask:0xf dim:2D
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&code, 24, 24 << 1);
-    let buffer = Source::Buffer { buffer: Box::new(Source::UserSgpr(4)), offset: 0, index: Some((Box::new(Source::UserSgpr(2)), 4)) };
-    assert!(t.resources.contains(&Resource::Sampler { slot: 0, source: buffer }));
+    let buffer = Source::Buffer {
+        buffer: Box::new(Source::UserSgpr(4)),
+        offset: 0,
+        index: Some((Box::new(Source::UserSgpr(2)), 4)),
+    };
+    assert!(t.resources.contains(&Resource::Sampler {
+        slot: 0,
+        source: buffer
+    }));
     let constant = Source::Constant(vec![0x92, 0xFF_F000, 0x650_0000, 0]);
-    assert!(t.resources.contains(&Resource::Sampler { slot: 1, source: constant }));
+    assert!(t.resources.contains(&Resource::Sampler {
+        slot: 1,
+        source: constant
+    }));
     compile(&t.msl);
 }
 
 #[test]
 fn samplers_indexed_by_a_buffer_dword_resolve() {
     let code = [
-        0xF420_1A82, 0xFA00_0000, // s_buffer_load_dword vcc_lo, s[4:7], null
+        0xF420_1A82,
+        0xFA00_0000, // s_buffer_load_dword vcc_lo, s[4:7], null
         0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
         0x8F6A_846A, // s_lshl_b32 vcc_lo, vcc_lo, 4
-        0xF428_0202, 0xD400_0000, // s_buffer_load_dwordx4 s[8:11], s[4:7], vcc_lo
+        0xF428_0202,
+        0xD400_0000, // s_buffer_load_dwordx4 s[8:11], s[4:7], vcc_lo
         0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
-        0xF080_0F08, 0x0044_0000, // image_sample v[0:3], v[0:1], s[16:23], s[8:11] dmask:0xf dim:2D
+        0xF080_0F08,
+        0x0044_0000, // image_sample v[0:3], v[0:1], s[16:23], s[8:11] dmask:0xf dim:2D
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&code, 24, 24 << 1);
-    let dword = Source::Buffer { buffer: Box::new(Source::UserSgpr(4)), offset: 0, index: None };
-    let buffer = Source::Buffer { buffer: Box::new(Source::UserSgpr(4)), offset: 0, index: Some((Box::new(dword), 4)) };
-    assert!(t.resources.contains(&Resource::Sampler { slot: 0, source: buffer }));
+    let dword = Source::Buffer {
+        buffer: Box::new(Source::UserSgpr(4)),
+        offset: 0,
+        index: None,
+    };
+    let buffer = Source::Buffer {
+        buffer: Box::new(Source::UserSgpr(4)),
+        offset: 0,
+        index: Some((Box::new(dword), 4)),
+    };
+    assert!(t.resources.contains(&Resource::Sampler {
+        slot: 0,
+        source: buffer
+    }));
     compile(&t.msl);
 }
 
 #[test]
 fn flat_and_global_loads_read_guest_memory() {
     let code = [
-        0xDC20_0000, 0x007D_0001, // flat_load_ubyte v0, v[1:2]
-        0xDC30_8010, 0x0300_0004, // global_load_dword v3, v4, s[0:1] offset:16
+        0xDC20_0000,
+        0x007D_0001, // flat_load_ubyte v0, v[1:2]
+        0xDC30_8010,
+        0x0300_0004, // global_load_dword v3, v4, s[0:1] offset:16
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&code, 2, 2 << 1);
     assert!(t.guest_memory);
-    assert!(t.msl.contains("flat_load_ubyte(mem, goff(mem_base, (ulong(v1) | (ulong(v2) << 32))"));
+    assert!(
+        t.msl
+            .contains("flat_load_ubyte(mem, goff(mem_base, (ulong(v1) | (ulong(v2) << 32))")
+    );
     assert!(t.msl.contains("flat_load_raw(mem, goff(mem_base, ((ulong(s0) | (ulong(s1) << 32)) + ulong(v4)) + ulong(long(16))"));
     assert!(t.msl.contains("constant Win& mem_base [[buffer(28)]]"));
     compile(&t.msl);
@@ -500,18 +629,33 @@ fn flat_and_global_loads_read_guest_memory() {
 #[test]
 fn typed_buffer_loads_take_the_instruction_format_and_fma_mix_reads_halves() {
     let code = [
-        0xEA6B_2000, 0x8000_0200, // tbuffer_load_format_xyzw v[2:5], v0, s[0:3], 0 format:[BUF_FMT_32_32_32_32_FLOAT] idxen
-        0xCC20_4006, 0x0C12_0702, // v_fma_mix_f32 v6, v2, v3, v4 op_sel_hi:[1,0,1]
-        0xCC21_C807, 0x5BCA_0702, // v_fma_mixlo_f16 v7, v2, -v3, 1.0 op_sel:[1,0,0] op_sel_hi:[1,1,1] clamp
-        0xCC22_0107, 0x1412_0702, // v_fma_mixhi_f16 v7, |v2|, v3, v4 op_sel_hi:[0,1,0]
-        0xE078_2000, 0x8000_0400, // buffer_store_dwordx4 v[4:7], v0, s[0:3], 0 idxen
+        0xEA6B_2000,
+        0x8000_0200, // tbuffer_load_format_xyzw v[2:5], v0, s[0:3], 0 format:[BUF_FMT_32_32_32_32_FLOAT] idxen
+        0xCC20_4006,
+        0x0C12_0702, // v_fma_mix_f32 v6, v2, v3, v4 op_sel_hi:[1,0,1]
+        0xCC21_C807,
+        0x5BCA_0702, // v_fma_mixlo_f16 v7, v2, -v3, 1.0 op_sel:[1,0,0] op_sel_hi:[1,1,1] clamp
+        0xCC22_0107,
+        0x1412_0702, // v_fma_mixhi_f16 v7, |v2|, v3, v4 op_sel_hi:[0,1,0]
+        0xE078_2000,
+        0x8000_0400, // buffer_store_dwordx4 v[4:7], v0, s[0:3], 0 idxen
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&code, 4, 4 << 1);
     assert!(t.msl.contains(&format!("& ~0x7f000u) | {}u)", 77 << 12)));
-    assert!(t.msl.contains("fma(float(as_type<half2>(v2).x), F(v3), float(as_type<half2>(v4).x))"));
-    assert!(t.msl.contains("saturate(fma(float(as_type<half2>(v2).y), (-float(as_type<half2>(v3).x)), F("));
-    assert!(t.msl.contains("fma(fabs(F(v2)), float(as_type<half2>(v3).x), F(v4))"));
+    assert!(
+        t.msl
+            .contains("fma(float(as_type<half2>(v2).x), F(v3), float(as_type<half2>(v4).x))")
+    );
+    assert!(
+        t.msl.contains(
+            "saturate(fma(float(as_type<half2>(v2).y), (-float(as_type<half2>(v3).x)), F("
+        )
+    );
+    assert!(
+        t.msl
+            .contains("fma(fabs(F(v2)), float(as_type<half2>(v3).x), F(v4))")
+    );
     compile(&t.msl);
 }
 
@@ -524,7 +668,8 @@ fn indexed_vgpr_moves_switch_over_every_vgpr() {
         0x7E0C_8904, // v_movrelsd_b32_e32 v6, v4
         0x7E0C_9104, // v_movrelsd_2_b32_e32 v6, v4
         0x7E0C_D104, // v_swaprel_b32 v6, v4
-        0xF800_180F, 0x0302_0100, // exp mrt0 v0, v1, v2, v3 done vm
+        0xF800_180F,
+        0x0302_0100, // exp mrt0 v0, v1, v2, v3 done vm
         0xBF81_0000, // s_endpgm
     ];
     let t = pixel(&code, 1);
@@ -553,14 +698,21 @@ fn wave32_saveexec_xad_class_addtid_and_image_atomics() {
     let code = [
         0xBE82_3C03, // s_and_saveexec_b32 s2, s3
         0xBE82_4403, // s_andn1_saveexec_b32 s2, s3
-        0xD745_0001, 0x0412_0702, // v_xad_u32 v1, v2, v3, v4
+        0xD745_0001,
+        0x0412_0702, // v_xad_u32 v1, v2, v3, v4
         0x7D10_0501, // v_cmp_class_f32_e32 vcc, v1, v2
-        0xD488_0004, 0x0001_0701, // v_cmp_class_f32_e64 s[4:5], v1, 3
-        0xDAC0_0010, 0x0000_0000, // ds_write_addtid_b32 v0 offset:16
-        0xDAC4_0010, 0x0100_0000, // ds_read_addtid_b32 v1 offset:16
-        0xF044_2108, 0x0002_0104, // image_atomic_add v1, v[4:5], s[8:15] dmask:0x1 dim:2D glc
-        0xF03C_0108, 0x0002_0204, // image_atomic_swap v2, v[4:5], s[8:15] dmask:0x1 dim:2D
-        0xF040_2308, 0x0002_0204, // image_atomic_cmpswap v[2:3], v[4:5], s[8:15] dmask:0x3 dim:2D glc
+        0xD488_0004,
+        0x0001_0701, // v_cmp_class_f32_e64 s[4:5], v1, 3
+        0xDAC0_0010,
+        0x0000_0000, // ds_write_addtid_b32 v0 offset:16
+        0xDAC4_0010,
+        0x0100_0000, // ds_read_addtid_b32 v1 offset:16
+        0xF044_2108,
+        0x0002_0104, // image_atomic_add v1, v[4:5], s[8:15] dmask:0x1 dim:2D glc
+        0xF03C_0108,
+        0x0002_0204, // image_atomic_swap v2, v[4:5], s[8:15] dmask:0x1 dim:2D
+        0xF040_2308,
+        0x0002_0204, // image_atomic_cmpswap v[2:3], v[4:5], s[8:15] dmask:0x3 dim:2D glc
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&code, 16, 16 << 1);
@@ -568,27 +720,49 @@ fn wave32_saveexec_xad_class_addtid_and_image_atomics() {
     assert!(t.msl.contains("uint n = ~s3 & old;"));
     assert!(t.msl.contains("(v2 ^ v3) + v4"));
     assert!(t.msl.contains("fclass(F(v1), v2)"));
-    assert!(t.msl.contains("4u * ((lid.x + lid.y * 64u + lid.z * 64u) & 63u)"));
+    assert!(
+        t.msl
+            .contains("4u * ((lid.x + lid.y * 64u + lid.z * 64u) & 63u)")
+    );
     assert!(t.msl.contains("texture2d<uint, access::read_write> t0"));
-    assert!(t.msl.contains("t0.atomic_fetch_add(uint2(v4, v5), uint4(v1)); v1 = (r.x);"));
+    assert!(
+        t.msl
+            .contains("t0.atomic_fetch_add(uint2(v4, v5), uint4(v1)); v1 = (r.x);")
+    );
     assert!(t.msl.contains("atomic_compare_exchange_weak"));
-    assert!(matches!(t.resources[0], Resource::Texture { access: Access::Atomic, .. }));
+    assert!(matches!(
+        t.resources[0],
+        Resource::Texture {
+            access: Access::Atomic,
+            ..
+        }
+    ));
     compile(&t.msl);
 }
 
 #[test]
 fn row_dpp_permlanes_readlane_and_bpermute_use_simd_shuffles() {
     let code = [
-        0x3814_14FA, 0xFF01_110A, // v_or_b32_dpp v10, v10, v10 row_shr:1 row_mask:0xf bank_mask:0xf
-        0x7E02_02FA, 0xFF09_4002, // v_mov_b32_dpp v1, v2 row_mirror row_mask:0xf bank_mask:0xf bound_ctrl:1
-        0x7E02_02FA, 0x3F01_6302, // v_mov_b32_dpp v1, v2 row_xmask:3 row_mask:0x3 bank_mask:0xf
-        0x0602_06FA, 0x5F00_B102, // v_add_f32_dpp v1, v2, v3 quad_perm:[1,0,3,2] row_mask:0x5 bank_mask:0xf
-        0x7E02_02E9, 0x0539_7702, // v_mov_b32_dpp v1, v2 dpp8:[7,6,5,4,3,2,1,0]
-        0xD778_0009, 0x0305_830A, // v_permlanex16_b32 v9, v10, -1, -1
-        0xD777_0009, 0x0008_030A, // v_permlane16_b32 v9, v10, s1, s2
-        0xD760_0000, 0x0001_3F0A, // v_readlane_b32 s0, v10, 31
-        0xDACC_0004, 0x0100_0302, // ds_bpermute_b32 v1, v2, v3 offset:4
-        0xF800_180F, 0x0302_0100, // exp mrt0 v0, v1, v2, v3 done vm
+        0x3814_14FA,
+        0xFF01_110A, // v_or_b32_dpp v10, v10, v10 row_shr:1 row_mask:0xf bank_mask:0xf
+        0x7E02_02FA,
+        0xFF09_4002, // v_mov_b32_dpp v1, v2 row_mirror row_mask:0xf bank_mask:0xf bound_ctrl:1
+        0x7E02_02FA,
+        0x3F01_6302, // v_mov_b32_dpp v1, v2 row_xmask:3 row_mask:0x3 bank_mask:0xf
+        0x0602_06FA,
+        0x5F00_B102, // v_add_f32_dpp v1, v2, v3 quad_perm:[1,0,3,2] row_mask:0x5 bank_mask:0xf
+        0x7E02_02E9,
+        0x0539_7702, // v_mov_b32_dpp v1, v2 dpp8:[7,6,5,4,3,2,1,0]
+        0xD778_0009,
+        0x0305_830A, // v_permlanex16_b32 v9, v10, -1, -1
+        0xD777_0009,
+        0x0008_030A, // v_permlane16_b32 v9, v10, s1, s2
+        0xD760_0000,
+        0x0001_3F0A, // v_readlane_b32 s0, v10, 31
+        0xDACC_0004,
+        0x0100_0302, // ds_bpermute_b32 v1, v2, v3 offset:4
+        0xF800_180F,
+        0x0302_0100, // exp mrt0 v0, v1, v2, v3 done vm
         0xBF81_0000, // s_endpgm
     ];
     let t = pixel(&code, 3);
@@ -598,7 +772,10 @@ fn row_dpp_permlanes_readlane_and_bpermute_use_simd_shuffles() {
     assert!(t.msl.contains("if (!dpp_in) dpp0 = 0u;"));
     assert!(t.msl.contains("((slane & 16u) ^ 16u)"));
     assert!(t.msl.contains("s0 = simd_broadcast(v10, ushort(31));"));
-    assert!(t.msl.contains("simd_shuffle(v3, ushort(((v2 + 4u) >> 2) & 31u))"));
+    assert!(
+        t.msl
+            .contains("simd_shuffle(v3, ushort(((v2 + 4u) >> 2) & 31u))")
+    );
     compile(&t.msl);
 }
 
@@ -608,12 +785,15 @@ fn pixel_loops_give_up_after_too_many_branches_back() {
         0x7E00_0200, // v_mov_b32 v0, s0
         0xBF84_FFFE, // s_cbranch_scc0 -2 (to 0)
         0x7E02_0201, // v_mov_b32 v1, s1
-        0xF800_180F, 0x0302_0100, // exp mrt0 v0, v1, v2, v3 done vm
+        0xF800_180F,
+        0x0302_0100, // exp mrt0 v0, v1, v2, v3 done vm
         0xBF81_0000, // s_endpgm
     ];
     let t = pixel(&code, 2);
     let limit = gfx10::translate::MAX_BACK_BRANCHES;
-    assert!(t.msl.contains(&format!("if (++back > {limit}u) {{ discard_fragment(); return o; }} pc = 0; continue;")));
+    assert!(t.msl.contains(&format!(
+        "if (++back > {limit}u) {{ discard_fragment(); return o; }} pc = 0; continue;"
+    )));
     compile(&t.msl);
 }
 
@@ -626,7 +806,10 @@ fn compute_loops_give_up_alone_or_together_at_a_barrier() {
     ];
     let t = compute(&looping, 1, 0);
     assert!(t.loop_guard);
-    assert!(t.msl.contains("if (guard_stop(guard, ++back)) { return; } pc = 0; continue;"));
+    assert!(
+        t.msl
+            .contains("if (guard_stop(guard, ++back)) { return; } pc = 0; continue;")
+    );
     assert!(t.msl.contains("device atomic_uint* guard [[buffer(25)]]"));
     compile(&t.msl);
     let with_barrier = [
@@ -636,8 +819,13 @@ fn compute_loops_give_up_alone_or_together_at_a_barrier() {
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&with_barrier, 1, 0);
-    assert!(t.msl.contains("guard_leave(guard, ++back, bail_at, tg_bail)"));
-    assert!(t.msl.contains("bool leave = tg_bail; threadgroup_barrier(mem_flags::mem_threadgroup); if (leave) return;"));
+    assert!(
+        t.msl
+            .contains("guard_leave(guard, ++back, bail_at, tg_bail)")
+    );
+    assert!(t.msl.contains(
+        "bool leave = tg_bail; threadgroup_barrier(mem_flags::mem_threadgroup); if (leave) return;"
+    ));
     compile(&t.msl);
     let straight = [0x7E00_0200, 0xBF81_0000];
     let t = compute(&straight, 1, 0);

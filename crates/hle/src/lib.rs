@@ -13,12 +13,12 @@ use memory::{Fault, MapError, Memory, PAGE_SIZE, Prot};
 use x86::Cpu;
 use x86::cpu::reg::*;
 
-mod agc;
 mod acm;
+mod agc;
 mod ajm;
-mod avplayer;
 mod ampr;
 mod audio;
+mod avplayer;
 mod dialog;
 mod dmem;
 mod equeue;
@@ -765,7 +765,13 @@ mod tests {
         let mem = kernel.memory();
         mem.write(0x20_0000, &entries.concat()).unwrap();
         let args = [0x20_0000, entries.len() as u64, 0x20_0800];
-        let r = call_in(&kernel, "libkernel", "sceKernelBatchMap", cpu.fs_base, &args);
+        let r = call_in(
+            &kernel,
+            "libkernel",
+            "sceKernelBatchMap",
+            cpu.fs_base,
+            &args,
+        );
         let mut done = [0u8; 4];
         mem.read(0x20_0800, &mut done).unwrap();
         (kernel, r, i32::from_le_bytes(done))
@@ -1057,11 +1063,24 @@ mod tests {
         hle.stub_by_name("libSceGnmDriver", "sceGnmSetVsShader");
         let (k, cpu, _) = guest(hle);
         let buffer = 0x20_0000;
-        call_in(&k, "libSceGnmDriver", "sceGnmSetVsShader", cpu.fs_base, &[buffer, 0x1d, 0, 0]);
+        call_in(
+            &k,
+            "libSceGnmDriver",
+            "sceGnmSetVsShader",
+            cpu.fs_base,
+            &[buffer, 0x1d, 0, 0],
+        );
         let mut header = [0u8; 4];
         k.memory().read(buffer, &mut header).unwrap();
         let header = u32::from_le_bytes(header);
-        assert_eq!((header >> 30, (header >> 16 & 0x3FFF) + 2, header >> 8 & 0xFF), (3, 0x1d, 0x10));
+        assert_eq!(
+            (
+                header >> 30,
+                (header >> 16 & 0x3FFF) + 2,
+                header >> 8 & 0xFF
+            ),
+            (3, 0x1d, 0x10)
+        );
     }
 
     #[test]

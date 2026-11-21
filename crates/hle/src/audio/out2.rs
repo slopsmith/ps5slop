@@ -74,7 +74,10 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceAudioOut2GetSpeakerArrayMemorySize", speaker_array_size),
     f("sceAudioOut2SpeakerArrayCreate", speaker_array_create),
     f("sceAudioOut2SpeakerArrayDestroy", ok),
-    f("sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients", ambisonics_coefficients),
+    f(
+        "sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients",
+        ambisonics_coefficients,
+    ),
 ];
 
 const PORT_STATE_SIZE: usize = 0x40;
@@ -130,8 +133,16 @@ fn depth_and_grain(env: &Env, at: u64) -> Result<(u32, u32), CallError> {
     let depth = read_u32(env, at + 0x0C)?;
     let grain = read_u32(env, at + 0x10)?;
     Ok((
-        if (1..=32).contains(&depth) { depth } else { DEFAULT_QUEUE_DEPTH },
-        if (64..=0x4000).contains(&grain) { grain } else { DEFAULT_GRAIN },
+        if (1..=32).contains(&depth) {
+            depth
+        } else {
+            DEFAULT_QUEUE_DEPTH
+        },
+        if (64..=0x4000).contains(&grain) {
+            grain
+        } else {
+            DEFAULT_GRAIN
+        },
     ))
 }
 
@@ -161,7 +172,13 @@ fn context_create(env: &mut Env) -> Result<Outcome, CallError> {
     audio.start_device();
     let queue = audio.new_queue();
     let wav = audio.open_wav(queue);
-    let handle = env.kernel.audio.out2.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+    let handle = env
+        .kernel
+        .audio
+        .out2
+        .next_id
+        .fetch_add(1, Ordering::Relaxed)
+        + 1;
     lock(&audio.out2.contexts).insert(
         handle,
         Context {
@@ -196,7 +213,13 @@ fn user_create(env: &mut Env) -> Result<Outcome, CallError> {
     if user == -1 {
         return ret(ERROR_INVALID_USER);
     }
-    let handle = env.kernel.audio.out2.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+    let handle = env
+        .kernel
+        .audio
+        .out2
+        .next_id
+        .fetch_add(1, Ordering::Relaxed)
+        + 1;
     env.mem.write_u64(out, handle)?;
     ret(0)
 }
@@ -276,7 +299,11 @@ const SPEAKER_ARRAY_MAX: u32 = 32;
 const SPEAKER_ARRAY_DEFAULT: u32 = 8;
 
 fn speaker_count(n: u32) -> u32 {
-    if (1..=SPEAKER_ARRAY_MAX).contains(&n) { n } else { SPEAKER_ARRAY_DEFAULT }
+    if (1..=SPEAKER_ARRAY_MAX).contains(&n) {
+        n
+    } else {
+        SPEAKER_ARRAY_DEFAULT
+    }
 }
 
 fn speaker_array_bytes(speakers: u32) -> u64 {
@@ -365,7 +392,10 @@ fn port_set_attributes(env: &mut Env) -> Result<Outcome, CallError> {
 fn mix(env: &Env, handle: u64, grain: usize) -> Result<Vec<f32>, CallError> {
     let mut sum = vec![0.0f32; grain * 2];
     let mut ports = lock(&env.kernel.audio.out2.ports);
-    for p in ports.values_mut().filter(|p| p.context == handle && p.pcm != 0) {
+    for p in ports
+        .values_mut()
+        .filter(|p| p.context == handle && p.pcm != 0)
+    {
         let bytes = if p.float { 4 } else { 2 };
         let mut raw = vec![0u8; grain * p.channels * bytes];
         env.mem.read(p.pcm, &mut raw)?;

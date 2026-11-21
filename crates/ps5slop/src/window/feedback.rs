@@ -8,8 +8,7 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{AnyThread, msg_send};
 use objc2_core_haptics::{
-    CHHapticEngine, CHHapticEvent,
-    CHHapticEventParameter, CHHapticEventParameterIDHapticIntensity,
+    CHHapticEngine, CHHapticEvent, CHHapticEventParameter, CHHapticEventParameterIDHapticIntensity,
     CHHapticEventParameterIDHapticSharpness, CHHapticEventTypeHapticContinuous, CHHapticPattern,
     CHHapticPatternPlayer, CHHapticTimeImmediate,
 };
@@ -131,7 +130,11 @@ unsafe fn describe(c: &GCController) -> String {
         names.sort();
         format!("haptics at {}", names.join(", "))
     });
-    let light = if unsafe { c.light() }.is_some() { "light bar" } else { "no light bar" };
+    let light = if unsafe { c.light() }.is_some() {
+        "light bar"
+    } else {
+        "no light bar"
+    };
     format!("{vendor} ({category}), {haptics}, {light}")
 }
 
@@ -157,7 +160,11 @@ impl Rumble {
 }
 
 impl Motor {
-    unsafe fn new(haptics: &GCDeviceHaptics, at: &GCHapticsLocality, sharpness: f32) -> Option<Self> {
+    unsafe fn new(
+        haptics: &GCDeviceHaptics,
+        at: &GCHapticsLocality,
+        sharpness: f32,
+    ) -> Option<Self> {
         let engine: Option<Retained<CHHapticEngine>> =
             unsafe { msg_send![haptics, createEngineWithLocality: at] };
         let Some(engine) = engine else {
@@ -165,7 +172,10 @@ impl Motor {
             return None;
         };
         if let Err(e) = unsafe { engine.startAndReturnError() } {
-            eprintln!("ps5slop: controller: haptics at {at}: {}", e.localizedDescription());
+            eprintln!(
+                "ps5slop: controller: haptics at {at}: {}",
+                e.localizedDescription()
+            );
             return None;
         }
         Some(Self {
@@ -221,7 +231,10 @@ impl Motor {
                 })
         };
         if let Err(e) = r {
-            eprintln!("ps5slop: controller: vibration: {}", e.localizedDescription());
+            eprintln!(
+                "ps5slop: controller: vibration: {}",
+                e.localizedDescription()
+            );
             *slot = None;
         }
     }
@@ -237,9 +250,18 @@ impl Motor {
 }
 
 unsafe fn light(c: &GCController, [r, g, b]: [u8; 3]) {
-    let Some(l) = (unsafe { c.light() }) else { return };
+    let Some(l) = (unsafe { c.light() }) else {
+        return;
+    };
     let v = |x: u8| x as f32 / 255.0;
-    unsafe { l.setColor(&GCColor::initWithRed_green_blue(GCColor::alloc(), v(r), v(g), v(b))) };
+    unsafe {
+        l.setColor(&GCColor::initWithRed_green_blue(
+            GCColor::alloc(),
+            v(r),
+            v(g),
+            v(b),
+        ))
+    };
 }
 
 unsafe fn triggers(c: &GCController, effects: [TriggerEffect; 2]) {
@@ -275,38 +297,54 @@ unsafe fn set_trigger(t: &GCDualSenseAdaptiveTrigger, e: TriggerEffect) {
     unsafe {
         match e {
             TriggerEffect::Off => t.setModeOff(),
-            TriggerEffect::Feedback { position: p, strength: s } => {
-                t.setModeFeedbackWithStartPosition_resistiveStrength(position(p), strength(s))
-            }
-            TriggerEffect::Weapon { start, end, strength: s } => t
-                .setModeWeaponWithStartPosition_endPosition_resistiveStrength(
-                    position(start),
-                    position(end),
-                    strength(s),
+            TriggerEffect::Feedback {
+                position: p,
+                strength: s,
+            } => t.setModeFeedbackWithStartPosition_resistiveStrength(position(p), strength(s)),
+            TriggerEffect::Weapon {
+                start,
+                end,
+                strength: s,
+            } => t.setModeWeaponWithStartPosition_endPosition_resistiveStrength(
+                position(start),
+                position(end),
+                strength(s),
+            ),
+            TriggerEffect::Vibration {
+                position: p,
+                amplitude,
+                frequency: f,
+            } => t.setModeVibrationWithStartPosition_amplitude_frequency(
+                position(p),
+                strength(amplitude),
+                frequency(f),
+            ),
+            TriggerEffect::MultiplePositionFeedback { strengths } => t
+                .setModeFeedbackWithResistiveStrengths(
+                    GCDualSenseAdaptiveTriggerPositionalResistiveStrengths {
+                        values: zones(strengths),
+                    },
                 ),
-            TriggerEffect::Vibration { position: p, amplitude, frequency: f } => t
-                .setModeVibrationWithStartPosition_amplitude_frequency(
-                    position(p),
-                    strength(amplitude),
-                    frequency(f),
-                ),
-            TriggerEffect::MultiplePositionFeedback { strengths } => {
-                t.setModeFeedbackWithResistiveStrengths(
-                    GCDualSenseAdaptiveTriggerPositionalResistiveStrengths { values: zones(strengths) },
-                )
-            }
-            TriggerEffect::SlopeFeedback { start, end, start_strength, end_strength } => t
-                .setModeSlopeFeedbackWithStartPosition_endPosition_startStrength_endStrength(
-                    position(start),
-                    position(end),
-                    strength(start_strength),
-                    strength(end_strength),
-                ),
-            TriggerEffect::MultiplePositionVibration { frequency: f, amplitudes } => t
-                .setModeVibrationWithAmplitudes_frequency(
-                    GCDualSenseAdaptiveTriggerPositionalAmplitudes { values: zones(amplitudes) },
-                    frequency(f),
-                ),
+            TriggerEffect::SlopeFeedback {
+                start,
+                end,
+                start_strength,
+                end_strength,
+            } => t.setModeSlopeFeedbackWithStartPosition_endPosition_startStrength_endStrength(
+                position(start),
+                position(end),
+                strength(start_strength),
+                strength(end_strength),
+            ),
+            TriggerEffect::MultiplePositionVibration {
+                frequency: f,
+                amplitudes,
+            } => t.setModeVibrationWithAmplitudes_frequency(
+                GCDualSenseAdaptiveTriggerPositionalAmplitudes {
+                    values: zones(amplitudes),
+                },
+                frequency(f),
+            ),
         }
     }
 }

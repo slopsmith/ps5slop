@@ -6,8 +6,8 @@
 
 #[cfg(target_os = "macos")]
 mod coreaudio;
-mod out2;
 mod input;
+mod out2;
 mod propagation;
 mod wav;
 

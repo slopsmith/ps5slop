@@ -333,7 +333,9 @@ impl Ctx<'_> {
                 return Err(CpuFault::InvalidOpcode);
             };
             let y = self.cpu.xmm[r as usize];
-            let m = (0..32).fold(0u64, |acc, k| acc | (y[k / 8] >> (8 * (k % 8) + 7) & 1) << k);
+            let m = (0..32).fold(0u64, |acc, k| {
+                acc | (y[k / 8] >> (8 * (k % 8) + 7) & 1) << k
+            });
             self.set(i.reg, 4, m);
             return Ok(true);
         }
@@ -381,7 +383,12 @@ impl Ctx<'_> {
             }
         };
         let r = src.map(f64_to_f32);
-        self.cpu.xmm[d] = [r[0] as u64 | (r[1] as u64) << 32, r[2] as u64 | (r[3] as u64) << 32, 0, 0];
+        self.cpu.xmm[d] = [
+            r[0] as u64 | (r[1] as u64) << 32,
+            r[2] as u64 | (r[3] as u64) << 32,
+            0,
+            0,
+        ];
         Ok(true)
     }
 
@@ -622,12 +629,19 @@ impl Ctx<'_> {
                     let (la, lb) = (lanes::<4>(a), lanes::<4>(b));
                     join::<4>(core::array::from_fn(|k| {
                         let (x, y) = (la[k] as u32, lb[k] as u32);
-                        let v = if k % 2 == 0 { f32op(x, y, |x, y| x - y) } else { f32op(x, y, |x, y| x + y) };
+                        let v = if k % 2 == 0 {
+                            f32op(x, y, |x, y| x - y)
+                        } else {
+                            f32op(x, y, |x, y| x + y)
+                        };
                         v as u64
                     }))
                 } else {
                     let (la, lb) = (lanes::<2>(a), lanes::<2>(b));
-                    join::<2>([f64op(la[0], lb[0], |x, y| x - y), f64op(la[1], lb[1], |x, y| x + y)])
+                    join::<2>([
+                        f64op(la[0], lb[0], |x, y| x - y),
+                        f64op(la[1], lb[1], |x, y| x + y),
+                    ])
                 };
                 self.xset(d, r);
             }
@@ -648,13 +662,21 @@ impl Ctx<'_> {
                     let (la, lb) = (lanes::<4>(a), lanes::<4>(b));
                     let pair = |l: [u64; 4], k: usize| {
                         let (x, y) = (l[2 * k] as u32, l[2 * k + 1] as u32);
-                        (if sub { f32op(x, y, |x, y| x - y) } else { f32op(x, y, |x, y| x + y) }) as u64
+                        (if sub {
+                            f32op(x, y, |x, y| x - y)
+                        } else {
+                            f32op(x, y, |x, y| x + y)
+                        }) as u64
                     };
                     join::<4>([pair(la, 0), pair(la, 1), pair(lb, 0), pair(lb, 1)])
                 } else {
                     let (la, lb) = (lanes::<2>(a), lanes::<2>(b));
                     let pair = |l: [u64; 2]| {
-                        if sub { f64op(l[0], l[1], |x, y| x - y) } else { f64op(l[0], l[1], |x, y| x + y) }
+                        if sub {
+                            f64op(l[0], l[1], |x, y| x - y)
+                        } else {
+                            f64op(l[0], l[1], |x, y| x + y)
+                        }
                     };
                     join::<2>([pair(la), pair(lb)])
                 };
@@ -729,7 +751,11 @@ impl Ctx<'_> {
                 } else {
                     ((src >> 64) as u32 & 63, (src >> 72) as u32 & 63)
                 };
-                let mask = if len == 0 { u64::MAX } else { (1u64 << len) - 1 };
+                let mask = if len == 0 {
+                    u64::MAX
+                } else {
+                    (1u64 << len) - 1
+                };
                 let low = if p == Pfx::P66 {
                     if op == 0x78 && i.ext() != 0 {
                         return Err(CpuFault::InvalidOpcode);
@@ -737,7 +763,8 @@ impl Ctx<'_> {
                     (dst as u64).checked_shr(idx).unwrap_or(0) & mask
                 } else {
                     let field = mask.checked_shl(idx).unwrap_or(0);
-                    (dst as u64 & !field) | ((src as u64 & mask).checked_shl(idx).unwrap_or(0) & field)
+                    (dst as u64 & !field)
+                        | ((src as u64 & mask).checked_shl(idx).unwrap_or(0) & field)
                 };
                 self.xset(d, (dst & !(u64::MAX as u128)) | low as u128);
             }

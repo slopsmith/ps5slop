@@ -3,9 +3,9 @@
 
 use std::ptr::NonNull;
 
-use objc2::{Message, msg_send};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::{Message, msg_send};
 use objc2_core_foundation::CGSize;
 use objc2_core_graphics::{CGColorSpace, kCGColorSpaceSRGB};
 use objc2_foundation::NSString;

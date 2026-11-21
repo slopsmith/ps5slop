@@ -409,8 +409,6 @@ fn sce_attr_getdetachstate(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-
-
 /// `scePthreadAttrGetschedparam(attr, param)`, `scePthreadGetprio(thread,
 /// prio)`: the default priority; set priorities are not kept.
 fn sce_attr_getschedparam(env: &mut Env) -> Result<Outcome, CallError> {
@@ -424,7 +422,6 @@ fn sce_attr_getaffinity(env: &mut Env) -> Result<Outcome, CallError> {
     env.mem.write_u64(env.arg(1), ALL_CPUS)?;
     ret(0)
 }
-
 
 /// `scePthreadGetname(thread, name)`: names are not kept.
 fn sce_getname(env: &mut Env) -> Result<Outcome, CallError> {

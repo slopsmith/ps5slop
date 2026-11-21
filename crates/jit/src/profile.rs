@@ -68,9 +68,16 @@ fn cpu_ns(port: u32) -> Option<u64> {
     unsafe {
         let mut info: libc::thread_basic_info = std::mem::zeroed();
         let mut count = libc::THREAD_BASIC_INFO_COUNT;
-        let r = libc::thread_info(port, libc::THREAD_BASIC_INFO as u32, (&raw mut info).cast(), &mut count);
+        let r = libc::thread_info(
+            port,
+            libc::THREAD_BASIC_INFO as u32,
+            (&raw mut info).cast(),
+            &mut count,
+        );
         (r == 0).then(|| {
-            let t = |v: libc::time_value_t| v.seconds as u64 * 1_000_000_000 + v.microseconds as u64 * 1000;
+            let t = |v: libc::time_value_t| {
+                v.seconds as u64 * 1_000_000_000 + v.microseconds as u64 * 1000
+            };
             t(info.user_time) + t(info.system_time)
         })
     }
@@ -90,7 +97,10 @@ fn with_counts(f: impl FnOnce(&mut Counts)) {
                 port,
                 counts: Mutex::new(Counts::new(u64::MAX, port)),
             });
-            THREADS.lock().unwrap_or_else(|e| e.into_inner()).push(t.clone());
+            THREADS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(t.clone());
             t
         });
         let mut c = t.counts.lock().unwrap_or_else(|e| e.into_inner());
@@ -267,7 +277,9 @@ pub(crate) fn sample(pc: u64) {
             Some(r) => *s.samples.entry(r).or_default() += 1,
             None if pc >= layout::RUNTIME_VA => {
                 s.runtime_samples += 1;
-                *s.runtime.entry(crate::runtime_part((pc - layout::RUNTIME_VA) as usize)).or_default() += 1;
+                *s.runtime
+                    .entry(crate::runtime_part((pc - layout::RUNTIME_VA) as usize))
+                    .or_default() += 1;
             }
             None => {}
         }
@@ -288,8 +300,24 @@ pub fn report() -> Option<Report> {
         }
         let cpu = cpu_ns(t.port).map_or(0, |n| n.saturating_sub(c.cpu_at_start));
         let k = c.kinds;
-        threads.push((t.name.clone(), [k[0], k[1], k[2], k[3], k[4], cpu, c.first.elapsed().as_nanos() as u64, c.instructions]));
-        by_thread.extend(c.host.iter().map(|(&a, &(n, ns))| (t.name.clone(), a, n, ns)));
+        threads.push((
+            t.name.clone(),
+            [
+                k[0],
+                k[1],
+                k[2],
+                k[3],
+                k[4],
+                cpu,
+                c.first.elapsed().as_nanos() as u64,
+                c.instructions,
+            ],
+        ));
+        by_thread.extend(
+            c.host
+                .iter()
+                .map(|(&a, &(n, ns))| (t.name.clone(), a, n, ns)),
+        );
     }
     threads.sort_by_key(|(_, t)| std::cmp::Reverse(t[5]));
     let mut samples: Vec<_> = s.samples.iter().map(|(&r, &n)| (r, n)).collect();

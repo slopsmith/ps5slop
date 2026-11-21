@@ -56,7 +56,9 @@ pub fn serve(kernel: Arc<Kernel>, path: PathBuf) {
             let Ok(conn) = conn else { continue };
             let kernel = kernel.clone();
             std::thread::spawn(move || {
-                let Ok(mut out) = conn.try_clone() else { return };
+                let Ok(mut out) = conn.try_clone() else {
+                    return;
+                };
                 for line in BufReader::new(conn).lines() {
                     let Ok(line) = line else { break };
                     let line = line.trim();
@@ -141,7 +143,12 @@ fn run(kernel: &Kernel, line: &str) -> String {
         "find" => match bytes(it.next()) {
             Some(pattern) if !pattern.is_empty() => {
                 let range = (num(it.next()), num(it.next()));
-                find(&mem, &pattern, range.0.unwrap_or(0), range.1.unwrap_or(u64::MAX))
+                find(
+                    &mem,
+                    &pattern,
+                    range.0.unwrap_or(0),
+                    range.1.unwrap_or(u64::MAX),
+                )
             }
             _ => "usage: find HEXBYTES [START END]".into(),
         },
@@ -159,7 +166,10 @@ fn run(kernel: &Kernel, line: &str) -> String {
                     t.name.as_deref().unwrap_or("-"),
                     if t.running { "running" } else { "ended  " },
                     t.calls,
-                    kernel.hle.describe(t.stub).unwrap_or_else(|| format!("{:#x}", t.stub)),
+                    kernel
+                        .hle
+                        .describe(t.stub)
+                        .unwrap_or_else(|| format!("{:#x}", t.stub)),
                     sym(kernel, t.caller)
                 )
             })
@@ -170,7 +180,10 @@ fn run(kernel: &Kernel, line: &str) -> String {
                 Ok(()) => format!("watching {addr:#x}..{:#x}", addr + len),
                 Err(e) => {
                     memory::watch::add(addr, addr + len);
-                    format!("watching {addr:#x}..{:#x} (interpreter and host writes only: {e:?})", addr + len)
+                    format!(
+                        "watching {addr:#x}..{:#x} (interpreter and host writes only: {e:?})",
+                        addr + len
+                    )
                 }
             },
             _ => "usage: watch ADDR LEN".into(),
@@ -236,7 +249,9 @@ fn run(kernel: &Kernel, line: &str) -> String {
         "gpusnap" => match it.next() {
             Some(dir) => {
                 let from = it.next().and_then(|n| n.parse().ok()).unwrap_or(0);
-                *hle::gpu::metal::SNAP.lock().unwrap_or_else(|e| e.into_inner()) = Some((dir.into(), from));
+                *hle::gpu::metal::SNAP
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some((dir.into(), from));
                 "snapping the next frame's render passes".into()
             }
             None => "usage: gpusnap DIR [FIRST_PASS]".into(),
@@ -248,15 +263,21 @@ fn run(kernel: &Kernel, line: &str) -> String {
         }
         #[cfg(target_os = "macos")]
         "gpuskip" => {
-            let addrs: Vec<u64> = it.filter_map(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok()).collect();
-            let mut skip = hle::gpu::metal::SKIP.lock().unwrap_or_else(|e| e.into_inner());
+            let addrs: Vec<u64> = it
+                .filter_map(|a| u64::from_str_radix(a.trim_start_matches("0x"), 16).ok())
+                .collect();
+            let mut skip = hle::gpu::metal::SKIP
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             *skip = addrs;
             format!("skipping {:x?}", *skip)
         }
         #[cfg(target_os = "macos")]
         "targets" => match it.next() {
-            Some(_) if !hle::gpu::metal::DUMP_TARGETS.swap(true, std::sync::atomic::Ordering::Relaxed)
-                && std::env::var_os("PS5SLOP_DUMP_TARGETS").is_none() =>
+            Some(_)
+                if !hle::gpu::metal::DUMP_TARGETS
+                    .swap(true, std::sync::atomic::Ordering::Relaxed)
+                    && std::env::var_os("PS5SLOP_DUMP_TARGETS").is_none() =>
             {
                 "recording targets from now on; run again after a frame".into()
             }
@@ -265,8 +286,14 @@ fn run(kernel: &Kernel, line: &str) -> String {
                 for (addr, t) in hle::gpu::metal::all_frames() {
                     if let Some((w, h, px)) = hle::gpu::metal::read_rgba(&t) {
                         let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
-                        ppm.extend(px.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]));
-                        if std::fs::write(Path::new(dir).join(format!("{addr:x}.ppm")), ppm).is_ok() {
+                        ppm.extend(
+                            px.as_chunks::<4>()
+                                .0
+                                .iter()
+                                .flat_map(|p| [p[0], p[1], p[2]]),
+                        );
+                        if std::fs::write(Path::new(dir).join(format!("{addr:x}.ppm")), ppm).is_ok()
+                        {
                             n += 1;
                         }
                     }
@@ -287,7 +314,10 @@ fn run(kernel: &Kernel, line: &str) -> String {
         },
         "profile" => match it.next() {
             Some("on") => {
-                PROFILE_GENERATION.store(kernel.memory().generation(), std::sync::atomic::Ordering::Relaxed);
+                PROFILE_GENERATION.store(
+                    kernel.memory().generation(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 jit::profile::set(true);
                 hle::gpu::timing::set(true);
                 "profiling".into()
@@ -342,7 +372,13 @@ fn hexdump(mem: &memory::Memory, addr: u64, len: u64) -> String {
         let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
         let text: String = b
             .iter()
-            .map(|&c| if c.is_ascii_graphic() || c == b' ' { c as char } else { '.' })
+            .map(|&c| {
+                if c.is_ascii_graphic() || c == b' ' {
+                    c as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
         lines.push(format!("{at:#012x}: {:<47}  {text}", hex.join(" ")));
     }
@@ -376,7 +412,11 @@ fn find(mem: &memory::Memory, pattern: &[u8], lo: u64, hi: u64) -> String {
             at += CHUNK;
         }
     }
-    if found.is_empty() { "not found".into() } else { found.join("\n") }
+    if found.is_empty() {
+        "not found".into()
+    } else {
+        found.join("\n")
+    }
 }
 
 fn sym(kernel: &Kernel, addr: u64) -> String {
@@ -402,7 +442,10 @@ fn hits(kernel: &Kernel, last: usize, (lo, hi): (u64, u64)) -> String {
     )];
     let site_name = |site: u64| {
         if site & memory::watch::HOST_CALL != 0 {
-            format!("host call from {}", sym(kernel, site & !memory::watch::HOST_CALL))
+            format!(
+                "host call from {}",
+                sym(kernel, site & !memory::watch::HOST_CALL)
+            )
         } else if site == 0 {
             "unknown".into()
         } else {
@@ -436,7 +479,8 @@ fn hits(kernel: &Kernel, last: usize, (lo, hi): (u64, u64)) -> String {
     out.join("\n")
 }
 
-static RATES: std::sync::Mutex<Option<(std::time::Instant, (u64, u64))>> = std::sync::Mutex::new(None);
+static RATES: std::sync::Mutex<Option<(std::time::Instant, (u64, u64))>> =
+    std::sync::Mutex::new(None);
 
 static PROFILE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -447,7 +491,8 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
         .into_iter()
         .filter_map(|t| Some((format!("guest {:#x}", t.tcb), t.name?)))
         .collect();
-    let changes = kernel.memory().generation() - PROFILE_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
+    let changes = kernel.memory().generation()
+        - PROFILE_GENERATION.load(std::sync::atomic::Ordering::Relaxed);
     let mut out = vec![format!(
         "{:.1} s; {} translations ({} of code translated before, {} bytes each on average), {} segments evicted, {} blocks in the cache, {changes} memory map changes",
         r.seconds,
@@ -500,14 +545,31 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
     }
     out.push("host functions (ms, calls):".into());
     for (addr, calls, ns) in r.host.iter().take(top) {
-        let name = kernel.hle.describe(*addr).unwrap_or_else(|| format!("{addr:#x}"));
-        out.push(format!("  {:>9.1} {:>9}  {}", ms(*ns), calls, name.trim_start_matches("the stub of ")));
+        let name = kernel
+            .hle
+            .describe(*addr)
+            .unwrap_or_else(|| format!("{addr:#x}"));
+        out.push(format!(
+            "  {:>9.1} {:>9}  {}",
+            ms(*ns),
+            calls,
+            name.trim_start_matches("the stub of ")
+        ));
     }
     out.push("host functions by thread (ms, calls):".into());
     for (thread, addr, calls, ns) in r.host_by_thread.iter().take(top) {
-        let name = kernel.hle.describe(*addr).unwrap_or_else(|| format!("{addr:#x}"));
+        let name = kernel
+            .hle
+            .describe(*addr)
+            .unwrap_or_else(|| format!("{addr:#x}"));
         let t = names.get(thread).map_or(thread.as_str(), String::as_str);
-        out.push(format!("  {:>9.1} {:>9}  {:<24} {}", ms(*ns), calls, t, name.trim_start_matches("the stub of ")));
+        out.push(format!(
+            "  {:>9.1} {:>9}  {:<24} {}",
+            ms(*ns),
+            calls,
+            t,
+            name.trim_start_matches("the stub of ")
+        ));
     }
     let (ops, rips, exits) = jit::interpreted(top);
     out.push(format!(
@@ -518,13 +580,21 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
     let total: u64 = causes.iter().map(|c| c.1).sum();
     out.push(format!("VM exits by cause ({total}):"));
     for (cause, n, distinct, rips) in &causes {
-        out.push(format!("  {:>10} {:>5.1}%  {} ({distinct} addresses)", n, *n as f64 * 100.0 / total.max(1) as f64, cause.name()));
+        out.push(format!(
+            "  {:>10} {:>5.1}%  {} ({distinct} addresses)",
+            n,
+            *n as f64 * 100.0 / total.max(1) as f64,
+            cause.name()
+        ));
         if *cause == jit::Cause::Canceled {
             continue;
         }
         for (rip, k) in rips {
             let at = match cause {
-                jit::Cause::HostCall => kernel.hle.describe(*rip).map(|d| d.trim_start_matches("the stub of ").to_string()),
+                jit::Cause::HostCall => kernel
+                    .hle
+                    .describe(*rip)
+                    .map(|d| d.trim_start_matches("the stub of ").to_string()),
                 _ => None,
             }
             .unwrap_or_else(|| sym(kernel, *rip));
@@ -533,7 +603,11 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
     }
     out.push("interpreted opcodes (map, opcode, /ext):".into());
     for ((map, op, ext), n) in ops {
-        let ext = if ext == 0xff { String::new() } else { format!(" /{ext}") };
+        let ext = if ext == 0xff {
+            String::new()
+        } else {
+            format!(" /{ext}")
+        };
         out.push(format!("  {n:>10}  map {map} {op:02x}{ext}"));
     }
     out.push("interpreted addresses:".into());

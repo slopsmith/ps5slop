@@ -148,7 +148,14 @@ fn set_flip(env: &mut Env) -> Result<Outcome, CallError> {
     if buffer == 0 {
         return ret(0);
     }
-    let packet = [pm4(6, IT_NOP, R_FLIP), handle, index, mode, flip_arg as u32, (flip_arg >> 32) as u32];
+    let packet = [
+        pm4(6, IT_NOP, R_FLIP),
+        handle,
+        index,
+        mode,
+        flip_arg as u32,
+        (flip_arg >> 32) as u32,
+    ];
     let at = emit(env, buffer, &packet)?;
     env.kernel.agc.gpu.flip_built(at);
     ret(at)

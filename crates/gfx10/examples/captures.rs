@@ -59,7 +59,12 @@ fn main() {
             }
         }
         let failure = match result {
-            Ok(t) => compile(&t.msl).err().map(|e| format!("Metal: {}", e.lines().find(|l| l.contains("error")).unwrap_or(&e))),
+            Ok(t) => compile(&t.msl).err().map(|e| {
+                format!(
+                    "Metal: {}",
+                    e.lines().find(|l| l.contains("error")).unwrap_or(&e)
+                )
+            }),
             Err(e) => Some(e.message.clone()),
         };
         match failure {
@@ -69,8 +74,15 @@ fn main() {
     }
     let mut sorted: Vec<_> = reasons.into_iter().collect();
     sorted.sort_by_key(|r| std::cmp::Reverse(r.1.len()));
-    println!("{ok} of {} translate", ok + sorted.iter().map(|r| r.1.len()).sum::<usize>());
+    println!(
+        "{ok} of {} translate",
+        ok + sorted.iter().map(|r| r.1.len()).sum::<usize>()
+    );
     for (why, names) in sorted {
-        println!("{:4} {why}: {}", names.len(), names.iter().take(4).cloned().collect::<Vec<_>>().join(" "));
+        println!(
+            "{:4} {why}: {}",
+            names.len(),
+            names.iter().take(4).cloned().collect::<Vec<_>>().join(" ")
+        );
     }
 }

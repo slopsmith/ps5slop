@@ -396,7 +396,11 @@ pub fn decode<E>(mut fetch: impl FnMut(usize) -> Result<u8, E>) -> Result<Insn, 
     let imm = match (insn.map, b) {
         (Map::Primary, 0xf6) if insn.ext() < 2 => Imm::B,
         (Map::Primary, 0xf7) if insn.ext() < 2 => Imm::Z,
-        (Map::M0F, 0x78) if insn.vex.is_none() && (insn.opsize_prefix || insn.rep == Rep::Repne) => Imm::BB,
+        (Map::M0F, 0x78)
+            if insn.vex.is_none() && (insn.opsize_prefix || insn.rep == Rep::Repne) =>
+        {
+            Imm::BB
+        }
         _ => imm,
     };
     let branch = matches!(

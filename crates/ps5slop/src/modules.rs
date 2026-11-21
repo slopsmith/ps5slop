@@ -83,7 +83,13 @@ pub fn candidates(files: &dyn Files) -> HashMap<String, Candidate> {
                         .folders(folder)
                         .into_iter()
                         .filter(|f| f != "sce_sys")
-                        .map(|f| if folder.is_empty() { f } else { format!("{folder}/{f}") }),
+                        .map(|f| {
+                            if folder.is_empty() {
+                                f
+                            } else {
+                                format!("{folder}/{f}")
+                            }
+                        }),
                 );
             }
             let system = folder.split('/').any(|c| c == "sce_module");
@@ -192,7 +198,11 @@ pub fn choose(
     files: &dyn Files,
 ) -> Vec<(String, String, Vec<u8>)> {
     let mut chosen: Vec<(String, String, Vec<u8>)> = Vec::new();
-    let mut games: Vec<&String> = found.iter().filter(|(_, c)| !c.system).map(|(n, _)| n).collect();
+    let mut games: Vec<&String> = found
+        .iter()
+        .filter(|(_, c)| !c.system)
+        .map(|(n, _)| n)
+        .collect();
     games.sort_by(|a, b| b.cmp(a));
     let mut queue: Vec<String> = games.into_iter().cloned().collect();
     queue.extend(main.dynamic.needed_modules.iter().map(|m| m.name.clone()));

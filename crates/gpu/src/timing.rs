@@ -102,4 +102,3 @@ pub fn host_seconds() -> f64 {
     // SAFETY: no arguments.
     (unsafe { libc::mach_absolute_time() }) as f64 * scale
 }
-

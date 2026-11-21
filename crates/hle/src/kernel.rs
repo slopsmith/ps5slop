@@ -125,7 +125,8 @@ fn mmap(env: &mut Env) -> Result<Outcome, CallError> {
         }
         env.mem.map_over(addr, len, prot, "mmap").map(|()| addr)
     } else {
-        env.mem.map_free(addr.max(USER_AREA), len, PAGE_SIZE, prot, "mmap")
+        env.mem
+            .map_free(addr.max(USER_AREA), len, PAGE_SIZE, prot, "mmap")
     };
     match mapped {
         Ok(at) => {
@@ -133,7 +134,11 @@ fn mmap(env: &mut Env) -> Result<Outcome, CallError> {
             Ok(Outcome::Return(at))
         }
         Err(e) => {
-            crate::dmem::failure(env, "mmap failed", format_args!("{len:#x} bytes at {addr:#x}, flags {flags:#x}: {e:?}"));
+            crate::dmem::failure(
+                env,
+                "mmap failed",
+                format_args!("{len:#x} bytes at {addr:#x}, flags {flags:#x}: {e:?}"),
+            );
             Ok(Outcome::Return(MAP_FAILED))
         }
     }

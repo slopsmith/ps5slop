@@ -4,8 +4,8 @@
 
 mod cache;
 mod engine;
-pub mod profile;
 pub mod layout;
+pub mod profile;
 mod tables;
 mod translate;
 
@@ -17,7 +17,10 @@ use a64::{Asm, Reg, Shift, Size, Width};
 use hvf::{GuestMemory, Vcpu, VcpuKicker, Vm, reg, sysreg};
 use memory::Memory;
 
-pub use engine::{Cause, Causes, exit_causes, instructions, interpret, interpreted, kick_all, recent_blocks, report, run};
+pub use engine::{
+    Cause, Causes, exit_causes, instructions, interpret, interpreted, kick_all, recent_blocks,
+    report, run,
+};
 pub use hvf::Error;
 
 /// `hvc` numbers the runtime's exception vectors use.
@@ -88,7 +91,10 @@ pub enum Native {
     /// `pthread_getspecific(key)` for keys whose values live at the thread
     /// pointer plus `specific` (the first `keys` of them); other keys go to
     /// the host function.
-    Getspecific { specific: u32, keys: u32 },
+    Getspecific {
+        specific: u32,
+        keys: u32,
+    },
     /// `scePthreadGetthreadid()`: the thread pointer shifted right 14 bits.
     ThreadId,
     /// `pthread_self()`: the thread pointer.
@@ -149,7 +155,8 @@ pub fn watch(start: u64, end: u64) -> Result<(), Error> {
     let mut m = machine()?;
     memory::watch::add(start, end);
     let page = memory::PAGE_SIZE;
-    m.watched.push((start & !(page - 1), end.next_multiple_of(page)));
+    m.watched
+        .push((start & !(page - 1), end.next_multiple_of(page)));
     m.protect_watched(hvf::mem::READ | hvf::mem::EXEC);
     Ok(())
 }
@@ -179,7 +186,10 @@ pub fn set_native(addr: u64, native: Native) {
                 m.runtime.write_words(NATIVE_SPECIFIC, &code);
                 // SAFETY: the range was just written inside the runtime region.
                 unsafe {
-                    sys_icache_invalidate(m.runtime.as_ptr().add(NATIVE_SPECIFIC).cast(), code.len() * 4)
+                    sys_icache_invalidate(
+                        m.runtime.as_ptr().add(NATIVE_SPECIFIC).cast(),
+                        code.len() * 4,
+                    )
                 };
                 NATIVE_SPECIFIC
             }
@@ -288,7 +298,8 @@ impl Shared {
         let sc = Ordering::SeqCst;
         let epoch = self.epoch.load(sc);
         let generation = self.generation.load(sc);
-        let current = generation == mem.generation() || (EAGER.load(Ordering::Relaxed) && generation != u64::MAX);
+        let current = generation == mem.generation()
+            || (EAGER.load(Ordering::Relaxed) && generation != u64::MAX);
         if !current || self.id.load(sc) != mem.id() {
             return None;
         }
@@ -296,7 +307,10 @@ impl Shared {
         self.users[pool].fetch_add(1, sc);
         // `sync` bumps the epoch before it switches pools, so a pool that
         // is still active with the same epoch was not rebuilt meanwhile.
-        if self.active.load(sc) == pool && self.epoch.load(sc) == epoch && self.generation.load(sc) == generation {
+        if self.active.load(sc) == pool
+            && self.epoch.load(sc) == epoch
+            && self.generation.load(sc) == generation
+        {
             return Some((pool, epoch));
         }
         self.users[pool].fetch_sub(1, sc);
@@ -424,7 +438,11 @@ fn try_machine() -> Result<Option<MachineGuard>, Error> {
         },
         Err(e) => return Err(*e),
     };
-    Ok(Some(MachineGuard { guard, site, since: profile::start() }))
+    Ok(Some(MachineGuard {
+        guard,
+        site,
+        since: profile::start(),
+    }))
 }
 
 /// The process's machine, created on first use.
@@ -438,7 +456,11 @@ pub fn machine() -> Result<MachineGuard, Error> {
         Err(e) => return Err(*e),
     };
     profile::lock_waited(site, asked);
-    Ok(MachineGuard { guard, site, since: profile::start() })
+    Ok(MachineGuard {
+        guard,
+        site,
+        since: profile::start(),
+    })
 }
 
 /// What made a vCPU leave the VM.
@@ -531,7 +553,9 @@ impl Machine {
         if self.generation == Some(generation) {
             return Ok(true);
         }
-        let same_space = self.generation.is_some_and(|(base, _)| base == generation.0);
+        let same_space = self
+            .generation
+            .is_some_and(|(base, _)| base == generation.0);
         if self.generation.is_some() && !same_space {
             for (start, end) in self.mapped.drain(..) {
                 self.vm.unmap(start, (end - start) as usize)?;
@@ -545,8 +569,7 @@ impl Machine {
             .into_iter()
             .filter(|r| {
                 !r.trap
-                    && (r.prot.allows(memory::Access::Read)
-                        || r.prot.allows(memory::Access::Write))
+                    && (r.prot.allows(memory::Access::Read) || r.prot.allows(memory::Access::Write))
             })
             .collect();
         let access: Vec<(u64, u64, bool)> = regions
@@ -634,9 +657,12 @@ impl Machine {
         let (removed, _) = sorted_diff(&self.mirrored, access);
         removed.iter().filter(|&&(_, _, w)| w).any(|&(s, e, _)| {
             let first = regions.partition_point(|r| r.end <= s);
-            regions[first..].iter().take_while(|r| r.start < e).any(|r| {
-                r.prot.allows(memory::Access::Read) && !r.prot.allows(memory::Access::Write)
-            })
+            regions[first..]
+                .iter()
+                .take_while(|r| r.start < e)
+                .any(|r| {
+                    r.prot.allows(memory::Access::Read) && !r.prot.allows(memory::Access::Write)
+                })
         })
     }
 
@@ -646,7 +672,12 @@ impl Machine {
         let pool = SHARED.active.load(Ordering::SeqCst);
         let root = SHARED.roots[pool].load(Ordering::SeqCst);
         let (old, new) = sorted_diff(&self.mirrored, access);
-        let mut t = tables::Tables::resume(self.runtime.as_mut_slice(), pool, root, self.pool_next[pool]);
+        let mut t = tables::Tables::resume(
+            self.runtime.as_mut_slice(),
+            pool,
+            root,
+            self.pool_next[pool],
+        );
         for (start, end, _) in old {
             t.unmap(start, end);
         }
@@ -709,7 +740,11 @@ impl Machine {
             }
             return true;
         }
-        let exit = if self.verify || self.trace { VERIFY_EXIT } else { DISPATCH };
+        let exit = if self.verify || self.trace {
+            VERIFY_EXIT
+        } else {
+            DISPATCH
+        };
         let Some((place, block)) = self.emit(mem, rip, exit) else {
             engine::count_exit(engine::Count::NoBlock);
             engine::note_exit(engine::Cause::Untranslatable, rip);
@@ -765,7 +800,14 @@ impl Machine {
         engine::count_exit(engine::Count::Region);
         let verified = if self.verify { 0 } else { VERIFY_RUNS };
         let rips = std::sync::Arc::new(rips);
-        self.regions.insert(rip, RegionInfo { place, rips, verified });
+        self.regions.insert(
+            rip,
+            RegionInfo {
+                place,
+                rips,
+                verified,
+            },
+        );
         if self.verify {
             self.enter(rip, place);
         } else {
@@ -775,9 +817,15 @@ impl Machine {
 
     /// Translates the region at `rip` into the code cache, its exits going to
     /// `exit`; where it went and the RIPs of its instructions.
-    fn emit_region(&mut self, mem: &Memory, rip: u64, exit: usize) -> Option<(usize, HashSet<u64>)> {
+    fn emit_region(
+        &mut self,
+        mem: &Memory,
+        rip: u64,
+        exit: usize,
+    ) -> Option<(usize, HashSet<u64>)> {
         let mut place = self.code_next;
-        let (mut region, mut rips) = translate::region(mem, rip, place, cache::local_exit(place, exit))?;
+        let (mut region, mut rips) =
+            translate::region(mem, rip, place, cache::local_exit(place, exit))?;
         if !self.fits(place, region.code.len() * 4) {
             if self.cache_full || !self.next_segment() {
                 return None;
@@ -833,12 +881,17 @@ impl Machine {
             return None;
         }
         let mut place = self.code_next;
-        let count = self.tier2.count().filter(|_| exit == DISPATCH && !self.trace);
+        let count = self
+            .tier2
+            .count()
+            .filter(|_| exit == DISPATCH && !self.trace);
         let mut block = translate::block(mem, rip, place, cache::local_exit(place, exit), count)?;
         if !self.fits(place, block.code.len() * 4) {
             if self.verify || self.trace {
                 self.cache_full = true;
-                eprintln!("ps5slop: the JIT's code cache is full; interpreting new code from now on");
+                eprintln!(
+                    "ps5slop: the JIT's code cache is full; interpreting new code from now on"
+                );
                 return None;
             }
             if !self.next_segment() {
@@ -887,7 +940,8 @@ impl Machine {
             return false;
         }
         if !self.patched.contains_key(&site) {
-            let old = u32::from_le_bytes(self.runtime.as_slice()[site..site + 4].try_into().unwrap());
+            let old =
+                u32::from_le_bytes(self.runtime.as_slice()[site..site + 4].try_into().unwrap());
             self.patched.insert(site, old);
         }
         self.chained_to.entry(to).or_default().push(site);
@@ -927,7 +981,11 @@ impl Machine {
             return Some((layout::va(r.place), steps, r.verified < VERIFY_RUNS));
         }
         let b = self.blocks.get(&rip)?;
-        Some((layout::va(b.place), Steps::Insns(b.insns), b.verified < VERIFY_RUNS))
+        Some((
+            layout::va(b.place),
+            Steps::Insns(b.insns),
+            b.verified < VERIFY_RUNS,
+        ))
     }
 
     /// Counts one checked run of the block or region at `rip`. After the
@@ -939,7 +997,9 @@ impl Machine {
                 return;
             }
             let block_place = self.blocks.get(&rip).map(|b| b.place);
-            if let (Some((place, _)), Some(block_place)) = (self.emit_region(mem, rip, DISPATCH), block_place) {
+            if let (Some((place, _)), Some(block_place)) =
+                (self.emit_region(mem, rip, DISPATCH), block_place)
+            {
                 if let Some(r) = self.regions.get_mut(&rip) {
                     r.place = place;
                 }
@@ -947,7 +1007,9 @@ impl Machine {
             }
             return;
         }
-        let Some(b) = self.blocks.get_mut(&rip) else { return };
+        let Some(b) = self.blocks.get_mut(&rip) else {
+            return;
+        };
         b.verified += 1;
         if b.verified != VERIFY_RUNS {
             return;
@@ -1303,7 +1365,9 @@ impl Cpu {
 
     pub fn release(self, m: &mut Machine) {
         m.vcpus[self.slot] = None;
-        SHARED.slots[self.slot].running.store(false, Ordering::SeqCst);
+        SHARED.slots[self.slot]
+            .running
+            .store(false, Ordering::SeqCst);
     }
 }
 

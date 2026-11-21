@@ -119,7 +119,11 @@ impl Gpu {
     fn takes_flip(&self, buffers: &[(u64, u32)]) -> bool {
         let mut flips = lock(&self.flips);
         let before = flips.len();
-        flips.retain(|&at| !buffers.iter().any(|&(addr, dwords)| (addr..addr + 4 * dwords as u64).contains(&at)));
+        flips.retain(|&at| {
+            !buffers
+                .iter()
+                .any(|&(addr, dwords)| (addr..addr + 4 * dwords as u64).contains(&at))
+        });
         flips.len() != before
     }
 }
@@ -217,7 +221,12 @@ fn new_backend() -> Option<gpu::SharedBackend> {
     None
 }
 
-fn gpu_thread(host: Host, jobs: Receiver<Job>, backend: Arc<OnceLock<Option<gpu::SharedBackend>>>, name: String) {
+fn gpu_thread(
+    host: Host,
+    jobs: Receiver<Job>,
+    backend: Arc<OnceLock<Option<gpu::SharedBackend>>>,
+    name: String,
+) {
     let mut processor = gpu::Processor::default();
     if let Some(b) = backend.get_or_init(new_backend) {
         processor.backend = Some(Box::new(b.clone()));
@@ -261,14 +270,24 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>, backend: Arc<OnceLock<Option<gpu:
                 s.longest_flip_gap.as_millis()
             );
             if !processor.stats.long_flip_gaps.is_empty() {
-                let gaps: Vec<u128> = processor.stats.long_flip_gaps.drain(..).map(|g| g.as_millis()).collect();
-                eprintln!("ps5slop: GPU {name}: flip gaps over 1 s since the last report (ms): {gaps:?}");
+                let gaps: Vec<u128> = processor
+                    .stats
+                    .long_flip_gaps
+                    .drain(..)
+                    .map(|g| g.as_millis())
+                    .collect();
+                eprintln!(
+                    "ps5slop: GPU {name}: flip gaps over 1 s since the last report (ms): {gaps:?}"
+                );
             }
             if let Some(b) = processor.backend.as_ref().filter(|_| name == "graphics") {
                 eprintln!("ps5slop: GPU: Metal: {}", b.summary());
             }
             if std::env::var_os("PS5SLOP_GPU_OPCODES").is_some() {
-                eprintln!("ps5slop: GPU: packets by opcode: {:x?}", processor.stats.opcodes);
+                eprintln!(
+                    "ps5slop: GPU: packets by opcode: {:x?}",
+                    processor.stats.opcodes
+                );
             }
         }
         if host.kernel.has_exited() {
@@ -289,7 +308,11 @@ fn enqueue(env: &Env, queue: u64, buffers: Vec<(u64, u32)>) {
             progress: progress.clone(),
         };
         let backend = gpu.backend.clone();
-        let name = if queue == GRAPHICS { "graphics".to_string() } else { format!("compute {queue:#x}") };
+        let name = if queue == GRAPHICS {
+            "graphics".to_string()
+        } else {
+            format!("compute {queue:#x}")
+        };
         std::thread::Builder::new()
             .name(format!("gpu {name}"))
             .spawn(move || gpu_thread(host, rx, backend, name))
@@ -301,7 +324,10 @@ fn enqueue(env: &Env, queue: u64, buffers: Vec<(u64, u32)>) {
     let order = lock(&progress.order);
     let ends_frame = gpu.takes_flip(&buffers);
     let previous = progress.add(ends_frame);
-    let _ = sender.send(Job { buffers, ends_frame });
+    let _ = sender.send(Job {
+        buffers,
+        ends_frame,
+    });
     drop(order);
     // Titles reuse the previous frame's memory once the next frame is submitted.
     progress.wait_for(previous, || env.kernel.has_exited());

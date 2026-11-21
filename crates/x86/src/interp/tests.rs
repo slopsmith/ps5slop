@@ -489,13 +489,19 @@ fn addsub_subtracts_even_lanes_and_adds_odd_ones() {
     cpu.xmm[2] = [10.0f64.to_bits(), 10.0f64.to_bits(), 0, 0];
     cpu.xmm[3] = [1.0f64.to_bits(), 2.0f64.to_bits(), 0, 0];
     steps(&mut cpu, &mem, 2);
-    assert_eq!(cpu.xmm[0][..2], [f(4.0) | f(7.0) << 32, f(2.0) | f(9.0) << 32]);
+    assert_eq!(
+        cpu.xmm[0][..2],
+        [f(4.0) | f(7.0) << 32, f(2.0) | f(9.0) << 32]
+    );
     assert_eq!(cpu.xmm[2][..2], [9.0f64.to_bits(), 12.0f64.to_bits()]);
 }
 
 #[test]
 fn negated_fma_passes_nan_operands_through_unchanged() {
-    let (mut cpu, mem) = machine("vfnmsub213ss xmm2, xmm13, xmm14", &[0xc4, 0xc2, 0x11, 0xaf, 0xd6]);
+    let (mut cpu, mem) = machine(
+        "vfnmsub213ss xmm2, xmm13, xmm14",
+        &[0xc4, 0xc2, 0x11, 0xaf, 0xd6],
+    );
     cpu.xmm[2] = [0x3f80_0000, 0, 0, 0];
     cpu.xmm[13] = [0xffc0_0000, 0, 0, 0];
     cpu.xmm[14] = [0, 0, 0, 0];
@@ -555,10 +561,21 @@ fn wide_move_mask_takes_the_sign_of_all_four_doubles() {
 #[test]
 fn reciprocal_square_root_handles_zero_and_negative_inputs() {
     let (mut cpu, mem) = machine("rsqrtps xmm0, xmm1", &[0x0f, 0x52, 0xc1]);
-    cpu.xmm[1] = [4.0f32.to_bits() as u64 | ((-1.0f32).to_bits() as u64) << 32, 0x8000_0000, 0, 0];
+    cpu.xmm[1] = [
+        4.0f32.to_bits() as u64 | ((-1.0f32).to_bits() as u64) << 32,
+        0x8000_0000,
+        0,
+        0,
+    ];
     steps(&mut cpu, &mem, 1);
-    assert_eq!(cpu.xmm[0][0], 0.5f32.to_bits() as u64 | 0xffc0_0000u64 << 32);
-    assert_eq!(cpu.xmm[0][1], 0xff80_0000 | (f32::INFINITY.to_bits() as u64) << 32);
+    assert_eq!(
+        cpu.xmm[0][0],
+        0.5f32.to_bits() as u64 | 0xffc0_0000u64 << 32
+    );
+    assert_eq!(
+        cpu.xmm[0][1],
+        0xff80_0000 | (f32::INFINITY.to_bits() as u64) << 32
+    );
 }
 
 #[test]
@@ -573,16 +590,26 @@ fn wide_byte_mask_takes_the_sign_of_all_32_bytes() {
 #[test]
 fn wide_int_to_double_conversion_widens_four_lanes() {
     let (mut cpu, mem) = machine("vcvtdq2pd ymm12, xmm10", &[0xc4, 0x41, 0x7e, 0xe6, 0xe2]);
-    cpu.xmm[10] = [1 | (u32::MAX as u64) << 32, 7 | (0x8000_0000u64 << 32), 9, 9];
+    cpu.xmm[10] = [
+        1 | (u32::MAX as u64) << 32,
+        7 | (0x8000_0000u64 << 32),
+        9,
+        9,
+    ];
     steps(&mut cpu, &mem, 1);
-    assert_eq!(cpu.xmm[12], [1.0f64, -1.0, 7.0, -2147483648.0].map(f64::to_bits));
+    assert_eq!(
+        cpu.xmm[12],
+        [1.0f64, -1.0, 7.0, -2147483648.0].map(f64::to_bits)
+    );
 }
 
 #[test]
 fn sse4a_insertq_and_extrq_move_a_bit_field() {
     let (mut cpu, mem) = machine(
         "insertq xmm2, xmm1, 8, 8; extrq xmm2, 16, 4",
-        &[0xf2, 0x0f, 0x78, 0xd1, 0x08, 0x08, 0x66, 0x0f, 0x78, 0xc2, 0x10, 0x04],
+        &[
+            0xf2, 0x0f, 0x78, 0xd1, 0x08, 0x08, 0x66, 0x0f, 0x78, 0xc2, 0x10, 0x04,
+        ],
     );
     cpu.xmm[2] = [0x1111_1111_1111_1111, 0x2222, 0, 0];
     cpu.xmm[1] = [0xab, 0, 0, 0];
@@ -595,24 +622,37 @@ fn sse4a_insertq_and_extrq_move_a_bit_field() {
 
 #[test]
 fn cmpxchg16b_stores_on_a_match_and_loads_on_a_mismatch() {
-    let (mut cpu, mem) = machine("lock cmpxchg16b xmmword ptr [rdi]", &[0xf0, 0x48, 0x0f, 0xc7, 0x0f]);
-    mem.write(DATA, &[1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+    let (mut cpu, mem) = machine(
+        "lock cmpxchg16b xmmword ptr [rdi]",
+        &[0xf0, 0x48, 0x0f, 0xc7, 0x0f],
+    );
+    mem.write(DATA, &[1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0])
+        .unwrap();
     cpu.regs[RDI] = DATA;
     (cpu.regs[RAX], cpu.regs[RDX], cpu.regs[RBX], cpu.regs[RCX]) = (1, 2, 3, 4);
     steps(&mut cpu, &mem, 1);
     assert!(cpu.flag(ZF));
-    assert_eq!((mem.read_u64(DATA).unwrap(), mem.read_u64(DATA + 8).unwrap()), (3, 4));
+    assert_eq!(
+        (mem.read_u64(DATA).unwrap(), mem.read_u64(DATA + 8).unwrap()),
+        (3, 4)
+    );
 
     cpu.rip = CODE;
     steps(&mut cpu, &mem, 1);
     assert!(!cpu.flag(ZF));
     assert_eq!((cpu.regs[RAX], cpu.regs[RDX]), (3, 4));
-    assert_eq!((mem.read_u64(DATA).unwrap(), mem.read_u64(DATA + 8).unwrap()), (3, 4));
+    assert_eq!(
+        (mem.read_u64(DATA).unwrap(), mem.read_u64(DATA + 8).unwrap()),
+        (3, 4)
+    );
 }
 
 #[test]
 fn cmpxchg16b_on_a_misaligned_address_faults() {
-    let (mut cpu, mem) = machine("lock cmpxchg16b xmmword ptr [rdi]", &[0xf0, 0x48, 0x0f, 0xc7, 0x0f]);
+    let (mut cpu, mem) = machine(
+        "lock cmpxchg16b xmmword ptr [rdi]",
+        &[0xf0, 0x48, 0x0f, 0xc7, 0x0f],
+    );
     cpu.regs[RDI] = DATA + 8;
     assert!(matches!(
         step(&mut cpu, &mem),
@@ -647,14 +687,19 @@ fn cmpxchg16b_increments_from_several_threads_are_atomic() {
         }
     });
     let total = threads * per_thread;
-    assert_eq!((mem.read_u64(DATA).unwrap(), mem.read_u64(DATA + 8).unwrap()), (total, total));
+    assert_eq!(
+        (mem.read_u64(DATA).unwrap(), mem.read_u64(DATA + 8).unwrap()),
+        (total, total)
+    );
 }
 
 #[test]
 fn lddqu_loads_from_unaligned_addresses() {
     let (mut cpu, mem) = machine(
         "lddqu xmm1, [rsi]; vlddqu xmm2, [rsi]; vlddqu ymm3, [rsi]",
-        &[0xf2, 0x0f, 0xf0, 0x0e, 0xc5, 0xfb, 0xf0, 0x16, 0xc5, 0xff, 0xf0, 0x1e],
+        &[
+            0xf2, 0x0f, 0xf0, 0x0e, 0xc5, 0xfb, 0xf0, 0x16, 0xc5, 0xff, 0xf0, 0x1e,
+        ],
     );
     let bytes: Vec<u8> = (1..=32).collect();
     mem.write(DATA + 1, &bytes).unwrap();

@@ -56,7 +56,11 @@ impl<T: Clone + Send + 'static> Task<T> {
                 return Some(v.clone());
             }
             let left = deadline.checked_duration_since(Instant::now())?;
-            status = self.done.wait_timeout(status, left).unwrap_or_else(|e| e.into_inner()).0;
+            status = self
+                .done
+                .wait_timeout(status, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
         }
     }
 
@@ -70,7 +74,9 @@ impl<T: Clone + Send + 'static> Task<T> {
                     drop(status);
                     return self.finish(job);
                 }
-                Status::Running => status = self.done.wait(status).unwrap_or_else(|e| e.into_inner()),
+                Status::Running => {
+                    status = self.done.wait(status).unwrap_or_else(|e| e.into_inner())
+                }
                 Status::Done(v) => {
                     *status = Status::Done(v.clone());
                     return v;
@@ -130,7 +136,11 @@ impl Pool {
 
 /// Compile threads: `PS5SLOP_COMPILE_THREADS`, or 4.
 fn threads() -> usize {
-    std::env::var("PS5SLOP_COMPILE_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(4).max(1)
+    std::env::var("PS5SLOP_COMPILE_THREADS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4)
+        .max(1)
 }
 
 fn pool() -> &'static Pool {
@@ -212,7 +222,10 @@ mod tests {
             .map(|_| {
                 let gate = gate.clone();
                 Task::spawn(move || {
-                    gate.lock().unwrap().recv_timeout(Duration::from_secs(10)).ok();
+                    gate.lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(10))
+                        .ok();
                     Some(0)
                 })
             })

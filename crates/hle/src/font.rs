@@ -212,7 +212,10 @@ fn load_face(env: &Env, data: Vec<u8>) -> Option<u64> {
         });
     }
     let ft = freetype.as_mut()?;
-    let face = ft.library.new_memory_face2(Arc::<[u8]>::from(data), 0).ok()?;
+    let face = ft
+        .library
+        .new_memory_face2(Arc::<[u8]>::from(data), 0)
+        .ok()?;
     let key = ft.next;
     ft.next += 1;
     ft.faces.insert(key, face);
@@ -329,7 +332,11 @@ fn with_face<T>(env: &Env, font: Font, s: Scale, f: impl FnOnce(&Face) -> Option
 /// Glyph `code` of `font` at scale `s`, with its coverage if `render`.
 fn glyph(env: &Env, font: Font, code: u32, s: Scale, render: bool) -> Glyph {
     let found = with_face(env, font, s, |face| {
-        let flags = if render { LoadFlag::RENDER } else { LoadFlag::DEFAULT };
+        let flags = if render {
+            LoadFlag::RENDER
+        } else {
+            LoadFlag::DEFAULT
+        };
         face.load_char(code as usize, flags).ok()?;
         let slot = face.glyph();
         let m = slot.metrics();
@@ -338,7 +345,9 @@ fn glyph(env: &Env, font: Font, code: u32, s: Scale, render: bool) -> Glyph {
             let (w, h) = (b.width().max(0) as usize, b.rows().max(0) as usize);
             let pitch = b.pitch().unsigned_abs() as usize;
             let rows = b.buffer().chunks(pitch.max(1)).take(h);
-            let pixels = rows.flat_map(|r| r[..w.min(r.len())].iter().copied()).collect();
+            let pixels = rows
+                .flat_map(|r| r[..w.min(r.len())].iter().copied())
+                .collect();
             (pixels, w, h, slot.bitmap_left(), -slot.bitmap_top())
         });
         Some(Glyph {
@@ -394,7 +403,16 @@ fn vertical_layout(env: &mut Env) -> Result<Outcome, CallError> {
 /// and advance for horizontal and for vertical writing.
 fn write_metrics(env: &Env, at: u64, g: &Glyph) -> Result<(), CallError> {
     let [vx, vy, va] = g.vertical;
-    let values = [g.width, g.height, g.bearing_x, g.bearing_y, g.advance, vx, vy, va];
+    let values = [
+        g.width,
+        g.height,
+        g.bearing_x,
+        g.bearing_y,
+        g.advance,
+        vx,
+        vy,
+        va,
+    ];
     write_floats(env, at, &values)
 }
 

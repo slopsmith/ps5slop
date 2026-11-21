@@ -45,7 +45,12 @@ impl AprFile {
 
 #[derive(Debug, Clone, Copy)]
 enum Command {
-    Read { file: u32, dest: u64, len: u64, offset: u64 },
+    Read {
+        file: u32,
+        dest: u64,
+        len: u64,
+        offset: u64,
+    },
     /// Writes `value` (64 bits) to `addr` once the commands before it ran.
     WriteAddress { addr: u64, value: u64 },
 }
@@ -62,12 +67,28 @@ pub struct Apr {
 }
 
 pub static FUNCTIONS: &[Function] = &[
-    f("libkernel", "sceKernelAprResolveFilepathsToIdsAndFileSizes", resolve),
-    f("libkernel", "sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes", resolve_with_prefix),
-    f("libkernel", "sceKernelAprSubmitCommandBufferAndGetResult", submit),
+    f(
+        "libkernel",
+        "sceKernelAprResolveFilepathsToIdsAndFileSizes",
+        resolve,
+    ),
+    f(
+        "libkernel",
+        "sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes",
+        resolve_with_prefix,
+    ),
+    f(
+        "libkernel",
+        "sceKernelAprSubmitCommandBufferAndGetResult",
+        submit,
+    ),
     f("libkernel", "sceKernelAprWaitCommandBuffer", wait),
     f("libSceAmpr", "sceAmprCommandBufferConstructor", construct),
-    f("libSceAmpr", "sceAmprAprCommandBufferConstructor", construct),
+    f(
+        "libSceAmpr",
+        "sceAmprAprCommandBufferConstructor",
+        construct,
+    ),
     f("libSceAmpr", "sceAmprCommandBufferSetBuffer", set_buffer),
     f("libSceAmpr", "sceAmprCommandBufferReset", reset),
     f("libSceAmpr", "sceAmprAprCommandBufferReadFile", read_file),
@@ -75,20 +96,56 @@ pub static FUNCTIONS: &[Function] = &[
     f("libSceAmpr", "sceAmprCommandBufferDestructor", destruct),
     f("libSceAmpr", "sceAmprAprCommandBufferDestructor", destruct),
     f("libSceAmpr", "sceAmprCommandBufferClearBuffer", reset),
-    f("libSceAmpr", "sceAmprCommandBufferGetNumCommands", num_commands),
-    f("libSceAmpr", "sceAmprCommandBufferGetCurrentOffset", current_offset),
+    f(
+        "libSceAmpr",
+        "sceAmprCommandBufferGetNumCommands",
+        num_commands,
+    ),
+    f(
+        "libSceAmpr",
+        "sceAmprCommandBufferGetCurrentOffset",
+        current_offset,
+    ),
     f("libSceAmpr", "sceAmprCommandBufferNop", accept),
     f("libSceAmpr", "sceAmprCommandBufferSetMarker", accept),
     f("libSceAmpr", "sceAmprCommandBufferPushMarker", accept),
     f("libSceAmpr", "sceAmprCommandBufferPopMarker", accept),
     f("libSceAmpr", "sceAmprMeasureCommandSizeNop", command_size),
-    f("libSceAmpr", "sceAmprMeasureCommandSizeReadFile", command_size),
-    f("libSceAmpr", "sceAmprMeasureCommandSizeReadFileGather", command_size),
-    f("libSceAmpr", "sceAmprMeasureCommandSizeReadFileScatter", command_size),
-    f("libSceAmpr", "sceAmprMeasureCommandSizeReadFileGatherScatter", command_size),
-    f("libSceAmpr", "sceAmprMeasureCommandSizeSetMarker", command_size),
-    f("libSceAmpr", "sceAmprMeasureCommandSizePushMarker", command_size),
-    f("libSceAmpr", "sceAmprMeasureCommandSizePopMarker", command_size),
+    f(
+        "libSceAmpr",
+        "sceAmprMeasureCommandSizeReadFile",
+        command_size,
+    ),
+    f(
+        "libSceAmpr",
+        "sceAmprMeasureCommandSizeReadFileGather",
+        command_size,
+    ),
+    f(
+        "libSceAmpr",
+        "sceAmprMeasureCommandSizeReadFileScatter",
+        command_size,
+    ),
+    f(
+        "libSceAmpr",
+        "sceAmprMeasureCommandSizeReadFileGatherScatter",
+        command_size,
+    ),
+    f(
+        "libSceAmpr",
+        "sceAmprMeasureCommandSizeSetMarker",
+        command_size,
+    ),
+    f(
+        "libSceAmpr",
+        "sceAmprMeasureCommandSizePushMarker",
+        command_size,
+    ),
+    f(
+        "libSceAmpr",
+        "sceAmprMeasureCommandSizePopMarker",
+        command_size,
+    ),
 ];
 
 /// What `sceAmprMeasureCommandSize*` report for any command (our choice:
@@ -105,7 +162,11 @@ const fn f(library: &'static str, name: &'static str, func: crate::HostFn) -> Fu
 }
 
 fn ret(errno: i32) -> Result<Outcome, CallError> {
-    Ok(Outcome::Return(if errno == 0 { 0 } else { sce_error(errno) }))
+    Ok(Outcome::Return(if errno == 0 {
+        0
+    } else {
+        sce_error(errno)
+    }))
 }
 
 fn open(env: &Env, path: &[u8]) -> Option<AprFile> {
@@ -128,7 +189,11 @@ fn resolve_with_prefix(env: &mut Env) -> Result<Outcome, CallError> {
     resolve_paths(env, &prefix, [1, 2, 3, 4, 5].map(|n| env.arg(n)))
 }
 
-fn resolve_paths(env: &Env, prefix: &[u8], [paths, count, ids, sizes, failed]: [u64; 5]) -> Result<Outcome, CallError> {
+fn resolve_paths(
+    env: &Env,
+    prefix: &[u8],
+    [paths, count, ids, sizes, failed]: [u64; 5],
+) -> Result<Outcome, CallError> {
     if count == 0 || count > RESOLVE_MAX {
         return ret(EINVAL);
     }
@@ -259,7 +324,12 @@ fn submit(env: &mut Env) -> Result<Outcome, CallError> {
     };
     for c in commands {
         let (file, dest, len, offset) = match c {
-            Command::Read { file, dest, len, offset } => (file, dest, len, offset),
+            Command::Read {
+                file,
+                dest,
+                len,
+                offset,
+            } => (file, dest, len, offset),
             Command::WriteAddress { addr, value } => {
                 env.mem.write_u64(addr, value)?;
                 continue;

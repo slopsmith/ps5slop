@@ -21,4 +21,3 @@ const fn f(name: &'static str, func: crate::HostFn) -> Function {
 fn ok(_: &mut Env) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(0))
 }
-

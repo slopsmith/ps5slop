@@ -323,7 +323,9 @@ impl Drop for Engine {
         if let Ok(mut m) = machine() {
             m.vcpus[self.cpu.slot] = None;
         }
-        SHARED.slots[self.cpu.slot].running.store(false, Ordering::SeqCst);
+        SHARED.slots[self.cpu.slot]
+            .running
+            .store(false, Ordering::SeqCst);
     }
 }
 
@@ -577,7 +579,11 @@ impl Engine {
             tries += 1;
             // Another thread may sync meanwhile; queue for the lock only
             // when it stays taken.
-            let m = if tries < 64 { crate::try_machine()? } else { Some(machine()?) };
+            let m = if tries < 64 {
+                crate::try_machine()?
+            } else {
+                Some(machine()?)
+            };
             let Some(mut m) = m else {
                 std::hint::spin_loop();
                 if tries % 8 == 0 {
@@ -701,7 +707,9 @@ impl Engine {
                 }
                 Exit::Fault { elr: pc, .. } | Exit::Stage2 { pc } if crate::in_native(pc) => {
                     count_exit(Count::Fault);
-                    SHARED.slots[self.cpu.slot].old_pc.store(0, Ordering::SeqCst);
+                    SHARED.slots[self.cpu.slot]
+                        .old_pc
+                        .store(0, Ordering::SeqCst);
                     let rip = self.cpu.reg(RIP.0)?;
                     note_exit(Cause::NativeFault, rip);
                     self.store(x)?;
@@ -715,14 +723,18 @@ impl Engine {
                         panic!("the JIT faulted outside translated code at {pc:#x}");
                     };
                     note_exit(Cause::Fault, rip);
-                    SHARED.slots[self.cpu.slot].old_pc.store(0, Ordering::SeqCst);
+                    SHARED.slots[self.cpu.slot]
+                        .old_pc
+                        .store(0, Ordering::SeqCst);
                     rip
                 }
                 Exit::Canceled { pc, cpsr } => {
                     count_exit(Count::Cancel);
                     note_exit(Cause::Canceled, 0);
                     if stop() {
-                        SHARED.slots[self.cpu.slot].old_pc.store(0, Ordering::SeqCst);
+                        SHARED.slots[self.cpu.slot]
+                            .old_pc
+                            .store(0, Ordering::SeqCst);
                         return Ok(x86::Exit::Limit);
                     }
                     entry = resume_after_cancel(previous, pc, cpsr);

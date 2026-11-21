@@ -9,8 +9,8 @@ use memory::Memory;
 use x86::decode::{Insn, Map, Mem, Rep, Seg, decode};
 
 use super::{
-    A, ADDR, AF_AUX, Alu, B, Block, HVC_INTERP, ICOUNT, PF_RESULT, T, Translator, alu_of,
-    classify, cond, mask, sz, width,
+    A, ADDR, AF_AUX, Alu, B, Block, HVC_INTERP, ICOUNT, PF_RESULT, T, Translator, alu_of, classify,
+    cond, mask, sz, width,
 };
 
 const MAX_BLOCKS: usize = 32;
@@ -30,7 +30,13 @@ enum End {
     /// Falls through or jumps to the region block with this index.
     Goto(usize),
     /// A Jcc whose targets are region blocks or leave it (`None`).
-    Branch { cc: u8, taken: Option<usize>, taken_rip: u64, fall: Option<usize>, fall_rip: u64 },
+    Branch {
+        cc: u8,
+        taken: Option<usize>,
+        taken_rip: u64,
+        fall: Option<usize>,
+        fall_rip: u64,
+    },
     /// Leaves the region for the code at this RIP.
     Leave(u64),
     /// Leaves for the interpreter at this RIP.
@@ -62,7 +68,11 @@ fn discover(mem: &Memory, entry: u64) -> Vec<XBlock> {
     let mut work = vec![entry];
     let mut total = 0;
     index.insert(entry, 0);
-    blocks.push(XBlock { start: entry, insns: Vec::new(), end: End::Leave(entry) });
+    blocks.push(XBlock {
+        start: entry,
+        insns: Vec::new(),
+        end: End::Leave(entry),
+    });
     while let Some(start) = work.pop() {
         let b = index[&start];
         let mut insns = Vec::new();
@@ -77,7 +87,11 @@ fn discover(mem: &Memory, entry: u64) -> Vec<XBlock> {
             if blocks.len() >= MAX_BLOCKS {
                 return None;
             }
-            blocks.push(XBlock { start: t, insns: Vec::new(), end: End::Leave(t) });
+            blocks.push(XBlock {
+                start: t,
+                insns: Vec::new(),
+                end: End::Leave(t),
+            });
             index.insert(t, blocks.len() - 1);
             work.push(t);
             Some(blocks.len() - 1)
@@ -86,11 +100,18 @@ fn discover(mem: &Memory, entry: u64) -> Vec<XBlock> {
             if insns.len() >= MAX_BLOCK_INSNS || total >= MAX_INSNS || at & !0xfff != page {
                 break End::Leave(at);
             }
-            let Some(i) = fetch(mem, at) else { break End::Interpret(at) };
-            let Some((ends, _)) = classify(&i) else { break End::Interpret(at) };
+            let Some(i) = fetch(mem, at) else {
+                break End::Interpret(at);
+            };
+            let Some((ends, _)) = classify(&i) else {
+                break End::Interpret(at);
+            };
             let next = at + i.len as u64;
             total += 1;
-            let jcc = matches!((i.map, i.op), (Map::Primary, 0x70..=0x7f) | (Map::M0F, 0x80..=0x8f));
+            let jcc = matches!(
+                (i.map, i.op),
+                (Map::Primary, 0x70..=0x7f) | (Map::M0F, 0x80..=0x8f)
+            );
             let jmp = i.map == Map::Primary && matches!(i.op, 0xe9 | 0xeb);
             if jcc {
                 let t = next.wrapping_add(i.imm as u64);
@@ -98,7 +119,13 @@ fn discover(mem: &Memory, entry: u64) -> Vec<XBlock> {
                 let fall = target(next, &mut blocks, &mut work);
                 let cc = i.op & 0xf;
                 insns.push((i, at));
-                break End::Branch { cc, taken, taken_rip: t, fall, fall_rip: next };
+                break End::Branch {
+                    cc,
+                    taken,
+                    taken_rip: t,
+                    fall,
+                    fall_rip: next,
+                };
             }
             if jmp {
                 let t = next.wrapping_add(i.imm as u64);
@@ -265,7 +292,10 @@ pub fn region(mem: &Memory, rip: u64, place: usize, dispatch: usize) -> Option<(
         t.a.sub_imm(Size::X, ICOUNT, ICOUNT, left);
         t.exit_to(at, Some(HVC_INTERP));
     }
-    let rips = blocks.iter().flat_map(|b| b.insns.iter().map(|&(_, at)| at)).collect();
+    let rips = blocks
+        .iter()
+        .flat_map(|b| b.insns.iter().map(|&(_, at)| at))
+        .collect();
     Some((
         Block {
             code: t.a.finish(),
@@ -291,7 +321,13 @@ impl Translator {
                     self.a.b(labels[t]);
                 }
             }
-            End::Branch { cc, taken, taken_rip, fall, fall_rip } => {
+            End::Branch {
+                cc,
+                taken,
+                taken_rip,
+                fall,
+                fall_rip,
+            } => {
                 let to_taken = match taken {
                     Some(t) => labels[t],
                     None => self.a.label(),
@@ -401,17 +437,32 @@ impl Translator {
                 self.a.mov_imm(s, r(i.rm), i.imm as u64 & mask(size));
                 true
             }
-            (Map::Primary, 0x01 | 0x03 | 0x09 | 0x0b | 0x21 | 0x23 | 0x29 | 0x2b | 0x31 | 0x33 | 0x39 | 0x3b | 0x85) => {
+            (
+                Map::Primary,
+                0x01 | 0x03 | 0x09 | 0x0b | 0x21 | 0x23 | 0x29 | 0x2b | 0x31 | 0x33 | 0x39 | 0x3b
+                | 0x85,
+            ) => {
                 let (op, keep) = match i.op {
                     0x85 => (Alu::And, false),
                     _ => alu_of(i.op >> 3).expect("ALU opcode"),
                 };
                 let to_rm = i.op & 2 == 0;
-                let (dst_reg, src) = if to_rm { (i.rm, Opd::Reg(r(i.reg))) } else { (i.reg, Opd::Reg(r(i.rm))) };
+                let (dst_reg, src) = if to_rm {
+                    (i.rm, Opd::Reg(r(i.reg)))
+                } else {
+                    (i.reg, Opd::Reg(r(i.rm)))
+                };
                 if !to_rm && let Some(m) = i.mem {
                     let (base, off) = self.mem_operand(&m, next, w);
                     self.a.ldr(w, B, base, off);
-                    return self.alu2(op, size, r(dst_reg), Opd::Reg(B), keep.then_some(Dst::Reg(dst_reg)), need);
+                    return self.alu2(
+                        op,
+                        size,
+                        r(dst_reg),
+                        Opd::Reg(B),
+                        keep.then_some(Dst::Reg(dst_reg)),
+                        need,
+                    );
                 }
                 match i.mem {
                     Some(m) if to_rm => {
@@ -420,7 +471,14 @@ impl Translator {
                         let dst = keep.then_some(Dst::Mem(base, off));
                         self.alu2(op, size, A, src, dst, need)
                     }
-                    _ => self.alu2(op, size, r(dst_reg), src, keep.then_some(Dst::Reg(dst_reg)), need),
+                    _ => self.alu2(
+                        op,
+                        size,
+                        r(dst_reg),
+                        src,
+                        keep.then_some(Dst::Reg(dst_reg)),
+                        need,
+                    ),
                 }
             }
             (Map::Primary, 0x81 | 0x83) if matches!(i.ext(), 0 | 1 | 4 | 5 | 6 | 7) => {
@@ -433,10 +491,24 @@ impl Translator {
                         let dst = keep.then_some(Dst::Mem(base, off));
                         self.alu2(op, size, A, Opd::Imm(v), dst, need)
                     }
-                    None => self.alu2(op, size, r(i.rm), Opd::Imm(v), keep.then_some(Dst::Reg(i.rm)), need),
+                    None => self.alu2(
+                        op,
+                        size,
+                        r(i.rm),
+                        Opd::Imm(v),
+                        keep.then_some(Dst::Reg(i.rm)),
+                        need,
+                    ),
                 }
             }
-            (Map::Primary, 0xa9) => self.alu2(Alu::And, size, r(0), Opd::Imm(i.imm as u64 & mask(size)), None, need),
+            (Map::Primary, 0xa9) => self.alu2(
+                Alu::And,
+                size,
+                r(0),
+                Opd::Imm(i.imm as u64 & mask(size)),
+                None,
+                need,
+            ),
             (Map::Primary, 0x8d) if i.mem.is_some() => {
                 let m = i.mem.expect("memory operand");
                 if m.rip_relative || m.addr32 {
@@ -451,7 +523,14 @@ impl Translator {
                         self.a.sub_imm(s, r(i.reg), r(b), (-d) as u32);
                     }
                     (Some(b), Some(x)) if d == 0 => {
-                        self.a.add_shift(s, r(i.reg), r(b), r(x), a64::Shift::Lsl, m.scale.trailing_zeros());
+                        self.a.add_shift(
+                            s,
+                            r(i.reg),
+                            r(b),
+                            r(x),
+                            a64::Shift::Lsl,
+                            m.scale.trailing_zeros(),
+                        );
                     }
                     _ => return false,
                 }

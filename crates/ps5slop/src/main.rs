@@ -69,7 +69,9 @@ fn main() -> ExitCode {
         passcode,
         control,
     } = Cli::parse().command;
-    let control = control.unwrap_or_else(|| std::env::temp_dir().join(format!("ps5slop-{}.sock", std::process::id())));
+    let control = control.unwrap_or_else(|| {
+        std::env::temp_dir().join(format!("ps5slop-{}.sock", std::process::id()))
+    });
     let passcode = match passcode
         .as_deref()
         .map(Passcode::new)
@@ -206,18 +208,33 @@ fn dump_after(kernel: std::sync::Arc<hle::Kernel>, out: PathBuf, seconds: f64) {
             for (addr, t) in hle::gpu::metal::all_frames() {
                 if let Some((w, h, px)) = hle::gpu::metal::read_rgba(&t) {
                     let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
-                    ppm.extend(px.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]));
+                    ppm.extend(
+                        px.as_chunks::<4>()
+                            .0
+                            .iter()
+                            .flat_map(|p| [p[0], p[1], p[2]]),
+                    );
                     let _ = std::fs::write(out.with_extension(format!("{addr:x}.ppm")), ppm);
                 }
             }
         }
-        let series: u32 = std::env::var("PS5SLOP_DUMP_SERIES").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
-        let every: u64 = std::env::var("PS5SLOP_DUMP_EVERY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(500);
+        let series: u32 = std::env::var("PS5SLOP_DUMP_SERIES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+        let every: u64 = std::env::var("PS5SLOP_DUMP_EVERY_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(500);
         for i in 0..series {
             if i > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(every));
             }
-            let path = if series > 1 { out.with_extension(format!("{i}.ppm")) } else { out.clone() };
+            let path = if series > 1 {
+                out.with_extension(format!("{i}.ppm"))
+            } else {
+                out.clone()
+            };
             write_frame(&kernel, &path);
         }
         kernel.exit(Ok(0));
@@ -237,7 +254,8 @@ fn play_input(kernel: std::sync::Arc<hle::Kernel>, script: String) {
         .collect();
     std::thread::spawn(move || {
         for (at, input) in steps {
-            if let Some(wait) = std::time::Duration::from_secs_f64(at).checked_sub(start.elapsed()) {
+            if let Some(wait) = std::time::Duration::from_secs_f64(at).checked_sub(start.elapsed())
+            {
                 std::thread::sleep(wait);
             }
             kernel.set_pad_input(input);
