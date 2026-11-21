@@ -43,13 +43,29 @@ struct Stream {
     fd: i32,
     error: bool,
     eof: bool,
+    origin: Option<Origin>,
 }
+
+/// How a file was opened, so that a loaded save state can open it again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Origin {
+    pub path: Vec<u8>,
+    pub write: bool,
+    pub append: bool,
+}
+
+savestate::record!(Origin {
+    path,
+    write,
+    append
+});
 
 /// The open streams, by FILE address, and the files opened as bare
 /// descriptors (libkernel's `open`). Both share one descriptor space.
 pub(crate) struct Files {
     streams: Mutex<HashMap<u64, Stream>>,
     descriptors: Mutex<HashMap<i32, GuestFile>>,
+    origins: Mutex<HashMap<i32, Origin>>,
     /// Descriptors open on directories: what to list and how many entries
     /// `getdents` has returned.
     directories: Mutex<HashMap<i32, (DirSource, usize)>>,
@@ -75,11 +91,12 @@ impl Files {
     }
 
     /// Gives `file` the lowest free descriptor number.
-    pub(crate) fn open_fd(&self, file: GuestFile) -> i32 {
+    pub(crate) fn open_fd(&self, file: GuestFile, origin: Origin) -> i32 {
         let streams = lock(&self.streams);
         let mut descriptors = lock(&self.descriptors);
         let fd = free_fd(&streams, &descriptors);
         descriptors.insert(fd, file);
+        lock(&self.origins).insert(fd, origin);
         fd
     }
 
@@ -105,6 +122,7 @@ impl Files {
     /// Closes descriptor `fd`; false when it was not open.
     pub(crate) fn close_fd(&self, fd: i32) -> bool {
         lock(&self.directories).remove(&fd);
+        lock(&self.origins).remove(&fd);
         lock(&self.descriptors).remove(&fd).is_some()
     }
 
@@ -138,6 +156,7 @@ impl Default for Files {
             fd,
             error: false,
             eof: false,
+            origin: None,
         };
         let streams = HashMap::from([
             (STDIN_FILE, console(0)),
@@ -147,6 +166,7 @@ impl Default for Files {
         Self {
             streams: Mutex::new(streams),
             descriptors: Mutex::default(),
+            origins: Mutex::default(),
             directories: Mutex::default(),
         }
     }
@@ -195,6 +215,11 @@ fn fopen(env: &mut Env) -> Result<Outcome, CallError> {
             fd,
             error: false,
             eof: false,
+            origin: Some(Origin {
+                path,
+                write: writes,
+                append: mode.first() == Some(&b'a'),
+            }),
         },
     );
     ret(at)
@@ -388,4 +413,99 @@ fn ferror(env: &mut Env) -> Result<Outcome, CallError> {
 fn fileno(env: &mut Env) -> Result<Outcome, CallError> {
     let file = env.arg(0);
     with_stream(env, file, EOF, |s| Ok(s.fd as u32 as u64))
+}
+
+/// The guest's position in an open file, from its handle.
+fn position(file: &mut GuestFile) -> u64 {
+    file.stream_position().unwrap_or(0)
+}
+
+impl Files {
+    /// Writes every open file as how it was opened and where it is.
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) -> Result<(), String> {
+        let mut streams = lock(&self.streams);
+        let mut descriptors = lock(&self.descriptors);
+        let origins = lock(&self.origins);
+        let directories = lock(&self.directories);
+        let mut saved_streams = Vec::new();
+        for (&at, s) in streams.iter_mut() {
+            let file = match &mut s.target {
+                Target::Console(fd) => (true, *fd as u64),
+                Target::Host(f) => (false, position(f)),
+            };
+            saved_streams.push((at, s.fd, file, (s.error, s.eof), s.origin.clone()));
+        }
+        let mut saved_fds = Vec::new();
+        for (&fd, f) in descriptors.iter_mut() {
+            let Some(origin) = origins.get(&fd) else {
+                return Err(format!("descriptor {fd} has no recorded path"));
+            };
+            let dir = directories.get(&fd).map(|(_, n)| *n as u64);
+            saved_fds.push((fd, origin.clone(), position(f), dir));
+        }
+        saved_streams.sort_by_key(|s| s.0);
+        saved_fds.sort_by_key(|f| f.0);
+        e.put(&saved_streams).put(&saved_fds);
+        Ok(())
+    }
+
+    /// Opens the saved files again through `vfs`.
+    pub(crate) fn load(
+        &self,
+        d: &mut savestate::Decoder,
+        vfs: &crate::Vfs,
+    ) -> Result<(), savestate::Error> {
+        type SavedStream = (u64, i32, (bool, u64), (bool, bool), Option<Origin>);
+        let saved_streams: Vec<SavedStream> = d.get()?;
+        let saved_fds: Vec<(i32, Origin, u64, Option<u64>)> = d.get()?;
+        let reopen =
+            |o: &Origin, pos: u64| -> Result<(GuestFile, Option<DirSource>), savestate::Error> {
+                let mut options = OpenOptions::new();
+                options
+                    .read(true)
+                    .write(o.write && !o.append)
+                    .append(o.append);
+                let (mut file, dir) = vfs.open(&o.path, &options, o.write).map_err(|e| {
+                    savestate::error(format!(
+                        "cannot open {} again (errno {e})",
+                        String::from_utf8_lossy(&o.path)
+                    ))
+                })?;
+                if dir.is_none() {
+                    file.seek(SeekFrom::Start(pos))?;
+                }
+                Ok((file, dir))
+            };
+        let mut streams = HashMap::new();
+        for (at, fd, (console, n), (error, eof), origin) in saved_streams {
+            let target = match (&origin, console) {
+                (_, true) => Target::Console(n as i32),
+                (Some(o), false) => Target::Host(reopen(o, n)?.0),
+                (None, false) => return Err(savestate::error("a stream has no recorded path")),
+            };
+            let s = Stream {
+                target,
+                fd,
+                error,
+                eof,
+                origin,
+            };
+            streams.insert(at, s);
+        }
+        let (mut descriptors, mut origins, mut directories) =
+            (HashMap::new(), HashMap::new(), HashMap::new());
+        for (fd, origin, pos, dir) in saved_fds {
+            let (file, source) = reopen(&origin, pos)?;
+            if let (Some(source), Some(n)) = (source, dir) {
+                directories.insert(fd, (source, n as usize));
+            }
+            descriptors.insert(fd, file);
+            origins.insert(fd, origin);
+        }
+        *lock(&self.streams) = streams;
+        *lock(&self.descriptors) = descriptors;
+        *lock(&self.origins) = origins;
+        *lock(&self.directories) = directories;
+        Ok(())
+    }
 }

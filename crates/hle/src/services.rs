@@ -210,8 +210,7 @@ const USER_SERVICE_ERROR_NO_EVENT: u64 = 0x8096_0007;
 /// `sceUserServiceGetEvent(event)`: [`USER_ID`] logging in on the first call
 /// (`{ i32 type = 0, i32 user }`, from OpenOrbis), then no events.
 fn user_event(env: &mut Env) -> Result<Outcome, CallError> {
-    static REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if REPORTED.swap(true, std::sync::atomic::Ordering::AcqRel) {
+    if LOGIN_REPORTED.swap(true, std::sync::atomic::Ordering::AcqRel) {
         return ret(USER_SERVICE_ERROR_NO_EVENT);
     }
     env.mem.write(env.arg(0), &0i32.to_le_bytes())?;
@@ -389,10 +388,19 @@ fn rtc_current_tick(env: &mut Env) -> Result<Outcome, CallError> {
 }
 
 fn current_tick() -> u64 {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
+    let now = savestate::clock::unix();
     (now.as_secs() + RTC_EPOCH_OFFSET) * 1_000_000 + now.subsec_micros() as u64
+}
+
+static LOGIN_REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn save(e: &mut savestate::Encoder) {
+    e.put(&LOGIN_REPORTED.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+pub(crate) fn load(d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+    LOGIN_REPORTED.store(d.get()?, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
 }
 
 #[cfg(test)]

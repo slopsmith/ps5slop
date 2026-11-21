@@ -59,6 +59,20 @@ pub struct Cpu {
     pub ftag: u8,
 }
 
+savestate::record!(Cpu {
+    regs,
+    rip,
+    rflags,
+    fs_base,
+    gs_base,
+    xmm,
+    mxcsr,
+    fcw,
+    fsw,
+    st,
+    ftag
+});
+
 impl Default for Cpu {
     fn default() -> Self {
         Self {

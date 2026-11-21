@@ -30,6 +30,7 @@ The protocol is the one 86slopper uses: one command per line, and each answer en
 | `gpureload` | Translates every program again at the end of the frame, reading `PS5SLOP_MSL_OVERRIDE` files again |
 | `shot PATH` | Writes the screen as PPM; with `press`, this drives menus step by step |
 | `frames DIR N` | Writes the next N frames the guest flips as `DIR/FLIP.ppm` (N decimal), in the background; a flip number missing from the names was not caught. Shows flicker and one-frame glitches that single shots miss |
+| `save PATH` | Writes a save state and lets the guest go on; `ps5slop run --load-state PATH GAME` goes on from it in a fresh process (same title and `--data` folder). Answers with the size and the times. See [savestates.md](savestates.md) |
 | `rates` | The guest's instructions per second, translated and interpreted, since the last `rates`, as the window title shows them (the first call starts the window) |
 | `quit` | Ends the guest |
 
@@ -183,3 +184,5 @@ A route that worked headless on 2026-11-21 with a fresh `--data` folder, times f
 4. The "Entering Story Mode" loading screen runs to about 130 s, then the card "Ludendorff, North Yankton, nine years ago." and, at about 175 s, gameplay: HUD, minimap, "Go to the guard.". The camera still moves for a few seconds after control is given. A PS5 capture of the same moment (the depot lobby, from a 4K playthrough video) was the reference for the picture work of 2026-11-21.
 
 `press lup 2000` and `press rright 600` move and turn the player (watch the minimap arrow). The times are loose: wait for each screen with `shot` rather than trusting them.
+
+Once there, `save PATH` keeps the moment: `--load-state PATH` starts at "Go to the guard." about 5 s after launch instead of 3 to 5 minutes ([savestates.md](savestates.md)). On 2026-11-22 gameplay with the objective text came at about 320 s, and the location card stayed up from about 150 s to 175 s.

@@ -7,4 +7,5 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+savestate = { path = "../savestate" }
 memory = { path = "../memory" }

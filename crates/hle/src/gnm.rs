@@ -209,3 +209,10 @@ impl gpu::Host for Host {
         self.kernel.display_buffer(index)
     }
 }
+
+impl Gnm {
+    /// Whether the PS4 command path has run, which save states do not cover.
+    pub(crate) fn in_use(&self) -> bool {
+        lock(&self.jobs).is_some()
+    }
+}

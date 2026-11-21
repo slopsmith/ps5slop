@@ -242,3 +242,28 @@ fn get_self(env: &mut Env) -> Result<Outcome, CallError> {
 fn fiber_return(_: &mut Env) -> Result<Outcome, CallError> {
     Err(CallError::Abort("a fiber's entry function returned"))
 }
+
+savestate::record!(Fiber {
+    entry,
+    arg_on_initialize,
+    stack_top,
+    suspended,
+    running
+});
+savestate::record!(Host {
+    current,
+    thread,
+    arg_on_return
+});
+
+impl Fibers {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        e.put(&*lock(&self.fibers)).put(&*lock(&self.hosts));
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        *lock(&self.fibers) = d.get()?;
+        *lock(&self.hosts) = d.get()?;
+        Ok(())
+    }
+}

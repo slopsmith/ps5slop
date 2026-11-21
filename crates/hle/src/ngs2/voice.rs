@@ -484,6 +484,49 @@ pub(super) fn run_commands(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
+savestate::record!(Port {
+    volume,
+    matrix,
+    patch,
+    destination,
+    buffer
+});
+savestate::record!(Block {
+    address,
+    length,
+    skip,
+    frames,
+    repeats,
+    repeated,
+    joins,
+    user_data
+});
+savestate::record!(Voice {
+    rack,
+    index,
+    kind,
+    channels,
+    rate,
+    source,
+    blocks,
+    position,
+    playing,
+    paused,
+    in_use,
+    stopped,
+    error,
+    pitch,
+    gain,
+    output,
+    decoded_samples,
+    decoded_bytes,
+    callback,
+    callback_data,
+    callback_flags,
+    ports,
+    matrices
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;

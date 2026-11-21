@@ -170,7 +170,11 @@ fn ret(errno: i32) -> Result<Outcome, CallError> {
 }
 
 fn open(env: &Env, path: &[u8]) -> Option<AprFile> {
-    match env.kernel.vfs.lookup(path)? {
+    open_in(&env.kernel.vfs, path)
+}
+
+fn open_in(vfs: &crate::Vfs, path: &[u8]) -> Option<AprFile> {
+    match vfs.lookup(path)? {
         Target::Host(p, _) => File::open(p).ok().map(AprFile::Host),
         Target::Image(fs, p) => fs.open(&p).map(AprFile::Image),
     }
@@ -378,4 +382,74 @@ fn trace_reads() -> bool {
 /// return, so there is nothing to wait for.
 fn wait(_: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
+}
+
+impl savestate::Encode for Command {
+    fn encode(&self, e: &mut savestate::Encoder) {
+        match *self {
+            Command::Read {
+                file,
+                dest,
+                len,
+                offset,
+            } => e.put(&0u8).put(&(file, dest, len, offset)),
+            Command::WriteAddress { addr, value } => e.put(&1u8).put(&(addr, value)),
+        };
+    }
+}
+
+impl savestate::Decode for Command {
+    fn decode(d: &mut savestate::Decoder) -> Result<Self, savestate::Error> {
+        Ok(match d.get::<u8>()? {
+            0 => {
+                let (file, dest, len, offset) = d.get()?;
+                Command::Read {
+                    file,
+                    dest,
+                    len,
+                    offset,
+                }
+            }
+            1 => {
+                let (addr, value) = d.get()?;
+                Command::WriteAddress { addr, value }
+            }
+            n => return Err(savestate::error(format!("bad APR command {n}"))),
+        })
+    }
+}
+
+impl Apr {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        e.put(&*lock(&self.paths))
+            .put(&*lock(&self.buffers))
+            .put(&self.submissions.load(Ordering::Relaxed));
+    }
+
+    /// Opens the resolved files again by path, keeping their ids.
+    pub(crate) fn load(
+        &self,
+        d: &mut savestate::Decoder,
+        vfs: &crate::Vfs,
+    ) -> Result<(), savestate::Error> {
+        let paths: Vec<Vec<u8>> = d.get()?;
+        let mut files = Vec::new();
+        let mut by_path = HashMap::new();
+        for (id, path) in paths.iter().enumerate() {
+            let file = open_in(vfs, path).ok_or_else(|| {
+                savestate::error(format!(
+                    "cannot open APR file {} again",
+                    String::from_utf8_lossy(path)
+                ))
+            })?;
+            files.push(Arc::new(file));
+            by_path.insert(path.clone(), id as u32);
+        }
+        *lock(&self.files) = files;
+        *lock(&self.paths) = paths;
+        *lock(&self.by_path) = by_path;
+        *lock(&self.buffers) = d.get()?;
+        self.submissions.store(d.get()?, Ordering::Relaxed);
+        Ok(())
+    }
 }

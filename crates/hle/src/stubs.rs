@@ -790,3 +790,12 @@ fn sku_flag(env: &mut Env) -> Result<Outcome, CallError> {
     env.mem.write(env.arg(0), &3u32.to_le_bytes())?;
     Ok(Outcome::Return(0))
 }
+
+pub(crate) fn save(e: &mut savestate::Encoder) {
+    e.put(&NEXT.load(Ordering::Relaxed));
+}
+
+pub(crate) fn load(d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+    NEXT.store(d.get()?, Ordering::Relaxed);
+    Ok(())
+}

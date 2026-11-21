@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use crate::pthread::lock;
 use crate::{CallError, DATA_BASE, Env, Function, Outcome, Variable};
 
 mod format;
@@ -15,7 +16,7 @@ mod stdio;
 mod stdlib;
 mod string;
 
-pub(crate) use stdio::{FdInfo, Files};
+pub(crate) use stdio::{FdInfo, Files, Origin};
 
 pub const LIBRARY: &str = "libSceLibcInternal";
 
@@ -135,4 +136,26 @@ fn ret_f32(env: &mut Env, v: f32) -> Result<Outcome, CallError> {
 
 fn ret(v: u64) -> Result<Outcome, CallError> {
     Ok(Outcome::Return(v))
+}
+
+impl State {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) -> Result<(), String> {
+        e.put(&*lock(&self.atexit))
+            .put(&*lock(&self.environment))
+            .put(&*lock(&self.strerror))
+            .put(&*lock(&self.rand));
+        self.files.save(e)
+    }
+
+    pub(crate) fn load(
+        &self,
+        d: &mut savestate::Decoder,
+        vfs: &crate::Vfs,
+    ) -> Result<(), savestate::Error> {
+        *lock(&self.atexit) = d.get()?;
+        *lock(&self.environment) = d.get()?;
+        *lock(&self.strerror) = d.get()?;
+        *lock(&self.rand) = d.get()?;
+        self.files.load(d, vfs)
+    }
 }

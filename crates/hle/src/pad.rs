@@ -6,7 +6,6 @@
 //! and SharpEmu-mac's `pad` code (see docs/references.md), unverified on a PS5.
 
 use std::sync::Mutex;
-use std::time::Instant;
 
 use crate::pthread::lock;
 use crate::services::USER_ID;
@@ -155,7 +154,7 @@ pub struct Pad {
     output: Mutex<PadOutput>,
     open: Mutex<bool>,
     reads: Mutex<u8>,
-    start: Instant,
+    pub(crate) start: crate::process::Uptime,
 }
 
 impl Default for Pad {
@@ -165,7 +164,7 @@ impl Default for Pad {
             output: Mutex::default(),
             open: Mutex::new(false),
             reads: Mutex::new(0),
-            start: Instant::now(),
+            start: Default::default(),
         }
     }
 }
@@ -427,6 +426,21 @@ fn controller_information(env: &mut Env) -> Result<Outcome, CallError> {
     info[12..16].copy_from_slice(&1i32.to_le_bytes());
     env.mem.write(env.arg(1), &info)?;
     Ok(Outcome::Return(0))
+}
+
+impl Pad {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        e.put(&*lock(&self.open))
+            .put(&*lock(&self.reads))
+            .put(&self.start.elapsed());
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        *lock(&self.open) = d.get()?;
+        *lock(&self.reads) = d.get()?;
+        self.start.set(d.get()?);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

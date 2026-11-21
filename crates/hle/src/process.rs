@@ -206,7 +206,9 @@ pub struct Kernel {
     pub(crate) saves: crate::savedata::Saves,
     pub(crate) agc: crate::agc::Agc,
     pub(crate) gnm: crate::gnm::Gnm,
-    pub(crate) started: std::time::Instant,
+    pub(crate) started: Uptime,
+    /// Stops guest threads for a save state (see [`Kernel::stop_world`]).
+    pub(crate) park: Park,
     /// The running title's id (`PPSA01234`), when the host knows it.
     pub(crate) title_id: std::sync::OnceLock<String>,
     /// Every thread pointer `new_tls` handed out.
@@ -310,7 +312,8 @@ impl Kernel {
             agc: Default::default(),
             gnm: Default::default(),
 
-            started: std::time::Instant::now(),
+            started: Uptime::default(),
+            park: Park::default(),
             tcbs: Mutex::default(),
             names: Mutex::default(),
             running: Mutex::default(),
@@ -433,7 +436,7 @@ impl Kernel {
         if self.jit.load(Ordering::Relaxed) {
             let tcb = cpu.fs_base;
             jit::run(cpu, mem, &|| {
-                self.has_exited() || self.exception_pending(tcb)
+                self.has_exited() || self.exception_pending(tcb) || self.park_requested()
             })
         } else {
             jit::interpret(cpu, mem, SLICE)
@@ -458,6 +461,10 @@ impl Kernel {
             .unwrap_or_else(|e| e.into_inner())
             .push(tcb);
         Ok(tcb)
+    }
+
+    pub(crate) fn tls_span(&self) -> u64 {
+        self.tls.span()
     }
 
     /// The address of a TLS variable on thread `tcb`: TLS module `module`,
@@ -533,6 +540,10 @@ impl Kernel {
         loop {
             if self.has_exited() {
                 break;
+            }
+            if self.park_requested() {
+                self.park_here(&cpu, thread.tcb);
+                continue;
             }
             if self.exception_pending(thread.tcb) {
                 let mut env = Env {
@@ -664,5 +675,170 @@ impl Kernel {
         if self.live.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.exit(Ok(0));
         }
+    }
+}
+
+/// A clock that counts from the process's start, and can be set to go on
+/// from a saved reading.
+pub(crate) struct Uptime {
+    started: Mutex<std::time::Instant>,
+}
+
+impl Default for Uptime {
+    fn default() -> Self {
+        Self {
+            started: Mutex::new(std::time::Instant::now()),
+        }
+    }
+}
+
+impl Uptime {
+    pub(crate) fn start(&self) -> std::time::Instant {
+        *self.started.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub(crate) fn elapsed(&self) -> std::time::Duration {
+        self.start().elapsed()
+    }
+
+    /// Makes the clock read `elapsed` now.
+    pub(crate) fn set(&self, elapsed: std::time::Duration) {
+        let now = std::time::Instant::now();
+        let start = now.checked_sub(elapsed).unwrap_or(now);
+        *self.started.lock().unwrap_or_else(|e| e.into_inner()) = start;
+    }
+}
+
+std::thread_local! {
+    /// How deep this host thread is in host functions calling guest code;
+    /// it parks only at depth 0, where its state is all in its CPU.
+    static DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Marks the current thread as inside a guest call from a host function.
+pub(crate) struct Nested;
+
+impl Nested {
+    pub(crate) fn enter() -> Self {
+        DEPTH.with(|d| d.set(d.get() + 1));
+        Nested
+    }
+}
+
+impl Drop for Nested {
+    fn drop(&mut self) {
+        DEPTH.with(|d| d.set(d.get() - 1));
+    }
+}
+
+/// Guest threads stopped for a save state, with their CPU state.
+#[derive(Default)]
+pub(crate) struct Park {
+    requested: AtomicBool,
+    parked: Mutex<std::collections::BTreeMap<u64, Cpu>>,
+    changed: Condvar,
+}
+
+/// How long [`Kernel::stop_world`] waits for every thread to stop.
+const STOP_LIMIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+impl Kernel {
+    /// Whether the calling thread should stop for a save state now: one is
+    /// asked for, and the thread is not inside a guest call from the host.
+    pub(crate) fn park_requested(&self) -> bool {
+        self.park.requested.load(Ordering::Acquire) && DEPTH.with(|d| d.get()) == 0
+    }
+
+    fn park_here(&self, cpu: &Cpu, tcb: u64) {
+        let p = &self.park;
+        let mut parked = p.parked.lock().unwrap_or_else(|e| e.into_inner());
+        parked.insert(tcb, cpu.clone());
+        p.changed.notify_all();
+        jit::blocking();
+        while p.requested.load(Ordering::Acquire) && !self.has_exited() {
+            parked = p
+                .changed
+                .wait_timeout(parked, std::time::Duration::from_millis(50))
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        parked.remove(&tcb);
+        p.changed.notify_all();
+    }
+
+    /// Stops every guest thread at a host call boundary and returns their
+    /// CPU states by thread pointer, or, if some thread did not stop in
+    /// time, lets them all go on and says which did not.
+    pub(crate) fn stop_world(&self) -> Result<std::collections::BTreeMap<u64, Cpu>, String> {
+        let p = &self.park;
+        p.requested.store(true, Ordering::Release);
+        if self.jit.load(Ordering::Relaxed) {
+            jit::kick_all();
+        }
+        let start = std::time::Instant::now();
+        let mut parked = p.parked.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            let live = self.live.load(Ordering::Acquire) as usize;
+            if parked.len() >= live {
+                return Ok(parked.clone());
+            }
+            if start.elapsed() > STOP_LIMIT || self.has_exited() {
+                let stopped: Vec<u64> = parked.keys().copied().collect();
+                drop(parked);
+                self.resume_world();
+                let names = self.names.lock().unwrap_or_else(|e| e.into_inner());
+                let running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+                let late: Vec<String> = running
+                    .iter()
+                    .filter(|(tcb, w)| !w.done.load(Ordering::Relaxed) && !stopped.contains(tcb))
+                    .map(|(tcb, w)| {
+                        format!(
+                            "{tcb:#x} {} (last host call {}, from {:#x})",
+                            names.get(tcb).map_or("", String::as_str),
+                            self.hle
+                                .describe(w.stub.load(Ordering::Relaxed))
+                                .unwrap_or_default(),
+                            w.caller.load(Ordering::Relaxed)
+                        )
+                    })
+                    .collect();
+                return Err(format!(
+                    "{} of {live} guest threads did not stop: {}",
+                    live - stopped.len(),
+                    late.join("; ")
+                ));
+            }
+            parked = p
+                .changed
+                .wait_timeout(parked, std::time::Duration::from_millis(10))
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+            if self.jit.load(Ordering::Relaxed) {
+                jit::kick_all();
+            }
+        }
+    }
+
+    /// Lets threads stopped by [`Kernel::stop_world`] go on.
+    pub(crate) fn resume_world(&self) {
+        self.park.requested.store(false, Ordering::Release);
+        let _guard = self.park.parked.lock().unwrap_or_else(|e| e.into_inner());
+        self.park.changed.notify_all();
+    }
+
+    /// Starts guest threads from saved CPU states, each on its own host
+    /// thread, and waits until the process exits.
+    pub fn run_restored(self: &Arc<Self>, cpus: Vec<Cpu>) -> Result<i32, ThreadError> {
+        for cpu in cpus {
+            self.spawn_thread(cpu);
+        }
+        let mut slot = self.result.lock().unwrap_or_else(|e| e.into_inner());
+        while slot.is_none() {
+            slot = self
+                .exit_signal
+                .wait(slot)
+                .unwrap_or_else(|e| e.into_inner());
+        }
+        slot.take().expect("checked above")
     }
 }

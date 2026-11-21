@@ -261,3 +261,39 @@ impl crate::Kernel {
         *lock(&self.rtld.proc_param) = addr;
     }
 }
+
+savestate::record!(ModuleInfo {
+    name,
+    file,
+    start,
+    end,
+    text,
+    eh_frame_hdr,
+    eh_frame,
+    needs,
+    inits,
+    exports
+});
+
+impl Rtld {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        e.put(&*lock(&self.modules))
+            .put(&*lock(&self.thread_dtors))
+            .put(&*lock(&self.atexit_count))
+            .put(&*lock(&self.atexit_report))
+            .put(&*lock(&self.heap_api))
+            .put(&*lock(&self.proc_param))
+            .put(&*lock(&self.heap_trace));
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        *lock(&self.modules) = d.get()?;
+        *lock(&self.thread_dtors) = d.get()?;
+        *lock(&self.atexit_count) = d.get()?;
+        *lock(&self.atexit_report) = d.get()?;
+        *lock(&self.heap_api) = d.get()?;
+        *lock(&self.proc_param) = d.get()?;
+        *lock(&self.heap_trace) = d.get()?;
+        Ok(())
+    }
+}

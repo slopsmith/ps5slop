@@ -227,6 +227,23 @@ fn build(d: &CompactDefaults, base: u64) -> Vec<u8> {
     b
 }
 
+impl Agc {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) -> Result<(), String> {
+        e.put(&*lock(&self.defaults)).put(&*lock(&self.shaders));
+        lock(&self.registry).save(e);
+        e.put(&sync::saved_amm());
+        self.gpu.save(e)
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        *lock(&self.defaults) = d.get()?;
+        *lock(&self.shaders) = d.get()?;
+        lock(&self.registry).load(d)?;
+        sync::restore_amm(d.get()?);
+        self.gpu.load(d)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

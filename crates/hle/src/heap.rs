@@ -114,6 +114,21 @@ impl Heap {
 
 const _: () = assert!(HEAP_BASE.is_multiple_of(PAGE_SIZE));
 
+impl Heap {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        let s = lock(&self.state);
+        e.put(&s.end).put(&s.free).put(&s.used);
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        let mut s = lock(&self.state);
+        s.end = d.get()?;
+        s.free = d.get()?;
+        s.used = d.get()?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -56,7 +56,7 @@ struct Port {
 
 pub struct VideoOut {
     port: Mutex<Port>,
-    start: Instant,
+    pub(crate) start: crate::process::Uptime,
     listener: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
     on_open: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
@@ -65,7 +65,7 @@ impl Default for VideoOut {
     fn default() -> Self {
         Self {
             port: Mutex::default(),
-            start: Instant::now(),
+            start: Default::default(),
             listener: Mutex::new(None),
             on_open: Mutex::new(None),
         }
@@ -443,7 +443,7 @@ fn wait_vblank(env: &mut Env) -> Result<Outcome, CallError> {
     if !is_open(env) {
         return ret(ERROR_INVALID_HANDLE);
     }
-    let start = env.kernel.videoout.start;
+    let start = env.kernel.videoout.start.start();
     let n = start.elapsed().as_nanos() / VBLANK.as_nanos() + 1;
     let next = start + VBLANK * n as u32;
     while let Some(left) = next.checked_duration_since(Instant::now()) {
@@ -525,7 +525,7 @@ fn flip_status(env: &mut Env) -> Result<Outcome, CallError> {
     if !is_open(env) {
         return ret(ERROR_INVALID_HANDLE);
     }
-    let start = env.kernel.videoout.start;
+    let start = env.kernel.videoout.start.start();
     let (count, arg, time, front) = {
         let port = lock(&env.kernel.videoout.port);
         let time = port
@@ -546,6 +546,42 @@ fn flip_status(env: &mut Env) -> Result<Outcome, CallError> {
     b[0x38..0x3c].copy_from_slice(&front.to_le_bytes());
     env.mem.write(env.arg(1), &b)?;
     ret(0)
+}
+
+savestate::record!(Layout {
+    width,
+    height,
+    tiled,
+    linear
+});
+
+impl VideoOut {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        let p = lock(&self.port);
+        e.put(&p.open)
+            .put(&p.buffers)
+            .put(&p.front)
+            .put(&p.flips)
+            .put(&p.last_arg)
+            .put(&self.start.elapsed());
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        let mut p = lock(&self.port);
+        p.open = d.get()?;
+        p.buffers = d.get()?;
+        p.front = d.get()?;
+        p.flips = d.get()?;
+        p.last_arg = d.get()?;
+        p.last_flip = None;
+        self.start.set(d.get()?);
+        let open = p.open;
+        drop(p);
+        if open && let Some(f) = lock(&self.on_open).as_ref() {
+            f();
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

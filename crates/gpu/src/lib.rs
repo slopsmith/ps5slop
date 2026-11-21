@@ -14,7 +14,7 @@ pub mod regs;
 pub mod tiling;
 pub mod timing;
 
-pub use pm4::{Processor, Stats, trace_sync_event};
+pub use pm4::{Processor, Saved, Stats, trace_sync_event};
 
 /// The register banks as a draw sees them.
 pub struct State<'a> {
@@ -102,6 +102,15 @@ pub trait Backend: Send {
     fn summary(&self) -> String {
         String::new()
     }
+    /// The contents of textures only the GPU holds (render, depth and
+    /// program-written targets), for a save state; the GPU must be idle.
+    fn save_textures(&mut self) -> Result<Vec<u8>, String> {
+        Ok(Vec::new())
+    }
+    /// Makes textures saved by [`Backend::save_textures`] again.
+    fn restore_textures(&mut self, _saved: &[u8]) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// One backend shared by the command processors of several queues; each
@@ -145,6 +154,12 @@ impl Backend for SharedBackend {
     }
     fn summary(&self) -> String {
         self.lock().summary()
+    }
+    fn save_textures(&mut self) -> Result<Vec<u8>, String> {
+        self.lock().save_textures()
+    }
+    fn restore_textures(&mut self, saved: &[u8]) -> Result<(), String> {
+        self.lock().restore_textures(saved)
     }
 }
 

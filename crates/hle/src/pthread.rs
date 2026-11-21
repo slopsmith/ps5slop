@@ -11,9 +11,9 @@
 use std::collections::HashMap;
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use x86::cpu::reg::RSP;
+use x86::cpu::reg::{RDI, RSI, RSP};
 
 use crate::errno::{EBUSY, EDEADLK, EINVAL, EPERM, ETIMEDOUT};
 use crate::process::{SPECIFIC_KEYS, SPECIFIC_OFFSET};
@@ -27,6 +27,9 @@ const PTHREAD_MUTEX_RECURSIVE: u64 = 2;
 
 /// The internal function `pthread_once` returns through.
 pub const ONCE_DONE: &str = "once_done";
+/// The internal function a condition wait stopped for a save state goes on
+/// in: it takes the mutex back and returns.
+pub const COND_RELOCK: &str = "cond_relock";
 
 const ONCE_NEEDS_INIT: u64 = 0;
 const ONCE_DONE_STATE: u64 = 1;
@@ -153,6 +156,11 @@ pub static FUNCTIONS: &[Function] = &[
         library: INTERNAL,
         name: ONCE_DONE,
         func: once_done,
+    },
+    Function {
+        library: INTERNAL,
+        name: COND_RELOCK,
+        func: cond_relock,
     },
 ];
 
@@ -439,9 +447,31 @@ fn wait(env: &mut Env, deadline: Option<Instant>) -> Result<Outcome, CallError> 
             .0;
     }
     drop(generation);
+    if !timed_out && env.kernel.park_requested() && !env.kernel.exception_pending(me) {
+        // The mutex's owner may be stopped already, so take it back after
+        // the save, as a spurious wake-up.
+        let at = env.arg(1);
+        env.cpu.rip = env.kernel.hle.internal(COND_RELOCK);
+        env.cpu.regs[RDI] = at;
+        env.cpu.regs[RSI] = held as u64;
+        return Ok(Outcome::Resume);
+    }
     acquire(env, &m, me, false, false);
     lock(&m.state).count = held;
     ret(if timed_out { ETIMEDOUT } else { 0 })
+}
+
+/// `cond_relock(mutex, count)`: see [`COND_RELOCK`]; returns 0 to the
+/// condition wait's caller.
+fn cond_relock(env: &mut Env) -> Result<Outcome, CallError> {
+    let m = mutex(env, env.arg(0))?;
+    match acquire(env, &m, env.thread.tcb, false, true) {
+        RESTART => Ok(Outcome::Resume),
+        _ => {
+            lock(&m.state).count = env.arg(1) as u32;
+            ret(0)
+        }
+    }
 }
 
 fn cond_wait(env: &mut Env) -> Result<Outcome, CallError> {
@@ -457,7 +487,7 @@ fn cond_timedwait(env: &mut Env) -> Result<Outcome, CallError> {
             let ts = env.arg(2);
             let (sec, nsec) = (env.mem.read_u64(ts)?, env.mem.read_u64(ts + 8)?);
             let target = Duration::new(sec, nsec.min(999_999_999) as u32);
-            env.kernel.started + target
+            env.kernel.started.start() + target
         }
     };
     wait(env, Some(deadline))
@@ -468,9 +498,7 @@ fn cond_timedwait(env: &mut Env) -> Result<Outcome, CallError> {
 pub(crate) fn realtime_deadline(env: &Env, ts: u64) -> Result<Instant, CallError> {
     let (sec, nsec) = (env.mem.read_u64(ts)?, env.mem.read_u64(ts + 8)?);
     let target = Duration::new(sec, nsec.min(999_999_999) as u32);
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
+    let now = savestate::clock::unix();
     Ok(Instant::now() + target.saturating_sub(now))
 }
 
@@ -845,3 +873,77 @@ pub static SCE_FUNCTIONS: &[Function] = &[
     f("scePthreadSelf", self_),
     f("scePthreadEqual", equal),
 ];
+
+use savestate::{Decoder, Encoder, Error};
+
+impl Objects {
+    /// Writes every object for a save state. No thread waits at a save, so
+    /// waiter counts are not kept.
+    pub(crate) fn save(&self, e: &mut Encoder) {
+        let mutexes: HashMap<u64, (u64, Option<u64>, u32)> = lock(&self.mutexes)
+            .iter()
+            .map(|(&id, m)| {
+                let s = lock(&m.state);
+                (id, (m.kind, s.owner, s.count))
+            })
+            .collect();
+        let conds: HashMap<u64, (u64, u64)> = lock(&self.conds)
+            .iter()
+            .map(|(&id, c)| (id, (*lock(&c.generation), c.clock)))
+            .collect();
+        let rwlocks: HashMap<u64, (u32, Option<u64>)> = lock(&self.rwlocks)
+            .iter()
+            .map(|(&id, l)| {
+                let s = lock(&l.state);
+                (id, (s.readers, s.writer))
+            })
+            .collect();
+        e.put(&mutexes)
+            .put(&conds)
+            .put(&rwlocks)
+            .put(&*lock(&self.mutex_attrs))
+            .put(&*lock(&self.keys))
+            .put(&*lock(&self.specific));
+    }
+
+    pub(crate) fn load(&self, d: &mut Decoder) -> Result<(), Error> {
+        let mutexes: HashMap<u64, (u64, Option<u64>, u32)> = d.get()?;
+        *lock(&self.mutexes) = mutexes
+            .into_iter()
+            .map(|(id, (kind, owner, count))| {
+                let m = new_mutex(kind);
+                *lock(&m.state) = MutexState {
+                    owner,
+                    count,
+                    ..MutexState::default()
+                };
+                (id, Arc::new(m))
+            })
+            .collect();
+        let conds: HashMap<u64, (u64, u64)> = d.get()?;
+        *lock(&self.conds) = conds
+            .into_iter()
+            .map(|(id, (generation, clock))| {
+                let c = HostCond {
+                    generation: Mutex::new(generation),
+                    clock,
+                    ..HostCond::default()
+                };
+                (id, Arc::new(c))
+            })
+            .collect();
+        let rwlocks: HashMap<u64, (u32, Option<u64>)> = d.get()?;
+        *lock(&self.rwlocks) = rwlocks
+            .into_iter()
+            .map(|(id, (readers, writer))| {
+                let l = HostRwLock::default();
+                *lock(&l.state) = RwState { readers, writer };
+                (id, Arc::new(l))
+            })
+            .collect();
+        *lock(&self.mutex_attrs) = d.get()?;
+        *lock(&self.keys) = d.get()?;
+        *lock(&self.specific) = d.get()?;
+        Ok(())
+    }
+}

@@ -70,7 +70,12 @@ fn open(env: &mut Env) -> Result<Outcome, CallError> {
         .create(flags & O_CREAT != 0);
     match env.kernel.vfs.open(&path, &o, writes) {
         Ok((file, dir)) => {
-            let fd = env.kernel.libc.files.open_fd(file);
+            let origin = crate::libc::Origin {
+                path: path.clone(),
+                write: flags & (O_WRITE | O_APPEND) != 0,
+                append: flags & O_APPEND != 0,
+            };
+            let fd = env.kernel.libc.files.open_fd(file, origin);
             if let Some(dir) = dir {
                 env.kernel.libc.files.set_directory(fd, dir);
             }

@@ -197,6 +197,28 @@ pub struct Processor {
     color_control_written: bool,
 }
 
+/// What a save state keeps of a [`Processor`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Saved {
+    pub context: Vec<u32>,
+    pub sh: Vec<u32>,
+    pub uconfig: Vec<u32>,
+    pub index_base: u64,
+    pub indirect_base: u64,
+    pub instances: u32,
+    pub gds: Vec<u8>,
+}
+
+savestate::record!(Saved {
+    context,
+    sh,
+    uconfig,
+    index_base,
+    indirect_base,
+    instances,
+    gds
+});
+
 enum Pending {
     Release {
         data: u32,
@@ -326,9 +348,7 @@ fn compare(function: u32, value: u64, reference: u64) -> bool {
 }
 
 fn gpu_clock() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos() as u64)
+    savestate::clock::unix_nanos()
 }
 
 /// ATOMIC_MEM's operation `op` (the TC op numbers SharpEmu-mac uses) on
@@ -1270,6 +1290,39 @@ impl Processor {
         }
     }
 
+    /// The register state and global data share, for a save state. Call
+    /// [`Processor::finish`] first, so that no GPU work is in flight.
+    pub fn saved(&mut self) -> Saved {
+        let mut gds = Vec::new();
+        self.with_gds(&mut |g| gds = g.to_vec());
+        Saved {
+            context: self.context.clone(),
+            sh: self.sh.clone(),
+            uconfig: self.uconfig.clone(),
+            index_base: self.index_base,
+            indirect_base: self.indirect_base,
+            instances: self.instances,
+            gds,
+        }
+    }
+
+    /// Takes over a saved register state; the global data share too when
+    /// `gds` (it is shared by every queue of a backend).
+    pub fn restore(&mut self, s: Saved, gds: bool) {
+        self.context = s.context;
+        self.sh = s.sh;
+        self.uconfig = s.uconfig;
+        self.index_base = s.index_base;
+        self.indirect_base = s.indirect_base;
+        self.instances = s.instances;
+        if gds {
+            self.with_gds(&mut |g| {
+                let n = g.len().min(s.gds.len());
+                g[..n].copy_from_slice(&s.gds[..n]);
+            });
+        }
+    }
+
     /// Ends a submission: pending releases take effect, and the GPU work
     /// encoded so far is done.
     pub fn finish(&mut self, host: &dyn Host) {
@@ -2052,5 +2105,29 @@ mod tests {
                 arg: 0x42
             }]
         );
+    }
+
+    #[test]
+    fn saved_register_state_carries_over_to_a_new_processor() {
+        let mut p = Processor::default();
+        p.context[5] = 0x1234;
+        p.sh[7] = 9;
+        p.uconfig[0x100] = 0xabcd;
+        p.index_base = 0x10_0000;
+        p.instances = 3;
+        p.gds[10] = 0x55;
+        let saved = p.saved();
+        let bytes = savestate::to_bytes(&saved);
+        let back: Saved = savestate::from_bytes(&bytes).unwrap();
+        assert_eq!(back, saved);
+        let mut q = Processor::default();
+        q.restore(back.clone(), false);
+        assert_eq!(
+            (q.context[5], q.sh[7], q.uconfig[0x100]),
+            (0x1234, 9, 0xabcd)
+        );
+        assert_eq!((q.index_base, q.instances, q.gds[10]), (0x10_0000, 3, 0));
+        q.restore(back, true);
+        assert_eq!(q.gds[10], 0x55);
     }
 }

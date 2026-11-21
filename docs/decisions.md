@@ -553,3 +553,19 @@ An OR or AND of a descriptor dword with anything that is not itself a descriptor
 ## 2026-11-22: Commit before a new window once dropped ones add up
 
 Before the renderer makes a new guest memory window, it commits the open command buffer if windows of 1 GiB or more were dropped since the last commit, and waits for the GPU if Metal's allocations would then pass half of `recommendedMaxWorkingSetSize`. A physical mapping that repeats the mapping already there replaces no host pages. Reason: a command buffer keeps every window it binds, and Minecraft made its 6 GiB GPU-area window again about 500 times a minute, so one command buffer could hold dozens of them and Metal failed it as out of memory (22 failures in 5 Minecraft runs, 3 in 5 Superliminal runs; 0 and 0 after). Half the working set leaves room for textures and the window in use; the threshold was not tuned. Mapping only the changed pages into the existing window is not possible, since a no-copy buffer keeps the pages it was made over ([gpu.md](gpu.md#metal-running-out-of-memory-2026-11-22)).
+
+## 2026-11-22: Save states stop threads at host call boundaries
+
+A save parks every guest thread between two host calls, where its CPU registers are its whole state, and makes blocking host calls restart after the load (the restart path exceptions already used); condition waits instead resume in an internal `cond_relock` that takes the mutex back. Threads inside guest callbacks run by host functions are waited for until they return. Reason: guest threads are host threads, and a thread blocked in a host function has state on the host stack that cannot be written down; restarting calls keeps the saved state pure data. A condition wait cannot restart because it has released its mutex, and re-taking the mutex before parking can deadlock against a parked owner.
+
+## 2026-11-22: Save state format: hand-written encoding, zstd sections
+
+Save states use a small binary encoding of our own (`crates/savestate`: little-endian fields in order, a `record!` macro for structs) in zstd-compressed sections, with memory as one section per run of non-zero pages, compressed in parallel at level 1. A format version guards the encoding, and a fingerprint of the host-function layout guards guest memory's references to it. Reason: no new dependency beyond zstd, every field of the private HLE structures stays visible in their own modules, and parallel page compression keeps GTA V's save to seconds. The fingerprint instead of a build id lets a rebuild with unrelated changes load older states, which is the point of using them while debugging.
+
+## 2026-11-22: Save states keep GPU-only textures
+
+The Metal renderer's render targets, depth targets and program-written volumes are read back into the save state and made again on load; other GPU caches are rebuilt from guest memory. Reason: GTA V's frames sample a 3D colour-grading volume written once by the GPU at start-up, and without it every frame after a load was black. Writing these textures back into guest memory in the console's tiled layouts would need tiling encoders we do not have.
+
+## 2026-11-22: The guest's wall clock can run behind the host's
+
+Wall-clock reads the guest sees (`clock_gettime` realtime, `gettimeofday`, `time`, `rdtsc`, `sceKernelReadTsc`, RTC ticks, GPU timestamps) go through `savestate::clock`, which a load sets to go on from the saved time. Reason: a state loaded hours later would otherwise show the guest a jump of hours in one frame.

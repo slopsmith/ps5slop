@@ -110,7 +110,12 @@ fn open_file(env: &Env) -> Result<Result<u64, i32>, CallError> {
         .vfs
         .open(&path, &o, wants_write)
         .map(|(file, dir)| {
-            let fd = env.kernel.libc.files.open_fd(file);
+            let origin = crate::libc::Origin {
+                path: path.clone(),
+                write: matches!(access, O_WRONLY | O_RDWR) || flags & O_APPEND != 0,
+                append: flags & O_APPEND != 0,
+            };
+            let fd = env.kernel.libc.files.open_fd(file, origin);
             if let Some(dir) = dir {
                 env.kernel.libc.files.set_directory(fd, dir);
             }

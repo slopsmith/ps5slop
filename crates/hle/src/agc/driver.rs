@@ -182,3 +182,22 @@ fn unregister_owner(env: &mut Env) -> Result<Outcome, CallError> {
     reg.resources.retain(|_, r| r.0 != owner);
     ret(0)
 }
+
+impl Registry {
+    pub(super) fn save(&self, e: &mut savestate::Encoder) {
+        e.put(&self.owners)
+            .put(&self.resources)
+            .put(&self.next_owner)
+            .put(&self.next_resource)
+            .put(&self.default_owner);
+    }
+
+    pub(super) fn load(&mut self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        self.owners = d.get()?;
+        self.resources = d.get()?;
+        self.next_owner = d.get()?;
+        self.next_resource = d.get()?;
+        self.default_owner = d.get()?;
+        Ok(())
+    }
+}

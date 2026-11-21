@@ -32,6 +32,15 @@ impl Prot {
         Prot(read as u8 | (write as u8) << 1 | (exec as u8) << 2)
     }
 
+    /// Read, write and execute as bits 0, 1 and 2.
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+
+    pub fn from_bits(bits: u8) -> Self {
+        Prot(bits & 7)
+    }
+
     pub fn allows(self, access: Access) -> bool {
         let bit = match access {
             Access::Read => 1,
@@ -103,6 +112,21 @@ struct Region {
     prot: Prot,
     trap: bool,
     name: String,
+    /// For a region on physical memory, its offset minus the region's start
+    /// (wrapping), which pieces of a split region share.
+    physical: Option<u64>,
+}
+
+/// A region as a save state keeps it (see [`Memory::saved_regions`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedRegion {
+    pub start: u64,
+    pub end: u64,
+    pub prot: Prot,
+    pub trap: bool,
+    pub name: String,
+    /// The physical memory offset at `start`, for a region mapping it.
+    pub physical: Option<u64>,
 }
 
 /// A mapped region, as listed by [`Memory::regions`].
@@ -273,6 +297,8 @@ struct Shared {
     /// Shared memory standing in for physical memory (see
     /// [`Memory::map_physical`]): its descriptor, or -1 if it could not be made.
     physical: std::sync::OnceLock<i32>,
+    /// The size physical memory was made with, or 0.
+    physical_size: AtomicU64,
     /// Ranges whose host pages map physical memory: start to end and the
     /// physical offset minus the address (unchanged when a range is split).
     on_physical: Mutex<BTreeMap<u64, (u64, u64)>>,
@@ -382,6 +408,7 @@ impl Memory {
                 history: Mutex::new(std::collections::VecDeque::new()),
                 born: std::time::Instant::now(),
                 physical: std::sync::OnceLock::new(),
+                physical_size: AtomicU64::new(0),
                 on_physical: Mutex::new(BTreeMap::new()),
                 dirty_physical: Mutex::new(BTreeMap::new()),
             }),
@@ -684,6 +711,7 @@ impl Memory {
                 prot,
                 trap,
                 name: name.to_owned(),
+                physical: None,
             },
         );
         drop(regions);
@@ -706,6 +734,7 @@ impl Memory {
                 prot,
                 trap: false,
                 name: name.to_owned(),
+                physical: None,
             },
         );
         self.host_fresh(addr, len)?;
@@ -734,7 +763,10 @@ impl Memory {
         {
             return Err(MapError::OutOfRange);
         }
-        let fd = *self.shared.physical.get_or_init(|| make_physical(size));
+        let fd = *self.shared.physical.get_or_init(|| {
+            self.shared.physical_size.store(size, Ordering::Relaxed);
+            make_physical(size)
+        });
         if fd < 0 {
             return Err(MapError::Host(io::Error::other(
                 "no shared memory for physical memory",
@@ -749,6 +781,7 @@ impl Memory {
                 prot,
                 trap: false,
                 name: name.to_owned(),
+                physical: Some(offset.wrapping_sub(addr)),
             },
         );
         self.host_replace(addr, len, Some((fd, offset)))?;
@@ -777,7 +810,10 @@ impl Memory {
         {
             return Err(MapError::OutOfRange);
         }
-        let fd = *self.shared.physical.get_or_init(|| make_physical(size));
+        let fd = *self.shared.physical.get_or_init(|| {
+            self.shared.physical_size.store(size, Ordering::Relaxed);
+            make_physical(size)
+        });
         if fd < 0 {
             return Err(MapError::Host(io::Error::other(
                 "no shared memory for physical memory",
@@ -794,6 +830,7 @@ impl Memory {
                 prot,
                 trap: false,
                 name: name.to_owned(),
+                physical: Some(offset.wrapping_sub(addr)),
             },
         );
         drop(regions);
@@ -994,12 +1031,148 @@ impl Memory {
                 prot,
                 trap: false,
                 name: name.to_owned(),
+                physical: None,
             },
         );
         drop(regions);
         self.note("map", addr, len, Some(prot));
         self.changed();
         Ok(addr)
+    }
+
+    /// Every region with what a save state needs to make it again.
+    pub fn saved_regions(&self) -> Vec<SavedRegion> {
+        self.regions_read()
+            .iter()
+            .map(|(&start, r)| SavedRegion {
+                start,
+                end: r.end,
+                prot: r.prot,
+                trap: r.trap,
+                name: r.name.clone(),
+                physical: r.physical.map(|d| d.wrapping_add(start)),
+            })
+            .collect()
+    }
+
+    /// Makes a region saved by [`Memory::saved_regions`] again where nothing
+    /// is mapped: zero-filled, or over physical memory of `physical_size`
+    /// bytes. A trap region must already exist as saved.
+    pub fn restore_region(&self, r: &SavedRegion, physical_size: u64) -> Result<(), MapError> {
+        let len = r.end - r.start;
+        if r.trap {
+            let regions = self.regions_read();
+            return match regions.get(&r.start) {
+                Some(t) if t.trap && t.end == r.end => Ok(()),
+                _ => Err(MapError::Overlaps),
+            };
+        }
+        match r.physical {
+            Some(offset) => self.map_physical(r.start, len, r.prot, &r.name, offset, physical_size),
+            None => self.map(r.start, len, r.prot, &r.name),
+        }
+    }
+
+    /// The size physical memory was made with, or 0 if it was never used.
+    pub fn physical_size(&self) -> u64 {
+        self.shared.physical_size.load(Ordering::Relaxed)
+    }
+
+    /// The ranges of physical memory that may hold non-zero bytes.
+    pub fn physical_ranges(&self) -> Vec<(u64, u64)> {
+        let dirty = self
+            .shared
+            .dirty_physical
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        dirty.iter().map(|(&s, &e)| (s, e)).collect()
+    }
+
+    /// Runs `f` on physical memory `[offset, offset + len)` mapped into the
+    /// host (page-aligned); false if there is no physical memory.
+    pub fn with_physical<R>(
+        &self,
+        offset: u64,
+        len: u64,
+        f: impl FnOnce(&mut [u8]) -> R,
+    ) -> Option<R> {
+        let &fd = self.shared.physical.get().filter(|&&fd| fd >= 0)?;
+        if !offset.is_multiple_of(PAGE_SIZE) || len == 0 {
+            return None;
+        }
+        let map_len = len.next_multiple_of(PAGE_SIZE) as usize;
+        // SAFETY: a temporary shared mapping of our own descriptor, unmapped
+        // before returning; nothing else holds the slice.
+        unsafe {
+            let p = libc::mmap(
+                std::ptr::null_mut(),
+                map_len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd,
+                offset as libc::off_t,
+            );
+            if p == libc::MAP_FAILED {
+                return None;
+            }
+            let out = f(std::slice::from_raw_parts_mut(p.cast::<u8>(), len as usize));
+            fence(Ordering::SeqCst);
+            libc::munmap(p, map_len);
+            Some(out)
+        }
+    }
+
+    /// Makes physical memory of `size` bytes if there is none yet; false if
+    /// it cannot be made or exists with another size.
+    pub fn init_physical(&self, size: u64) -> bool {
+        let fd = *self.shared.physical.get_or_init(|| {
+            self.shared.physical_size.store(size, Ordering::Relaxed);
+            make_physical(size)
+        });
+        fd >= 0 && self.physical_size() == size
+    }
+
+    /// Writes `data` to physical memory at `offset` (page-aligned).
+    pub fn write_physical(&self, offset: u64, data: &[u8]) -> bool {
+        let end = offset + data.len() as u64;
+        let done = self
+            .with_physical(offset, data.len() as u64, |p| p.copy_from_slice(data))
+            .is_some();
+        if done {
+            let mut dirty = self
+                .shared
+                .dirty_physical
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let (mut start, mut stop) = (offset, end.next_multiple_of(PAGE_SIZE));
+            let touching: Vec<(u64, u64)> = dirty
+                .range(..=stop)
+                .rev()
+                .take_while(|&(_, &e)| e >= start)
+                .map(|(&s, &e)| (s, e))
+                .collect();
+            for (s, e) in touching {
+                dirty.remove(&s);
+                start = start.min(s);
+                stop = stop.max(e);
+            }
+            dirty.insert(start, stop);
+        }
+        done
+    }
+
+    /// Reads mapped (non-trap) memory whatever its guest protection.
+    pub fn read_host(&self, addr: u64, buf: &mut [u8]) -> Result<(), Fault> {
+        self.check(addr, buf.len(), Access::Read).or_else(|f| {
+            if f.kind == FaultKind::Protection {
+                Ok(())
+            } else {
+                Err(f)
+            }
+        })?;
+        fence(Ordering::Acquire);
+        self.copy_out(addr, buf);
+        Ok(())
     }
 
     /// The mapped regions, like [`Memory::regions`] without their names.
@@ -1402,6 +1575,55 @@ fn cas128(p: *mut u8, expected: u128, new: u128) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_regions_make_the_same_address_space_again() {
+        let p = PAGE_SIZE;
+        let size = 64 * p;
+        let mem = Memory::new(1 << 32).unwrap();
+        mem.map(0x10_0000, 4 * p, Prot::RW, "plain").unwrap();
+        mem.map_physical(0x20_0000, 4 * p, Prot::RW, "direct", 8 * p, size)
+            .unwrap();
+        mem.map_physical(0x30_0000, p, Prot::READ, "alias", 9 * p, size)
+            .unwrap();
+        mem.protect_range(0x20_0000 + 2 * p, p, Prot::READ).unwrap();
+        mem.write(0x10_0000 + p, b"anon").unwrap();
+        mem.write(0x20_0000 + p, b"phys").unwrap();
+        assert!(mem.write_physical(20 * p, b"unmapped"));
+        let regions = mem.saved_regions();
+        let offsets: Vec<Option<u64>> = regions.iter().map(|r| r.physical).collect();
+        assert_eq!(
+            offsets,
+            [None, Some(8 * p), Some(10 * p), Some(11 * p), Some(9 * p)]
+        );
+
+        let copy = Memory::new(1 << 32).unwrap();
+        assert!(copy.init_physical(mem.physical_size()));
+        for r in &regions {
+            copy.restore_region(r, size).unwrap();
+        }
+        assert_eq!(copy.saved_regions(), regions);
+        for (s, e) in mem.physical_ranges() {
+            let bytes = mem.with_physical(s, e - s, |b| b.to_vec()).unwrap();
+            assert!(copy.write_physical(s, &bytes));
+        }
+        let mut b = [0u8; 4];
+        copy.read(0x20_0000 + p, &mut b).unwrap();
+        assert_eq!(&b, b"phys");
+        copy.read(0x30_0000, &mut b).unwrap();
+        assert_eq!(&b, b"phys");
+        assert_eq!(copy.read(0x10_0000 + p, &mut b), Ok(()));
+        assert_eq!(&b, &[0; 4], "plain memory comes from the caller");
+        let mut long = [0u8; 8];
+        copy.with_physical(20 * p, 8, |m| long.copy_from_slice(m))
+            .unwrap();
+        assert_eq!(&long, b"unmapped");
+        assert!(
+            copy.physical_ranges()
+                .iter()
+                .any(|&(s, e)| s <= 20 * p && e > 20 * p)
+        );
+    }
 
     #[test]
     fn range_operations_split_regions_like_mmap() {

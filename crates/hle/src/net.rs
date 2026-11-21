@@ -81,8 +81,18 @@ fn ok(_: &mut Env) -> Result<Outcome, CallError> {
 
 /// `sceNetPoolCreate(name, size, flags)`: a new pool id.
 fn pool_create(_: &mut Env) -> Result<Outcome, CallError> {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    Ok(Outcome::Return(NEXT.fetch_add(1, Ordering::Relaxed)))
+    Ok(Outcome::Return(NEXT_POOL.fetch_add(1, Ordering::Relaxed)))
+}
+
+static NEXT_POOL: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) fn save(e: &mut savestate::Encoder) {
+    e.put(&NEXT_POOL.load(Ordering::Relaxed));
+}
+
+pub(crate) fn load(d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+    NEXT_POOL.store(d.get()?, Ordering::Relaxed);
+    Ok(())
 }
 
 /// `sceNetGetMacAddress(addr, flags)`.

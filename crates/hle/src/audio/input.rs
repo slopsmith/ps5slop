@@ -68,3 +68,13 @@ fn close(env: &mut Env) -> Result<Outcome, CallError> {
         ERROR_INVALID_HANDLE
     }))
 }
+
+pub(crate) fn save(e: &mut savestate::Encoder) {
+    e.put(&*lock(&PORTS)).put(&NEXT.load(Ordering::Relaxed));
+}
+
+pub(crate) fn load(d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+    *lock(&PORTS) = d.get()?;
+    NEXT.store(d.get()?, Ordering::Relaxed);
+    Ok(())
+}

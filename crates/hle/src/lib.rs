@@ -44,6 +44,7 @@ mod rtld;
 mod savedata;
 mod sem;
 mod services;
+mod snapshot;
 mod stubs;
 mod sysmodule;
 mod thread;
@@ -54,6 +55,7 @@ pub use dmem::report as memory_report;
 pub use pad::{PadInput, PadOutput, TriggerEffect};
 pub use process::{Kernel, Thread, ThreadError, ThreadInfo, TlsBlock, TlsTemplate, trace_calls};
 pub use rtld::ModuleInfo;
+pub use snapshot::SaveReport;
 pub use vfs::{ImageFile, ImageFs, ImageStat, Target, Vfs};
 pub use videoout::Frame;
 
@@ -177,6 +179,7 @@ impl Env<'_> {
     pub fn call_guest(&mut self, addr: u64, args: &[u64]) -> Result<u64, CallError> {
         const ORDER: [usize; 6] = [RDI, RSI, RDX, RCX, R8, R9];
         let saved = self.cpu.clone();
+        let _nested = crate::process::Nested::enter();
         let back = self.kernel.hle.internal(CALLBACK_RETURN);
         // Skip the red zone, align, and push the return address as a call would.
         let sp = ((saved.regs[RSP] - 128) & !15) - 8;
@@ -318,12 +321,15 @@ impl Hle {
             data_end: DATA_BASE + FIXED_DATA,
             names: names(),
         };
-        let internal: Vec<&str> = hle
+        let mut internal: Vec<&str> = hle
             .by_nid
             .iter()
             .filter(|(k, _)| k.1 == INTERNAL)
             .map(|(_, f)| f.name)
             .collect();
+        // Sorted: save states hold these stubs' addresses, so every process
+        // must give them the same ones.
+        internal.sort_unstable();
         for name in internal {
             hle.stub_by_name(INTERNAL, name);
         }
@@ -416,6 +422,24 @@ impl Hle {
                 (s.library.clone(), s.nid.clone(), name)
             })
             .collect()
+    }
+
+    /// A hash of every stub and variable address handed out, which guest
+    /// memory refers to: a save state loads only where this matches.
+    pub fn layout_fingerprint(&self) -> u64 {
+        let mut b = Vec::new();
+        for s in &self.stubs {
+            b.extend_from_slice(s.nid.as_bytes());
+            b.push(0);
+            b.extend_from_slice(s.library.as_bytes());
+            b.push(0);
+        }
+        for (addr, v) in &self.data {
+            b.extend_from_slice(&addr.to_le_bytes());
+            b.extend_from_slice(v.name.as_bytes());
+            b.push(0);
+        }
+        savestate::fnv(&b)
     }
 
     /// Maps the trap region that holds every stub handed out so far.
@@ -953,6 +977,61 @@ mod tests {
         assert_eq!(libkernel(&k, "pthread_getspecific", 1, &[key]), 0xaaaa);
         assert_eq!(libkernel(&k, "pthread_getspecific", 2, &[key]), 0xbbbb);
         assert_eq!(libkernel(&k, "pthread_getspecific", 3, &[key]), 0);
+    }
+
+    #[test]
+    fn kernel_objects_survive_a_save_and_load() {
+        let names = [
+            "pthread_mutex_lock",
+            "pthread_mutex_trylock",
+            "sem_init",
+            "sem_getvalue",
+            "pthread_key_create",
+            "pthread_setspecific",
+            "pthread_getspecific",
+            "__error",
+        ];
+        let make = || {
+            let mut hle = Hle::new();
+            for name in names {
+                hle.stub_by_name("libkernel", name);
+            }
+            guest(hle)
+        };
+        let (k, cpu, _) = make();
+        let me = cpu.fs_base;
+        let (m, sem, key_at, value) = (0x20_0000, 0x20_0100, 0x20_0200, 0x20_0300);
+        assert_eq!(libkernel(&k, "pthread_mutex_lock", me, &[m]), 0);
+        assert_eq!(libkernel(&k, "sem_init", me, &[sem, 0, 2]), 0);
+        libkernel(&k, "pthread_key_create", me, &[key_at, 0]);
+        let mut b = [0u8; 4];
+        k.memory().read(key_at, &mut b).unwrap();
+        let key = u32::from_le_bytes(b) as u64;
+        libkernel(&k, "pthread_setspecific", 2, &[key, 0xbeef]);
+        let mut e = savestate::Encoder::new();
+        k.save_objects(&mut e).unwrap();
+        let saved = e.finish();
+
+        let (k2, _, _) = make();
+        let mem = k2.memory();
+        let mut page = vec![0u8; PAGE_SIZE as usize];
+        k.memory().read(0x20_0000, &mut page).unwrap();
+        mem.write(0x20_0000, &page).unwrap();
+        let mut d = savestate::Decoder::new(&saved);
+        k2.load_objects(&mut d).unwrap();
+        assert!(d.is_empty());
+        assert_eq!(
+            libkernel(&k2, "pthread_mutex_trylock", 7, &[m]) as i32,
+            errno::EBUSY
+        );
+        assert_eq!(
+            libkernel(&k2, "pthread_mutex_lock", me, &[m]) as i32,
+            errno::EDEADLK
+        );
+        libkernel(&k2, "sem_getvalue", me, &[sem, value]);
+        mem.read(value, &mut b).unwrap();
+        assert_eq!(u32::from_le_bytes(b), 2);
+        assert_eq!(libkernel(&k2, "pthread_getspecific", 2, &[key]), 0xbeef);
     }
 
     #[test]

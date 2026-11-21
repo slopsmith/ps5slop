@@ -338,6 +338,47 @@ impl Kernel {
     }
 }
 
+/// A registration as saved: ident, filter, user data and pending data.
+type SavedRegistration = (u64, i16, u64, Option<u64>);
+
+impl Queues {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        let queues: HashMap<u64, Vec<SavedRegistration>> = lock(&self.queues)
+            .iter()
+            .map(|(&id, q)| {
+                let regs = lock(&q.registrations)
+                    .iter()
+                    .map(|r| (r.ident, r.filter, r.udata, r.pending))
+                    .collect();
+                (id, regs)
+            })
+            .collect();
+        e.put(&self.next.load(Ordering::Relaxed)).put(&queues);
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        self.next.store(d.get()?, Ordering::Relaxed);
+        let queues: HashMap<u64, Vec<SavedRegistration>> = d.get()?;
+        *lock(&self.queues) = queues
+            .into_iter()
+            .map(|(id, regs)| {
+                let q = Queue::default();
+                *lock(&q.registrations) = regs
+                    .into_iter()
+                    .map(|(ident, filter, udata, pending)| Registration {
+                        ident,
+                        filter,
+                        udata,
+                        pending,
+                    })
+                    .collect();
+                (id, Arc::new(q))
+            })
+            .collect();
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

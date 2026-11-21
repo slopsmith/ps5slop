@@ -475,3 +475,47 @@ pub static SCE_FUNCTIONS: &[Function] = &[
     f("scePthreadAttrSetguardsize", sce_ok),
     f("scePthreadAttrGet", sce_attr_get),
 ];
+
+impl Threads {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        let records: HashMap<u64, (Option<u64>, bool)> = lock(&self.records)
+            .iter()
+            .map(|(&tcb, r)| (tcb, (*lock(&r.result), *lock(&r.detached))))
+            .collect();
+        let attrs: HashMap<u64, (u64, u64, bool, bool)> = lock(&self.attrs)
+            .iter()
+            .map(|(&id, a)| (id, (a.stack, a.stack_addr, a.given, a.detached)))
+            .collect();
+        e.put(&records).put(&attrs).put(&*lock(&self.stacks));
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        let records: HashMap<u64, (Option<u64>, bool)> = d.get()?;
+        *lock(&self.records) = records
+            .into_iter()
+            .map(|(tcb, (result, detached))| {
+                let r = Record {
+                    result: Mutex::new(result),
+                    detached: Mutex::new(detached),
+                    ..Record::default()
+                };
+                (tcb, Arc::new(r))
+            })
+            .collect();
+        let attrs: HashMap<u64, (u64, u64, bool, bool)> = d.get()?;
+        *lock(&self.attrs) = attrs
+            .into_iter()
+            .map(|(id, (stack, stack_addr, given, detached))| {
+                let a = Attr {
+                    stack,
+                    stack_addr,
+                    given,
+                    detached,
+                };
+                (id, a)
+            })
+            .collect();
+        *lock(&self.stacks) = d.get()?;
+        Ok(())
+    }
+}

@@ -1,0 +1,10 @@
+[package]
+name = "savestate"
+description = "The save state file format: a small binary encoding, compressed sections and the guest's clock offset"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+zstd = { version = "0.13", default-features = false }

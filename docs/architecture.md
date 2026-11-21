@@ -31,7 +31,7 @@ Status: milestones 1 and 2 are done; our own test programs run under the interpr
 - [test-targets.md](test-targets.md): test programs, commercial targets and the oracles we have without a PS5.
 - [debugging.md](debugging.md): the control socket and write watchpoints.
 - [input.md](input.md): controllers, keyboard, vibration, light bar and trigger effects.
-- [savestates.md](savestates.md): the plan for save states (not started).
+- [savestates.md](savestates.md): save states: what a save keeps, how threads stop for it, the file format and its limits.
 - [references.md](references.md): prior art, licenses, and what we read.
 - [legal.md](legal.md): the hard rules.
 - [decisions.md](decisions.md): what has been decided, when and why.
@@ -56,6 +56,7 @@ Each step has a test program we can run and check. Steps 1 to 4 need only progra
 - `memory`: the guest address space, with protected regions and trap regions. See [memory.md](memory.md).
 - `x86`: the decoder and interpreter. See [cpu.md](cpu.md).
 - `hle`: host functions behind trap stubs. See [hle-kernel.md](hle-kernel.md).
+- `savestate`: the save state file format (a small binary encoding in zstd sections) and the guest's wall clock. See [savestates.md](savestates.md).
 - `ps5slop`: the `ps5slop run` command, which puts the pieces together.
 - `mkelf`: `ps5slop-mkelf`, which turns an ELF linked with `ld.lld -shared` into an Orbis executable, for our own test programs. See [test-targets.md](test-targets.md).
 

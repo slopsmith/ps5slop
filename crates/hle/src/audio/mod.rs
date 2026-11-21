@@ -37,6 +37,7 @@ const DEVICE_STALL: Duration = Duration::from_millis(250);
 pub use out2::FUNCTIONS as OUT2_FUNCTIONS;
 
 pub use input::FUNCTIONS as INPUT_FUNCTIONS;
+pub(crate) use input::{load as load_input, save as save_input};
 
 pub use propagation::STUBS as PROPAGATION_STUBS;
 
@@ -450,6 +451,52 @@ impl crate::Kernel {
     /// Plays audio on the host's output device (see [`Audio::use_device`]).
     pub fn use_audio_device(&self) {
         self.audio.use_device();
+    }
+}
+
+impl Audio {
+    /// Ports keep their settings; what was queued for the device is dropped
+    /// and recordings (`PS5SLOP_AUDIO_WAV`) do not go on.
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        let ports: HashMap<u64, (usize, bool, usize, Duration, [f32; 8])> = lock(&self.ports)
+            .iter()
+            .map(|(&id, p)| (id, (p.channels, p.float, p.frames, p.period, p.volume)))
+            .collect();
+        e.put(&*lock(&self.next)).put(&ports);
+        self.out2.save(e);
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        *lock(&self.next) = d.get()?;
+        let ports: HashMap<u64, (usize, bool, usize, Duration, [f32; 8])> = d.get()?;
+        let mut queues = lock(&self.mixer.queues);
+        let mut mine = lock(&self.ports);
+        for (id, (channels, float, frames, period, volume)) in ports {
+            queues.insert(id, VecDeque::new());
+            let p = Port {
+                channels,
+                float,
+                frames,
+                period,
+                next: Instant::now(),
+                volume,
+                wav: None,
+            };
+            mine.insert(id, p);
+        }
+        drop(queues);
+        let any = !mine.is_empty();
+        drop(mine);
+        let contexts = self.out2.load(d)?;
+        let mut queues = lock(&self.mixer.queues);
+        for q in contexts {
+            queues.insert(q, VecDeque::new());
+        }
+        drop(queues);
+        if any {
+            self.start_device();
+        }
+        Ok(())
     }
 }
 

@@ -738,9 +738,7 @@ impl Ctx<'_> {
 
     /// The time stamp counter counts nanoseconds since the Unix epoch (1 GHz).
     fn rdtsc(&mut self) {
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos() as u64);
+        let t = savestate::clock::unix_nanos();
         self.cpu.regs[RAX] = t & 0xffff_ffff;
         self.cpu.regs[RDX] = t >> 32;
     }

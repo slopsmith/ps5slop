@@ -28,6 +28,7 @@ calls PATH [FILTER]         append every host call (whose name contains FILTER) 
 calls off                   stop logging calls
 shot PATH                   write the screen as PPM
 frames DIR N                write the next N flipped frames as DIR/FLIP.ppm (N decimal)
+save PATH                   write a save state (load it with `run --load-state PATH`)
 profile on|off              start a fresh profile window, or stop profiling
 profile [N]                 report the window so far (top N rows, default 20)
 gputrace N                  trace every draw of the next N frames on stderr (decimal)
@@ -237,6 +238,13 @@ fn run(kernel: &Arc<Kernel>, line: &str) -> String {
                 Err(e) => e,
             },
             None => "usage: shot PATH".into(),
+        },
+        "save" => match it.next() {
+            Some(path) => match kernel.save_state(Path::new(path)) {
+                Ok(report) => report.describe(),
+                Err(e) => e,
+            },
+            None => "usage: save PATH".into(),
         },
         "frames" => match (it.next(), it.next().and_then(|n| n.parse().ok())) {
             (Some(dir), Some(n)) => {

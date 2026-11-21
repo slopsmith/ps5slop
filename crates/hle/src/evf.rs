@@ -244,6 +244,38 @@ fn cancel(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
+impl EventFlags {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        let flags: HashMap<u64, (u64, u64)> = lock(&self.flags)
+            .iter()
+            .map(|(&id, f)| {
+                let st = lock(&f.state);
+                (id, (st.pattern, st.cancels))
+            })
+            .collect();
+        e.put(&flags);
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        let flags: HashMap<u64, (u64, u64)> = d.get()?;
+        *lock(&self.flags) = flags
+            .into_iter()
+            .map(|(id, (pattern, cancels))| {
+                let f = Flag {
+                    state: Mutex::new(State {
+                        pattern,
+                        cancels,
+                        waiters: 0,
+                    }),
+                    changed: Condvar::new(),
+                };
+                (id, Arc::new(f))
+            })
+            .collect();
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

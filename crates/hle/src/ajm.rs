@@ -186,3 +186,12 @@ fn batch_wait(env: &mut Env) -> Result<Outcome, CallError> {
     zero(env, env.arg(3), BATCH_ERROR_BYTES as u64)?;
     ret(0)
 }
+
+pub(crate) fn save(e: &mut savestate::Encoder) {
+    e.put(&NEXT_BATCH.load(Ordering::Relaxed));
+}
+
+pub(crate) fn load(d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+    NEXT_BATCH.store(d.get()?, Ordering::Relaxed);
+    Ok(())
+}

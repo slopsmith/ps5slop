@@ -11,6 +11,7 @@ default = ["window"]
 window = ["dep:winit", "dep:objc2", "dep:objc2-foundation", "dep:objc2-metal", "dep:objc2-quartz-core", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-game-controller", "dep:objc2-core-haptics"]
 
 [dependencies]
+savestate = { path = "../savestate" }
 clap = { version = "4.5", features = ["derive"] }
 hle = { path = "../hle" }
 jit = { path = "../jit" }

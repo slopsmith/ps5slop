@@ -180,3 +180,15 @@ fn signin_result(env: &mut Env) -> Result<Outcome, CallError> {
         .write(env.arg(0), &RESULT_USER_CANCELED.to_le_bytes())?;
     Ok(Outcome::Return(0))
 }
+
+pub(crate) fn save(e: &mut savestate::Encoder) {
+    e.put(&[&MSG, &MSG_MODE, &SIGNIN, &SAVE].map(|a| a.load(Ordering::Relaxed)));
+}
+
+pub(crate) fn load(d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+    let v: [u32; 4] = d.get()?;
+    for (a, v) in [&MSG, &MSG_MODE, &SIGNIN, &SAVE].into_iter().zip(v) {
+        a.store(v, Ordering::Relaxed);
+    }
+    Ok(())
+}

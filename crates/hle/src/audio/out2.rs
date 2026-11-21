@@ -502,3 +502,56 @@ fn queue_level(env: &mut Env) -> Result<Outcome, CallError> {
     }
     ret(0)
 }
+
+impl Out2 {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        let contexts: HashMap<u64, (u32, u32, Duration, bool, u64)> = lock(&self.contexts)
+            .iter()
+            .map(|(&id, c)| (id, (c.grain, c.depth, c.period, c.advanced, c.queue)))
+            .collect();
+        let ports: HashMap<u64, (u64, usize, bool, f32, u64)> = lock(&self.ports)
+            .iter()
+            .map(|(&id, p)| (id, (p.context, p.channels, p.float, p.gain, p.pcm)))
+            .collect();
+        e.put(&contexts)
+            .put(&ports)
+            .put(&self.next_id.load(Ordering::Relaxed));
+    }
+
+    /// Loads what [`Out2::save`] wrote and returns the mixer queues it uses.
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<Vec<u64>, savestate::Error> {
+        let contexts: HashMap<u64, (u32, u32, Duration, bool, u64)> = d.get()?;
+        let queues = contexts.values().map(|c| c.4).collect();
+        *lock(&self.contexts) = contexts
+            .into_iter()
+            .map(|(id, (grain, depth, period, advanced, queue))| {
+                let c = Context {
+                    grain,
+                    depth,
+                    period,
+                    next: Instant::now(),
+                    advanced,
+                    queue,
+                    wav: None,
+                };
+                (id, c)
+            })
+            .collect();
+        let ports: HashMap<u64, (u64, usize, bool, f32, u64)> = d.get()?;
+        *lock(&self.ports) = ports
+            .into_iter()
+            .map(|(id, (context, channels, float, gain, pcm))| {
+                let p = Port {
+                    context,
+                    channels,
+                    float,
+                    gain,
+                    pcm,
+                };
+                (id, p)
+            })
+            .collect();
+        self.next_id.store(d.get()?, Ordering::Relaxed);
+        Ok(queues)
+    }
+}

@@ -91,9 +91,10 @@ fn accept(_: &mut Env) -> Result<Outcome, CallError> {
 
 /// `sceSaveDataCreateTransactionResource(...)`: a positive id.
 fn create_transaction(_: &mut Env) -> Result<Outcome, CallError> {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    ret(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    ret(NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
 }
+
+static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 // Minecraft's world saves contain `@`; the console's own rules are unknown.
 fn valid_dir_name(name: &[u8]) -> bool {
@@ -491,6 +492,36 @@ fn delete(env: &mut Env) -> Result<Outcome, CallError> {
     match std::fs::remove_dir_all(root.join(&name)) {
         Ok(()) => ret(0),
         Err(_) => ret(ERROR_NOT_FOUND),
+    }
+}
+
+savestate::record!(Mounted { name, host, blocks });
+
+impl Saves {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        let mounted = lock(&self.mounted);
+        e.put(&*mounted)
+            .put(&NEXT_ID.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    /// Mounts the saved mount points again, in this run's save folder.
+    pub(crate) fn load(
+        &self,
+        d: &mut savestate::Decoder,
+        vfs: &crate::Vfs,
+    ) -> Result<(), savestate::Error> {
+        let mut saved: [Option<Mounted>; MOUNT_POINTS] = d.get()?;
+        for (slot, m) in saved.iter_mut().enumerate() {
+            let Some(m) = m else { continue };
+            if let (Some(root), Some(leaf)) = (&vfs.saves, m.host.file_name()) {
+                m.host = root.join(leaf);
+            }
+            let _ = std::fs::create_dir_all(&m.host);
+            vfs.mount(&format!("/savedata{slot}"), m.host.clone(), true);
+        }
+        *lock(&self.mounted) = saved;
+        NEXT_ID.store(d.get()?, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
     }
 }
 

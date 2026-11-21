@@ -209,6 +209,14 @@ fn semaphore_label(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
+pub(super) fn saved_amm() -> Option<(u64, u64)> {
+    *lock(&AMM)
+}
+
+pub(super) fn restore_amm(amm: Option<(u64, u64)>) {
+    *lock(&AMM) = amm;
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::packets::golden;

@@ -36,6 +36,7 @@ pub enum Error {
     Load(loader::Error),
     Map(MapError),
     Thread(ThreadError),
+    State(String),
 }
 
 impl fmt::Display for Error {
@@ -44,6 +45,7 @@ impl fmt::Display for Error {
             Error::Load(e) => write!(f, "cannot load: {e}"),
             Error::Map(e) => write!(f, "cannot map: {e}"),
             Error::Thread(e) => e.fmt(f),
+            Error::State(e) => write!(f, "cannot load the save state: {e}"),
         }
     }
 }
@@ -229,7 +231,12 @@ impl Process {
         for info in module_infos {
             kernel.add_module(info);
         }
-        Ok(Booted { kernel, cpu, inits })
+        Ok(Booted {
+            kernel,
+            cpu,
+            inits,
+            state: None,
+        })
     }
 }
 
@@ -238,13 +245,31 @@ pub struct Booted {
     pub kernel: Arc<Kernel>,
     cpu: Cpu,
     inits: Vec<u64>,
+    state: Option<std::path::PathBuf>,
 }
 
 impl Booted {
-    /// Runs the main thread on this host thread until the guest exits, and
-    /// returns its exit status.
+    /// Makes [`Booted::run`] go on from the save state at `path` instead of
+    /// starting the title.
+    pub fn load_state(&mut self, path: std::path::PathBuf) {
+        self.state = Some(path);
+    }
+
+    /// Runs the guest until it exits, and returns its exit status: the main
+    /// thread on this host thread, or every thread of the save state.
     pub fn run(self) -> Result<i32, Error> {
-        Ok(self.kernel.run_main(self.cpu, &self.inits)?)
+        let Some(path) = self.state else {
+            return Ok(self.kernel.run_main(self.cpu, &self.inits)?);
+        };
+        let start = std::time::Instant::now();
+        let cpus = self.kernel.load_state(&path).map_err(Error::State)?;
+        eprintln!(
+            "ps5slop: loaded {} ({} threads) in {:.2} s",
+            path.display(),
+            cpus.len(),
+            start.elapsed().as_secs_f64()
+        );
+        Ok(self.kernel.run_restored(cpus)?)
     }
 }
 

@@ -48,7 +48,14 @@ struct Progress {
     changed: Condvar,
     /// Held from numbering a submission until it is queued, so both keep one order.
     order: Mutex<()>,
+    /// A save state wants the processor's state once the queue is idle.
+    wants_state: std::sync::atomic::AtomicBool,
+    /// That state, with the number of submissions finished before it.
+    state: Mutex<Option<(u64, gpu::Saved)>>,
 }
+
+/// How often an idle GPU thread looks whether a save state wants its state.
+const IDLE_POLL: Duration = Duration::from_millis(20);
 
 #[derive(Default)]
 struct Counts {
@@ -107,6 +114,12 @@ pub(super) struct Gpu {
     backend: Arc<OnceLock<Option<gpu::SharedBackend>>>,
     /// Flip packets built and not yet seen in a submitted buffer, by address.
     flips: Mutex<Vec<u64>>,
+    /// Processor states from a loaded save state, by queue, for queues
+    /// not started yet.
+    restored: Mutex<HashMap<u64, gpu::Saved>>,
+    gds_restored: std::sync::atomic::AtomicBool,
+    /// GPU-only textures from a loaded save state, for the backend once made.
+    textures: Mutex<Option<Vec<u8>>>,
 }
 
 impl Gpu {
@@ -234,20 +247,33 @@ fn gpu_thread(
     jobs: Receiver<Job>,
     backend: Arc<OnceLock<Option<gpu::SharedBackend>>>,
     name: String,
+    restored: Option<(gpu::Saved, bool)>,
 ) {
     let mut processor = gpu::Processor::default();
     if let Some(b) = backend.get_or_init(new_backend) {
         processor.backend = Some(Box::new(b.clone()));
+    }
+    if let Some((saved, gds)) = restored {
+        processor.restore(saved, gds);
     }
     let report = std::env::var_os("PS5SLOP_GPU_STATS").is_some();
     let mut last_report = std::time::Instant::now();
     loop {
         let idle = gpu::timing::start();
         let job = loop {
-            if !processor.retire(&host) {
-                break jobs.recv().ok();
+            let retiring = processor.retire(&host);
+            let p = &host.progress;
+            if !retiring
+                && p.wants_state
+                    .swap(false, std::sync::atomic::Ordering::AcqRel)
+            {
+                processor.finish(&host);
+                let finished = lock(&p.counts).finished;
+                *lock(&p.state) = Some((finished, processor.saved()));
+                p.changed.notify_all();
             }
-            match jobs.recv_timeout(RETIRE_POLL) {
+            let poll = if retiring { RETIRE_POLL } else { IDLE_POLL };
+            match jobs.recv_timeout(poll) {
                 Err(RecvTimeoutError::Timeout) => continue,
                 job => break job.ok(),
             }
@@ -326,14 +352,26 @@ fn enqueue(env: &Env, queue: u64, buffers: Vec<(u64, u32)>) {
             progress: progress.clone(),
         };
         let backend = gpu.backend.clone();
+        if let Some(textures) = lock(&gpu.textures).take()
+            && let Some(b) = backend.get_or_init(new_backend)
+            && let Err(e) = gpu::Backend::restore_textures(&mut b.clone(), &textures)
+        {
+            eprintln!("ps5slop: save state: GPU textures not restored: {e}");
+        }
         let name = if queue == GRAPHICS {
             "graphics".to_string()
         } else {
             format!("compute {queue:#x}")
         };
+        let restored = lock(&gpu.restored).remove(&queue).map(|saved| {
+            let gds = !gpu
+                .gds_restored
+                .swap(true, std::sync::atomic::Ordering::AcqRel);
+            (saved, gds)
+        });
         std::thread::Builder::new()
             .name(format!("gpu {name}"))
-            .spawn(move || gpu_thread(host, rx, backend, name))
+            .spawn(move || gpu_thread(host, rx, backend, name, restored))
             .expect("the GPU thread starts");
         (tx, progress)
     });
@@ -348,7 +386,9 @@ fn enqueue(env: &Env, queue: u64, buffers: Vec<(u64, u32)>) {
     });
     drop(order);
     // Titles reuse the previous frame's memory once the next frame is submitted.
-    progress.wait_for(previous, || env.kernel.has_exited());
+    progress.wait_for(previous, || {
+        env.kernel.has_exited() || env.kernel.park_requested()
+    });
 }
 
 /// A submit descriptor: the command address (u64 at 0) and dword count (u32 at 8).
@@ -423,4 +463,76 @@ fn submit_multi_acbs(env: &mut Env) -> Result<Outcome, CallError> {
 /// `sceAgcSuspendPoint()`: where a title may be suspended; nothing to do.
 fn suspend_point(_: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
+}
+
+/// How long a save state waits for the GPU queues to finish their work.
+const DRAIN_LIMIT: Duration = Duration::from_secs(3);
+
+impl Gpu {
+    /// Waits until every queue has finished what was submitted and the GPU
+    /// is done with it, then writes each queue's processor state. Guest
+    /// threads must be stopped, so nothing new is submitted.
+    pub(super) fn save(&self, e: &mut savestate::Encoder) -> Result<(), String> {
+        let queues: Vec<(u64, Arc<Progress>)> = lock(&self.jobs)
+            .iter()
+            .map(|(&k, (_, p))| (k, p.clone()))
+            .collect();
+        for (_, p) in &queues {
+            *lock(&p.state) = None;
+            p.wants_state
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        let start = Instant::now();
+        let mut saved = HashMap::new();
+        for (key, p) in &queues {
+            let mut c = lock(&p.counts);
+            loop {
+                let ready = lock(&p.state)
+                    .as_ref()
+                    .is_some_and(|(finished, _)| *finished == c.submitted);
+                if ready {
+                    break;
+                }
+                if lock(&p.state).is_some() {
+                    *lock(&p.state) = None;
+                    p.wants_state
+                        .store(true, std::sync::atomic::Ordering::Release);
+                }
+                if start.elapsed() > DRAIN_LIMIT {
+                    p.wants_state
+                        .store(false, std::sync::atomic::Ordering::Release);
+                    let what = if c.polling {
+                        "waits on memory"
+                    } else {
+                        "is still running"
+                    };
+                    return Err(format!(
+                        "GPU queue {key:#x} {what}: {} of {} submissions finished",
+                        c.finished, c.submitted
+                    ));
+                }
+                c = match p.changed.wait_timeout(c, Duration::from_millis(10)) {
+                    Ok((c, _)) => c,
+                    Err(e) => e.into_inner().0,
+                };
+            }
+            drop(c);
+            let (_, state) = lock(&p.state).take().expect("checked above");
+            saved.insert(*key, state);
+        }
+        let textures = match self.backend.get() {
+            Some(Some(b)) => gpu::Backend::save_textures(&mut b.clone())?,
+            _ => Vec::new(),
+        };
+        e.put(&saved).put(&*lock(&self.flips)).put(&textures);
+        Ok(())
+    }
+
+    pub(super) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        *lock(&self.restored) = d.get()?;
+        *lock(&self.flips) = d.get()?;
+        let textures: Vec<u8> = d.get()?;
+        *lock(&self.textures) = (!textures.is_empty()).then_some(textures);
+        Ok(())
+    }
 }

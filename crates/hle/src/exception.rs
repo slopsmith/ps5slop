@@ -84,8 +84,9 @@ fn raise(env: &mut Env) -> Result<Outcome, CallError> {
 /// function that sees this returns early where its contract allows, or
 /// else returns [`Outcome::Resume`] untouched so that the call restarts
 /// after the handler has run.
+/// A save state waiting for the thread to stop counts too.
 pub(crate) fn interrupted(env: &Env) -> bool {
-    env.kernel.exception_pending(env.thread.tcb)
+    env.kernel.exception_pending(env.thread.tcb) || env.kernel.park_requested()
 }
 
 impl crate::Kernel {
@@ -159,6 +160,21 @@ fn context_bytes(cpu: &x86::Cpu) -> [u8; CONTEXT_SIZE as usize] {
     put(736, cpu.fs_base);
     put(744, cpu.gs_base);
     b
+}
+
+impl Exceptions {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        e.put(&*lock(&self.handlers)).put(&*lock(&self.pending));
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        *lock(&self.handlers) = d.get()?;
+        let pending: HashMap<u64, Vec<i32>> = d.get()?;
+        self.any_pending
+            .store(pending.values().any(|v| !v.is_empty()), Ordering::Release);
+        *lock(&self.pending) = pending;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

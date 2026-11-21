@@ -825,6 +825,21 @@ fn query(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
+impl DirectMemory {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        e.put(&*lock(&self.allocated))
+            .put(&*lock(&self.mapped))
+            .put(&*lock(&self.prot));
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        *lock(&self.allocated) = d.get()?;
+        *lock(&self.mapped) = d.get()?;
+        *lock(&self.prot) = d.get()?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -431,3 +431,27 @@ fn write_waveform_info(env: &Env, data: &[u8], total: u64, out: u64) -> Result<O
         None => ret(ERROR_INVALID_WAVEFORM_DATA),
     }
 }
+
+savestate::record!(System {
+    grain,
+    rate,
+    callback_info
+});
+savestate::record!(Rack { system, id });
+savestate::record!(State {
+    next,
+    systems,
+    racks,
+    voices
+});
+
+impl Ngs2 {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        e.put(&*lock(&self.state));
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        *lock(&self.state) = d.get()?;
+        Ok(())
+    }
+}

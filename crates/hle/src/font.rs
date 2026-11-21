@@ -576,3 +576,13 @@ fn delete_glyph(env: &mut Env) -> Result<Outcome, CallError> {
     env.mem.write_u64(at, 0)?;
     ret(0)
 }
+
+impl Fonts {
+    /// What stops a save state: fonts hold FreeType faces, which are not saved.
+    pub(crate) fn in_use(&self) -> bool {
+        !lock(&self.fonts).is_empty()
+            || lock(&self.freetype)
+                .as_ref()
+                .is_some_and(|f| !f.faces.is_empty())
+    }
+}

@@ -29,6 +29,7 @@ cargo run --release -p pkg -- cat GAME.pkg data/x.xml   # one app file to stdout
 scripts/fetch-fonts   # open-source stand-ins for system fonts (needed by Astro Bot)
 cargo run --release -p ps5slop -- run --headless --dump-frame out.ppm --after 10 games/TITLE
 cargo run --release -p ps5slop -- run --interpreter games/TITLE   # no JIT; by default guest code is translated and runs in a Hypervisor.framework VM
+cargo run --release -p ps5slop -- run --headless --load-state X.state games/TITLE   # go on from a save state written by the control socket's `save X.state`
 PS5SLOP_JIT_VERIFY=1 PS5SLOP_JIT_STATS=1 cargo run ...   # check the JIT against the interpreter / see what it leaves to the interpreter
 ```
 
@@ -39,6 +40,7 @@ A DualShock 4, DualSense or other controller macOS knows (through its GameContro
 - [Compatibility](COMPATIBILITY.md): what each title does so far
 - [Architecture](docs/architecture.md): overview, milestones and index of the other docs
 - [CPU](docs/cpu.md), [memory](docs/memory.md), [loader](docs/loader.md), [packages](docs/packages.md), [HLE](docs/hle-kernel.md), [input](docs/input.md), [JIT](docs/jit.md), [GPU](docs/gpu.md)
+- [Save states](docs/savestates.md)
 - [Test targets and oracles](docs/test-targets.md)
 - [References and prior art](docs/references.md)
 - [Legal boundaries](docs/legal.md)

@@ -53,6 +53,10 @@ enum Command {
         /// `ps5slop-PID.sock` in the temporary folder).
         #[arg(long, value_name = "PATH")]
         control: Option<PathBuf>,
+        /// Goes on from a save state written by the control socket's `save`
+        /// instead of starting the title (`PATH` must be the same title).
+        #[arg(long, value_name = "STATE")]
+        load_state: Option<PathBuf>,
     },
 }
 
@@ -68,6 +72,7 @@ fn main() -> ExitCode {
         patch,
         passcode,
         control,
+        load_state,
     } = Cli::parse().command;
     let control = control.unwrap_or_else(|| {
         std::env::temp_dir().join(format!("ps5slop-{}.sock", std::process::id()))
@@ -153,7 +158,10 @@ fn main() -> ExitCode {
             Box::new(std::io::stderr()),
             vfs,
         )
-        .and_then(|booted| {
+        .and_then(|mut booted| {
+            if let Some(state) = load_state {
+                booted.load_state(state);
+            }
             booted.kernel.use_jit(!interpreter);
             if let Some(id) = title_id {
                 booted.kernel.set_title_id(id);

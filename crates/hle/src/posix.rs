@@ -191,9 +191,7 @@ fn mkdir(env: &mut Env) -> Result<Outcome, CallError> {
 
 /// `gettimeofday(tv, tz)`, with `struct timeval { i64 sec; i64 usec; }`.
 fn gettimeofday(env: &mut Env) -> Result<Outcome, CallError> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
+    let now = savestate::clock::unix();
     if env.arg(0) != 0 {
         env.mem.write_u64(env.arg(0), now.as_secs())?;
         env.mem
@@ -235,11 +233,7 @@ fn usleep(env: &mut Env) -> Result<Outcome, CallError> {
 /// The time on FreeBSD clock `id`; the non-realtime ones count from start.
 fn clock(env: &Env, id: u64) -> Option<Duration> {
     match id {
-        0 | 9 | 10 | 13 => Some(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default(),
-        ),
+        0 | 9 | 10 | 13 => Some(savestate::clock::unix()),
         1 | 2 | 4 | 5 | 7 | 8 | 11 | 12 | 14 | 15 => Some(env.kernel.started.elapsed()),
         _ => None,
     }
@@ -446,10 +440,7 @@ fn process_time_counter(env: &mut Env) -> Result<Outcome, CallError> {
 /// `sceKernelReadTsc()`: what `rdtsc` reads, nanoseconds since the Unix
 /// epoch, so its frequency is [`COUNTER_FREQUENCY`] too.
 fn read_tsc(_: &mut Env) -> Result<Outcome, CallError> {
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos() as u64);
-    ret(t)
+    ret(savestate::clock::unix_nanos())
 }
 
 fn process_time_frequency(_: &mut Env) -> Result<Outcome, CallError> {

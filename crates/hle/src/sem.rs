@@ -346,3 +346,51 @@ fn read_u32(env: &Env, at: u64) -> Result<u32, CallError> {
     env.mem.read(at, &mut b)?;
     Ok(u32::from_le_bytes(b))
 }
+
+impl Semaphores {
+    pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        let sems: HashMap<u64, u64> = lock(&self.sems)
+            .iter()
+            .map(|(&id, s)| (id, *lock(&s.count)))
+            .collect();
+        let sce: HashMap<u64, (i64, u64, i64)> = lock(&self.sce)
+            .iter()
+            .map(|(&id, s)| {
+                let st = lock(&s.state);
+                (id, (st.count, st.cancels, s.max))
+            })
+            .collect();
+        e.put(&sems).put(&sce);
+    }
+
+    pub(crate) fn load(&self, d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
+        let sems: HashMap<u64, u64> = d.get()?;
+        *lock(&self.sems) = sems
+            .into_iter()
+            .map(|(id, count)| {
+                let s = Sem {
+                    count: Mutex::new(count),
+                    posted: Condvar::new(),
+                };
+                (id, Arc::new(s))
+            })
+            .collect();
+        let sce: HashMap<u64, (i64, u64, i64)> = d.get()?;
+        *lock(&self.sce) = sce
+            .into_iter()
+            .map(|(id, (count, cancels, max))| {
+                let s = SceSem {
+                    state: Mutex::new(SceState {
+                        count,
+                        cancels,
+                        waiters: 0,
+                    }),
+                    changed: Condvar::new(),
+                    max,
+                };
+                (id, Arc::new(s))
+            })
+            .collect();
+        Ok(())
+    }
+}

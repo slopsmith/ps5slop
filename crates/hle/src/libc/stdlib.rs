@@ -65,9 +65,7 @@ fn abort(_: &mut Env) -> Result<Outcome, CallError> {
 }
 
 fn time(env: &mut Env) -> Result<Outcome, CallError> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
+    let now = savestate::clock::unix().as_secs();
     if env.arg(0) != 0 {
         env.mem.write_u64(env.arg(0), now)?;
     }
