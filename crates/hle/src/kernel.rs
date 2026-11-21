@@ -94,10 +94,6 @@ fn stack_chk_fail(_: &mut Env) -> Result<Outcome, CallError> {
     Err(CallError::Abort("stack smashing detected"))
 }
 
-/// Where `mmap` puts mappings without a fixed address: the PS4 user area
-/// (shadPS4's `address_space.cpp`; unverified for PS5).
-const USER_AREA: u64 = 0x10_0000_0000;
-
 const PROT_READ: u64 = 1;
 const PROT_WRITE: u64 = 2;
 const PROT_EXEC: u64 = 4;
@@ -125,8 +121,13 @@ fn mmap(env: &mut Env) -> Result<Outcome, CallError> {
         }
         env.mem.map_over(addr, len, prot, "mmap").map(|()| addr)
     } else {
-        env.mem
-            .map_free(addr.max(USER_AREA), len, PAGE_SIZE, prot, "mmap")
+        env.mem.map_free(
+            addr.max(crate::dmem::MAP_AREA),
+            len,
+            PAGE_SIZE,
+            prot,
+            "mmap",
+        )
     };
     match mapped {
         Ok(at) => {

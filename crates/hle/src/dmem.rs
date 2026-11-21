@@ -15,11 +15,14 @@ use crate::{CallError, Env, Function, Outcome, errno};
 /// How much direct memory a title gets: 12.5 GiB (our choice; the PS5's is
 /// unknown). Astro Bot's engine allocates about 12.1 GiB of it.
 pub const DIRECT_MEMORY_SIZE: u64 = 0x3_2000_0000;
-/// Where maps without a fixed address go: the start of the user area.
-const MAP_AREA: u64 = 0x10_0000_0000;
-/// Where direct memory and `mmap` without a fixed address land (both search
-/// upward from `MAP_AREA`), for the GPU's guest memory window.
-pub(crate) const GPU_AREA: (u64, u64) = (MAP_AREA, MAP_AREA + (16 << 30));
+/// The start of the user area.
+const USER_AREA: u64 = 0x10_0000_0000;
+/// Where maps without a fixed address go. The user area's first 4 GiB is
+/// left to fixed maps: GTA V puts a streaming arena at its start unasked.
+pub(crate) const MAP_AREA: u64 = 0x11_0000_0000;
+/// The user area's fixed part and 16 GiB of maps without a fixed address,
+/// for the GPU's guest memory window.
+pub(crate) const GPU_AREA: (u64, u64) = (USER_AREA, MAP_AREA + (16 << 30));
 const MAP_FIXED: u64 = 0x10;
 const PROT_CPU_READ: u64 = 0x01;
 const PROT_CPU_WRITE: u64 = 0x02;
