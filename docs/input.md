@@ -58,4 +58,6 @@ None beyond the hypervisor entitlement. GameController works in an unbundled, un
 - Isaac (2026-11-20, headless, `PS5SLOP_PAD_TRACE=1`): at start it calls `scePadSetVibrationMode(handle, 2)`; a bomb explosion in a run gives `scePadSetVibration` with `(255, 255)` and then `(0, 0)`. It does not set the light bar or trigger effects.
 - Isaac with the window and a Bluetooth DualShock 4 (2026-11-20): the controller is detected and described; a bomb explosion rumbles the controller (felt by vic) and stops afterwards.
 
+- GTA V (2026-11-21, headless, control socket): its pad thread reads `scePadReadState` on handle 1 about 75 times a second and gates on the connected byte at offset 0x4C; `press cross` reached its per-pad state and moved its menus (see [hle-kernel.md](hle-kernel.md)).
+
 Not yet checked on hardware: the light bar (Isaac never sets it), DualSense trigger effects (no title we run sets them yet), the split between left and right handle motors, DualSense and Xbox controllers, and USB connections.

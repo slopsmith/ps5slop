@@ -143,6 +143,11 @@ Astro Bot builds GPU work on the GPU: compute programs count items with `ds_appe
 
 Not modelled: GDS ordered append (`ds_ordered_count`), GWS, and GDS reads or writes from packets other than `DMA_DATA`.
 
+## Index offsets and chained command buffers (2026-11-21)
+
+- **`GE_INDX_OFFSET`** (user-config register 0x24A; the name and address are from Mesa's `gfx103.json`, the GFX10.3 register list, MIT) is added to every vertex index, for auto draws as well as indexed ones. It becomes Metal's `vertexStart` for auto draws and `baseVertex` for indexed draws, so the `vertex_id` the translated vertex program sees includes it. GTA V's Scaleform UI writes it (with `sceAgcDcbSetUcRegisterDirect`) to draw several shapes from one vertex buffer; while we ignored it, those draws read the first shape's vertices, which hid the Cross icon on the title screen and drew the wrong shapes elsewhere. A rectangle-list auto draw with a non-zero offset is refused (not seen).
+- **Chained `INDIRECT_BUFFER`**: bit 20 of the size dword is CHAIN. A chained buffer ends the current one and continues at its target at the same depth, instead of nesting (our `sceAgcDcbJump` sets the bit in jump mode 1). Before, every chain hop counted as one level, and GTA V's longer command buffers in Story Mode passed the depth limit of 8 and were dropped ("indirect buffers nest too deep"). The meaning of the bit follows AMD's PM4 packet description as Mesa uses it; packets after a chained IB in the same buffer are not run.
+
 ## Renderer performance (2026-11-20)
 
 Measured on Minecraft's main menu with the control socket's `profile` (which now reports the GPU thread: encoding, waiting for Metal, GPU busy time from each command buffer's `GPUStartTime`/`GPUEndTime`, commit-to-scheduled and done-to-woken latencies), host `sample`, and a Metal System Trace with labelled encoders (`PS5SLOP_GPU_LABELS=1`; see [debugging.md](debugging.md)). The menu went from about 10 to about 16 flips a second. In order:

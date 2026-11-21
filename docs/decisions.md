@@ -402,3 +402,10 @@ Reason: Superliminal clears every shadow map by filling its HTILE with a compute
 ## 2026-11-21: Submissions still wait for Metal one by one
 
 A change that ran queued submissions back to back and waited for Metal once the queue was empty was tried and dropped. Superliminal's menu ran at 22.9 flips a second with it and 25.2 without (single runs, within noise), and the long stall after New Game turned out to be shader compilation, not the per-submission waits ([hle-kernel.md](hle-kernel.md#what-superliminal-needs-2026-11-20)). Not worth an unproven change to GPU synchronisation.
+
+## 2026-11-21: A title's own add-on entitlements are reported as installed
+
+`sceNpEntitlementAccessGetAddcontEntitlementInfoList` reports, per title id, the add-on entitlements a title's own package carries, as installed (package type 3, download status 4). Only GTA V has a list so far (three labels that unlock its Story Mode). Every other title gets none.
+
+Reason: GTA V's PS5 build unlocks Story Mode only when these entitlements are listed (seen in its code: it hashes each listed label and compares it with three constants); a full-game license includes them on a console (assumed, not checked). With an empty list its landing page offers "Buy Story Mode" and Story Mode cannot start. Handing every title these labels is wrong (SharpEmu-mac saw another title treat them as its own DLC), so the list is keyed by title id. Separately sold add-ons stay unowned.
+
