@@ -2540,6 +2540,14 @@ impl Metal {
             self.pending_writes |= program.translated.writes_memory;
         }
         enc.endEncoding();
+        if crate::timing::labels() {
+            command.setLabel(Some(&NSString::from_str(&format!("last dispatch #{} {:#x} {groups:?}", self.dispatches, program.address))));
+        }
+        static EVERY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let every = *EVERY.get_or_init(|| std::env::var("PS5SLOP_GPU_COMMIT_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
+        if every > 0 && (self.dispatches + 1).is_multiple_of(every) {
+            self.commit();
+        }
         if bound.is_some() { Ok(()) } else { Err("resources") }
     }
 
@@ -2910,7 +2918,7 @@ impl Metal {
     fn flush_and_wait(&mut self) {
         self.commit();
         for (cb, committed) in std::mem::take(&mut self.inflight) {
-            cb.waitUntilCompleted();
+            wait_reporting_hangs(&cb);
             let woken = crate::timing::host_seconds();
             let ns = |s: f64| (s.max(0.0) * 1e9) as u64;
             crate::timing::add_raw(crate::timing::Part::Submission, ns(cb.kernelStartTime() - committed));
@@ -2928,6 +2936,20 @@ impl Metal {
             crate::timing::add_raw(crate::timing::Part::GpuBusy, (busy * 1e9) as u64);
             crate::timing::add_raw(crate::timing::Part::Syncs, 1_000_000);
         }
+    }
+}
+
+/// Waits for `cb`; one still running after 10 s is reported with its label
+/// (`PS5SLOP_GPU_LABELS` names the dispatches in it), then waited for.
+fn wait_reporting_hangs(cb: &CommandBuffer) {
+    let start = std::time::Instant::now();
+    while !matches!(cb.status(), MTLCommandBufferStatus::Completed | MTLCommandBufferStatus::Error) {
+        if start.elapsed() > std::time::Duration::from_secs(10) {
+            eprintln!("ps5slop: GPU: command buffer {:?} still running after 10 s (status {:?})", cb.label().map(|l| l.to_string()), cb.status());
+            cb.waitUntilCompleted();
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_micros(50));
     }
 }
 

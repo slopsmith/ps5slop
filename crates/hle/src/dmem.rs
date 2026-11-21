@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use memory::{Access, PAGE_SIZE, Prot};
+use memory::{Access, MapError, PAGE_SIZE, Prot};
 
 use crate::pthread::lock;
 use crate::{CallError, Env, Function, Outcome, errno};
@@ -71,12 +71,18 @@ impl DirectMemory {
             return None;
         }
         allocated.insert(at, (len, kind));
+        if std::env::var_os("PS5SLOP_TRACE_ALIAS").is_some() {
+            eprintln!("ps5slop: dalloc: {at:#x}+{len:#x} type {kind}");
+        }
         Some(at)
     }
 
     /// Frees `[start, start + len)`, keeping what allocations around it
     /// stick out on either side.
     fn release(&self, start: u64, len: u64) {
+        if std::env::var_os("PS5SLOP_TRACE_ALIAS").is_some() {
+            eprintln!("ps5slop: dfree: {start:#x}+{len:#x}");
+        }
         let end = start + len;
         let mut allocated = lock(&self.allocated);
         let hit: Vec<(u64, u64, i32)> = allocated
@@ -132,11 +138,23 @@ impl DirectMemory {
     fn note_map(&self, addr: u64, len: u64, offset: u64) {
         let mut mapped = lock(&self.mapped);
         cut(&mut mapped, addr, addr + len);
+        if std::env::var_os("PS5SLOP_TRACE_ALIAS").is_some() {
+            eprintln!("ps5slop: dmap: {addr:#x}+{len:#x} direct {offset:#x}");
+            for (&v, &(v_end, delta)) in mapped.iter() {
+                let (p, p_end) = (v.wrapping_add(delta), v_end.wrapping_add(delta));
+                if p < offset + len && p_end > offset {
+                    eprintln!("ps5slop: alias: {addr:#x}+{len:#x} maps direct {offset:#x}, already mapped at {v:#x}..{v_end:#x} (direct {p:#x}..{p_end:#x})");
+                }
+            }
+        }
         mapped.insert(addr, (addr + len, offset.wrapping_sub(addr)));
     }
 
     /// Forgets the direct memory behind `[addr, addr + len)`.
     pub(crate) fn note_unmap(&self, addr: u64, len: u64) {
+        if std::env::var_os("PS5SLOP_TRACE_ALIAS").is_some() {
+            eprintln!("ps5slop: dunmap: {addr:#x}+{len:#x}");
+        }
         cut(&mut lock(&self.mapped), addr, addr.saturating_add(len));
         cut(&mut lock(&self.prot), addr, addr.saturating_add(len));
     }
@@ -367,6 +385,7 @@ fn allocate_in(
         .allocate(start, end, len, align.max(PAGE_SIZE), kind)
     {
         Some(at) => {
+            env.mem.zero_physical(at, len);
             env.mem.write_u64(out, at)?;
             ret(0)
         }
@@ -458,13 +477,30 @@ fn map_direct(env: &Env, wanted: u64, len: u64, prot: u64, flags: u64, offset: u
     }
     let bits = prot;
     let prot = gpu_as_cpu(prot);
-    let mapped = if flags & MAP_FIXED != 0 {
-        env.mem
-            .map_over(wanted, len, prot, "direct memory")
-            .map(|()| wanted)
-    } else {
-        env.mem
-            .map_free(wanted.max(MAP_AREA), len, align, prot, "direct memory")
+    if flags & MAP_FIXED != 0 && std::env::var_os("PS5SLOP_TRACE_ALIAS").is_some() && len <= 0x10_0000 {
+        let mut old = vec![0u8; len as usize];
+        if env.mem.read(wanted, &mut old).is_ok() {
+            let live = old.as_chunks::<8>().0.iter().filter(|q| **q != [0; 8] && **q != [0xff; 8]).count();
+            eprintln!("ps5slop: dremap: {wanted:#x}+{len:#x} over {live} qwords that are neither 0 nor all ones");
+        }
+    }
+    let physical = |fixed: bool| {
+        if fixed {
+            env.mem.map_physical(wanted, len, prot, "direct memory", offset, DIRECT_MEMORY_SIZE).map(|()| wanted)
+        } else {
+            env.mem.map_free_physical(wanted.max(MAP_AREA), len, align, prot, "direct memory", (offset, DIRECT_MEMORY_SIZE))
+        }
+    };
+    let fixed = flags & MAP_FIXED != 0;
+    let mapped = match physical(fixed) {
+        Err(MapError::OutOfRange) if offset.saturating_add(len) > DIRECT_MEMORY_SIZE || !offset.is_multiple_of(PAGE_SIZE) => {
+            if fixed {
+                env.mem.map_over(wanted, len, prot, "direct memory").map(|()| wanted)
+            } else {
+                env.mem.map_free(wanted.max(MAP_AREA), len, align, prot, "direct memory")
+            }
+        }
+        r => r,
     };
     let at = match mapped {
         Ok(at) => at,

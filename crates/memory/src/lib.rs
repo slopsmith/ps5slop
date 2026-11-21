@@ -159,6 +159,20 @@ pub fn on_change(f: fn(&Memory)) {
 
 const HISTORY: usize = 4096;
 
+/// Removes `[start, end)` from a set of ranges, trimming those that stick out.
+fn cut_ranges(ranges: &mut BTreeMap<u64, u64>, start: u64, end: u64) {
+    let hit: Vec<(u64, u64)> = ranges.range(..end).filter(|&(_, &e)| e > start).map(|(&s, &e)| (s, e)).collect();
+    for (s, e) in hit {
+        ranges.remove(&s);
+        if s < start {
+            ranges.insert(s, start);
+        }
+        if e > end {
+            ranges.insert(end, e);
+        }
+    }
+}
+
 /// The lowest `align`-aligned range of `len` bytes at or above `min` that no
 /// region overlaps and that fits in `size`.
 fn free_range(regions: &BTreeMap<u64, Region>, min: u64, len: u64, align: u64, size: u64) -> Option<u64> {
@@ -222,6 +236,10 @@ struct Shared {
     /// Shared memory standing in for physical memory (see
     /// [`Memory::map_physical`]): its descriptor, or -1 if it could not be made.
     physical: std::sync::OnceLock<i32>,
+    /// Ranges whose host pages map physical memory, start to end.
+    on_physical: Mutex<BTreeMap<u64, u64>>,
+    /// Physical memory that may hold non-zero bytes, start to end.
+    dirty_physical: Mutex<BTreeMap<u64, u64>>,
 }
 
 // The reservation is owned by `Shared` and only reached through `Memory` handles,
@@ -326,6 +344,8 @@ impl Memory {
                 history: Mutex::new(std::collections::VecDeque::new()),
                 born: std::time::Instant::now(),
                 physical: std::sync::OnceLock::new(),
+                on_physical: Mutex::new(BTreeMap::new()),
+                dirty_physical: Mutex::new(BTreeMap::new()),
             }),
             last: Default::default(),
             next: Cell::new(0),
@@ -434,7 +454,7 @@ impl Memory {
             .next_back()
             .is_some_and(|(_, &end)| end >= addr + len);
         drop(backed);
-        if len < ZERO_IN_PLACE && covered {
+        if len < ZERO_IN_PLACE && covered && !self.maps_physical(addr, len) {
             // SAFETY: the range lies inside our reservation and has readable and
             // writable host pages.
             unsafe { std::ptr::write_bytes(self.host(addr), 0, len as usize) };
@@ -445,7 +465,7 @@ impl Memory {
     }
 
     fn release(&self, addr: u64, len: u64) -> Result<(), MapError> {
-        if len < ZERO_IN_PLACE {
+        if len < ZERO_IN_PLACE && !self.maps_physical(addr, len) {
             return Ok(());
         }
         self.host_replace(addr, len, None)
@@ -471,6 +491,17 @@ impl Memory {
         };
         if p == libc::MAP_FAILED {
             return Err(MapError::Host(io::Error::last_os_error()));
+        }
+        {
+            let mut on = self.shared.on_physical.lock().unwrap_or_else(|e| e.into_inner());
+            cut_ranges(&mut on, addr, addr + len);
+            if let Some((_, offset)) = source {
+                on.insert(addr, addr + len);
+                drop(on);
+                let mut dirty = self.shared.dirty_physical.lock().unwrap_or_else(|e| e.into_inner());
+                cut_ranges(&mut dirty, offset, offset + len);
+                dirty.insert(offset, offset + len);
+            }
         }
         let mut backed = self.shared.backed.lock().unwrap_or_else(|e| e.into_inner());
         let (mut start, mut end) = (addr, addr + len);
@@ -623,6 +654,70 @@ impl Memory {
         self.note("map physical", addr, len, Some(prot));
         self.changed();
         Ok(())
+    }
+
+    /// Like [`Memory::map_free`], with the pages of [`Memory::map_physical`]
+    /// at `(offset, size)`.
+    pub fn map_free_physical(&self, min: u64, len: u64, align: u64, prot: Prot, name: &str, (offset, size): (u64, u64)) -> Result<u64, MapError> {
+        let len = len.next_multiple_of(PAGE_SIZE);
+        if len == 0 {
+            return Err(MapError::Unaligned);
+        }
+        if offset.checked_add(len).is_none_or(|end| end > size) || !offset.is_multiple_of(PAGE_SIZE) {
+            return Err(MapError::OutOfRange);
+        }
+        let fd = *self.shared.physical.get_or_init(|| make_physical(size));
+        if fd < 0 {
+            return Err(MapError::Host(io::Error::other("no shared memory for physical memory")));
+        }
+        let mut regions = self.regions_write();
+        let addr = free_range(&regions, min, len, align.max(PAGE_SIZE), self.shared.size).ok_or(MapError::OutOfRange)?;
+        self.host_replace(addr, len, Some((fd, offset)))?;
+        regions.insert(
+            addr,
+            Region {
+                end: addr + len,
+                prot,
+                trap: false,
+                name: name.to_owned(),
+            },
+        );
+        drop(regions);
+        self.note("map physical", addr, len, Some(prot));
+        self.changed();
+        Ok(addr)
+    }
+
+    /// Zeroes the physical memory `[offset, offset + len)`, as a fresh
+    /// allocation of it should read. Only pages ever mapped are touched.
+    pub fn zero_physical(&self, offset: u64, len: u64) {
+        let Some(&fd) = self.shared.physical.get().filter(|&&fd| fd >= 0) else { return };
+        let end = offset.saturating_add(len);
+        let mut dirty = self.shared.dirty_physical.lock().unwrap_or_else(|e| e.into_inner());
+        let hits: Vec<(u64, u64)> = dirty
+            .range(..end)
+            .filter(|&(_, &e)| e > offset)
+            .map(|(&s, &e)| (s.max(offset), e.min(end)))
+            .collect();
+        cut_ranges(&mut dirty, offset, end);
+        drop(dirty);
+        for (s, e) in hits {
+            let (s, e) = (s / PAGE_SIZE * PAGE_SIZE, e.next_multiple_of(PAGE_SIZE));
+            // SAFETY: a temporary shared mapping of our own descriptor, unmapped below.
+            unsafe {
+                let p = libc::mmap(std::ptr::null_mut(), (e - s) as usize, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, s as libc::off_t);
+                if p != libc::MAP_FAILED {
+                    std::ptr::write_bytes(p.cast::<u8>(), 0, (e - s) as usize);
+                    libc::munmap(p, (e - s) as usize);
+                }
+            }
+        }
+        fence(Ordering::SeqCst);
+    }
+
+    fn maps_physical(&self, addr: u64, len: u64) -> bool {
+        let on = self.shared.on_physical.lock().unwrap_or_else(|e| e.into_inner());
+        on.range(..addr + len).next_back().is_some_and(|(_, &e)| e > addr)
     }
 
     /// Unmaps whatever lies in `addr..addr + len`, splitting regions that
@@ -1292,6 +1387,28 @@ mod tests {
         m.map_physical(0x40_0000, PAGE_SIZE, rw, "a", 2 * PAGE_SIZE, 16 * PAGE_SIZE).unwrap();
         assert_eq!(m.read_u64(0x40_0010).unwrap(), 0x1234);
         assert!(m.map_physical(0x40_0000, PAGE_SIZE, rw, "a", 16 * PAGE_SIZE, 16 * PAGE_SIZE).is_err());
+    }
+
+    #[test]
+    fn ordinary_maps_over_physical_pages_leave_the_physical_bytes_alone() {
+        let m = Memory::new(4 * GIB).unwrap();
+        let size = 16 * PAGE_SIZE;
+        m.map_physical(0x40_0000, 2 * PAGE_SIZE, Prot::RW, "a", 0, size).unwrap();
+        m.write_u64(0x40_0000, 0x5555).unwrap();
+        m.write_u64(0x40_0000 + PAGE_SIZE, 0x6666).unwrap();
+        m.map_over(0x40_0000, PAGE_SIZE, Prot::RW, "plain").unwrap();
+        assert_eq!(m.read_u64(0x40_0000).unwrap(), 0);
+        m.unmap_range(0x40_0000 + PAGE_SIZE, PAGE_SIZE).unwrap();
+        m.map(0x40_0000 + PAGE_SIZE, PAGE_SIZE, Prot::RW, "plain").unwrap();
+        assert_eq!(m.read_u64(0x40_0000 + PAGE_SIZE).unwrap(), 0);
+        let at = m.map_free_physical(0x100_0000, 2 * PAGE_SIZE, PAGE_SIZE, Prot::RW, "b", (0, size)).unwrap();
+        assert_eq!(m.read_u64(at).unwrap(), 0x5555);
+        assert_eq!(m.read_u64(at + PAGE_SIZE).unwrap(), 0x6666);
+        m.unmap_range(at, 2 * PAGE_SIZE).unwrap();
+        m.zero_physical(PAGE_SIZE, PAGE_SIZE);
+        m.map_physical(0x40_0000, 2 * PAGE_SIZE, Prot::RW, "c", 0, size).unwrap();
+        assert_eq!(m.read_u64(0x40_0000).unwrap(), 0x5555);
+        assert_eq!(m.read_u64(0x40_0000 + PAGE_SIZE).unwrap(), 0);
     }
 
     #[test]
