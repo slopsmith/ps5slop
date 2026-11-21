@@ -517,6 +517,39 @@ fn sixty_four_bit_integer_ops_compile() {
 }
 
 #[test]
+fn quad_masks_and_sixty_four_bit_bit_scans_compile() {
+    let code = [
+        0xBE82_2D04, // s_quadmask_b64 s[2:3], s[4:5]
+        0xBE82_2C04, // s_quadmask_b32 s2, s4
+        0xBE82_1404, // s_ff1_i32_b64 s2, s[4:5]
+        0xBE82_1004, // s_bcnt1_i32_b64 s2, s[4:5]
+        0xBE82_1604, // s_flbit_i32_b64 s2, s[4:5]
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 6, 6 << 1);
+    assert!(t.msl.contains("quadmask64("));
+    compile(&t.msl);
+}
+
+#[test]
+fn sixty_four_bit_shifts_alignbyte_subb_and_setreg_compile() {
+    let code = [
+        0xD6FF_0002,
+        0x0002_0900, // v_lshlrev_b64 v[2:3], v0, v[4:5]
+        0xD700_0002,
+        0x0002_0883, // v_lshrrev_b64 v[2:3], 3, v[4:5]
+        0xD701_0002,
+        0x0002_0900, // v_ashrrev_i64 v[2:3], v0, v[4:5]
+        0xD54F_0001,
+        0x0412_0702, // v_alignbyte_b32 v1, v2, v3, v4
+        0x8282_0504, // s_subb_u32 s2, s4, s5
+        0xB982_1801, // s_setreg_b32 hwreg(HW_REG_MODE, 0, 4), s2
+        0xBF81_0000, // s_endpgm
+    ];
+    compile(&compute(&code, 6, 6 << 1).msl);
+}
+
+#[test]
 fn typed_buffer_stores_and_d16_image_stores_pack_their_data() {
     let code = [
         0xE014_2000,

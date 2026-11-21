@@ -922,12 +922,31 @@ impl<'a> Tx<'a> {
             self.set64(sdst, &format!("{next:#x}ul"));
             return Ok(());
         }
+        if let Some(e) = match name {
+            "s_bcnt1_i32_b64" => Some(("popcount({a})", true)),
+            "s_ff1_i32_b64" => Some(("({a} == 0ul ? 0xffffffffu : uint(ctz({a})))", false)),
+            "s_flbit_i32_b64" => Some(("({a} == 0ul ? 0xffffffffu : uint(clz({a})))", false)),
+            _ => None,
+        } {
+            let a = self.src64(s0, lit, pc)?;
+            let (e, scc) = (e.0.replace("{a}", &a), e.1);
+            let Some(d) = self.sdst(sdst) else {
+                return Ok(());
+            };
+            if scc {
+                self.regs.insert("scc".into());
+            }
+            let scc = if scc { " scc = r != 0u;" } else { "" };
+            self.line(&format!("{{ uint r = uint({e});{scc} {d} = r; }}"));
+            return Ok(());
+        }
         if b64 {
             let a = self.src64(s0, lit, pc)?;
             let (e, scc) = match name {
                 "s_mov_b64" => (a, false),
                 "s_not_b64" => (format!("~{a}"), true),
                 "s_wqm_b64" => (format!("wqm64({a})"), true),
+                "s_quadmask_b64" => (format!("ulong(quadmask64({a}))"), true),
                 _ => return Err(err(pc, format!("unsupported instruction {name}"))),
             };
             self.line(&format!("{{ ulong r = {e};"));
@@ -950,6 +969,7 @@ impl<'a> Tx<'a> {
             "s_sext_i32_i8" => (format!("uint(int(char({a})))"), false),
             "s_sext_i32_i16" => (format!("uint(int(short({a})))"), false),
             "s_abs_i32" => (format!("uint(abs(int({a})))"), true),
+            "s_quadmask_b32" => (format!("quadmask64(ulong({a}))"), true),
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
         let Some(d) = self.sdst(sdst) else {
@@ -1029,6 +1049,10 @@ impl<'a> Tx<'a> {
             "s_addc_u32" => (
                 format!("{a} + {b} + uint(scc)"),
                 "(ulong(a) + ulong(b) + ulong(scc)) >> 32 != 0ul",
+            ),
+            "s_subb_u32" => (
+                format!("{a} - {b} - uint(scc)"),
+                "ulong(b) + ulong(scc) > ulong(a)",
             ),
             "s_min_i32" => (format!("uint(min(int({a}), int({b})))"), "r == a"),
             "s_min_u32" => (format!("min({a}, {b})"), "r == a"),
@@ -1144,6 +1168,8 @@ impl<'a> Tx<'a> {
     ) -> Result<(), TranslateError> {
         let k = simm16 as i16 as i32;
         match name {
+            // Hardware registers (rounding and denormal modes) are not modelled.
+            "s_setreg_b32" | "s_setreg_imm32_b32" => {}
             "s_movk_i32" => {
                 if let Some(d) = self.sdst(sdst) {
                     self.line(&format!("{d} = 0x{:x}u;", k as u32));
@@ -1403,6 +1429,21 @@ impl<'a> Tx<'a> {
         if name == "v_mad_u64_u32" || name == "v_mad_i64_i32" {
             return self.mad64(pc, inst, v);
         }
+        if matches!(name, "v_lshlrev_b64" | "v_lshrrev_b64" | "v_ashrrev_i64") {
+            let shift = self.usrc(pc, inst, v, 0)?;
+            let x = self.vsrc64(pc, inst, v.src[1])?;
+            let value = match name {
+                "v_lshlrev_b64" => format!("{x} << ({shift} & 63u)"),
+                "v_lshrrev_b64" => format!("{x} >> ({shift} & 63u)"),
+                _ => format!("ulong(long({x}) >> ({shift} & 63u))"),
+            };
+            let exec = self.s(126);
+            let (lo, hi) = (self.v(v.vdst as u16), self.v(v.vdst as u16 + 1));
+            self.line(&format!(
+                "{{ ulong r = {value}; if (({exec} & 1u) != 0u) {{ {lo} = uint(r); {hi} = uint(r >> 32); }} }}"
+            ));
+            return Ok(());
+        }
         if matches!(
             name,
             "v_fma_mix_f32" | "v_fma_mixlo_f16" | "v_fma_mixhi_f16"
@@ -1628,6 +1669,12 @@ impl<'a> Tx<'a> {
             "v_xor3_b32" => format!("{} ^ {} ^ {}", u(self, 0)?, u(self, 1)?, u(self, 2)?),
             "v_add3_u32" => format!("{} + {} + {}", u(self, 0)?, u(self, 1)?, u(self, 2)?),
             "v_xad_u32" => format!("({} ^ {}) + {}", u(self, 0)?, u(self, 1)?, u(self, 2)?),
+            "v_alignbyte_b32" => format!(
+                "uint((ulong({}) << 32 | ulong({})) >> (8u * ({} & 3u)))",
+                u(self, 0)?,
+                u(self, 1)?,
+                u(self, 2)?
+            ),
             "v_alignbit_b32" => format!(
                 "uint((ulong({}) << 32 | ulong({})) >> ({} & 31u))",
                 u(self, 0)?,
@@ -2714,6 +2761,21 @@ impl<'a> Tx<'a> {
                             });
                     new.insert(sdst as u16, mask.map(|m| Source::Constant(vec![m])));
                 }
+                // Bits a program ORs or ANDs into a descriptor dword at run
+                // time are dropped; the dword keeps where it came from.
+                Kind::Sop2 { sdst, ssrc0, ssrc1 }
+                    if matches!(inst.op.name, "s_or_b32" | "s_and_b32" | "s_andn2_b32")
+                        && (sdst as u16 == ssrc0 || sdst as u16 == ssrc1)
+                        && (sdst as u16) < TRACKED_SGPRS
+                        && matches!(
+                            st[sdst as usize],
+                            Some(
+                                Source::Buffer { .. } | Source::Memory { .. } | Source::UserSgpr(_)
+                            )
+                        ) =>
+                {
+                    new.insert(sdst as u16, st[sdst as usize].clone());
+                }
                 Kind::Sop1 { sdst, ssrc0 }
                     if inst.op.name == "s_mov_b64" && ssrc0 + 1 < SGPR_COUNT =>
                 {
@@ -2803,15 +2865,20 @@ impl<'a> Tx<'a> {
                     st[r as usize] = new.remove(&r).flatten();
                 }
             }
-            if !matches!(
-                inst.kind,
-                Kind::Sop1 { .. }
-                    | Kind::Sop2 { .. }
-                    | Kind::Sopk { .. }
-                    | Kind::Sopc { .. }
-                    | Kind::Sopp { .. }
-                    | Kind::Smem { .. }
-            ) {
+            let vcc = |d: u8| d == 106 || d == 107;
+            let vcc_written = match &inst.kind {
+                Kind::Valu(v) => match v.sdst {
+                    Some(d) => vcc(d),
+                    None => {
+                        let n = inst.op.name;
+                        n.starts_with("v_cmp")
+                            || n.contains("_co_")
+                            || (n.starts_with("v_read") && n.contains("lane") && vcc(v.vdst))
+                    }
+                },
+                _ => false,
+            };
+            if vcc_written {
                 st[106] = None;
                 st[107] = None;
             }
@@ -3711,6 +3778,14 @@ static inline ulong wqm64(ulong v) {
     ulong r = 0ul;
     for (uint q = 0u; q < 16u; q++) {
         if ((v >> (4u * q)) & 0xful) r |= 0xful << (4u * q);
+    }
+    return r;
+}
+
+static inline uint quadmask64(ulong v) {
+    uint r = 0u;
+    for (uint q = 0u; q < 16u; q++) {
+        if ((v >> (4u * q)) & 0xful) r |= 1u << q;
     }
     return r;
 }
