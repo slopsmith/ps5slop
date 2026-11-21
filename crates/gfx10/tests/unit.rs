@@ -491,8 +491,9 @@ fn flat_and_global_loads_read_guest_memory() {
     ];
     let t = compute(&code, 2, 2 << 1);
     assert!(t.guest_memory);
-    assert!(t.msl.contains("flat_load_ubyte(mem, long((ulong(v1) | (ulong(v2) << 32))"));
-    assert!(t.msl.contains("flat_load_raw(mem, long(((ulong(s0) | (ulong(s1) << 32)) + ulong(v4)) + ulong(long(16))"));
+    assert!(t.msl.contains("flat_load_ubyte(mem, goff(mem_base, (ulong(v1) | (ulong(v2) << 32))"));
+    assert!(t.msl.contains("flat_load_raw(mem, goff(mem_base, ((ulong(s0) | (ulong(s1) << 32)) + ulong(v4)) + ulong(long(16))"));
+    assert!(t.msl.contains("constant Win& mem_base [[buffer(28)]]"));
     compile(&t.msl);
 }
 
@@ -511,5 +512,92 @@ fn typed_buffer_loads_take_the_instruction_format_and_fma_mix_reads_halves() {
     assert!(t.msl.contains("fma(float(as_type<half2>(v2).x), F(v3), float(as_type<half2>(v4).x))"));
     assert!(t.msl.contains("saturate(fma(float(as_type<half2>(v2).y), (-float(as_type<half2>(v3).x)), F("));
     assert!(t.msl.contains("fma(fabs(F(v2)), float(as_type<half2>(v3).x), F(v4))"));
+    compile(&t.msl);
+}
+
+#[test]
+fn indexed_vgpr_moves_switch_over_every_vgpr() {
+    let code = [
+        0xBEFC_0300, // s_mov_b32 m0, s0
+        0x7E00_8704, // v_movrels_b32_e32 v0, v4
+        0x7E0A_8501, // v_movreld_b32_e32 v5, v1
+        0x7E0C_8904, // v_movrelsd_b32_e32 v6, v4
+        0x7E0C_9104, // v_movrelsd_2_b32_e32 v6, v4
+        0x7E0C_D104, // v_swaprel_b32 v6, v4
+        0xF800_180F, 0x0302_0100, // exp mrt0 v0, v1, v2, v3 done vm
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = pixel(&code, 1);
+    assert!(t.msl.contains("switch (m0 + 4u) { case 0: rv = v0; break;"));
+    assert!(t.msl.contains("case 6: v6 = wv; break;"));
+    assert!(t.msl.contains("switch (((m0 >> 16) & 0x3ffu) + 6u)"));
+    assert!(!t.msl.contains("@"));
+    compile(&t.msl);
+}
+
+#[test]
+fn a_program_may_end_with_a_branch_back() {
+    let code = [
+        0xBF85_0002, // s_cbranch_scc1 2 (to 3)
+        0xBF81_0000, // s_endpgm
+        0xBF81_0000, // s_endpgm
+        0xBEFC_0300, // s_mov_b32 m0, s0
+        0xBF82_FFFC, // s_branch -4 (to 1)
+        0x3030_6C73, // the trailer, not an instruction
+    ];
+    assert_eq!(gfx10::translate::program(&code).unwrap().len(), 5);
+}
+
+#[test]
+fn wave32_saveexec_xad_class_addtid_and_image_atomics() {
+    let code = [
+        0xBE82_3C03, // s_and_saveexec_b32 s2, s3
+        0xBE82_4403, // s_andn1_saveexec_b32 s2, s3
+        0xD745_0001, 0x0412_0702, // v_xad_u32 v1, v2, v3, v4
+        0x7D10_0501, // v_cmp_class_f32_e32 vcc, v1, v2
+        0xD488_0004, 0x0001_0701, // v_cmp_class_f32_e64 s[4:5], v1, 3
+        0xDAC0_0010, 0x0000_0000, // ds_write_addtid_b32 v0 offset:16
+        0xDAC4_0010, 0x0100_0000, // ds_read_addtid_b32 v1 offset:16
+        0xF044_2108, 0x0002_0104, // image_atomic_add v1, v[4:5], s[8:15] dmask:0x1 dim:2D glc
+        0xF03C_0108, 0x0002_0204, // image_atomic_swap v2, v[4:5], s[8:15] dmask:0x1 dim:2D
+        0xF040_2308, 0x0002_0204, // image_atomic_cmpswap v[2:3], v[4:5], s[8:15] dmask:0x3 dim:2D glc
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 16, 16 << 1);
+    assert!(t.msl.contains("uint old = exec_lo; uint n = s3 & old;"));
+    assert!(t.msl.contains("uint n = ~s3 & old;"));
+    assert!(t.msl.contains("(v2 ^ v3) + v4"));
+    assert!(t.msl.contains("fclass(F(v1), v2)"));
+    assert!(t.msl.contains("4u * ((lid.x + lid.y * 64u + lid.z * 64u) & 63u)"));
+    assert!(t.msl.contains("texture2d<uint, access::read_write> t0"));
+    assert!(t.msl.contains("t0.atomic_fetch_add(uint2(v4, v5), uint4(v1)); v1 = (r.x);"));
+    assert!(t.msl.contains("atomic_compare_exchange_weak"));
+    assert!(matches!(t.resources[0], Resource::Texture { access: Access::Atomic, .. }));
+    compile(&t.msl);
+}
+
+#[test]
+fn row_dpp_permlanes_readlane_and_bpermute_use_simd_shuffles() {
+    let code = [
+        0x3814_14FA, 0xFF01_110A, // v_or_b32_dpp v10, v10, v10 row_shr:1 row_mask:0xf bank_mask:0xf
+        0x7E02_02FA, 0xFF09_4002, // v_mov_b32_dpp v1, v2 row_mirror row_mask:0xf bank_mask:0xf bound_ctrl:1
+        0x7E02_02FA, 0x3F01_6302, // v_mov_b32_dpp v1, v2 row_xmask:3 row_mask:0x3 bank_mask:0xf
+        0x0602_06FA, 0x5F00_B102, // v_add_f32_dpp v1, v2, v3 quad_perm:[1,0,3,2] row_mask:0x5 bank_mask:0xf
+        0x7E02_02E9, 0x0539_7702, // v_mov_b32_dpp v1, v2 dpp8:[7,6,5,4,3,2,1,0]
+        0xD778_0009, 0x0305_830A, // v_permlanex16_b32 v9, v10, -1, -1
+        0xD777_0009, 0x0008_030A, // v_permlane16_b32 v9, v10, s1, s2
+        0xD760_0000, 0x0001_3F0A, // v_readlane_b32 s0, v10, 31
+        0xDACC_0004, 0x0100_0302, // ds_bpermute_b32 v1, v2, v3 offset:4
+        0xF800_180F, 0x0302_0100, // exp mrt0 v0, v1, v2, v3 done vm
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = pixel(&code, 3);
+    assert!(t.msl.contains("ushort slane [[thread_index_in_simdgroup]]"));
+    assert!(t.msl.contains("simd_shuffle(v10, ushort((i - 1u) & 31u))"));
+    assert!(t.msl.contains("dpp_on = dpp_on && dpp_in;"));
+    assert!(t.msl.contains("if (!dpp_in) dpp0 = 0u;"));
+    assert!(t.msl.contains("((slane & 16u) ^ 16u)"));
+    assert!(t.msl.contains("s0 = simd_broadcast(v10, ushort(31));"));
+    assert!(t.msl.contains("simd_shuffle(v3, ushort(((v2 + 4u) >> 2) & 31u))"));
     compile(&t.msl);
 }

@@ -109,6 +109,9 @@ pub enum Access {
     Write,
     /// Read and written (`access::read_write`).
     ReadWrite,
+    /// Used by image atomics (`access::read_write`, `uint` or `int` texels):
+    /// the host binds a 32-bit integer view made with atomic usage.
+    Atomic,
 }
 
 /// A Metal object the host binds for the program.
@@ -173,7 +176,8 @@ impl std::error::Error for TranslateError {}
 pub mod binding {
     /// `constant uint* user`: all user SGPR values in order.
     pub const USER: u32 = 0;
-    /// `constant ulong& mem_base`: guest address of byte 0 of the memory buffer.
+    /// `constant Win& mem_base`: the guest range the memory buffer covers, and
+    /// a second range reached at a fixed distance from it (see `goff`).
     pub const MEM_BASE: u32 = 28;
     /// `device uchar* mem`: guest memory.
     pub const MEM: u32 = 29;
@@ -191,7 +195,8 @@ fn err(pc: usize, message: impl Into<String>) -> TranslateError {
     }
 }
 
-/// Decodes from the start of `code` to the `s_endpgm` that no branch jumps past.
+/// Decodes from the start of `code` to the first instruction that does not
+/// fall through (`s_endpgm`, `s_branch`) and that no branch jumps past.
 pub fn program(code: &[u32]) -> Result<Vec<(usize, Inst)>, TranslateError> {
     let mut out = Vec::new();
     let mut pc = 0;
@@ -205,7 +210,8 @@ pub fn program(code: &[u32]) -> Result<Vec<(usize, Inst)>, TranslateError> {
             furthest = furthest.max(t);
         }
         out.push((pc, inst));
-        if (name == "s_endpgm" || name == "s_code_end") && pc >= furthest {
+        let ends = matches!(name, "s_endpgm" | "s_code_end" | "s_branch");
+        if ends && pc >= furthest {
             return Ok(out);
         }
         pc = next;
@@ -233,6 +239,12 @@ pub fn translate(req: &Request) -> Result<Translated, TranslateError> {
     let syms = dry.sgpr_sources();
     let mut tx = Tx::new(req, insts);
     tx.syms = Some(syms);
+    tx.atomic_textures = dry
+        .textures
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.3 == Access::Atomic)
+        .fold(0, |m, (i, _)| m | 1 << i);
     tx.run()?;
     Ok(tx.finish())
 }
@@ -299,11 +311,22 @@ struct Tx<'a> {
     gds: bool,
     /// The entry point declares `qlane`, the thread's lane in its quad.
     quad_lane: bool,
+    /// Texture slots image atomics use, from the first pass.
+    atomic_textures: u32,
+    /// The entry point declares `slane`, the thread's lane in its SIMD group.
+    simd_lane: bool,
+    /// The current DPP instruction leaves some lanes unwritten (`dpp_on`).
+    dpp_lane_off: bool,
+    /// The body holds indexed VGPR accesses (`movrel`) to fill in.
+    movrel: bool,
     ij_vgprs: BTreeMap<u16, Interp>,
     user_base: u16,
 }
 
 const SGPR_COUNT: u16 = 106;
+const VREAD: &str = "/*@VREAD:";
+const VWRITE: &str = "/*@VWRITE:";
+const VEND: &str = "@*/";
 /// SGPRs `sgpr_sources` follows: the general ones and VCC.
 const TRACKED_SGPRS: u16 = 108;
 
@@ -356,6 +379,10 @@ impl<'a> Tx<'a> {
             lds: false,
             gds: false,
             quad_lane: false,
+            atomic_textures: 0,
+            simd_lane: false,
+            dpp_lane_off: false,
+            movrel: false,
             ij_vgprs,
             user_base,
         }
@@ -638,6 +665,31 @@ impl<'a> Tx<'a> {
         lit: Option<u32>,
     ) -> Result<(), TranslateError> {
         let b64 = name.ends_with("_b64");
+        if name.ends_with("saveexec_b32") {
+            let a = self.src32(s0, lit, pc)?;
+            let op = name.trim_start_matches("s_").trim_end_matches("_saveexec_b32");
+            let new = match op {
+                "and" => format!("{a} & old"),
+                "or" => format!("{a} | old"),
+                "xor" => format!("{a} ^ old"),
+                "andn2" => format!("{a} & ~old"),
+                "orn2" => format!("{a} | ~old"),
+                "nand" => format!("~({a} & old)"),
+                "nor" => format!("~({a} | old)"),
+                "xnor" => format!("~({a} ^ old)"),
+                "andn1" => format!("~{a} & old"),
+                "orn1" => format!("~{a} | old"),
+                _ => return Err(err(pc, format!("unsupported instruction {name}"))),
+            };
+            self.regs.insert("scc".into());
+            let lo = self.s(126);
+            self.line(&format!("{{ uint old = {lo}; uint n = {new}; scc = n != 0u; {lo} = n;"));
+            if let Some(d) = self.sdst(sdst) {
+                self.line(&format!("{d} = old;"));
+            }
+            self.line("}");
+            return Ok(());
+        }
         if name.ends_with("saveexec_b64") {
             let a = self.src64(s0, lit, pc)?;
             let exec = self.src64(126, None, pc)?;
@@ -972,7 +1024,8 @@ impl<'a> Tx<'a> {
 
     fn guard(&mut self, stmt: &str) {
         let e = self.s(126);
-        self.line(&format!("if ({e} & 1u) {{ {stmt} }}"));
+        let extra = if self.dpp_lane_off { " && dpp_on" } else { "" };
+        self.line(&format!("if (({e} & 1u) != 0u{extra}) {{ {stmt} }}"));
     }
 
     // Source `i` of a VALU instruction as a `float` expression, with its modifiers.
@@ -1060,6 +1113,15 @@ impl<'a> Tx<'a> {
     }
 
     fn valu(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
+        let r = self.valu_inner(pc, inst, v);
+        if self.dpp_lane_off {
+            self.dpp_lane_off = false;
+            self.line("}");
+        }
+        r
+    }
+
+    fn valu_inner(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
         let op = inst.op;
         let name = op.name;
         if matches!(v.enc, VEnc::Dpp16 | VEnc::Dpp8) {
@@ -1094,7 +1156,16 @@ impl<'a> Tx<'a> {
                 .filter(|n| self.regs.contains(n));
             let s = match spilled {
                 Some(n) => n,
-                None => self.usrc(pc, inst, v, 0)?,
+                None => {
+                    let a = self.usrc(pc, inst, v, 0)?;
+                    match lane(v.src[1]) {
+                        // Metal SIMD groups are 32 lanes: lane k reads lane k mod 32 of its group.
+                        Some(k) if name == "v_readlane_b32" && self.req.stage != Stage::Vertex => {
+                            format!("simd_broadcast({a}, ushort({}))", k & 31)
+                        }
+                        _ => a,
+                    }
+                }
             };
             if let Some(d) = self.sdst(v.vdst as u16) {
                 self.line(&format!("{d} = {s};"));
@@ -1117,6 +1188,25 @@ impl<'a> Tx<'a> {
         }
         if matches!(name, "v_fma_mix_f32" | "v_fma_mixlo_f16" | "v_fma_mixhi_f16") {
             return self.fma_mix(pc, inst, v);
+        }
+        if name.starts_with("v_movrel") || name == "v_swaprel_b32" {
+            return self.movrel(pc, inst, v);
+        }
+        if name == "v_permlane16_b32" || name == "v_permlanex16_b32" {
+            if self.req.stage == Stage::Vertex {
+                return Err(err(pc, format!("{name} in a vertex program")));
+            }
+            let a = self.usrc(pc, inst, v, 0)?;
+            let (lo, hi) = (self.usrc(pc, inst, v, 1)?, self.usrc(pc, inst, v, 2)?);
+            self.simd_lane = true;
+            let row = if name == "v_permlanex16_b32" { "((slane & 16u) ^ 16u)" } else { "(slane & 16u)" };
+            let d = self.v(v.vdst as u16);
+            self.line(&format!(
+                "{{ uint i = slane & 15u; uint sel = (i < 8u ? {lo} >> (4u * i) : {hi} >> (4u * (i - 8u))) & 15u; uint r = simd_shuffle({a}, ushort({row} | sel));"
+            ));
+            self.guard(&format!("{d} = r;"));
+            self.line("}");
+            return Ok(());
         }
         let f = |t: &mut Self, i: usize| t.fsrc(pc, inst, v, i);
         let u = |t: &mut Self, i: usize| t.usrc(pc, inst, v, i);
@@ -1313,6 +1403,7 @@ impl<'a> Tx<'a> {
             "v_or3_b32" => format!("{} | {} | {}", u(self, 0)?, u(self, 1)?, u(self, 2)?),
             "v_xor3_b32" => format!("{} ^ {} ^ {}", u(self, 0)?, u(self, 1)?, u(self, 2)?),
             "v_add3_u32" => format!("{} + {} + {}", u(self, 0)?, u(self, 1)?, u(self, 2)?),
+            "v_xad_u32" => format!("({} ^ {}) + {}", u(self, 0)?, u(self, 1)?, u(self, 2)?),
             "v_alignbit_b32" => format!(
                 "uint((ulong({}) << 32 | ulong({})) >> ({} & 31u))",
                 u(self, 0)?,
@@ -1375,6 +1466,9 @@ impl<'a> Tx<'a> {
             && v.dpp.row_mask == 0xF
             && v.dpp.bank_mask == 0xF
             && self.req.stage != Stage::Vertex;
+        if !broadcast && !permute && self.req.stage != Stage::Vertex {
+            return self.dpp_general(pc, v);
+        }
         if !broadcast && !permute {
             return Err(err(pc, format!("unsupported DPP form of {}", inst.op.name)));
         }
@@ -1386,6 +1480,42 @@ impl<'a> Tx<'a> {
             self.quad_lane = true;
             self.line(&format!("dpp0 = quad_shuffle({a}, ushort(({ctrl:#x}u >> (2u * uint(qlane))) & 3u));"));
         }
+        Ok(())
+    }
+
+    /// DPP forms other than full-mask quad permutations, as `simd_shuffle`
+    /// within 32-lane Metal SIMD groups.
+    fn dpp_general(&mut self, pc: usize, v: &Valu) -> Result<(), TranslateError> {
+        let ctrl = v.dpp.ctrl as u32;
+        let (src, inside) = if v.enc == VEnc::Dpp8 {
+            (format!("((i & 24u) | (({:#x}u >> (3u * (i & 7u))) & 7u))", v.dpp.sel8), "true".to_string())
+        } else {
+            let n = ctrl & 0xF;
+            match ctrl {
+                0x00..=0xFF => (format!("((i & 28u) | (({ctrl:#x}u >> (2u * (i & 3u))) & 3u))"), "true".into()),
+                0x101..=0x10F => (format!("(i + {n}u)"), format!("(i & 15u) + {n}u < 16u")),
+                0x111..=0x11F => (format!("(i - {n}u)"), format!("(i & 15u) >= {n}u")),
+                0x121..=0x12F => (format!("((i & 16u) | ((i - {n}u) & 15u))"), "true".into()),
+                0x140 => ("((i & 16u) | (15u - (i & 15u)))".into(), "true".into()),
+                0x141 => ("((i & 24u) | (7u - (i & 7u)))".into(), "true".into()),
+                0x150..=0x15F => (format!("((i & 16u) | {n}u)"), "true".into()),
+                0x160..=0x16F => (format!("(i ^ {n}u)"), "true".into()),
+                _ => return Err(err(pc, format!("unsupported DPP control {ctrl:#x}"))),
+            }
+        };
+        let a = self.src32(v.src[0], None, pc)?;
+        self.simd_lane = true;
+        self.regs.insert("dpp0".into());
+        let (rows, banks) = if v.enc == VEnc::Dpp8 { (0xF, 0xF) } else { (v.dpp.row_mask, v.dpp.bank_mask) };
+        self.line(&format!(
+            "{{ uint i = slane; dpp0 = simd_shuffle({a}, ushort({src} & 31u)); bool dpp_on = ({rows:#x}u >> ((i >> 4) & 3u) & 1u) != 0u && ({banks:#x}u >> ((i >> 2) & 3u) & 1u) != 0u; bool dpp_in = {inside};"
+        ));
+        if v.dpp.bound_ctrl {
+            self.line("if (!dpp_in) dpp0 = 0u; ");
+        } else {
+            self.line("dpp_on = dpp_on && dpp_in;");
+        }
+        self.dpp_lane_off = true;
         Ok(())
     }
 
@@ -1510,6 +1640,66 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
+    /// Indexed VGPR moves through M0. VGPRs are named locals, so an indexed
+    /// access is a `switch` whose cases `emit` fills in (`VREAD`, `VWRITE`).
+    fn movrel(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
+        let name = inst.op.name;
+        if !matches!(v.enc, VEnc::E32 | VEnc::E64)
+            || (v.enc == VEnc::E64 && (v.abs != 0 || v.neg != 0 || v.clamp || v.omod != 0))
+        {
+            return Err(err(pc, format!("unsupported form of {name}")));
+        }
+        let m0 = self.s(124);
+        self.movrel = true;
+        let src = v.src[0];
+        let dst = v.vdst as u16;
+        let (src_index, dst_index) = match name {
+            "v_movrelsd_2_b32" | "v_swaprel_b32" => {
+                (format!("({m0} & 0x3ffu)"), format!("(({m0} >> 16) & 0x3ffu)"))
+            }
+            _ => (m0.clone(), m0.clone()),
+        };
+        let read = |out: &str, base: u16, index: &str| {
+            format!("uint {out} = 0u; switch ({index} + {base}u) {{ {VREAD}{out}{VEND} }}")
+        };
+        let write = |base: u16, index: &str, val: &str| {
+            format!("switch ({index} + {base}u) {{ {VWRITE}{val}{VEND} }}")
+        };
+        let base = (src >= 256).then(|| src - 256);
+        if let Some(b) = base {
+            self.v(b);
+        }
+        self.v(dst);
+        let need_base = || base.ok_or_else(|| err(pc, format!("{name} from a non-VGPR")));
+        let stmt = match name {
+            "v_movrels_b32" => {
+                let d = self.v(dst);
+                format!("{{ {} {d} = rv; }}", read("rv", need_base()?, &src_index))
+            }
+            "v_movreld_b32" => {
+                let s = self.usrc(pc, inst, v, 0)?;
+                format!("{{ uint wv = {s}; {} }}", write(dst, &dst_index, "wv"))
+            }
+            "v_movrelsd_b32" | "v_movrelsd_2_b32" => {
+                let b = need_base()?;
+                format!("{{ {} {} }}", read("rv", b, &src_index), write(dst, &dst_index, "rv"))
+            }
+            "v_swaprel_b32" => {
+                let b = need_base()?;
+                format!(
+                    "{{ {} {} {} {} }}",
+                    read("rv", b, &src_index),
+                    read("rw", dst, &dst_index),
+                    write(dst, &dst_index, "rv"),
+                    write(b, &src_index, "rw")
+                )
+            }
+            _ => return Err(err(pc, format!("unsupported instruction {name}"))),
+        };
+        self.guard(&stmt);
+        Ok(())
+    }
+
     fn output_mods(&self, v: &Valu, e: &str) -> String {
         let mut e = format!("({e})");
         match v.omod {
@@ -1534,6 +1724,11 @@ impl<'a> Tx<'a> {
             .rsplit_once('_')
             .ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?;
         let cond = match ty {
+            "f32" if op == "class" => {
+                let a = self.fsrc(pc, inst, v, 0)?;
+                let m = self.usrc(pc, inst, v, 1)?;
+                format!("fclass({a}, {m})")
+            }
             "f32" => {
                 let (a, b) = (self.fsrc(pc, inst, v, 0)?, self.fsrc(pc, inst, v, 1)?);
                 fcmp(op, &a, &b)
@@ -1756,7 +1951,7 @@ impl<'a> Tx<'a> {
             let hi = self.v(f.addr as u16 + 1);
             format!("(ulong({lo}) | (ulong({hi}) << 32))")
         };
-        let mut s = format!("uint4 r = {call}(mem, long({addr} + ulong(long({})) - mem_base));", f.offset);
+        let mut s = format!("uint4 r = {call}(mem, goff(mem_base, {addr} + ulong(long({}))));", f.offset);
         for i in 0..n {
             let d = self.v(f.vdst as u16 + i);
             write!(s, " {d} = r[{i}];").unwrap();
@@ -1828,7 +2023,7 @@ impl<'a> Tx<'a> {
         };
         if let Some((n, width)) = store {
             self.mem_write = true;
-            let mut s = format!("long o = buffer_offset({args}); if (o >= 0) {{");
+            let mut s = format!("long o = buffer_offset({args}); if (o != OOB_OFF) {{");
             for i in 0..n {
                 let v = self.v(vd + i);
                 match width {
@@ -1894,10 +2089,40 @@ impl<'a> Tx<'a> {
         if matches!(name, "ds_append" | "ds_consume") {
             return self.ds_counter(pc, name, offset0 as u32 | (offset1 as u32) << 8, gds, regs[3]);
         }
+        if name == "ds_bpermute_b32" && !gds && self.req.stage != Stage::Vertex {
+            // Metal SIMD groups are 32 lanes, so the source lane is taken mod 32.
+            let [addr, data0, _, vdst] = regs;
+            let (a, d0, d) = (self.v(addr), self.v(data0), self.v(vdst));
+            let off = offset0 as u32 | (offset1 as u32) << 8;
+            self.line(&format!("{{ uint bp = simd_shuffle({d0}, ushort((({a} + {off}u) >> 2) & 31u));"));
+            self.guard(&format!("{d} = bp;"));
+            self.line("}");
+            return Ok(());
+        }
         if gds || self.req.stage != Stage::Compute {
             return Err(err(pc, format!("unsupported LDS access {name}")));
         }
         self.lds = true;
+        if name == "ds_write_addtid_b32" || name == "ds_read_addtid_b32" {
+            // Wave64 assumed: the lane is the thread's index in the group mod 64.
+            let [_, data0, _, vdst] = regs;
+            let m0 = self.s(124);
+            let [tx, ty, _] = self.req.threads;
+            let a = format!(
+                "(({m0} & 0xffffu) + {}u + 4u * ((lid.x + lid.y * {tx}u + lid.z * {}u) & 63u))",
+                offset0 as u32 | (offset1 as u32) << 8,
+                tx * ty
+            );
+            let stmt = if name == "ds_write_addtid_b32" {
+                let d = self.v(data0);
+                format!("lds_wr(lds, {a}, {d});")
+            } else {
+                let d = self.v(vdst);
+                format!("{d} = lds_rd(lds, {a});")
+            };
+            self.guard(&stmt);
+            return Ok(());
+        }
         let [addr, data0, data1, vdst] = regs;
         let a = self.v(addr);
         let off = offset0 as u32 | (offset1 as u32) << 8;
@@ -2195,7 +2420,9 @@ impl<'a> Tx<'a> {
 
     // The element type of texture slot `t` and how a component of it becomes a VGPR value.
     fn texel(&self, t: usize) -> (&'static str, &'static str) {
-        if self.req.uint_textures >> t & 1 != 0 {
+        if self.atomic_textures >> t & 1 != 0 {
+            if self.req.sint_textures >> t & 1 != 0 { ("int", "uint") } else { ("uint", "") }
+        } else if self.req.uint_textures >> t & 1 != 0 {
             ("uint", "")
         } else if self.req.sint_textures >> t & 1 != 0 {
             ("int", "uint")
@@ -2223,6 +2450,7 @@ impl<'a> Tx<'a> {
         let entry = &mut self.textures[t];
         entry.3 = match (entry.3, access) {
             (a, b) if a == b => a,
+            (Access::Atomic, _) | (_, Access::Atomic) => Access::Atomic,
             (Access::Write, Access::Sample) | (Access::Sample, Access::Write) | (_, Access::ReadWrite) | (Access::ReadWrite, _) => Access::ReadWrite,
             (a, _) => a,
         };
@@ -2255,6 +2483,7 @@ impl<'a> Tx<'a> {
                 return self.image_rw(pc, name, m, kind, &addr_regs);
             }
             "image_get_resinfo" => return self.image_resinfo(pc, m, kind, &addr_regs),
+            n if n.starts_with("image_atomic_") => return self.image_atomic(pc, name, m, kind, &addr_regs),
             _ => {}
         }
         let gather = name.starts_with("image_gather4");
@@ -2421,6 +2650,62 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
+    /// Image atomics through Metal's texture atomics on a 32-bit integer
+    /// view; `glc` returns the value before the operation.
+    fn image_atomic(
+        &mut self,
+        pc: usize,
+        name: &str,
+        m: &Mimg,
+        kind: TextureKind,
+        addr: &[u16],
+    ) -> Result<(), TranslateError> {
+        let op = &name["image_atomic_".len()..];
+        let f = match op {
+            "swap" => "atomic_exchange",
+            "add" => "atomic_fetch_add",
+            "sub" => "atomic_fetch_sub",
+            "smin" | "umin" => "atomic_fetch_min",
+            "smax" | "umax" => "atomic_fetch_max",
+            "and" => "atomic_fetch_and",
+            "or" => "atomic_fetch_or",
+            "xor" => "atomic_fetch_xor",
+            "cmpswap" => "",
+            _ => return Err(err(pc, format!("unsupported instruction {name}"))),
+        };
+        if m.dmask != 1 && !(op == "cmpswap" && m.dmask == 3) || m.d16 {
+            return Err(err(pc, format!("unsupported form of {name}")));
+        }
+        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Atomic)?;
+        let a: Vec<String> = addr.iter().map(|&r| self.v(r)).collect();
+        let coord = match kind {
+            TextureKind::Tex2d => format!("uint2({}, {})", a[0], a[1]),
+            TextureKind::Tex2dArray => format!("uint2({}, {}), {}", a[0], a[1], a[2]),
+            _ => return Err(err(pc, format!("unsupported form of {name}"))),
+        };
+        // The first pass does not know the atomic slots yet.
+        let (elem, conv) = match self.texel(t) {
+            ("float", _) => ("uint", ""),
+            x => x,
+        };
+        let d = self.v(m.vdata as u16);
+        let value = if elem == "int" { format!("int({d})") } else { d.clone() };
+        let mut s = if op == "cmpswap" {
+            let cmp = self.v(m.vdata as u16 + 1);
+            let cmp = if elem == "int" { format!("int({cmp})") } else { cmp };
+            format!(
+                "{elem}4 r = {elem}4({cmp}); for (;;) {{ if (t{t}.atomic_compare_exchange_weak({coord}, &r, {elem}4({value}))) {{ r = {elem}4({cmp}); break; }} if (r.x != {cmp}) break; }}"
+            )
+        } else {
+            format!("{elem}4 r = t{t}.{f}({coord}, {elem}4({value}));")
+        };
+        if m.glc {
+            write!(s, " {d} = {conv}(r.x);").unwrap();
+        }
+        self.guard(&s);
+        Ok(())
+    }
+
     fn image_resinfo(
         &mut self,
         pc: usize,
@@ -2505,7 +2790,7 @@ impl<'a> Tx<'a> {
         let mut args = vec!["user".to_string()];
         if self.mem {
             params.push(format!("{mem_ty} mem"));
-            params.push("ulong mem_base".into());
+            params.push("Win mem_base".into());
             args.push("mem".into());
             args.push("mem_base".into());
         }
@@ -2516,7 +2801,7 @@ impl<'a> Tx<'a> {
                 binding::MEM
             ));
             entry_params.push(format!(
-                "constant ulong& mem_base [[buffer({})]]",
+                "constant Win& mem_base [[buffer({})]]",
                 binding::MEM_BASE
             ));
         }
@@ -2536,7 +2821,7 @@ impl<'a> Tx<'a> {
             let ty = match access {
                 Access::Sample => format!("{base}<{elem}>"),
                 Access::Write => format!("{base}<{elem}, access::write>"),
-                Access::ReadWrite => format!("{base}<{elem}, access::read_write>"),
+                Access::ReadWrite | Access::Atomic => format!("{base}<{elem}, access::read_write>"),
             };
             params.push(format!("{ty} t{i}"));
             args.push(format!("t{i}"));
@@ -2550,7 +2835,13 @@ impl<'a> Tx<'a> {
         if self.quad_lane {
             entry_params.push("ushort qlane [[thread_index_in_quadgroup]]".into());
         }
+        if self.simd_lane {
+            entry_params.push("ushort slane [[thread_index_in_simdgroup]]".into());
+        }
 
+        if self.movrel {
+            self.fill_movrel();
+        }
         let mut init = String::new();
         let users = self.req.user_sgprs as u16;
         for r in self.regs.clone() {
@@ -2632,9 +2923,15 @@ impl<'a> Tx<'a> {
                 if shared {
                     out.push_str("};\n\nstruct PsIn {\n    float4 pos;\n    bool front;\n");
                     let mut fill = String::from("    PsIn in = { raw.pos, raw.front");
-                    for &a in self.attrs.keys() {
-                        out.push_str(&format!("    float4 a{a};\n"));
-                        fill.push_str(&format!(", raw.a{}", first[&loc_of(a)]));
+                    for (&a, &mode) in &self.attrs {
+                        let ty = if mode == Interp::Flat { "uint4" } else { "float4" };
+                        out.push_str(&format!("    {ty} a{a};\n"));
+                        let src = first[&loc_of(a)];
+                        if (self.attrs[&src] == Interp::Flat) == (mode == Interp::Flat) {
+                            fill.push_str(&format!(", raw.a{src}"));
+                        } else {
+                            fill.push_str(&format!(", as_type<{ty}>(raw.a{src})"));
+                        }
                     }
                     init.insert_str(0, &(fill + " };\n"));
                 }
@@ -2694,6 +2991,33 @@ impl<'a> Tx<'a> {
             }
         }
         out
+    }
+
+    /// Replaces the `VREAD`/`VWRITE` markers by one case per VGPR up to the
+    /// highest the program names, all of which are then declared.
+    fn fill_movrel(&mut self) {
+        let top = self
+            .regs
+            .iter()
+            .filter_map(|r| r.strip_prefix('v')?.parse::<u16>().ok())
+            .max()
+            .unwrap_or(0);
+        for n in 0..=top {
+            self.regs.insert(format!("v{n}"));
+        }
+        let mut body = std::mem::take(&mut self.body);
+        for (marker, read) in [(VREAD, true), (VWRITE, false)] {
+            while let Some(at) = body.find(marker) {
+                let rest = &body[at + marker.len()..];
+                let end = rest.find(VEND).unwrap();
+                let var = &rest[..end];
+                let cases: String = (0..=top)
+                    .map(|n| if read { format!("case {n}: {var} = v{n}; break; ") } else { format!("case {n}: v{n} = {var}; break; ") })
+                    .collect();
+                body = format!("{}{cases}default: break;{}", &body[..at], &rest[end + VEND.len()..]);
+            }
+        }
+        self.body = body;
     }
 
     // Workgroup ids after the user SGPRs and thread ids in v0..v2, as `COMPUTE_PGM_RSRC2` enables them.
@@ -2787,6 +3111,19 @@ using namespace metal;
 #define F(x) as_type<float>(uint(x))
 #define U(x) as_type<uint>(float(x))
 
+// v_cmp_class_f32's mask: signalling NaN, quiet NaN, -inf, -normal,
+// -denormal, -0, +0, +denormal, +normal, +inf.
+static inline bool fclass(float x, uint mask) {
+    uint b = as_type<uint>(x);
+    bool neg = (b >> 31) != 0u;
+    uint e = (b >> 23) & 0xffu, f = b & 0x7fffffu;
+    uint k;
+    if (e == 0xffu) k = f != 0u ? ((f >> 22) != 0u ? 1u : 0u) : (neg ? 2u : 9u);
+    else if (e == 0u) k = f != 0u ? (neg ? 4u : 7u) : (neg ? 5u : 6u);
+    else k = neg ? 3u : 8u;
+    return (mask >> k & 1u) != 0u;
+}
+
 static inline uint bfe_u32(uint v, uint o, uint w) {
     w = min(w, 32u);
     if (w == 0u) return 0u;
@@ -2825,119 +3162,132 @@ static inline int med3_i(int a, int b, int c) {
     return max(min(a, b), min(max(a, b), c));
 }
 
-static inline uint ld32(device const uchar* mem, ulong base, ulong addr) {
-    return *(device const uint*)(mem + (addr - base));
+// `mem` covers [base, end); a second window over [base2, end2) lies
+// `delta` bytes from `mem` in the GPU's address space.
+struct Win { ulong base; ulong end; ulong base2; ulong end2; long delta; };
+#define OOB_OFF (-0x7fffffffffffffffl - 1l)
+
+// Byte offset from `mem` of guest address `a`, or OOB_OFF outside both windows.
+static inline long goff(Win w, ulong a) {
+    if (a >= w.base && a < w.end) return long(a - w.base);
+    if (a >= w.base2 && a < w.end2) return long(a - w.base2) + w.delta;
+    return OOB_OFF;
+}
+
+static inline uint ld32(device const uchar* mem, Win w, ulong addr) {
+    long o = goff(w, addr);
+    return o == OOB_OFF ? 0u : *(device const uint*)(mem + o);
 }
 
 // Byte offset into the memory buffer of a buffer element, or -1 when out of range.
-static inline long buffer_offset(ulong mem_base, uint4 vs, uint index, uint offset, uint idxen) {
+static inline long buffer_offset(Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
     ulong base = ulong(vs.x) | (ulong(vs.y & 0xffffu) << 32);
     uint stride = (vs.y >> 16) & 0x3fffu;
-    if (stride != 0u && idxen != 0u ? index >= vs.z : offset >= vs.z) return -1;
-    return long(base + ulong(index) * ulong(stride) * ulong(idxen) + ulong(offset) - mem_base);
+    if (stride != 0u && idxen != 0u ? index >= vs.z : offset >= vs.z) return OOB_OFF;
+    return goff(mem_base, base + ulong(index) * ulong(stride) * ulong(idxen) + ulong(offset));
 }
 
-static inline uint4 buffer_load_raw(device const uchar* mem, ulong mem_base, uint4 vs, uint index, uint offset, uint idxen) {
+static inline uint4 buffer_load_raw(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
     long o = buffer_offset(mem_base, vs, index, offset, idxen);
-    if (o < 0) return uint4(0u);
+    if (o == OOB_OFF) return uint4(0u);
     device const uint* p = (device const uint*)(mem + o);
     return uint4(p[0], p[1], p[2], p[3]);
 }
 
-static inline uint4 buffer_load_ubyte(device const uchar* mem, ulong mem_base, uint4 vs, uint index, uint offset, uint idxen) {
+static inline uint4 buffer_load_ubyte(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
     long o = buffer_offset(mem_base, vs, index, offset, idxen);
-    return uint4(o < 0 ? 0u : uint(mem[o]), 0u, 0u, 0u);
+    return uint4(o == OOB_OFF ? 0u : uint(mem[o]), 0u, 0u, 0u);
 }
 
-static inline uint4 buffer_load_sbyte(device const uchar* mem, ulong mem_base, uint4 vs, uint index, uint offset, uint idxen) {
+static inline uint4 buffer_load_sbyte(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
     long o = buffer_offset(mem_base, vs, index, offset, idxen);
-    return uint4(o < 0 ? 0u : uint(int(char(mem[o]))), 0u, 0u, 0u);
+    return uint4(o == OOB_OFF ? 0u : uint(int(char(mem[o]))), 0u, 0u, 0u);
 }
 
-static inline uint4 buffer_load_ushort(device const uchar* mem, ulong mem_base, uint4 vs, uint index, uint offset, uint idxen) {
+static inline uint4 buffer_load_ushort(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
     long o = buffer_offset(mem_base, vs, index, offset, idxen);
-    return uint4(o < 0 ? 0u : uint(*(device const ushort*)(mem + o)), 0u, 0u, 0u);
+    return uint4(o == OOB_OFF ? 0u : uint(*(device const ushort*)(mem + o)), 0u, 0u, 0u);
 }
 
-static inline uint4 buffer_load_sshort(device const uchar* mem, ulong mem_base, uint4 vs, uint index, uint offset, uint idxen) {
+static inline uint4 buffer_load_sshort(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
     long o = buffer_offset(mem_base, vs, index, offset, idxen);
-    return uint4(o < 0 ? 0u : uint(int(*(device const short*)(mem + o))), 0u, 0u, 0u);
+    return uint4(o == OOB_OFF ? 0u : uint(int(*(device const short*)(mem + o))), 0u, 0u, 0u);
 }
 
 static inline uint4 flat_load_raw(device const uchar* mem, long o) {
-    if (o < 0) return uint4(0u);
+    if (o == OOB_OFF) return uint4(0u);
     device const uint* p = (device const uint*)(mem + o);
     return uint4(p[0], p[1], p[2], p[3]);
 }
 
 static inline uint4 flat_load_ubyte(device const uchar* mem, long o) {
-    return uint4(o < 0 ? 0u : uint(mem[o]), 0u, 0u, 0u);
+    return uint4(o == OOB_OFF ? 0u : uint(mem[o]), 0u, 0u, 0u);
 }
 
 static inline uint4 flat_load_sbyte(device const uchar* mem, long o) {
-    return uint4(o < 0 ? 0u : uint(int(char(mem[o]))), 0u, 0u, 0u);
+    return uint4(o == OOB_OFF ? 0u : uint(int(char(mem[o]))), 0u, 0u, 0u);
 }
 
 static inline uint4 flat_load_ushort(device const uchar* mem, long o) {
-    return uint4(o < 0 ? 0u : uint(*(device const ushort*)(mem + o)), 0u, 0u, 0u);
+    return uint4(o == OOB_OFF ? 0u : uint(*(device const ushort*)(mem + o)), 0u, 0u, 0u);
 }
 
 static inline uint4 flat_load_sshort(device const uchar* mem, long o) {
-    return uint4(o < 0 ? 0u : uint(int(*(device const short*)(mem + o))), 0u, 0u, 0u);
+    return uint4(o == OOB_OFF ? 0u : uint(int(*(device const short*)(mem + o))), 0u, 0u, 0u);
 }
 
 static inline uint atomic_rmw_add(device uchar* mem, long o, uint v) {
-    if (o < 0) return 0u;
+    if (o == OOB_OFF) return 0u;
     return uint(atomic_fetch_add_explicit((device atomic_uint*)(mem + o), v, memory_order_relaxed));
 }
 
 static inline uint atomic_rmw_sub(device uchar* mem, long o, uint v) {
-    if (o < 0) return 0u;
+    if (o == OOB_OFF) return 0u;
     return uint(atomic_fetch_sub_explicit((device atomic_uint*)(mem + o), v, memory_order_relaxed));
 }
 
 static inline uint atomic_rmw_and(device uchar* mem, long o, uint v) {
-    if (o < 0) return 0u;
+    if (o == OOB_OFF) return 0u;
     return uint(atomic_fetch_and_explicit((device atomic_uint*)(mem + o), v, memory_order_relaxed));
 }
 
 static inline uint atomic_rmw_or(device uchar* mem, long o, uint v) {
-    if (o < 0) return 0u;
+    if (o == OOB_OFF) return 0u;
     return uint(atomic_fetch_or_explicit((device atomic_uint*)(mem + o), v, memory_order_relaxed));
 }
 
 static inline uint atomic_rmw_xor(device uchar* mem, long o, uint v) {
-    if (o < 0) return 0u;
+    if (o == OOB_OFF) return 0u;
     return uint(atomic_fetch_xor_explicit((device atomic_uint*)(mem + o), v, memory_order_relaxed));
 }
 
 static inline uint atomic_rmw_umin(device uchar* mem, long o, uint v) {
-    if (o < 0) return 0u;
+    if (o == OOB_OFF) return 0u;
     return uint(atomic_fetch_min_explicit((device atomic_uint*)(mem + o), v, memory_order_relaxed));
 }
 
 static inline uint atomic_rmw_umax(device uchar* mem, long o, uint v) {
-    if (o < 0) return 0u;
+    if (o == OOB_OFF) return 0u;
     return uint(atomic_fetch_max_explicit((device atomic_uint*)(mem + o), v, memory_order_relaxed));
 }
 
 static inline uint atomic_rmw_smin(device uchar* mem, long o, uint v) {
-    if (o < 0) return 0u;
+    if (o == OOB_OFF) return 0u;
     return uint(atomic_fetch_min_explicit((device atomic_int*)(mem + o), int(v), memory_order_relaxed));
 }
 
 static inline uint atomic_rmw_smax(device uchar* mem, long o, uint v) {
-    if (o < 0) return 0u;
+    if (o == OOB_OFF) return 0u;
     return uint(atomic_fetch_max_explicit((device atomic_int*)(mem + o), int(v), memory_order_relaxed));
 }
 
 static inline uint atomic_rmw_swap(device uchar* mem, long o, uint v) {
-    if (o < 0) return 0u;
+    if (o == OOB_OFF) return 0u;
     return uint(atomic_exchange_explicit((device atomic_uint*)(mem + o), v, memory_order_relaxed));
 }
 
 static inline uint atomic_cas(device uchar* mem, long o, uint v, uint cmp) {
-    if (o < 0) return 0u;
+    if (o == OOB_OFF) return 0u;
     device atomic_uint* p = (device atomic_uint*)(mem + o);
     uint e = cmp;
     while (!atomic_compare_exchange_weak_explicit(p, &e, v, memory_order_relaxed, memory_order_relaxed) && e == cmp) {}
@@ -3050,9 +3400,9 @@ static inline uint3 buffer_fmt(uint fmt) {
 }
 
 // Buffer formats as raw result dwords.
-static inline uint4 buffer_load_format(device const uchar* mem, ulong mem_base, uint4 vs, uint index, uint offset, uint idxen) {
+static inline uint4 buffer_load_format(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
     long o = buffer_offset(mem_base, vs, index, offset, idxen);
-    if (o < 0) return uint4(0u);
+    if (o == OOB_OFF) return uint4(0u);
     device const uchar* p = mem + o;
     uint3 f = buffer_fmt((vs.w >> 12) & 0x7fu);
     uint n = f.x, bits = f.y, kind = f.z;
@@ -3089,9 +3439,9 @@ static inline void st_le(device uchar* p, uint bytes, uint v) {
 
 // Typed store: the first n data components go to the format's components in
 // order; components past n are left as they are.
-static inline void buffer_store_format(device uchar* mem, ulong mem_base, uint4 vs, uint index, uint offset, uint idxen, uint4 d, uint n) {
+static inline void buffer_store_format(device uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen, uint4 d, uint n) {
     long o = buffer_offset(mem_base, vs, index, offset, idxen);
-    if (o < 0) return;
+    if (o == OOB_OFF) return;
     device uchar* p = mem + o;
     uint3 f = buffer_fmt((vs.w >> 12) & 0x7fu);
     uint bits = f.y, kind = f.z;
