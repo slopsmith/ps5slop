@@ -2398,12 +2398,39 @@ impl<'a> Tx<'a> {
             let data = self.v(vd);
             let call = match op {
                 "add" | "sub" | "and" | "or" | "xor" | "umin" | "umax" | "smin" | "smax"
-                | "swap" => {
+                | "swap" | "fmin" | "fmax" => {
                     format!("atomic_rmw_{op}(mem, buffer_store_offset({args}), {data})")
                 }
                 "cmpswap" => {
                     let cmp = self.v(vd + 1);
                     format!("atomic_cas(mem, buffer_store_offset({args}), {data}, {cmp})")
+                }
+                // No 64-bit atomics here: each half alone, the high half (a
+                // flag in look-back scans) read before and written after the low.
+                "and_x2" | "or_x2" | "xor_x2" | "swap_x2" => {
+                    let f = &op[..op.len() - 3];
+                    let hi = self.v(vd + 1);
+                    let (first, second) = if f == "swap" {
+                        (
+                            format!("lo = atomic_rmw_swap(mem, o, {data});"),
+                            format!("hi = atomic_rmw_swap(mem, o4, {hi});"),
+                        )
+                    } else {
+                        (
+                            format!("hi = atomic_rmw_{f}(mem, o4, {hi});"),
+                            format!("lo = atomic_rmw_{f}(mem, o, {data});"),
+                        )
+                    };
+                    let stmt = format!(
+                        "{{ long o = buffer_store_offset({args}); long o4 = o == OOB_OFF ? o : o + 4; uint lo, hi; {first} {second}{} }}",
+                        if b.glc {
+                            format!(" {data} = lo; {hi} = hi;")
+                        } else {
+                            String::new()
+                        }
+                    );
+                    self.guard(&stmt);
+                    return Ok(());
                 }
                 _ => return Err(err(pc, format!("unsupported instruction {name}"))),
             };
@@ -2656,6 +2683,10 @@ impl<'a> Tx<'a> {
                         format!("lds_rmw_{f}(lds, a + {off}u, {v})")
                     }
                     "rsub_u32" => format!("lds_rmw_rsub(lds, a + {off}u, {v})"),
+                    "min_f32" | "max_f32" => {
+                        let f = &op[..3];
+                        format!("lds_rmw_f{f}(lds, a + {off}u, {v})")
+                    }
                     "cmpst_b32" => {
                         let new = d1(self, 0);
                         format!("lds_cas(lds, a + {off}u, {new}, {v})")
@@ -2810,19 +2841,33 @@ impl<'a> Tx<'a> {
                     new.insert(sdst as u16, mask.map(|m| Source::Constant(vec![m])));
                 }
                 // Bits a program ORs or ANDs into a descriptor dword at run
-                // time are dropped; the dword keeps where it came from.
+                // time are dropped; the result keeps where the dword came
+                // from (the destination's, when it is one of the two).
                 Kind::Sop2 { sdst, ssrc0, ssrc1 }
                     if matches!(inst.op.name, "s_or_b32" | "s_and_b32" | "s_andn2_b32")
-                        && (sdst as u16 == ssrc0 || sdst as u16 == ssrc1)
-                        && (sdst as u16) < TRACKED_SGPRS
-                        && matches!(
-                            st[sdst as usize],
-                            Some(
-                                Source::Buffer { .. } | Source::Memory { .. } | Source::UserSgpr(_)
-                            )
-                        ) =>
+                        && let Some(origin) = {
+                            let origin = |r: u16| {
+                                (r < TRACKED_SGPRS)
+                                    .then(|| st[r as usize].clone())
+                                    .flatten()
+                                    .filter(|s| {
+                                        matches!(
+                                            s,
+                                            Source::Buffer { .. }
+                                                | Source::Memory { .. }
+                                                | Source::UserSgpr(_)
+                                        )
+                                    })
+                            };
+                            match (origin(ssrc0), origin(ssrc1)) {
+                                (Some(a), None) | (None, Some(a)) => Some(a),
+                                (Some(_), Some(_)) if ssrc0 == sdst as u16 => origin(ssrc0),
+                                (Some(_), Some(_)) if ssrc1 == sdst as u16 => origin(ssrc1),
+                                _ => None,
+                            }
+                        } =>
                 {
-                    new.insert(sdst as u16, st[sdst as usize].clone());
+                    new.insert(sdst as u16, Some(origin));
                 }
                 Kind::Sop1 { sdst, ssrc0 }
                     if inst.op.name == "s_mov_b64" && ssrc0 + 1 < SGPR_COUNT =>
@@ -4122,6 +4167,26 @@ static inline uint atomic_rmw_smax(device uchar* mem, long o, uint v) {
     return uint(atomic_fetch_max_explicit((device atomic_int*)(mem + o), int(v), memory_order_relaxed));
 }
 
+static inline uint atomic_rmw_fmin(device uchar* mem, long o, uint v) {
+    if (o == OOB_OFF) return 0u;
+    device atomic_uint* p = (device atomic_uint*)(mem + o);
+    uint e = atomic_load_explicit(p, memory_order_relaxed);
+    for (;;) {
+        uint n = as_type<uint>(fmin(as_type<float>(e), as_type<float>(v)));
+        if (n == e || atomic_compare_exchange_weak_explicit(p, &e, n, memory_order_relaxed, memory_order_relaxed)) return e;
+    }
+}
+
+static inline uint atomic_rmw_fmax(device uchar* mem, long o, uint v) {
+    if (o == OOB_OFF) return 0u;
+    device atomic_uint* p = (device atomic_uint*)(mem + o);
+    uint e = atomic_load_explicit(p, memory_order_relaxed);
+    for (;;) {
+        uint n = as_type<uint>(fmax(as_type<float>(e), as_type<float>(v)));
+        if (n == e || atomic_compare_exchange_weak_explicit(p, &e, n, memory_order_relaxed, memory_order_relaxed)) return e;
+    }
+}
+
 static inline uint atomic_rmw_swap(device uchar* mem, long o, uint v) {
     if (o == OOB_OFF) return 0u;
     return uint(atomic_exchange_explicit((device atomic_uint*)(mem + o), v, memory_order_relaxed));
@@ -4377,6 +4442,26 @@ static inline uint lds_cas(threadgroup uint* lds, uint a, uint v, uint cmp) {
     uint e = cmp;
     while (!atomic_compare_exchange_weak_explicit(p, &e, v, memory_order_relaxed, memory_order_relaxed) && e == cmp) {}
     return e;
+}
+
+static inline uint lds_rmw_fmin(threadgroup uint* lds, uint a, uint v) {
+    if (a >= LDS_BYTES) return 0u;
+    threadgroup atomic_uint* p = (threadgroup atomic_uint*)&lds[a >> 2];
+    uint e = atomic_load_explicit(p, memory_order_relaxed);
+    for (;;) {
+        uint n = as_type<uint>(fmin(as_type<float>(e), as_type<float>(v)));
+        if (n == e || atomic_compare_exchange_weak_explicit(p, &e, n, memory_order_relaxed, memory_order_relaxed)) return e;
+    }
+}
+
+static inline uint lds_rmw_fmax(threadgroup uint* lds, uint a, uint v) {
+    if (a >= LDS_BYTES) return 0u;
+    threadgroup atomic_uint* p = (threadgroup atomic_uint*)&lds[a >> 2];
+    uint e = atomic_load_explicit(p, memory_order_relaxed);
+    for (;;) {
+        uint n = as_type<uint>(fmax(as_type<float>(e), as_type<float>(v)));
+        if (n == e || atomic_compare_exchange_weak_explicit(p, &e, n, memory_order_relaxed, memory_order_relaxed)) return e;
+    }
 }
 
 static inline uint lds_rmw_rsub(threadgroup uint* lds, uint a, uint v) {

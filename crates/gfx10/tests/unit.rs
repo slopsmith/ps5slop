@@ -738,6 +738,28 @@ fn samplers_indexed_by_a_buffer_dword_resolve() {
 }
 
 #[test]
+fn a_descriptor_dword_masked_with_constants_through_another_register_keeps_its_origin() {
+    let code = [
+        0x876A_FF17,
+        0x0FFF_FFFF, // s_and_b32 vcc_lo, s23, 0xfffffff
+        0x8817_FF6A,
+        0xD000_0000, // s_or_b32 s23, vcc_lo, 0xd0000000
+        0xF080_0F08,
+        0x0044_0000, // image_sample v[0:3], v[0:1], s[16:23], s[8:11] dmask:0xf dim:2D
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 24, 24 << 1);
+    assert!(t.resources.iter().any(|r| matches!(
+        r,
+        Resource::Texture {
+            source: Source::UserSgpr(16),
+            ..
+        }
+    )));
+    compile(&t.msl);
+}
+
+#[test]
 fn one_sampler_copied_into_other_registers_takes_one_slot() {
     let code = [
         0xBE98_0308, // s_mov_b32 s24, s8

@@ -346,6 +346,180 @@ const TAIL_64K: [[(u32, u32); 12]; 5] = [
     ],
 ];
 
+/// A 3D surface in `SW_4KB_S`, whose 4 KiB blocks span 3D boxes of elements.
+/// Bit patterns and mip placement follow AMD's addrlib in Mesa (MIT,
+/// `gfx10SwizzlePattern.h` `SW_4K_S3`, `Gfx10Lib::ComputeSurfaceInfoMacroTiled`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Volume {
+    bpe_log2: u32,
+    /// Block size in elements.
+    pub block: (u32, u32, u32),
+    /// Per level: size, padded pitch and height in elements, and offset in a slab.
+    pub levels: Vec<VolumeLevel>,
+    /// Bytes of one slab: the whole mip chain for `block.2` slices.
+    slab: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VolumeLevel {
+    pub size: (u32, u32, u32),
+    pitch: u32,
+    offset: u64,
+}
+
+/// Address bit n of an element inside a `SW_4KB_S` 3D block, per log2 of
+/// the element size: (axis, bit), axis 3 for a byte-address bit.
+const STANDARD_3D: [[(u8, u8); 12]; 5] = {
+    const B: (u8, u8) = (3, 0);
+    const fn x(n: u8) -> (u8, u8) {
+        (0, n)
+    }
+    const fn y(n: u8) -> (u8, u8) {
+        (1, n)
+    }
+    const fn z(n: u8) -> (u8, u8) {
+        (2, n)
+    }
+    [
+        [
+            x(0),
+            x(1),
+            z(0),
+            y(0),
+            z(1),
+            y(1),
+            x(2),
+            z(2),
+            y(2),
+            x(3),
+            z(3),
+            y(3),
+        ],
+        [
+            B,
+            x(0),
+            z(0),
+            y(0),
+            z(1),
+            y(1),
+            x(1),
+            z(2),
+            y(2),
+            x(2),
+            z(3),
+            y(3),
+        ],
+        [
+            B,
+            B,
+            x(0),
+            y(0),
+            z(0),
+            y(1),
+            x(1),
+            z(1),
+            y(2),
+            x(2),
+            z(2),
+            y(3),
+        ],
+        [
+            B,
+            B,
+            B,
+            x(0),
+            z(0),
+            y(0),
+            x(1),
+            z(1),
+            y(1),
+            x(2),
+            z(2),
+            y(2),
+        ],
+        [B, B, B, B, z(0), y(0), x(0), z(1), y(1), x(1), z(2), y(2)],
+    ]
+};
+
+impl Volume {
+    /// The layout of a `width` x `height` x `depth` surface with `levels`
+    /// mip levels; `None` for element sizes other than 1 to 16 bytes, or when
+    /// level 0 is already in the mip tail. Levels in the tail are left out.
+    pub fn new(bpe: u32, width: u32, height: u32, depth: u32, levels: u32) -> Option<Self> {
+        if !bpe.is_power_of_two() || bpe > 16 {
+            return None;
+        }
+        let bpe_log2 = bpe.trailing_zeros();
+        let pattern = &STANDARD_3D[bpe_log2 as usize];
+        let bits = |axis| pattern.iter().filter(|b| b.0 == axis).count() as u32;
+        let block = (1 << bits(0), 1 << bits(1), 1 << bits(2));
+        // With mips, a thick 4 KiB block halves its tail height and holds at most 5 levels.
+        let tail = (block.0, block.1 / 2);
+        let mut sizes = Vec::new();
+        for i in 0..levels {
+            let size = (
+                (width >> i).max(1),
+                (height >> i).max(1),
+                (depth >> i).max(1),
+            );
+            if levels > 1 && size.0 <= tail.0 && size.1 <= tail.1 && levels - i <= 5 {
+                break;
+            }
+            sizes.push(size);
+        }
+        if sizes.is_empty() {
+            return None;
+        }
+        let tail_bytes = if (sizes.len() as u32) < levels {
+            4096
+        } else {
+            0
+        };
+        let slab_bytes = |s: (u32, u32, u32)| {
+            u64::from(s.0.next_multiple_of(block.0))
+                * u64::from(s.1.next_multiple_of(block.1))
+                * u64::from(block.2)
+                * u64::from(bpe)
+        };
+        let mut offset = tail_bytes;
+        let mut out = vec![None; sizes.len()];
+        for (i, &size) in sizes.iter().enumerate().rev() {
+            out[i] = Some(VolumeLevel {
+                size,
+                pitch: size.0.next_multiple_of(block.0),
+                offset,
+            });
+            offset += slab_bytes(size);
+        }
+        Some(Self {
+            bpe_log2,
+            block,
+            levels: out.into_iter().flatten().collect(),
+            slab: offset,
+        })
+    }
+
+    /// Bytes the whole surface spans.
+    pub fn bytes(&self) -> u64 {
+        u64::from(self.levels[0].size.2.div_ceil(self.block.2)) * self.slab
+    }
+
+    /// Byte offset of element (x, y, z) of `level` from the surface's start.
+    pub fn offset(&self, level: usize, x: u32, y: u32, z: u32) -> u64 {
+        let l = &self.levels[level];
+        let (bw, bh, bd) = self.block;
+        let block = u64::from(y / bh) * u64::from(l.pitch / bw) + u64::from(x / bw);
+        let within = STANDARD_3D[self.bpe_log2 as usize]
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.0 < 3)
+            .fold(0u64, |a, (bit, &(axis, n))| {
+                a | u64::from([x, y, z][axis as usize] >> n & 1) << bit
+            });
+        u64::from(z / bd) * self.slab + l.offset + block * 4096 + within
+    }
+}
+
 /// One mip level of a tiled 2D surface, from the start of its array slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mip {
@@ -570,6 +744,51 @@ impl Layout {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn standard_3d_blocks_hold_4_kib_of_distinct_elements() {
+        for bpe in [1, 2, 4, 8, 16] {
+            let v = Volume::new(bpe, 64, 64, 64, 1).unwrap();
+            let (bw, bh, bd) = v.block;
+            assert_eq!(bw * bh * bd * bpe, 4096);
+            let mut seen = std::collections::HashSet::new();
+            for z in 0..bd {
+                for y in 0..bh {
+                    for x in 0..bw {
+                        let o = v.offset(0, x, y, z);
+                        assert!(o < 4096 && o.is_multiple_of(u64::from(bpe)));
+                        assert!(seen.insert(o));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn standard_3d_mip_chains_put_small_levels_first_in_each_slab() {
+        // GTA V's 64x64x32 RGBA8 volume with 3 levels: 8x16x8 blocks.
+        let v = Volume::new(4, 64, 64, 32, 3).unwrap();
+        let level2 = 16 * 16 * 8 * 4;
+        let level1 = 32 * 32 * 8 * 4;
+        let level0 = 64 * 64 * 8 * 4;
+        assert_eq!(v.offset(2, 0, 0, 0), 0);
+        assert_eq!(v.offset(1, 0, 0, 0), level2);
+        assert_eq!(v.offset(0, 0, 0, 0), level2 + level1);
+        assert_eq!(v.offset(0, 8, 0, 0), level2 + level1 + 4096);
+        let slab = level2 + level1 + level0;
+        assert_eq!(v.offset(0, 0, 0, 8), slab + level2 + level1);
+        assert_eq!(v.offset(1, 0, 0, 8), slab + level2);
+        assert_eq!(v.bytes(), 4 * slab);
+    }
+
+    #[test]
+    fn standard_3d_levels_in_the_mip_tail_are_left_out() {
+        let v = Volume::new(4, 16, 16, 16, 5).unwrap();
+        assert_eq!(v.levels.len(), 1);
+        assert_eq!(v.offset(0, 0, 0, 0), 4096);
+        assert_eq!(Volume::new(4, 8, 8, 8, 2), None);
+        assert_eq!(Volume::new(1, 4, 4, 16, 1).unwrap().offset(0, 0, 0, 1), 4);
+    }
     use super::*;
 
     /// The frame layout ScreenTester5 writes, as recorded in `docs/gpu.md`:

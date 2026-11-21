@@ -1912,12 +1912,8 @@ impl Metal {
         Some(tex)
     }
 
-    /// A 3D image of one-byte texels in `SW_4KB_S` that fits one 4 KiB
-    /// block (16x16x16), or of one texel of any size, read from guest
-    /// memory once a frame. Address bits
-    /// are x0 x1 z0 y0 z1 y1 x2 z2 y2 x3 z3 y3: the z bits were confirmed on
-    /// Superliminal's 4x4x16 dither mask (its slices hold 0 to 16 set
-    /// texels in order), the x and y order is assumed.
+    /// A 3D image in `SW_4KB_S` with the levels before its mip tail, or of
+    /// one texel of any layout, read from guest memory once a frame.
     fn standard_volume(
         &mut self,
         host: &dyn Host,
@@ -1925,90 +1921,103 @@ impl Metal {
         format: MTLPixelFormat,
         bpe: u32,
     ) -> Option<Retained<Texture>> {
-        const BITS: [(usize, u32); 12] = [
-            (0, 0),
-            (0, 1),
-            (2, 0),
-            (1, 0),
-            (2, 1),
-            (1, 1),
-            (0, 2),
-            (2, 2),
-            (1, 2),
-            (0, 3),
-            (2, 3),
-            (1, 3),
-        ];
-        let (w, h, d) = (
-            image.width as usize,
-            image.height as usize,
-            image.depth as usize,
-        );
+        let (w, h, d) = (image.width, image.height, image.depth);
         let one = w == 1 && h == 1 && d == 1;
-        if image.kind != 10
-            || image.last_level != 0
-            || !one && (image.raw_tile != 5 || bpe != 1 || w > 16 || h > 16 || d > 16)
-        {
+        if image.kind != 10 || image.base_level != 0 || is_compressed(format) {
             return None;
         }
+        let layout = if one {
+            None
+        } else if image.raw_tile == 5 {
+            Some(crate::tiling::Volume::new(
+                bpe,
+                w,
+                h,
+                d,
+                image.last_level + 1,
+            )?)
+        } else {
+            return None;
+        };
         if let Some((epoch, tex)) = self.images.get(&(image, TextureKind::Tex3d))
             && *epoch == self.epoch
         {
             return Some(tex.clone());
         }
-        let mut block = vec![0u8; if one { bpe as usize } else { 4096 }];
-        if !host.read(image.address, &mut block) {
-            return None;
-        }
-        let mut linear = if one {
-            block.clone()
-        } else {
-            vec![0u8; w * h * d]
-        };
-        for z in (0..d).filter(|_| !one) {
-            for y in 0..h {
-                for x in 0..w {
-                    let at = BITS.iter().enumerate().fold(0, |a, (bit, &(axis, n))| {
-                        a | ([x, y, z][axis] >> n & 1) << bit
-                    });
-                    linear[(z * h + y) * w + x] = block[at];
+        let bpe = bpe as usize;
+        let levels: Vec<((u32, u32, u32), Vec<u8>)> = match &layout {
+            None => {
+                let mut texel = vec![0u8; bpe];
+                if !host.read(image.address, &mut texel) {
+                    return None;
                 }
+                vec![((1, 1, 1), texel)]
             }
-        }
+            Some(v) => {
+                let mut raw = vec![0u8; v.bytes() as usize];
+                if !host.read(image.address, &mut raw) {
+                    return None;
+                }
+                (0..v.levels.len())
+                    .map(|l| {
+                        let (lw, lh, ld) = v.levels[l].size;
+                        let mut linear = vec![0u8; lw as usize * lh as usize * ld as usize * bpe];
+                        let mut at = 0;
+                        for z in 0..ld {
+                            for y in 0..lh {
+                                for x in 0..lw {
+                                    let o = v.offset(l, x, y, z) as usize;
+                                    if let Some(src) = raw.get(o..o + bpe) {
+                                        linear[at..at + bpe].copy_from_slice(src);
+                                    }
+                                    at += bpe;
+                                }
+                            }
+                        }
+                        ((lw, lh, ld), linear)
+                    })
+                    .collect()
+            }
+        };
         let tex = match self.images.get(&(image, TextureKind::Tex3d)) {
             Some((_, t)) => t.clone(),
             None => {
                 let desc = MTLTextureDescriptor::new();
                 desc.setPixelFormat(format);
                 desc.setTextureType(MTLTextureType::Type3D);
+                let (w, h, d) = levels[0].0;
                 unsafe {
-                    desc.setWidth(w);
-                    desc.setHeight(h);
-                    desc.setDepth(d);
+                    desc.setWidth(w as usize);
+                    desc.setHeight(h as usize);
+                    desc.setDepth(d as usize);
+                    desc.setMipmapLevelCount(levels.len());
                 }
                 desc.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::PixelFormatView);
                 desc.setStorageMode(MTLStorageMode::Shared);
                 self.device.newTextureWithDescriptor(&desc)?
             }
         };
-        unsafe {
-            tex.replaceRegion_mipmapLevel_slice_withBytes_bytesPerRow_bytesPerImage(
-                MTLRegion {
-                    origin: MTLOrigin { x: 0, y: 0, z: 0 },
-                    size: MTLSize {
-                        width: w,
-                        height: h,
-                        depth: d,
+        for (level, ((w, h, d), mut linear)) in levels.into_iter().enumerate() {
+            let (w, h, d) = (w as usize, h as usize, d as usize);
+            unsafe {
+                tex.replaceRegion_mipmapLevel_slice_withBytes_bytesPerRow_bytesPerImage(
+                    MTLRegion {
+                        origin: MTLOrigin { x: 0, y: 0, z: 0 },
+                        size: MTLSize {
+                            width: w,
+                            height: h,
+                            depth: d,
+                        },
                     },
-                },
-                0,
-                0,
-                NonNull::new(linear.as_mut_ptr())?.cast(),
-                w * bpe as usize,
-                w * h * bpe as usize,
-            );
+                    level,
+                    0,
+                    NonNull::new(linear.as_mut_ptr())?.cast(),
+                    w * bpe,
+                    w * h * bpe,
+                );
+            }
         }
-        self.note(|| format!("      {:#x} a one-block standard 3D image", image.address));
+        self.note(|| format!("      {:#x} a standard 3D image", image.address));
         self.images
             .insert((image, TextureKind::Tex3d), (self.epoch, tex.clone()));
         Some(tex)
@@ -5911,6 +5920,77 @@ mod tests {
             (7, 9),
             "the dispatch must read the write before it, and the write after it must not run first"
         );
+    }
+
+    #[test]
+    fn float_min_and_64_bit_atomics_change_memory_and_lds_as_on_hardware() {
+        let Some(metal) = Metal::new() else {
+            return;
+        };
+        let mut mem = Mem::new(1 << 20);
+        mem.area = Some((0, 1 << 20));
+        let (a, b) = (0x8000u64, 0x8100u64);
+        mem.write(a, &2.0f32.to_le_bytes());
+        mem.write(b, &[0xF0u32.to_le_bytes(), 0xF00u32.to_le_bytes()].concat());
+        let (c, d) = (0x8200u64, 0x8300u64);
+        let program: &[u32] = &[
+            0x7E08_0280, // v_mov_b32 v4, 0
+            0x7E02_02FF,
+            0x4000_0000, // v_mov_b32 v1, 2.0
+            0xD834_0000,
+            0x0000_0104, // ds_write_b32 v4, v1
+            0x7E02_02FF,
+            0x3FC0_0000, // v_mov_b32 v1, 1.5
+            0xD848_0000,
+            0x0000_0104, // ds_min_f32 v4, v1
+            0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+            0xD8D8_0000,
+            0x0500_0004, // ds_read_b32 v5, v4
+            0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+            0xE070_0000,
+            0x8002_0500, // buffer_store_dword v5, off, s[8:11], 0
+            0x7E02_02FF,
+            0x3FC0_0000, // v_mov_b32 v1, 1.5
+            0xE0FC_0000,
+            0x8000_0100, // buffer_atomic_fmin v1, off, s[0:3], 0
+            0x7E02_02FF,
+            0x4040_0000, // v_mov_b32 v1, 3.0
+            0xE0FC_0000,
+            0x8000_0100, // buffer_atomic_fmin v1, off, s[0:3], 0
+            0x7E04_02FF,
+            0x0000_000F, // v_mov_b32 v2, 0xf
+            0x7E06_02FF,
+            0x0000_00F0, // v_mov_b32 v3, 0xf0
+            0xE168_0000,
+            0x8001_0200, // buffer_atomic_or_x2 v[2:3], off, s[4:7], 0
+            0xE140_0000,
+            0x8003_0200, // buffer_atomic_swap_x2 v[2:3], off, s[12:15], 0
+            0xBF81_0000, // s_endpgm
+        ];
+        for (i, w) in program.iter().enumerate() {
+            mem.write(0x1000 + 4 * i as u64, &w.to_le_bytes());
+        }
+        let packets = [
+            compute_setup(
+                0x1000,
+                &[buffer(a), buffer(b), buffer(c), buffer(d)].concat(),
+            ),
+            DISPATCH_ONE.to_vec(),
+        ]
+        .concat();
+        let mut packets = packets;
+        // COMPUTE_PGM_RSRC2's value: LDS_SIZE of one 512-byte block.
+        packets[6] |= 1 << 15;
+        let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+        mem.write(0x2000, &bytes);
+        let mut p = crate::pm4::Processor::default();
+        p.backend = Some(Box::new(metal));
+        p.run(&mem, 0x2000, packets.len() as u32).unwrap();
+        p.finish(&mem);
+        assert_eq!(f32::from_bits(word(&mem, a)), 1.5);
+        assert_eq!((word(&mem, b), word(&mem, b + 4)), (0xFF, 0xFF0));
+        assert_eq!(f32::from_bits(word(&mem, c)), 1.5, "ds_min_f32");
+        assert_eq!((word(&mem, d), word(&mem, d + 4)), (0xF, 0xF0), "swap_x2");
     }
 
     #[test]
