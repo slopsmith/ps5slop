@@ -187,6 +187,10 @@ impl gpu::Host for Host {
         self.mem.mapped_extent(addr)
     }
 
+    fn image(&self, addr: u64) -> Option<(u64, u64)> {
+        self.kernel.module_image(addr)
+    }
+
     fn host_pointer(&self, addr: u64) -> Option<*mut u8> {
         (addr < self.mem.size()).then(|| self.mem.host_base().wrapping_add(addr as usize))
     }

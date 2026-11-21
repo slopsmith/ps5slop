@@ -248,6 +248,14 @@ impl crate::Kernel {
         lock(&self.rtld.modules).push(info);
     }
 
+    /// The loaded module (or executable) whose image holds `addr`, as `(start, end)`.
+    pub fn module_image(&self, addr: u64) -> Option<(u64, u64)> {
+        lock(&self.rtld.modules)
+            .iter()
+            .find(|m| m.start <= addr && addr < m.end)
+            .map(|m| (m.start, m.end))
+    }
+
     /// Records where the executable's process parameters are.
     pub fn set_proc_param(&self, addr: u64) {
         *lock(&self.rtld.proc_param) = addr;

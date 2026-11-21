@@ -477,3 +477,11 @@ The translator reports the V#s of every buffer store; CPU reads of HTILE, CMASK,
 
 HVF allows 64 vCPUs per VM and Astro Bot starts about 70 threads; its loading thread was one of those left in the interpreter. A thread about to block in a host function now gives its vCPU back while a running thread has none. Reason: Astro Bot's title came up about twice as fast ([jit.md](jit.md)). The cost, a vCPU destroyed and made again, is paid only while more than 64 threads run at once.
 
+
+## 2026-11-21: Compute queues' WRITE_DATA into the GPU area lands in GPU order
+
+A `WRITE_DATA` from the command stream (and its NOP form) is now a blit into the GPU area window when the queue never draws, the destination is in the GPU area and nothing unapplied is queued before it; all other writes stay queued until the queue drains, as decided earlier today. Reason: GTA V's culling buffer resets counters, bounds and table words with `WRITE_DATA` before each object's dispatches, in one submission of about 3,000 dispatches; with the writes queued, the dispatches read stale memory and one stored through a garbage descriptor across the game's own code, which caused the CPU faults of the Story Mode load ([gpu.md](gpu.md#the-games-code-overwritten-by-the-culling-queue-2026-11-21-later)). The limits come from Metal ordering work only within one buffer object: the area window is the one object dispatches share, while draws read through other windows, so a write landed for a graphics queue could reach memory before an earlier draw read it. A wider first version coincided with a broken Astro Bot title in runs that shared the GPU with other emulators; not pinned down, but the narrow rule is what GTA V needs. `PS5SLOP_GPU_QUEUED_WRITES=1` restores the old behaviour.
+
+## 2026-11-21: Programs do not store into module images
+
+Stores and atomics of translated programs skip the image of the loaded module or executable that their memory window covers. Reason: GTA V's programs live in its executable, so their window covers its code and globals, and a store through a wrong descriptor overwrote the game's code. Assumed, not verified: the console's GPU does not write module images (no title is known to). The guard costs one compare per store.

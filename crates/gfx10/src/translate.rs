@@ -196,8 +196,9 @@ impl std::error::Error for TranslateError {}
 pub mod binding {
     /// `constant uint* user`: all user SGPR values in order.
     pub const USER: u32 = 0;
-    /// `constant Win& mem_base`: the guest range the memory buffer covers, and
-    /// a second range reached at a fixed distance from it (see `goff`).
+    /// `constant Win& mem_base`: the guest range the memory buffer covers, a
+    /// second range reached at a fixed distance from it (see `goff`), and a
+    /// range stores and atomics skip.
     pub const MEM_BASE: u32 = 28;
     /// `device uchar* mem`: guest memory.
     pub const MEM: u32 = 29;
@@ -2192,11 +2193,11 @@ impl<'a> Tx<'a> {
             let call = match op {
                 "add" | "sub" | "and" | "or" | "xor" | "umin" | "umax" | "smin" | "smax"
                 | "swap" => {
-                    format!("atomic_rmw_{op}(mem, buffer_offset({args}), {data})")
+                    format!("atomic_rmw_{op}(mem, buffer_store_offset({args}), {data})")
                 }
                 "cmpswap" => {
                     let cmp = self.v(vd + 1);
-                    format!("atomic_cas(mem, buffer_offset({args}), {data}, {cmp})")
+                    format!("atomic_cas(mem, buffer_store_offset({args}), {data}, {cmp})")
                 }
                 _ => return Err(err(pc, format!("unsupported instruction {name}"))),
             };
@@ -2220,7 +2221,7 @@ impl<'a> Tx<'a> {
         if let Some((n, width)) = store {
             self.mem_write = true;
             self.note_store(pc, r, b.idxen);
-            let mut s = format!("long o = buffer_offset({args}); if (o != OOB_OFF) {{");
+            let mut s = format!("long o = buffer_store_offset({args}); if (o != OOB_OFF) {{");
             for i in 0..n {
                 let v = self.v(vd + i);
                 match width {
@@ -3596,8 +3597,8 @@ static inline int med3_i(int a, int b, int c) {
 }
 
 // `mem` covers [base, end); a second window over [base2, end2) lies
-// `delta` bytes from `mem` in the GPU's address space.
-struct Win { ulong base; ulong end; ulong base2; ulong end2; long delta; };
+// `delta` bytes from `mem` in the GPU's address space. Stores skip [ro, ro_end).
+struct Win { ulong base; ulong end; ulong base2; ulong end2; long delta; ulong ro; ulong ro_end; };
 #define OOB_OFF (-0x7fffffffffffffffl - 1l)
 
 // Byte offset from `mem` of guest address `a`, or OOB_OFF outside both windows.
@@ -3612,12 +3613,20 @@ static inline uint ld32(device const uchar* mem, Win w, ulong addr) {
     return o == OOB_OFF ? 0u : *(device const uint*)(mem + o);
 }
 
-// Byte offset into the memory buffer of a buffer element, or -1 when out of range.
+// Byte offset into the memory buffer of a buffer element, or OOB_OFF when out of range.
 static inline long buffer_offset(Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
     ulong base = ulong(vs.x) | (ulong(vs.y & 0xffffu) << 32);
     uint stride = (vs.y >> 16) & 0x3fffu;
     if (stride != 0u && idxen != 0u ? index >= vs.z : offset >= vs.z) return OOB_OFF;
     return goff(mem_base, base + ulong(index) * ulong(stride) * ulong(idxen) + ulong(offset));
+}
+
+// As `buffer_offset`, for stores and atomics: OOB_OFF inside [ro, ro_end) too.
+static inline long buffer_store_offset(Win w, uint4 vs, uint index, uint offset, uint idxen) {
+    ulong a = (ulong(vs.x) | (ulong(vs.y & 0xffffu) << 32))
+        + ulong(index) * ulong((vs.y >> 16) & 0x3fffu) * ulong(idxen) + ulong(offset);
+    if (a >= w.ro && a < w.ro_end) return OOB_OFF;
+    return buffer_offset(w, vs, index, offset, idxen);
 }
 
 static inline uint4 buffer_load_raw(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
@@ -3873,7 +3882,7 @@ static inline void st_le(device uchar* p, uint bytes, uint v) {
 // Typed store: the first n data components go to the format's components in
 // order; components past n are left as they are.
 static inline void buffer_store_format(device uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen, uint4 d, uint n) {
-    long o = buffer_offset(mem_base, vs, index, offset, idxen);
+    long o = buffer_store_offset(mem_base, vs, index, offset, idxen);
     if (o == OOB_OFF) return;
     device uchar* p = mem + o;
     uint3 f = buffer_fmt((vs.w >> 12) & 0x7fu);

@@ -40,10 +40,24 @@ pub enum Draw {
 }
 
 /// Where draws and dispatches are carried out.
+/// A command processor's write of 32-bit values to guest memory.
+pub struct MemoryWrite<'a> {
+    pub dest: u64,
+    pub values: &'a [u32],
+    /// Every value goes to `dest`, so only the last one stays.
+    pub fixed: bool,
+}
+
 pub trait Backend: Send {
     fn draw(&mut self, host: &dyn Host, state: &State, draw: Draw);
     /// A compute dispatch of `groups` thread groups.
     fn dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]);
+    /// Writes `values` (all to `dest` when `fixed`) to guest memory in GPU
+    /// order, after the work recorded so far and before later work; false
+    /// if the caller must write them itself once that work is done.
+    fn write_memory(&mut self, _host: &dyn Host, _write: &MemoryWrite) -> bool {
+        false
+    }
     /// Finishes GPU work recorded so far, before the CPU may observe its results.
     fn sync(&mut self);
     /// Starts the GPU on the work recorded so far without waiting for it.
@@ -90,6 +104,9 @@ impl Backend for SharedBackend {
     }
     fn dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]) {
         self.lock().dispatch(host, state, groups)
+    }
+    fn write_memory(&mut self, host: &dyn Host, write: &MemoryWrite) -> bool {
+        self.lock().write_memory(host, write)
     }
     fn sync(&mut self) {
         self.lock().sync()
@@ -149,6 +166,11 @@ pub trait Host {
     fn exiting(&self) -> bool;
     /// The host-backed guest range around `addr`, as `(start, end)`.
     fn extent(&self, _addr: u64) -> Option<(u64, u64)> {
+        None
+    }
+    /// The image of the loaded module (or executable) holding `addr`, as
+    /// `(start, end)`: memory the GPU is not given to write.
+    fn image(&self, _addr: u64) -> Option<(u64, u64)> {
         None
     }
     /// The host address of guest address `addr`.

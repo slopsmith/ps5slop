@@ -332,12 +332,12 @@ struct Bound {
 /// Binding of the second guest memory window (reached through `Win.delta`).
 const SECOND_WINDOW: usize = 26;
 
-/// The guest memory bound for a program and its `Win`: both windows' ranges
-/// and the second's GPU address minus the first's.
+/// The guest memory bound for a program and its `Win`: both windows' ranges,
+/// the second's GPU address minus the first's, and the range stores skip.
 struct Memory {
     buffer: Retained<Buffer>,
     second: Option<Retained<Buffer>>,
-    win: [u64; 5],
+    win: [u64; 7],
 }
 
 struct Program {
@@ -449,6 +449,11 @@ pub struct Metal {
     guard_next: usize,
     guarded: Vec<(usize, u64, [u32; 16])>,
     guard_trips: u64,
+    /// Values of `WRITE_DATA` blits: a shared buffer filled from the front and
+    /// never rewritten, replaced by a fresh one when full.
+    write_staging: Option<(Retained<Buffer>, usize)>,
+    /// `WRITE_DATA`s written in GPU order.
+    ordered_writes: u64,
     /// Shared memory handed out front to back for data copied for the GPU,
     /// and how much of it is used; replaced when full.
     scratch: Option<(Retained<Buffer>, usize)>,
@@ -673,6 +678,8 @@ impl Metal {
             guard_next: 0,
             guarded: Vec::new(),
             guard_trips: 0,
+            write_staging: None,
+            ordered_writes: 0,
             missing_inputs: HashMap::new(),
             scratch: None,
             gds: None,
@@ -3569,7 +3576,8 @@ impl Metal {
             None => (region(self, (lo, hi)), None),
         };
         let (buffer, base) = first?;
-        let mut win = [base, base + buffer.length() as u64, 0, 0, 0];
+        let (ro, ro_end) = outside.and_then(|(lo, _)| host.image(lo)).unwrap_or((0, 0));
+        let mut win = [base, base + buffer.length() as u64, 0, 0, 0, ro, ro_end];
         let second = second.map(|(b, base2)| {
             win[2] = base2;
             win[3] = base2 + b.length() as u64;
@@ -4458,6 +4466,13 @@ const GDS_BYTES: usize = 64 << 10;
 /// zeroed when handed out again.
 const GUARD_SLOTS: usize = 1 << 16;
 
+/// `WRITE_DATA` of compute queues lands in GPU order unless
+/// `PS5SLOP_GPU_QUEUED_WRITES=1` keeps it queued until the queue drains.
+fn gpu_ordered_writes() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("PS5SLOP_GPU_QUEUED_WRITES").is_none())
+}
+
 impl Backend for Metal {
     fn with_gds(&mut self, f: &mut dyn FnMut(&mut [u8])) -> bool {
         let Some(buffer) = self.gds_buffer() else {
@@ -4498,6 +4513,83 @@ impl Backend for Metal {
         }
     }
 
+    fn write_memory(&mut self, host: &dyn Host, write: &crate::MemoryWrite) -> bool {
+        let dest = write.dest;
+        let words = match (write.fixed, write.values.last()) {
+            (_, None) => return false,
+            (true, Some(&v)) => vec![v],
+            (false, _) => write.values.to_vec(),
+        };
+        let len = 4 * words.len();
+        if !dest.is_multiple_of(4) || !gpu_ordered_writes() {
+            return false;
+        }
+        // Only the GPU area has one buffer object that programs share, and
+        // Metal orders work only within one object.
+        let target = match host.gpu_area() {
+            Some((start, end)) if start <= dest && dest + len as u64 <= end => self
+                .area_window(host, start, end, dest + len as u64)
+                .map(|b| (b, (dest - start) as usize)),
+            _ => None,
+        };
+        let Some((buffer, offset)) = target else {
+            return false;
+        };
+        const STAGING: usize = 1 << 20;
+        if self
+            .write_staging
+            .as_ref()
+            .is_none_or(|(_, used)| used + len > STAGING)
+        {
+            let Some(b) = self
+                .device
+                .newBufferWithLength_options(STAGING, MTLResourceOptions::StorageModeShared)
+            else {
+                return false;
+            };
+            self.write_staging = Some((b, 0));
+        }
+        let Some((source, used)) = self.write_staging.as_mut() else {
+            return false;
+        };
+        let (source, from) = (source.clone(), *used);
+        *used += len;
+        // SAFETY: `[from, from + len)` lies inside the shared buffer and no
+        // earlier write used it; the GPU reads it only once the blit runs.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                words.as_ptr(),
+                source.contents().as_ptr().cast::<u8>().add(from).cast(),
+                words.len(),
+            )
+        };
+        self.end_pass();
+        let command = self.command();
+        let Some(blit) = command.blitCommandEncoder() else {
+            return false;
+        };
+        if let Some(f) = self.wait_memory() {
+            blit.waitForFence(f);
+        }
+        // SAFETY: both ranges lie inside their buffers; offsets and size are multiples of 4.
+        unsafe {
+            blit.copyFromBuffer_sourceOffset_toBuffer_destinationOffset_size(
+                &source, from, &buffer, offset, len,
+            )
+        };
+        if let Some(f) = self.fence.as_deref() {
+            blit.updateFence(f);
+            self.fence_updated = true;
+        }
+        blit.endEncoding();
+        self.pending_writes = true;
+        self.ordered_writes += 1;
+        if self.ordered_writes.is_power_of_two() {
+            eprintln!("ps5slop: GPU: {} writes in GPU order", self.ordered_writes);
+        }
+        true
+    }
+
     fn sync(&mut self) {
         self.flush_and_wait();
     }
@@ -4523,10 +4615,11 @@ impl Backend for Metal {
         let image_bytes: u64 = self.images.values().map(|(_, t)| mib(t)).sum();
         let target_bytes: u64 = self.targets.values().map(|t| mib(&t.texture)).sum();
         format!(
-            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms); waits to read memory programs wrote {:?}, {} HTILE checks on the GPU",
+            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} writes in GPU order, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms); waits to read memory programs wrote {:?}, {} HTILE checks on the GPU",
             self.draws,
             self.dispatches,
             self.skipped,
+            self.ordered_writes,
             self.failed_commands,
             self.guard_trips,
             self.images.len(),
@@ -5048,6 +5141,8 @@ mod tests {
         bytes: RefCell<Vec<u8>>,
         base: *mut u8,
         len: u64,
+        image: Option<(u64, u64)>,
+        area: Option<(u64, u64)>,
     }
 
     impl Mem {
@@ -5067,6 +5162,8 @@ mod tests {
                 bytes: RefCell::new(Vec::new()),
                 base,
                 len,
+                image: None,
+                area: None,
             }
         }
     }
@@ -5102,6 +5199,15 @@ mod tests {
         }
         fn extent(&self, addr: u64) -> Option<(u64, u64)> {
             (addr < self.len).then_some((0, self.len))
+        }
+        fn image(&self, addr: u64) -> Option<(u64, u64)> {
+            self.image.filter(|&(s, e)| s <= addr && addr < e)
+        }
+        fn gpu_area(&self) -> Option<(u64, u64)> {
+            self.area
+        }
+        fn back(&self, _start: u64, end: u64) -> bool {
+            end <= self.len
         }
         fn host_pointer(&self, addr: u64) -> Option<*mut u8> {
             // SAFETY: inside the mapping.
@@ -5301,6 +5407,114 @@ mod tests {
             "a barrier runaway would stall other Metal work for {gpu} s"
         );
         eprintln!("barrier: {gpu:.4} s");
+    }
+
+    fn word(mem: &Mem, at: u64) -> u32 {
+        let mut b = [0; 4];
+        mem.read(at, &mut b);
+        u32::from_le_bytes(b)
+    }
+
+    /// Registers that dispatch one thread of the program at `code` with `user` data.
+    fn compute_setup(code: u64, user: &[u32]) -> Vec<u32> {
+        let set = |reg: usize, values: &[u32]| {
+            let mut p = vec![
+                0xC000_0000 | (values.len() as u32) << 16 | 0x76 << 8,
+                reg as u32,
+            ];
+            p.extend_from_slice(values);
+            p
+        };
+        [
+            set(sh::COMPUTE_PGM_LO, &[(code >> 8) as u32, 0]),
+            set(sh::COMPUTE_PGM_RSRC2, &[(user.len() as u32) << 1]),
+            set(sh::COMPUTE_NUM_THREAD_X, &[1, 1, 1]),
+            set(sh::COMPUTE_USER_DATA_0, user),
+        ]
+        .concat()
+    }
+
+    fn write_data(dest: u64, value: u32) -> [u32; 5] {
+        [0xC003_3700, 5 << 8, dest as u32, (dest >> 32) as u32, value]
+    }
+
+    const DISPATCH_ONE: [u32; 5] = [0xC003_1500, 1, 1, 1, 1];
+
+    fn buffer(base: u64) -> [u32; 4] {
+        [base as u32, (base >> 32) as u32, 4, 0x5204]
+    }
+
+    #[test]
+    fn writes_from_the_command_stream_land_between_the_dispatches_around_them() {
+        let Some(metal) = Metal::new() else {
+            return;
+        };
+        let mut mem = Mem::new(1 << 20);
+        mem.area = Some((0, 1 << 20));
+        let (a, b) = (0x8000, 0x8100);
+        let copy: [u32; 6] = [
+            0xE030_0000,
+            0x8000_0100, // buffer_load_dword v1, off, s[0:3], 0
+            0xBF8C_3F70, // s_waitcnt vmcnt(0)
+            0xE070_0000,
+            0x8001_0100, // buffer_store_dword v1, off, s[4:7], 0
+            0xBF81_0000, // s_endpgm
+        ];
+        for (i, w) in copy.iter().enumerate() {
+            mem.write(0x1000 + 4 * i as u64, &w.to_le_bytes());
+        }
+        let packets = [
+            compute_setup(0x1000, &[buffer(a), buffer(b)].concat()),
+            write_data(a, 7).to_vec(),
+            DISPATCH_ONE.to_vec(),
+            write_data(a, 9).to_vec(),
+        ]
+        .concat();
+        let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+        mem.write(0x2000, &bytes);
+        let mut p = crate::pm4::Processor::default();
+        p.backend = Some(Box::new(metal));
+        p.run(&mem, 0x2000, packets.len() as u32).unwrap();
+        p.finish(&mem);
+        assert_eq!(
+            (word(&mem, b), word(&mem, a)),
+            (7, 9),
+            "the dispatch must read the write before it, and the write after it must not run first"
+        );
+    }
+
+    #[test]
+    fn programs_do_not_store_into_a_loaded_module() {
+        let store: [u32; 4] = [
+            0x7E02_0204, // v_mov_b32 v1, s4
+            0xE070_0000,
+            0x8000_0100, // buffer_store_dword v1, off, s[0:3], 0
+            0xBF81_0000, // s_endpgm
+        ];
+        let mut results = Vec::new();
+        for image in [None, Some((0, 1 << 20))] {
+            let Some(metal) = Metal::new() else {
+                return;
+            };
+            let mut mem = Mem::new(1 << 20);
+            mem.image = image;
+            for (i, w) in store.iter().enumerate() {
+                mem.write(0x1000 + 4 * i as u64, &w.to_le_bytes());
+            }
+            let mut p = crate::pm4::Processor::default();
+            let packets = [
+                compute_setup(0x1000, &[&buffer(0x8000)[..], &[0x1234]].concat()),
+                DISPATCH_ONE.to_vec(),
+            ]
+            .concat();
+            let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+            mem.write(0x2000, &bytes);
+            p.backend = Some(Box::new(metal));
+            p.run(&mem, 0x2000, packets.len() as u32).unwrap();
+            p.finish(&mem);
+            results.push(word(&mem, 0x8000));
+        }
+        assert_eq!(results, [0x1234, 0]);
     }
 
     #[test]

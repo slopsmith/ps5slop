@@ -209,6 +209,8 @@ enum Pending {
         dest: u64,
         values: Vec<u32>,
         fixed: bool,
+        /// The backend already wrote it in GPU order; kept for waits only.
+        landed: bool,
     },
     /// The queue's interrupt at the end of a submission.
     Interrupt,
@@ -234,6 +236,7 @@ impl Pending {
                 dest,
                 ref values,
                 fixed,
+                ..
             } => {
                 if fixed {
                     values.last().copied().filter(|_| dest == address)
@@ -1173,11 +1176,29 @@ impl Processor {
             "write {dest:#x} {:x?}",
             &values[..values.len().min(4)]
         ));
-        if self.backend.is_some() && !synchronous_releases() {
+        if let Some(b) = self.backend.as_mut()
+            && !synchronous_releases()
+        {
+            let write = crate::MemoryWrite {
+                dest,
+                values,
+                fixed,
+            };
+            // Only a queue that never draws: draws read guest memory through
+            // other buffer objects, which Metal does not order against the
+            // write. Queued entries are applied later, so a write that lands
+            // now would end up before them.
+            let harmless =
+                |p: &Pending| matches!(p, Pending::Write { landed: true, .. } | Pending::Interrupt);
+            let landed = self.stats.draws == 0
+                && self.pending.iter().all(harmless)
+                && self.retiring.iter().all(|(_, l)| l.iter().all(harmless))
+                && b.write_memory(host, &write);
             self.pending.push(Pending::Write {
                 dest,
                 values: values.to_vec(),
                 fixed,
+                landed,
             });
             return;
         }
@@ -1309,7 +1330,9 @@ impl Processor {
                 dest,
                 values,
                 fixed,
+                landed: false,
             } => Self::apply_write(host, dest, &values, fixed),
+            Pending::Write { .. } => {}
             Pending::Interrupt => host.interrupt(0),
         }
     }
@@ -1628,6 +1651,7 @@ mod tests {
             dest: 0x100,
             values: vec![1, 2, 3],
             fixed: false,
+            landed: false,
         };
         assert_eq!(
             (w.word_at(0x104), w.word_at(0x10c), w.word_at(0x102)),
@@ -1637,6 +1661,7 @@ mod tests {
             dest: 0x100,
             values: vec![1, 2, 3],
             fixed: true,
+            landed: true,
         };
         assert_eq!((f.word_at(0x100), f.word_at(0x104)), (Some(3), None));
         let r = Pending::Release {
@@ -1671,6 +1696,50 @@ mod tests {
         assert_eq!(word(&host, 0x814), 0x5566_7788);
         assert_eq!(*host.interrupts.borrow(), [7]);
         assert_eq!(p.stats.packets, 2);
+    }
+
+    #[test]
+    fn a_write_after_a_queued_release_to_the_same_label_stays_last() {
+        // Writes the backend takes land at once, as the GPU would run them.
+        struct Landing;
+        impl Backend for Landing {
+            fn draw(&mut self, _: &dyn Host, _: &State, _: Draw) {}
+            fn dispatch(&mut self, _: &dyn Host, _: &State, _: [u32; 3]) {}
+            fn sync(&mut self) {}
+            fn frame_done(&mut self, _: Option<u64>) {}
+            fn write_memory(&mut self, host: &dyn Host, w: &crate::MemoryWrite) -> bool {
+                for (i, v) in w.values.iter().enumerate() {
+                    host.write(w.dest + 4 * i as u64, &v.to_le_bytes());
+                }
+                true
+            }
+        }
+        let host = Fake::default();
+        host.mem.replace(vec![0; 0x1000]);
+        let packets = [
+            header(8, IT_RELEASE_MEM, 0),
+            0,
+            1 << 29,
+            0x900,
+            0,
+            1,
+            0,
+            0,
+            header(5, IT_WRITE_DATA, 0),
+            5 << 8,
+            0x900,
+            0,
+            0,
+        ];
+        let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+        host.write(0x100, &bytes);
+        let mut p = Processor {
+            backend: Some(Box::new(Landing)),
+            ..Processor::default()
+        };
+        p.run(&host, 0x100, packets.len() as u32).unwrap();
+        p.finish(&host);
+        assert_eq!(word(&host, 0x900), 0);
     }
 
     #[test]
