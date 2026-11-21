@@ -187,6 +187,23 @@ fn cut_ranges(ranges: &mut BTreeMap<u64, u64>, start: u64, end: u64) {
     }
 }
 
+fn cut_physical(ranges: &mut BTreeMap<u64, (u64, u64)>, start: u64, end: u64) {
+    let hit: Vec<(u64, (u64, u64))> = ranges
+        .range(..end)
+        .filter(|&(_, &(e, _))| e > start)
+        .map(|(&s, &v)| (s, v))
+        .collect();
+    for (s, (e, delta)) in hit {
+        ranges.remove(&s);
+        if s < start {
+            ranges.insert(s, (start, delta));
+        }
+        if e > end {
+            ranges.insert(end, (e, delta));
+        }
+    }
+}
+
 /// The lowest `align`-aligned range of `len` bytes at or above `min` that no
 /// region overlaps and that fits in `size`.
 fn free_range(
@@ -256,8 +273,9 @@ struct Shared {
     /// Shared memory standing in for physical memory (see
     /// [`Memory::map_physical`]): its descriptor, or -1 if it could not be made.
     physical: std::sync::OnceLock<i32>,
-    /// Ranges whose host pages map physical memory, start to end.
-    on_physical: Mutex<BTreeMap<u64, u64>>,
+    /// Ranges whose host pages map physical memory: start to end and the
+    /// physical offset minus the address (unchanged when a range is split).
+    on_physical: Mutex<BTreeMap<u64, (u64, u64)>>,
     /// Physical memory that may hold non-zero bytes, start to end.
     dirty_physical: Mutex<BTreeMap<u64, u64>>,
 }
@@ -537,9 +555,9 @@ impl Memory {
                 .on_physical
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            cut_ranges(&mut on, addr, addr + len);
+            cut_physical(&mut on, addr, addr + len);
             if let Some((_, offset)) = source {
-                on.insert(addr, addr + len);
+                on.insert(addr, (addr + len, offset.wrapping_sub(addr)));
                 drop(on);
                 let mut dirty = self
                     .shared
@@ -574,6 +592,11 @@ impl Memory {
         len: u64,
         source: Option<(i32, u64)>,
     ) -> Result<(), MapError> {
+        if let Some((_, offset)) = source
+            && self.maps_physical_at(addr, len, offset)
+        {
+            return Ok(());
+        }
         self.host_map(addr, len, source)?;
         let mut fresh = self.shared.fresh.lock().unwrap_or_else(|e| e.into_inner());
         if fresh.len() >= FRESH_LIMIT {
@@ -819,6 +842,18 @@ impl Memory {
         fence(Ordering::SeqCst);
     }
 
+    /// Whether all of `[addr, addr + len)` already maps physical memory from `offset` on.
+    fn maps_physical_at(&self, addr: u64, len: u64, offset: u64) -> bool {
+        let on = self
+            .shared
+            .on_physical
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        on.range(..=addr)
+            .next_back()
+            .is_some_and(|(_, &(e, delta))| e >= addr + len && delta == offset.wrapping_sub(addr))
+    }
+
     fn maps_physical(&self, addr: u64, len: u64) -> bool {
         let on = self
             .shared
@@ -827,7 +862,7 @@ impl Memory {
             .unwrap_or_else(|e| e.into_inner());
         on.range(..addr + len)
             .next_back()
-            .is_some_and(|(_, &e)| e > addr)
+            .is_some_and(|(_, &(e, _))| e > addr)
     }
 
     /// Unmaps whatever lies in `addr..addr + len`, splitting regions that
@@ -1556,6 +1591,27 @@ mod tests {
             .unwrap();
         assert_eq!(m.read_u64(0x40_0000).unwrap(), 0x5555);
         assert_eq!(m.read_u64(0x40_0000 + PAGE_SIZE).unwrap(), 0);
+    }
+
+    #[test]
+    fn mapping_the_same_physical_pages_again_replaces_nothing() {
+        let m = Memory::new(4 * GIB).unwrap();
+        let rw = Prot::new(true, true, false);
+        let size = 16 * PAGE_SIZE;
+        m.map_physical(0x40_0000, 2 * PAGE_SIZE, rw, "a", PAGE_SIZE, size)
+            .unwrap();
+        m.write_u64(0x40_4010, 0x1234).unwrap();
+        let (mark, _) = m.replaced_since(u64::MAX);
+        m.map_physical(0x40_4000, PAGE_SIZE, rw, "a", 2 * PAGE_SIZE, size)
+            .unwrap();
+        assert_eq!(m.replaced_since(mark).1, Some(vec![]));
+        assert_eq!(m.read_u64(0x40_4010).unwrap(), 0x1234);
+        m.map_physical(0x40_4000, PAGE_SIZE, rw, "a", 3 * PAGE_SIZE, size)
+            .unwrap();
+        assert_eq!(
+            m.replaced_since(mark).1,
+            Some(vec![(0x40_4000, 0x40_4000 + PAGE_SIZE)])
+        );
     }
 
     #[test]
