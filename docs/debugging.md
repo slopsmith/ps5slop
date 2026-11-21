@@ -180,6 +180,6 @@ A route that worked headless on 2026-11-21 with a fresh `--data` folder, times f
 1. About 36 s: the title screen ("Continue"): `press cross`.
 2. About 46 s: the language picker: `press cross`. About 55 s: Display Calibration: `press cross`.
 3. About 64 s: the landing page: `press r1`, and again at about 72 s, to the STORY tab ("Resume Story"). About 78 s: `press cross`.
-4. The "Entering Story Mode" loading screen runs to about 130 s, then the card "Ludendorff, North Yankton, nine years ago." and, at about 175 s, gameplay: HUD, minimap, "Go to the guard.". The picture is very dark; raising levels (for example to 0 to 10%) shows the scene.
+4. The "Entering Story Mode" loading screen runs to about 130 s, then the card "Ludendorff, North Yankton, nine years ago." and, at about 175 s, gameplay: HUD, minimap, "Go to the guard.". The camera still moves for a few seconds after control is given. A PS5 capture of the same moment (the depot lobby, from a 4K playthrough video) was the reference for the picture work of 2026-11-21.
 
 `press lup 2000` and `press rright 600` move and turn the player (watch the minimap arrow). The times are loose: wait for each screen with `shot` rather than trusting them.

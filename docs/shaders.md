@@ -174,8 +174,15 @@ Astro Bot lights its G-buffer only in compute programs that also trace rays, so 
 
 Of the 140 programs captured in a 125 s run of the title, 134 translate and compile; the other 6 are the 4 ray-traced programs and the 2 NGG vertex programs that use `s_ff1_i32_b64`.
 
+## Added for GTA V's prologue (2026-11-21, late)
+
+- **Samplers by source**: a sampler takes one slot per distinct descriptor source, whichever register it was loaded into. Slots used to be per (register, source), and GTA V's final composite program, which loads the same samplers into several registers, asked for more than Metal's 16 sampler slots and never compiled.
+- **Descriptor dwords masked through another register**: an `s_or_b32`, `s_and_b32` or `s_andn2_b32` of a descriptor dword with anything that is not itself a descriptor dword (a constant, a run-time mask) gives its result the dword's origin, in place or not; the bits it changes are dropped, as decided for the in-place case. GTA V rewrites a T#'s type field through `vcc_lo` (`s_and_b32 vcc_lo, s23, 0xfffffff`, `s_or_b32 s23, vcc_lo, 0xd0000000`) in a 2D-array copy it runs about 1,500 times in the prologue, and ORs its per-quad sampler bits into a copy of the dword.
+- **Float atomics**: `ds_min_f32`, `ds_max_f32` (and their `_rtn` forms) and `buffer_atomic_fmin`, `buffer_atomic_fmax` are compare-and-swap loops around Metal's `fmin`/`fmax`, returning the old value. Not checked: NaN and signed-zero handling against the hardware's.
+- **64-bit atomics**: Metal has no 64-bit and/or/xor/swap. `buffer_atomic_and_x2`, `or_x2` and `xor_x2` are two 32-bit atomics, exact except that the returned old value can tear; `swap_x2` writes the low dword, then the high one. The bitwise forms touch the high dword first, so a reader polling the high dword of a record written with `swap_x2` also sees the low dword, assuming Apple GPUs keep one thread's relaxed device atomics in order (not shown). A GPU test covers the values (`float_min_and_64_bit_atomics_change_memory_and_lds_as_on_hardware`).
+
 ## Open questions
 
 - The renderer asked for buffers at `[[buffer(1 + slot)]]` with their V#s at `[[buffer(30)]]`. Balatro's vertex programs build their V#s at run time, so the translator reads guest memory instead; static buffer slots could come back as an optimisation where a V# provably sits in user SGPRs.
-- Not translated yet: ballots, `ds_swizzle`, `ds_permute`, wave operations that cross 32 lanes (except the lockstep case below), scratch, GDS ordered counts, 64-bit atomics, and the `a16` form of `image_bvh_intersect_ray`. NGG programs that use LDS and barriers need a mesh-shader path (above).
+- Not translated yet: ballots, `ds_swizzle`, `ds_permute`, wave operations that cross 32 lanes (except the lockstep case below), scratch, GDS ordered counts, 64-bit atomics other than the bitwise ones and `swap_x2` (see GTA V below), and the `a16` form of `image_bvh_intersect_ray`. NGG programs that use LDS and barriers need a mesh-shader path (above).
 - How AGC programs reach the GPU: the header's program-address registers are patched by `sceAgcCreateShader`, and the renderer finds the code through `SPI_SHADER_PGM_LO_*`; the `.ags` parsing here is only for tests.

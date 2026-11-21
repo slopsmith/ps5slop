@@ -248,7 +248,6 @@ The code cache is split into 8 MiB segments; when it is full, the coldest segmen
 
 Reason: Minecraft filled the cache when creating a world, and from then on all new code ran in the interpreter. vic asked for eviction of the least used and oldest code, in chunks, rather than flushing the whole cache, which would stall every thread at once. Use is sampled by kicking vCPUs 100 times a second rather than counted per block, which would slow every block down.
 
-
 ## 2026-11-20: PS4 patches run over their base package
 
 `ps5slop run` takes a PS4 patch package over its base (`--patch`), and given a patch alone finds the base beside it ([packages.md](packages.md)).
@@ -296,7 +295,6 @@ Reason: Unity's garbage collector stops threads this way and waits for each to a
 The interpreter runs `cmpxchg16b` with ARM's `caspal` (LSE, present on every Apple Silicon Mac), not with a lock ([cpu.md](cpu.md)).
 
 Reason: translated code on other threads updates the same words with native atomics; a lock in the interpreter would not exclude them. Superliminal's runtime uses `cmpxchg16b` from its first instructions.
-
 
 ## 2026-11-20: Open-source stand-ins for system fonts
 
@@ -367,7 +365,6 @@ Reason: FMOD treats a failed context create as fatal for all output, so Minecraf
 The main thread's stack grew from 1 MiB to 8 MiB ([memory.md](memory.md)). Minecraft's first-run "Get started" flow wrote about 1.3 MiB below the top while creating a world and faulted; with 8 MiB it creates the world and spawns the player (checked headless on 2026-11-20).
 
 Reason: the console's default main-thread stack size is unknown. The process parameters (`PT_SCE_PROCPARAM`) of Minecraft, Balatro and Isaac all leave the main-thread stack-size pointer null, so there is no per-title value to honour; 8 MiB is FreeBSD's default stack limit and costs only address space, since host pages are committed on first touch. Reading the field when a title does set it is left until one does.
-
 
 ## 2026-11-21: Unity's PSN plugin initialises (placeholders succeed)
 
@@ -477,7 +474,6 @@ The translator reports the V#s of every buffer store; CPU reads of HTILE, CMASK,
 
 HVF allows 64 vCPUs per VM and Astro Bot starts about 70 threads; its loading thread was one of those left in the interpreter. A thread about to block in a host function now gives its vCPU back while a running thread has none. Reason: Astro Bot's title came up about twice as fast ([jit.md](jit.md)). The cost, a vCPU destroyed and made again, is paid only while more than 64 threads run at once.
 
-
 ## 2026-11-21: Compute queues' WRITE_DATA into the GPU area lands in GPU order
 
 A `WRITE_DATA` from the command stream (and its NOP form) is now a blit into the GPU area window when the queue never draws, the destination is in the GPU area and nothing unapplied is queued before it; all other writes stay queued until the queue drains, as decided earlier today. Reason: GTA V's culling buffer resets counters, bounds and table words with `WRITE_DATA` before each object's dispatches, in one submission of about 3,000 dispatches; with the writes queued, the dispatches read stale memory and one stored through a garbage descriptor across the game's own code, which caused the CPU faults of the Story Mode load ([gpu.md](gpu.md#the-games-code-overwritten-by-the-culling-queue-2026-11-21-later)). The limits come from Metal ordering work only within one buffer object: the area window is the one object dispatches share, while draws read through other windows, so a write landed for a graphics queue could reach memory before an earlier draw read it. A wider first version coincided with a broken Astro Bot title in runs that shared the GPU with other emulators; not pinned down, but the narrow rule is what GTA V needs. `PS5SLOP_GPU_QUEUED_WRITES=1` restores the old behaviour.
@@ -533,4 +529,24 @@ When a program ORs or ANDs a register into a descriptor dword in place (`s_or_b3
 ## 2026-11-21: Astro Bot's lighting: ray-query emulation, a third memory window, lockstep wave64 groups
 
 `image_bvh_intersect_ray` is emulated in MSL over guest memory as Mesa radv's software path does it; compute programs get a third guest-memory window; a compute group that is one wave64 talking through LDS without barriers runs its two SIMD groups in lockstep (barriers around LDS instructions, branches voted across the group, a loop guard that leaves as a group); a GDS `ds_append` uses M0's high half as its base; a storage write to a colour target applies a pending fast clear first. Reason: Astro Bot lights its G-buffer only in ray-tracing compute programs, and each of these stood between them and the screen ([gpu.md](gpu.md#astro-bots-logo-2026-11-21-later)). Emulating the node tests keeps the game's own BVHs (Metal's ray tracing would need them rebuilt); a third window was the smallest change that reaches the tables in 0x4_xxxxxxxx without guessing which two of three regions a program needs; lockstep is limited to one-wave groups because voting across waves that are independent on hardware would change what they compute. The lockstep barriers cost time in those 8 programs; measured only as the title showing at about the same time as before (70 to 90 s).
+
+## 2026-11-21: Samplers get a slot per descriptor source
+
+A sampler's Metal slot is chosen by where its descriptor comes from, not by the register it was loaded into. Reason: GTA V's final composite loads the same samplers into several registers, needed more than Metal's 16 sampler slots and never compiled, so the screen showed a stale target ("a melting pot"). Textures keep their per-register slots, since the pre-pass that finds image atomics numbers them that way and 31 slots have not run out.
+
+## 2026-11-21: Rectangle lists take their index offset as the base instance
+
+A rectangle-list draw with `GE_INDX_OFFSET` set draws with the offset as Metal's base instance; the rectangle vertex function adds it to the vertex ids and subtracts it from the instance id. Reason: GTA V's deferred lighting draws full-screen rectangles at offsets that are not multiples of 3, and they were skipped. A vertex start of twice the offset would have needed offsets divisible by 3; the base instance carries any offset and needs no extra binding.
+
+## 2026-11-21: 64-bit bitwise and swap atomics as two 32-bit atomics
+
+`buffer_atomic_and_x2`, `or_x2`, `xor_x2` and `swap_x2` run as two 32-bit atomics: the bitwise forms high dword first, `swap_x2` low dword first. Reason: Metal has no 64-bit forms of these and GTA V's compute programs use them; with this order a reader that polls the high dword of a record written with `swap_x2` sees the low dword too, if one thread's relaxed atomics reach memory in order (not shown). Bitwise results are exact apart from a torn return value. Other 64-bit atomics stay untranslated.
+
+## 2026-11-21: Tiled 3D images follow AMD's addrlib
+
+`SW_4KB_S` 3D images are read with addrlib's block patterns and mip placement (Mesa, MIT), every level before the mip tail, detiled on the CPU once a frame. Reason: GTA V's G-buffer materials sample a 64x64x32 RGBA8 volume and the draws were skipped without it. The CPU copy (512 KiB a frame for this one) was simpler than a 3D detile kernel; measure before moving it to the GPU.
+
+## 2026-11-21: Descriptor dwords masked through another register keep their origin
+
+An OR or AND of a descriptor dword with anything that is not itself a descriptor dword keeps the dword's origin in the result, in place or not; the changed bits are dropped as before. Reason: GTA V edits a T#'s type through `vcc_lo` and ORs per-quad sampler bits into a copy, and those programs (a 2D-array copy run about 1,500 times, ten material draws a frame) did not translate. Risk: a masked value used as an index rather than a descriptor would keep its unmasked origin; none seen.
 
