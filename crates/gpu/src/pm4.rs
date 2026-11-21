@@ -71,11 +71,34 @@ fn synchronous_releases() -> bool {
     *SYNCHRONOUS.get_or_init(|| std::env::var_os("PS5SLOP_GPU_SYNC_RELEASES").is_some())
 }
 
+/// Whether waits, releases and memory writes are logged with their queue
+/// (`PS5SLOP_GPU_TRACE_SYNC`).
+fn trace_sync() -> bool {
+    static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRACE.get_or_init(|| std::env::var_os("PS5SLOP_GPU_TRACE_SYNC").is_some())
+}
+
+/// Whether every dispatch is waited for (`PS5SLOP_GPU_SYNC_DISPATCHES`), so a
+/// program that never ends is the last one traced.
+fn sync_dispatches() -> bool {
+    static SYNC: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SYNC.get_or_init(|| std::env::var_os("PS5SLOP_GPU_SYNC_DISPATCHES").is_some())
+}
+
+fn trace(what: std::fmt::Arguments) {
+    if trace_sync() {
+        eprintln!("ps5slop: GPU sync [{}]: {what}", std::thread::current().name().unwrap_or("?"));
+    }
+}
+
 /// Destination selects that mean memory in WRITE_DATA.
 const WRITE_DATA_MEMORY: [u32; 4] = [1, 2, 4, 5];
 const MAX_DEPTH: u32 = 8;
 /// How long a wait polls before giving up and moving on.
 const WAIT_LIMIT: Duration = Duration::from_secs(5);
+/// Dispatches with more thread groups than this are skipped: Metal would run
+/// them for minutes, and a real title's are far smaller.
+const MAX_GROUPS: u64 = 1 << 24;
 /// Flips wait for the display's next refresh, at 60 Hz.
 const VBLANK: Duration = Duration::from_micros(16_667);
 
@@ -92,6 +115,8 @@ pub struct Stats {
     pub timeouts: u64,
     /// Waits a pending release satisfied without waiting for the GPU.
     pub deferred_waits: u64,
+    /// Dispatches skipped for their size ([`MAX_GROUPS`]).
+    pub huge_dispatches: u64,
     /// Packets by opcode (and NOP code, as `0x100 | code`).
     pub opcodes: BTreeMap<u32, u64>,
 }
@@ -229,7 +254,7 @@ fn atomic(host: &dyn Host, address: u64, wide: bool, f: impl Fn(u64) -> (bool, u
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::SeqCst};
     let size = if wide { 8 } else { 4 };
     let mut probe = [0u8; 8];
-    if address % size != 0 || !host.read(address, &mut probe[..size as usize]) {
+    if !address.is_multiple_of(size) || !host.read(address, &mut probe[..size as usize]) {
         return None;
     }
     let mut result = true;
@@ -265,6 +290,7 @@ impl Processor {
     /// Runs the `dwords`-dword command buffer at `addr`.
     pub fn run(&mut self, host: &dyn Host, addr: u64, dwords: u32) -> Result<(), Error> {
         self.stats.submissions += 1;
+        trace(format_args!("submission {addr:#x} {dwords} dwords"));
         self.walk(host, addr, dwords, 0)
     }
 
@@ -525,6 +551,7 @@ impl Processor {
             return;
         }
         self.drain(host);
+        trace(format_args!("rewind {:#x} waits", body - 4));
         let start = Instant::now();
         let mut warned = false;
         while !valid(host) && !host.exiting() {
@@ -617,11 +644,25 @@ impl Processor {
 
     fn dispatch(&mut self, host: &dyn Host, groups: [u32; 3]) {
         self.stats.dispatches += 1;
+        let total = groups.iter().map(|&g| g as u64).product::<u64>();
+        let program = (self.sh[crate::regs::sh::COMPUTE_PGM_LO] as u64 | (self.sh[crate::regs::sh::COMPUTE_PGM_LO + 1] as u64) << 32) << 8;
+        trace(format_args!("dispatch {groups:?} program {program:#x}"));
+        if total > MAX_GROUPS {
+            self.stats.huge_dispatches += 1;
+            if self.stats.huge_dispatches <= 16 {
+                eprintln!("ps5slop: GPU: dispatch of {groups:?} groups of the program at {program:#x} skipped");
+            }
+            return;
+        }
         if let Some(b) = self.backend.as_mut() {
             let state = State { context: &self.context, sh: &self.sh, uconfig: &self.uconfig, color_control_written: self.color_control_written };
             let t = crate::timing::start();
             b.dispatch(host, &state, groups);
             crate::timing::add(crate::timing::Part::Dispatch, t);
+        }
+        if sync_dispatches() {
+            self.sync();
+            trace(format_args!("dispatch done"));
         }
     }
 
@@ -772,6 +813,7 @@ impl Processor {
     }
 
     fn write_values(&mut self, host: &dyn Host, dest: u64, values: &[u32], fixed: bool) {
+        trace(format_args!("write {dest:#x} {:x?}", &values[..values.len().min(4)]));
         if self.backend.is_some() && !synchronous_releases() {
             self.pending.push(Pending::Write { dest, values: values.to_vec(), fixed });
             return;
@@ -791,6 +833,7 @@ impl Processor {
     // Selectors 5 and 6 write nothing and interrupt only while the label at
     // `dest` is at or below `value` (SharpEmu-mac's `InterruptDecision`).
     fn release(&mut self, host: &dyn Host, data: u32, interrupt: u32, dest: u64, value: u64, context: u32) {
+        trace(format_args!("release data {data} interrupt {interrupt} {dest:#x} = {value:#x}"));
         if self.backend.is_some() && !synchronous_releases() {
             self.pending.push(Pending::Release { data, interrupt, dest, value, context });
         } else {
@@ -849,6 +892,7 @@ impl Processor {
     /// Polls guest memory until the masked value passes the comparison in
     /// `control`, the process exits, or [`WAIT_LIMIT`] passes.
     fn wait(&mut self, host: &dyn Host, control: u32, address: u64, reference: u64, mask: u64, wide: bool) {
+        trace(format_args!("wait {address:#x} & {mask:#x} function {} {reference:#x}", control & 7));
         // GPU work runs in order, so a wait on a label that a pending release
         // will satisfy passes without waiting for the GPU.
         let word = |at: u64| self.pending.iter().rev().find_map(|p| p.word_at(at));
@@ -879,7 +923,8 @@ impl Processor {
                 self.stats.timeouts += 1;
                 if self.stats.timeouts <= 16 {
                     eprintln!(
-                        "ps5slop: GPU: wait timed out: {address:#x} & {mask:#x} = {value:#x}, function {}, reference {reference:#x}",
+                        "ps5slop: GPU: wait timed out on {}: {address:#x} & {mask:#x} = {value:#x}, function {}, reference {reference:#x}",
+                        std::thread::current().name().unwrap_or("?"),
                         control & 7
                     );
                 }

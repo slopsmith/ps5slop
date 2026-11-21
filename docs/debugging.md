@@ -48,7 +48,9 @@ The report also has a GPU thread line: time encoding draws and dispatches, waiti
 
 A Metal frame capture (`MTLCaptureManager` to a `.gputrace`, opened in Xcode) was tried on 2026-11-21 and dropped: it records every buffer the frame uses, and our no-copy windows over guest memory are several GiB, so it wrote 25 GB and grew the process to 13 GB within seconds. `gpusnap` gives the per-pass view without that.
 
-`PS5SLOP_GPU_OPCODES=1` (with `PS5SLOP_GPU_STATS=1`) prints each queue's packet counts by opcode once a second (NOP codes as `0x100 | code`), which shows the packets a title uses that the command processor ignores. A `WAIT_REG_MEM` that gives up after 5 s prints its address, current value, function and reference (the first 16 per queue); a label nobody sets points at a missing packet, a skipped program or a queue blocked behind another.
+`PS5SLOP_GPU_OPCODES=1` (with `PS5SLOP_GPU_STATS=1`) prints each queue's packet counts by opcode once a second (NOP codes as `0x100 | code`), which shows the packets a title uses that the command processor ignores. A `WAIT_REG_MEM` that gives up after 5 s prints its address, current value, function and reference (the first 16 per queue); a label nobody sets points at a missing packet, a skipped program or a queue blocked behind another. The message names the queue's thread (`gpu graphics`, `gpu compute 0x20`, ...).
+
+`PS5SLOP_GPU_TRACE_SYNC=1` logs, per queue thread, every submission (address and size), wait, release, command-processor write, REWIND wait and dispatch (groups and program address). Grepping it for a label address shows who sets it and who waits for it; GTA V's Story Mode queues were followed this way. `PS5SLOP_GPU_SYNC_DISPATCHES=1` waits for Metal after every dispatch (slow), so when a program never finishes, the last `dispatch` line of its queue names it.
 
 `PS5SLOP_TRACE_DMA=1` prints every `DMA_DATA` packet as the command processor runs it: source and destination selects and addresses, size and the first word moved. It ruled out a DMA fill as what clears Astro Bot's transparency buffer (it was a DCC fast clear).
 
@@ -124,3 +126,4 @@ A NID is a hash of the symbol name, so a name can be confirmed by hashing guesse
 - The guest polls the pad once a frame and frames can be slow, so a short `press` can be missed; 250 to 400 ms works for Minecraft, and much longer holds repeat.
 - Runs that share the default data folder change each other's remembered menu state and saves. Give each run its own `--data DIR`.
 - Kill earlier runs before reusing a log file: an older process still writes into a truncated file.
+- Another process's GPU fault resets the GPU for everyone: Metal then reports our command buffers as `Discarded (victim of GPU error/recovery)` and soon `Ignored (for causing prior/excessive GPU errors)`, and the screen freezes on the last frame while the guest runs on. Grep a log for `command buffer failed` before trusting a run, especially while other agents run titles.

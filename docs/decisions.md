@@ -421,3 +421,9 @@ As for depth, the first dword of a target's CMASK or DCC is checked before a dra
 
 Reason: GTA V's PS5 build unlocks Story Mode only when these entitlements are listed (seen in its code: it hashes each listed label and compares it with three constants); a full-game license includes them on a console (assumed, not checked). With an empty list its landing page offers "Buy Story Mode" and Story Mode cannot start. Handing every title these labels is wrong (SharpEmu-mac saw another title treat them as its own DLC), so the list is keyed by title id. Separately sold add-ons stay unowned.
 
+## 2026-11-21: REWIND waits for its valid bit; WRITE_DATA stays queued
+
+The command processor now stops at a `REWIND` until the CPU marks it valid and then reads the rest of the buffer again, instead of skipping the packet. Reason: GTA V chains each graphics buffer to the next by patching an INDIRECT_BUFFER behind a REWIND and only then setting the REWIND valid; skipping it lost that work ([gpu.md](gpu.md)). The wait has no time limit, as on the hardware; it ends with the process and prints a note after 5 s.
+
+Landing `WRITE_DATA` on the GPU's timeline (a blit into the guest-memory buffer, so dispatches after it see the value) was tried for GTA V's culling queue and dropped: it did not change GTA V's stall and Minecraft's title fell from 56 to 43 flips a second, because every such write makes the renderer wait before it next reads guest memory. Writes stay queued until the queue drains, which is known to be wrong for a dispatch that reads what a write before it set.
+
