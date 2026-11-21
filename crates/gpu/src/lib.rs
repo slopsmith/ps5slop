@@ -40,6 +40,24 @@ pub enum Draw {
 }
 
 /// Where draws and dispatches are carried out.
+/// A compute dispatch of `groups` thread groups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Dispatch {
+    pub groups: [u32; 3],
+    /// The exact grid in threads when the last group in some dimension is
+    /// partial (dimensions given in threads that groups do not divide).
+    pub threads: Option<[u32; 3]>,
+}
+
+impl Dispatch {
+    pub fn groups(groups: [u32; 3]) -> Self {
+        Self {
+            groups,
+            threads: None,
+        }
+    }
+}
+
 /// A command processor's write of 32-bit values to guest memory.
 pub struct MemoryWrite<'a> {
     pub dest: u64,
@@ -50,8 +68,7 @@ pub struct MemoryWrite<'a> {
 
 pub trait Backend: Send {
     fn draw(&mut self, host: &dyn Host, state: &State, draw: Draw);
-    /// A compute dispatch of `groups` thread groups.
-    fn dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]);
+    fn dispatch(&mut self, host: &dyn Host, state: &State, dispatch: Dispatch);
     /// Writes `values` (all to `dest` when `fixed`) to guest memory in GPU
     /// order, after the work recorded so far and before later work; false
     /// if the caller must write them itself once that work is done.
@@ -102,8 +119,8 @@ impl Backend for SharedBackend {
     fn draw(&mut self, host: &dyn Host, state: &State, draw: Draw) {
         self.lock().draw(host, state, draw)
     }
-    fn dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]) {
-        self.lock().dispatch(host, state, groups)
+    fn dispatch(&mut self, host: &dyn Host, state: &State, dispatch: Dispatch) {
+        self.lock().dispatch(host, state, dispatch)
     }
     fn write_memory(&mut self, host: &dyn Host, write: &MemoryWrite) -> bool {
         self.lock().write_memory(host, write)

@@ -3936,8 +3936,9 @@ impl Metal {
         &mut self,
         host: &dyn Host,
         state: &State,
-        groups: [u32; 3],
+        dispatch: crate::Dispatch,
     ) -> Result<(), &'static str> {
+        let groups = dispatch.groups;
         let s = state.sh;
         let address =
             ((s[sh::COMPUTE_PGM_LO] as u64) | (s[sh::COMPUTE_PGM_LO + 1] as u64) << 32) << 8;
@@ -4012,18 +4013,29 @@ impl Metal {
             if let Some((g, offset)) = &guard {
                 Slot::Compute(&enc).buffer(g, *offset, binding::GUARD as usize);
             }
-            enc.dispatchThreadgroups_threadsPerThreadgroup(
-                MTLSize {
-                    width: groups[0] as usize,
-                    height: groups[1] as usize,
-                    depth: groups[2] as usize,
-                },
-                MTLSize {
-                    width: threads[0],
-                    height: threads[1],
-                    depth: threads[2],
-                },
-            );
+            let per_group = MTLSize {
+                width: threads[0],
+                height: threads[1],
+                depth: threads[2],
+            };
+            match dispatch.threads {
+                Some(t) => enc.dispatchThreads_threadsPerThreadgroup(
+                    MTLSize {
+                        width: t[0] as usize,
+                        height: t[1] as usize,
+                        depth: t[2] as usize,
+                    },
+                    per_group,
+                ),
+                None => enc.dispatchThreadgroups_threadsPerThreadgroup(
+                    MTLSize {
+                        width: groups[0] as usize,
+                        height: groups[1] as usize,
+                        depth: groups[2] as usize,
+                    },
+                    per_group,
+                ),
+            }
             self.note_writes(host, &program.translated, user);
             self.pending_writes |= program.translated.writes_memory;
         }
@@ -4801,9 +4813,10 @@ impl Backend for Metal {
         }
     }
 
-    fn dispatch(&mut self, host: &dyn Host, state: &State, groups: [u32; 3]) {
+    fn dispatch(&mut self, host: &dyn Host, state: &State, dispatch: crate::Dispatch) {
         self.trace = self.tracing().then(Vec::new);
-        let result = self.try_dispatch(host, state, groups);
+        let groups = dispatch.groups;
+        let result = self.try_dispatch(host, state, dispatch);
         self.end_trace(|| format!("dispatch {groups:?}"), result);
         match result {
             Ok(()) => self.dispatches += 1,
@@ -5678,7 +5691,7 @@ mod tests {
             color_control_written: false,
         };
         let trips = metal.guard_trips;
-        metal.dispatch(mem, &state, [groups, 1, 1]);
+        metal.dispatch(mem, &state, crate::Dispatch::groups([groups, 1, 1]));
         assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
         metal.commit();
         let start = std::time::Instant::now();
@@ -5923,7 +5936,7 @@ mod tests {
             uconfig: &u,
             color_control_written: false,
         };
-        metal.dispatch(&mem, &state, [2, 1, 1]);
+        metal.dispatch(&mem, &state, crate::Dispatch::groups([2, 1, 1]));
         assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
         metal.flush_and_wait();
         metal.check_guards();
@@ -6082,7 +6095,7 @@ mod tests {
             uconfig: &u,
             color_control_written: false,
         };
-        metal.dispatch(&mem, &state, [1, 1, 1]);
+        metal.dispatch(&mem, &state, crate::Dispatch::groups([1, 1, 1]));
         assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
         metal.flush_and_wait();
         assert_eq!(word(&mem, 0x8000), 11);
@@ -6123,7 +6136,7 @@ mod tests {
             uconfig: &u,
             color_control_written: false,
         };
-        metal.dispatch(&mem, &state, [1, 1, 1]);
+        metal.dispatch(&mem, &state, crate::Dispatch::groups([1, 1, 1]));
         assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
         metal.flush_and_wait();
         assert_eq!(word(&mem, 0x8000), 0x3C00_7BFF);

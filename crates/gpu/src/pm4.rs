@@ -624,10 +624,20 @@ impl Processor {
             IT_DRAW_INDIRECT_MULTI | IT_DRAW_INDEX_INDIRECT_MULTI | IT_DRAW_INDEX_MULTI_AUTO => {
                 self.stats.draws += 1
             }
-            IT_DISPATCH_DIRECT if p.len() >= 3 => self.dispatch(host, [p[0], p[1], p[2]]),
+            IT_DISPATCH_DIRECT if p.len() >= 3 => {
+                let initiator = p.get(3).copied().unwrap_or(0);
+                self.dispatch(host, [p[0], p[1], p[2]], initiator)
+            }
+            // The compute queues' form has a 64-bit address instead of an
+            // offset from SET_BASE (Mesa's radv builds both).
+            IT_DISPATCH_INDIRECT if p.len() >= 3 => {
+                self.wait_gpu(host, "indirect arguments");
+                let a = read_dwords(host, addr(p[0], p[1]), 3).unwrap_or_else(|_| vec![0; 3]);
+                self.dispatch(host, [a[0], a[1], a[2]], p[2]);
+            }
             IT_DISPATCH_INDIRECT if !p.is_empty() => {
                 let a = self.indirect_args(host, p[0], 3);
-                self.dispatch(host, [a[0], a[1], a[2]]);
+                self.dispatch(host, [a[0], a[1], a[2]], p.get(1).copied().unwrap_or(0));
             }
             _ => {}
         }
@@ -854,8 +864,10 @@ impl Processor {
         }
     }
 
-    fn dispatch(&mut self, host: &dyn Host, groups: [u32; 3]) {
+    fn dispatch(&mut self, host: &dyn Host, dims: [u32; 3], initiator: u32) {
         self.stats.dispatches += 1;
+        let dispatch = self.groups(dims, initiator);
+        let groups = dispatch.groups;
         let total = groups.iter().map(|&g| g as u64).product::<u64>();
         let program = (self.sh[crate::regs::sh::COMPUTE_PGM_LO] as u64
             | (self.sh[crate::regs::sh::COMPUTE_PGM_LO + 1] as u64) << 32)
@@ -886,7 +898,7 @@ impl Processor {
                 color_control_written: self.color_control_written,
             };
             let t = crate::timing::start();
-            b.dispatch(host, &state, groups);
+            b.dispatch(host, &state, dispatch);
             crate::timing::add(crate::timing::Part::Dispatch, t);
         }
         if sync_dispatches() {
@@ -894,6 +906,22 @@ impl Processor {
             trace(format_args!("dispatch done"));
         }
         self.gpu_watch(host, || format!("dispatch {groups:?} of {program:#x}"));
+    }
+
+    /// With USE_THREAD_DIMENSIONS (initiator bit 5) the dimensions count
+    /// threads, and a last group they do not fill runs partly (as radv uses it).
+    fn groups(&self, dims: [u32; 3], initiator: u32) -> crate::Dispatch {
+        if initiator & 0x20 == 0 {
+            return crate::Dispatch::groups(dims);
+        }
+        let size =
+            [0, 1, 2].map(|i| (self.sh[crate::regs::sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1));
+        let groups = [0, 1, 2].map(|i| dims[i].div_ceil(size[i]));
+        let partial = (0..3).any(|i| !dims[i].is_multiple_of(size[i]));
+        crate::Dispatch {
+            groups,
+            threads: partial.then_some(dims),
+        }
     }
 
     /// `PS5SLOP_GPU_WATCH=ADDR`: waits for each draw and dispatch and reports
@@ -1553,8 +1581,8 @@ mod tests {
         struct Groups(std::sync::Arc<std::sync::Mutex<Vec<[u32; 3]>>>);
         impl Backend for Groups {
             fn draw(&mut self, _: &dyn Host, _: &State, _: Draw) {}
-            fn dispatch(&mut self, _: &dyn Host, _: &State, groups: [u32; 3]) {
-                self.0.lock().unwrap().push(groups);
+            fn dispatch(&mut self, _: &dyn Host, _: &State, d: crate::Dispatch) {
+                self.0.lock().unwrap().push(d.groups);
             }
             fn sync(&mut self) {}
             fn frame_done(&mut self, _: Option<u64>) {}
@@ -1568,6 +1596,80 @@ mod tests {
         assert_eq!(*seen.lock().unwrap(), vec![[2, 3, 1]]);
     }
 
+    struct Dispatches(std::sync::Arc<std::sync::Mutex<Vec<crate::Dispatch>>>);
+    impl Backend for Dispatches {
+        fn draw(&mut self, _: &dyn Host, _: &State, _: Draw) {}
+        fn dispatch(&mut self, _: &dyn Host, _: &State, d: crate::Dispatch) {
+            self.0.lock().unwrap().push(d);
+        }
+        fn sync(&mut self) {}
+        fn frame_done(&mut self, _: Option<u64>) {}
+    }
+
+    fn dispatches(host: &Fake, packets: &[u32]) -> Vec<crate::Dispatch> {
+        let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+        host.write(0x100, &bytes);
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut p = Processor {
+            backend: Some(Box::new(Dispatches(seen.clone()))),
+            ..Processor::default()
+        };
+        p.run(host, 0x100, packets.len() as u32).unwrap();
+        seen.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn dispatches_in_thread_dimensions_run_whole_and_partial_groups() {
+        let host = Fake::default();
+        host.mem.replace(vec![0; 0x1000]);
+        let num_thread = crate::regs::sh::COMPUTE_NUM_THREAD_X as u32;
+        let packets = [
+            header(5, IT_SET_SH_REG, 0),
+            num_thread,
+            64,
+            1,
+            1,
+            header(5, IT_DISPATCH_DIRECT, 0),
+            18432,
+            1,
+            1,
+            0x61,
+            header(5, IT_DISPATCH_DIRECT, 0),
+            100,
+            1,
+            1,
+            0x61,
+            header(5, IT_DISPATCH_DIRECT, 0),
+            3,
+            1,
+            1,
+            0x41,
+        ];
+        let seen = dispatches(&host, &packets);
+        let d = |groups, threads| crate::Dispatch { groups, threads };
+        assert_eq!(
+            seen,
+            vec![
+                d([288, 1, 1], None),
+                d([2, 1, 1], Some([100, 1, 1])),
+                d([3, 1, 1], None),
+            ]
+        );
+    }
+
+    #[test]
+    fn compute_queue_indirect_dispatches_read_a_full_address() {
+        let host = Fake::default();
+        host.mem.replace(vec![0; 0x1000]);
+        host.write(0xA08, &[2, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0]);
+        let packets = [header(4, IT_DISPATCH_INDIRECT, 0), 0xA08, 0, 0x41];
+        let seen = dispatches(&host, &packets);
+        assert_eq!(
+            seen.iter().map(|d| d.groups).collect::<Vec<_>>(),
+            vec![[2, 3, 1]]
+        );
+    }
+
     #[test]
     fn label_waits_pass_without_the_gpu_and_releases_wait_for_it() {
         use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
@@ -1578,7 +1680,7 @@ mod tests {
         }
         impl Backend for Gpu {
             fn draw(&mut self, _: &dyn Host, _: &State, _: Draw) {}
-            fn dispatch(&mut self, _: &dyn Host, _: &State, _: [u32; 3]) {}
+            fn dispatch(&mut self, _: &dyn Host, _: &State, _: crate::Dispatch) {}
             fn sync(&mut self) {
                 self.syncs.fetch_add(1, Relaxed);
                 self.done.store(true, Relaxed);
@@ -1704,7 +1806,7 @@ mod tests {
         struct Landing;
         impl Backend for Landing {
             fn draw(&mut self, _: &dyn Host, _: &State, _: Draw) {}
-            fn dispatch(&mut self, _: &dyn Host, _: &State, _: [u32; 3]) {}
+            fn dispatch(&mut self, _: &dyn Host, _: &State, _: crate::Dispatch) {}
             fn sync(&mut self) {}
             fn frame_done(&mut self, _: Option<u64>) {}
             fn write_memory(&mut self, host: &dyn Host, w: &crate::MemoryWrite) -> bool {
