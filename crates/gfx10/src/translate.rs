@@ -259,6 +259,34 @@ pub fn program(code: &[u32]) -> Result<Vec<(usize, Inst)>, TranslateError> {
     }
 }
 
+/// The loops of a program as `(first, last)` block leaders: each backward
+/// branch's target and the last block that branches back to it. `None`
+/// when two of them overlap without nesting.
+fn loop_regions(insts: &[(usize, Inst)], leaders: &BTreeSet<usize>) -> Option<Vec<(usize, usize)>> {
+    let mut ends: BTreeMap<usize, usize> = BTreeMap::new();
+    for (pc, inst) in insts {
+        if let Some(t) = branch_target(*pc, inst)
+            && t <= *pc
+        {
+            let block = *leaders.range(..=*pc).next_back()?;
+            let end = ends.entry(t).or_insert(block);
+            *end = (*end).max(block);
+        }
+    }
+    let loops: Vec<(usize, usize)> = ends.into_iter().collect();
+    for (i, a) in loops.iter().enumerate() {
+        if !leaders.contains(&a.0) {
+            return None;
+        }
+        for b in &loops[i + 1..] {
+            if b.0 <= a.1 && b.1 > a.1 {
+                return None;
+            }
+        }
+    }
+    Some(loops)
+}
+
 fn branch_target(pc: usize, inst: &Inst) -> Option<usize> {
     let name = inst.op.name;
     match inst.kind {
@@ -333,6 +361,13 @@ struct Tx<'a> {
     /// A compute program with backward branches (see [`Translated::loop_guard`]).
     guarded: bool,
     body: String,
+    /// The condition of the `exec` guard still open at the end of `body`.
+    open_guard: Option<String>,
+    /// Blocks are guarded by `pc` in address order, with a loop around
+    /// each backward branch's range, instead of a `switch` in one loop.
+    regions: bool,
+    /// The current block ended with a branch, which set `pc`.
+    block_ended: bool,
     regs: BTreeSet<String>,
     /// SGPRs each instruction writes, by dword offset.
     writes: BTreeMap<usize, BTreeSet<u16>>,
@@ -410,6 +445,9 @@ impl<'a> Tx<'a> {
             has_barrier: false,
             guarded: false,
             body: String::new(),
+            open_guard: None,
+            regions: false,
+            block_ended: false,
             regs: BTreeSet::new(),
             writes: BTreeMap::new(),
             pc: 0,
@@ -436,6 +474,9 @@ impl<'a> Tx<'a> {
     }
 
     fn line(&mut self, s: &str) {
+        if !s.starts_with("//") {
+            self.close_guard();
+        }
         self.body.push_str("        ");
         self.body.push_str(s);
         self.body.push('\n');
@@ -569,6 +610,9 @@ impl<'a> Tx<'a> {
             }
         }
         let structured = leaders.len() > 1;
+        let loops = loop_regions(&self.insts, &leaders);
+        self.regions = structured && loops.is_some();
+        let loops = loops.unwrap_or_default();
         self.has_barrier = self.insts.iter().any(|(_, i)| i.op.name == "s_barrier");
         self.guarded = self.req.stage == Stage::Compute
             && self
@@ -576,8 +620,33 @@ impl<'a> Tx<'a> {
                 .iter()
                 .any(|(pc, i)| branch_target(*pc, i).is_some_and(|t| t <= *pc));
         let insts = std::mem::take(&mut self.insts);
+        let ret = if self.req.stage == Stage::Compute {
+            "return;"
+        } else {
+            "return o;"
+        };
+        let mut block = None;
         for (pc, inst) in &insts {
-            if structured && leaders.contains(pc) {
+            if self.regions && leaders.contains(pc) {
+                self.close_guard();
+                if let Some(prev) = block {
+                    if !self.block_ended {
+                        self.line(&format!("pc = {pc};"));
+                    }
+                    self.body.push_str("    }\n");
+                    for &(start, _) in loops.iter().rev().filter(|l| l.1 == prev) {
+                        self.body
+                            .push_str(&format!("    if (pc != {start}u) break; }}\n"));
+                    }
+                }
+                for _ in loops.iter().filter(|l| l.0 == *pc) {
+                    self.body.push_str("    for (;;) {\n");
+                }
+                self.body.push_str(&format!("    if (pc == {pc}u) {{\n"));
+                block = Some(*pc);
+                self.block_ended = false;
+            } else if structured && !self.regions && leaders.contains(pc) {
+                self.close_guard();
                 self.body.push_str(&format!("    case {pc}:\n"));
             }
             self.pc = *pc;
@@ -585,8 +654,20 @@ impl<'a> Tx<'a> {
             self.line(&format!("// {text}"));
             self.inst(*pc, inst)?;
         }
+        self.close_guard();
         self.insts = insts;
-        if structured {
+        if self.regions {
+            self.body = format!(
+                "    uint pc = 0;\n    uint back = 0;\n{}    }}\n{}    {ret}\n",
+                self.body,
+                loops
+                    .iter()
+                    .rev()
+                    .filter(|l| Some(l.1) == block)
+                    .map(|l| format!("    if (pc != {}u) break; }}\n", l.0))
+                    .collect::<String>()
+            );
+        } else if structured {
             self.body = format!(
                 "    uint pc = 0;\n    uint back = 0;\n    for (;;) {{\n    switch (pc) {{\n{}    default: {}\n    }}\n    }}\n",
                 self.body,
@@ -685,7 +766,12 @@ impl<'a> Tx<'a> {
             "s_branch" => {
                 let t = branch_target(pc, inst).unwrap();
                 let guard = self.loop_guard(pc, t);
-                self.line(&format!("{guard}pc = {t}; continue;"));
+                if self.regions {
+                    self.line(&format!("{guard}pc = {t};"));
+                    self.block_ended = true;
+                } else {
+                    self.line(&format!("{guard}pc = {t}; continue;"));
+                }
             }
             n if n.starts_with("s_cbranch") => {
                 let t = branch_target(pc, inst).unwrap();
@@ -716,7 +802,15 @@ impl<'a> Tx<'a> {
                     self.regs.insert("scc".into());
                 }
                 let guard = self.loop_guard(pc, t);
-                self.line(&format!("if ({cond}) {{ {guard}pc = {t}; continue; }}"));
+                if self.regions {
+                    let next = pc + 1;
+                    self.line(&format!(
+                        "if ({cond}) {{ {guard}pc = {t}; }} else {{ pc = {next}; }}"
+                    ));
+                    self.block_ended = true;
+                } else {
+                    self.line(&format!("if ({cond}) {{ {guard}pc = {t}; continue; }}"));
+                }
             }
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         }
@@ -1128,10 +1222,27 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
+    // Consecutive guarded statements share one `if`: a branch per
+    // instruction made Metal's compiler several times slower.
     fn guard(&mut self, stmt: &str) {
         let e = self.s(126);
         let extra = if self.dpp_lane_off { " && dpp_on" } else { "" };
-        self.line(&format!("if (({e} & 1u) != 0u{extra}) {{ {stmt} }}"));
+        let cond = format!("({e} & 1u) != 0u{extra}");
+        if self.open_guard.as_ref() != Some(&cond) {
+            self.close_guard();
+            self.body.push_str(&format!("        if ({cond}) {{\n"));
+            self.open_guard = Some(cond);
+        }
+        self.body.push_str(&format!("        {{ {stmt} }}\n"));
+        if stmt.contains(&format!("{e} =")) || stmt.contains("dpp_on =") {
+            self.close_guard();
+        }
+    }
+
+    fn close_guard(&mut self) {
+        if self.open_guard.take().is_some() {
+            self.body.push_str("        }\n");
+        }
     }
 
     // Source `i` of a VALU instruction as a `float` expression, with its modifiers.

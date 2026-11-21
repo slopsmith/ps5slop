@@ -820,8 +820,9 @@ fn pixel_loops_give_up_after_too_many_branches_back() {
     let t = pixel(&code, 2);
     let limit = gfx10::translate::MAX_BACK_BRANCHES;
     assert!(t.msl.contains(&format!(
-        "if (++back > {limit}u) {{ discard_fragment(); return o; }} pc = 0; continue;"
+        "if (++back > {limit}u) {{ discard_fragment(); return o; }} pc = 0; }}"
     )));
+    assert!(t.msl.contains("for (;;) {") && t.msl.contains("if (pc != 0u) break; }"));
     compile(&t.msl);
 }
 
@@ -836,7 +837,7 @@ fn compute_loops_give_up_alone_or_together_at_a_barrier() {
     assert!(t.loop_guard);
     assert!(
         t.msl
-            .contains("if (guard_stop(guard, ++back)) { return; } pc = 0; continue;")
+            .contains("if (guard_stop(guard, ++back)) { return; } pc = 0; }")
     );
     assert!(t.msl.contains("device atomic_uint* guard [[buffer(25)]]"));
     compile(&t.msl);
