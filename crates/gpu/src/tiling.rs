@@ -9,6 +9,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TileMode {
     Linear,
+    /// `SW_256B_S`: 256-byte blocks, the first 256 bytes of a `SW_4KB_S` block.
+    Standard256,
     /// `SW_4KB_S`: 4 KiB standard blocks, the first 4 KiB of a `SW_64KB_S` block.
     Standard4K,
     /// `SW_64KB_S`: 64 KiB standard blocks.
@@ -21,6 +23,7 @@ impl TileMode {
     pub fn from_bits(mode: u32) -> Option<Self> {
         match mode {
             0 => Some(Self::Linear),
+            0x01 => Some(Self::Standard256),
             0x05 => Some(Self::Standard4K),
             0x09 => Some(Self::Standard64K),
             0x1B => Some(Self::RenderTarget),
@@ -386,6 +389,10 @@ impl Layout {
     fn block(mode: TileMode, bpe: u32) -> (u32, u32) {
         match mode {
             TileMode::Linear => ((256 / bpe).max(1), 1),
+            TileMode::Standard256 => {
+                let (w, h) = BLOCK_64K[bpe.trailing_zeros() as usize];
+                (1 << (w - 4), 1 << (h - 4))
+            }
             TileMode::Standard4K => {
                 let (w, h) = BLOCK_64K[bpe.trailing_zeros() as usize];
                 (1 << (w - 2), 1 << (h - 2))
@@ -401,7 +408,7 @@ impl Layout {
         let i = self.bpe.trailing_zeros() as usize;
         match self.mode {
             TileMode::Linear => &[],
-            TileMode::Standard4K => STANDARD_4K[i],
+            TileMode::Standard256 | TileMode::Standard4K => STANDARD_4K[i],
             TileMode::Standard64K => STANDARD_64K[i],
             TileMode::RenderTarget => RENDER_TARGET[i],
         }
@@ -446,10 +453,11 @@ impl Layout {
         }
         let (bw, bh) = Self::block(self.mode, self.bpe);
         let i = self.bpe.trailing_zeros() as usize;
-        let tail: &[(u32, u32)] = if self.mode == TileMode::Standard4K {
-            &TAIL_4K[i]
-        } else {
-            &TAIL_64K[i]
+        // 256-byte blocks have no mip tail.
+        let tail: &[(u32, u32)] = match self.mode {
+            TileMode::Standard256 => &[],
+            TileMode::Standard4K => &TAIL_4K[i],
+            _ => &TAIL_64K[i],
         };
         let (w0, h0) = (self.width, self.height);
         let first_tail = (0..levels)
@@ -523,14 +531,14 @@ impl Layout {
             let c = if axis == 0 { ex } else { ey };
             inner ^= c.wrapping_shl(shift as u32) & mask;
         }
-        block * self.block_bytes() + inner as u64
+        block * self.block_bytes() + (inner as u64 & (self.block_bytes() - 1))
     }
 
     pub fn block_bytes(&self) -> u64 {
-        if self.mode == TileMode::Standard4K {
-            0x1000
-        } else {
-            0x10000
+        match self.mode {
+            TileMode::Standard256 => 0x100,
+            TileMode::Standard4K => 0x1000,
+            _ => 0x10000,
         }
     }
 
@@ -551,7 +559,11 @@ impl Layout {
             let c = if axis == 0 { "x" } else { "y" };
             s += &format!("    inner ^= ({c} << {shift}) & {mask:#x}u;\n");
         }
-        s += &format!("    return block * {}ul + inner;\n}}\n", self.block_bytes());
+        s += &format!(
+            "    return block * {}ul + (inner & {:#x}u);\n}}\n",
+            self.block_bytes(),
+            self.block_bytes() - 1
+        );
         s
     }
 }
@@ -608,6 +620,7 @@ mod tests {
     #[test]
     fn every_block_offset_is_used_once() {
         for mode in [
+            TileMode::Standard256,
             TileMode::Standard4K,
             TileMode::Standard64K,
             TileMode::RenderTarget,
@@ -669,6 +682,35 @@ mod tests {
                 .offset(x + m.layout.width - 1, y + m.layout.height - 1);
             assert!(last < l.block_bytes(), "{m:?}");
         }
+    }
+
+    #[test]
+    fn standard_256_is_the_start_of_standard_4k() {
+        for bpe in [1, 2, 4, 8, 16] {
+            let small = Layout::new(TileMode::Standard256, bpe, 64, 64).unwrap();
+            let big = Layout::new(TileMode::Standard4K, bpe, 64, 64).unwrap();
+            let (bw, bh) = Layout::block(TileMode::Standard256, bpe);
+            assert_eq!(bw * bh * bpe, 256);
+            for ey in 0..bh {
+                for ex in 0..bw {
+                    assert_eq!(small.offset(ex, ey), big.offset(ex, ey));
+                }
+            }
+            assert_eq!(small.offset(bw, 0), 0x100);
+        }
+    }
+
+    #[test]
+    fn standard_256_chains_have_no_tail() {
+        // A 64x64 BC1 texture with 5 levels: 16x16 blocks of 8 bytes, 8x4 per 256-byte block.
+        let l = Layout::new(TileMode::Standard256, 8, 16, 16).unwrap();
+        let mips = l.mips(5, (64, 64), 4);
+        assert_eq!(mips[4].offset, 0);
+        assert_eq!(mips[3].offset, 0x100);
+        assert_eq!(mips[2].offset, 0x200);
+        assert_eq!(mips[1].offset, 0x300);
+        assert_eq!(mips[0].offset, 0x300 + 8 * 8 * 8);
+        assert!(mips.iter().all(|m| m.origin == (0, 0)));
     }
 
     #[test]

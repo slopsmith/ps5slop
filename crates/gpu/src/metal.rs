@@ -318,8 +318,8 @@ const IMAGE_LIFETIME: u64 = 300;
 /// Guest memory is wrapped in windows of about this size.
 const WINDOW: u64 = 64 << 20;
 const PAGE: u64 = 0x4000;
-/// Draws whose shaders failed are reported this many times.
-const REPORTS: u32 = 24;
+/// How many different problems are reported; repeats are not printed.
+const REPORTS: usize = 64;
 /// Time per frame draws to redrawn targets may wait for their pipelines
 /// before they are skipped.
 const COMPILE_BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
@@ -505,7 +505,10 @@ pub struct Metal {
     /// Draws and dispatches that waited for a pipeline: how many, and how long.
     compile_waits: [(u64, std::time::Duration); 2],
     samplers: HashMap<Sampler, Retained<ProtocolObject<dyn MTLSamplerState>>>,
-    reports: u32,
+    reports: std::collections::HashSet<String>,
+    /// Images no texture could be made for: (read as, access, T# type,
+    /// swizzle mode, format) and how often.
+    image_misses: HashMap<(TextureKind, &'static str, u32, u32, u32), u64>,
     null: HashMap<TextureKind, Retained<Texture>>,
     pub draws: u64,
     pub dispatches: u64,
@@ -723,7 +726,8 @@ impl Metal {
             compile_budget: COMPILE_BUDGET,
             compile_waits: Default::default(),
             samplers: HashMap::new(),
-            reports: 0,
+            reports: std::collections::HashSet::new(),
+            image_misses: HashMap::new(),
             null: HashMap::new(),
             draws: 0,
             dispatches: 0,
@@ -755,8 +759,7 @@ impl Metal {
     }
 
     fn report(&mut self, what: String) {
-        if self.reports < REPORTS {
-            self.reports += 1;
+        if self.reports.len() < REPORTS && self.reports.insert(what.clone()) {
             eprintln!("ps5slop: GPU: {what}");
         }
     }
@@ -1637,13 +1640,20 @@ impl Metal {
                 return Some(v);
             }
         }
-        if image.tile.is_none() && is_depth_layout(image.raw_tile) && kind == TextureKind::Tex2d {
+        if image.tile.is_none() && is_depth_layout(image.raw_tile) && kind != TextureKind::Tex3d {
             return self.blank_texture(image, kind, format);
         }
         if kind == TextureKind::Tex3d
             && let Some(t) = self.standard_volume(host, image, format, bpe)
         {
             return Some(t);
+        }
+        if kind == TextureKind::Tex3d
+            && image.kind == 10
+            && image.tile == Some(TileMode::Linear)
+            && !is_compressed(format)
+        {
+            return self.linear_volume(host, image, format, bpe);
         }
         let slices = match kind {
             TextureKind::Tex2d => 1,
@@ -1818,6 +1828,76 @@ impl Metal {
         self.images
             .insert((image, TextureKind::Tex3d), (self.epoch, volume.clone()));
         Some(volume)
+    }
+
+    /// A linear 3D image, level 0, copied from guest memory once a frame.
+    /// Rows are padded to 256 bytes and slices follow each other unpadded,
+    /// as for linear 2D surfaces (assumed, not checked against a console).
+    fn linear_volume(
+        &mut self,
+        host: &dyn Host,
+        image: Image,
+        format: MTLPixelFormat,
+        bpe: u32,
+    ) -> Option<Retained<Texture>> {
+        if let Some((epoch, tex)) = self.images.get(&(image, TextureKind::Tex3d))
+            && *epoch == self.epoch
+        {
+            return Some(tex.clone());
+        }
+        let layout = Layout::new(TileMode::Linear, bpe, image.width, image.height)?;
+        let row = (layout.pitch * bpe) as usize;
+        let slice = layout.size() as usize;
+        let len = slice * image.depth as usize;
+        let (buffer, offset) = self.window(host, image.address, len as u64)?;
+        let tex = match self.images.get(&(image, TextureKind::Tex3d)) {
+            Some((_, t)) => t.clone(),
+            None => {
+                if trace_targets() {
+                    eprintln!(
+                        "ps5slop: targets: frame {} linear volume {:#x} {}x{}x{} from guest memory",
+                        self.epoch, image.address, image.width, image.height, image.depth
+                    );
+                }
+                let desc = MTLTextureDescriptor::new();
+                desc.setPixelFormat(format);
+                desc.setTextureType(MTLTextureType::Type3D);
+                unsafe {
+                    desc.setWidth(image.width as usize);
+                    desc.setHeight(image.height as usize);
+                    desc.setDepth(image.depth as usize);
+                }
+                desc.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::PixelFormatView);
+                desc.setStorageMode(MTLStorageMode::Private);
+                self.device.newTextureWithDescriptor(&desc)?
+            }
+        };
+        self.end_pass();
+        let command = self.command();
+        let blit = command.blitCommandEncoder()?;
+        unsafe {
+            blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
+                &buffer,
+                offset,
+                row,
+                slice,
+                MTLSize {
+                    width: image.width as usize,
+                    height: image.height as usize,
+                    depth: image.depth as usize,
+                },
+                &tex,
+                0,
+                0,
+                MTLOrigin { x: 0, y: 0, z: 0 },
+            );
+        }
+        blit.endEncoding();
+        self.note(|| format!("      {:#x} a linear 3D image", image.address));
+        self.images
+            .insert((image, TextureKind::Tex3d), (self.epoch, tex.clone()));
+        record(image.address | 1, &tex, false);
+        Some(tex)
     }
 
     /// A 3D image of one-byte texels in `SW_4KB_S` that fits one 4 KiB
@@ -2938,6 +3018,7 @@ impl Metal {
             blit.endEncoding();
         }
         self.depths.insert(d.address, t.clone());
+        self.blank.retain(|(i, _), _| i.address != d.address);
         record(d.address | 4, &t, true);
         Some((t, format, kept.is_none()))
     }
@@ -3367,7 +3448,8 @@ impl Metal {
         Some(t)
     }
 
-    /// A zero-filled texture shaped like `image`, cached.
+    /// A zero-filled 2D, 2D-array or cube texture shaped like `image`,
+    /// cached until a depth target is made at its address.
     fn blank_texture(
         &mut self,
         image: Image,
@@ -3377,33 +3459,49 @@ impl Metal {
         if let Some(t) = self.blank.get(&(image, kind)) {
             return Some(t.clone());
         }
-        let desc = unsafe {
-            MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
-                format,
-                image.width as usize,
-                image.height as usize,
-                false,
-            )
+        let slices = match kind {
+            TextureKind::Tex2d => 1,
+            TextureKind::Tex2dArray => image.depth.max(1) as usize,
+            TextureKind::Cube => 6,
+            TextureKind::Tex3d => return None,
         };
+        let desc = MTLTextureDescriptor::new();
+        desc.setPixelFormat(format);
+        unsafe {
+            desc.setWidth(image.width as usize);
+            desc.setHeight(image.height as usize);
+            match kind {
+                TextureKind::Cube => desc.setTextureType(MTLTextureType::TypeCube),
+                TextureKind::Tex2dArray => {
+                    desc.setTextureType(MTLTextureType::Type2DArray);
+                    desc.setArrayLength(slices);
+                }
+                _ => desc.setTextureType(MTLTextureType::Type2D),
+            }
+        }
         desc.setUsage(MTLTextureUsage::ShaderRead);
         desc.setStorageMode(MTLStorageMode::Shared);
         let t = self.device.newTextureWithDescriptor(&desc)?;
         let row = image.width as usize * texel_bytes(format)?;
         let zero = vec![0u8; row * image.height as usize];
-        unsafe {
-            t.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
-                MTLRegion {
-                    origin: MTLOrigin { x: 0, y: 0, z: 0 },
-                    size: MTLSize {
-                        width: image.width as usize,
-                        height: image.height as usize,
-                        depth: 1,
+        for slice in 0..slices {
+            unsafe {
+                t.replaceRegion_mipmapLevel_slice_withBytes_bytesPerRow_bytesPerImage(
+                    MTLRegion {
+                        origin: MTLOrigin { x: 0, y: 0, z: 0 },
+                        size: MTLSize {
+                            width: image.width as usize,
+                            height: image.height as usize,
+                            depth: 1,
+                        },
                     },
-                },
-                0,
-                NonNull::new(zero.as_ptr() as *mut u8)?.cast(),
-                row,
-            );
+                    0,
+                    slice,
+                    NonNull::new(zero.as_ptr() as *mut u8)?.cast(),
+                    row,
+                    zero.len(),
+                );
+            }
         }
         self.blank.insert((image, kind), t.clone());
         Some(t)
@@ -3620,6 +3718,16 @@ impl Metal {
                             .and_then(|t| self.swizzled(t, image.swizzle))
                     };
                     let Some(tex) = tex else {
+                        let how = match access {
+                            Access::Sample => "sample",
+                            Access::Write => "write",
+                            Access::ReadWrite => "read-write",
+                            Access::Atomic => "atomic",
+                        };
+                        *self
+                            .image_misses
+                            .entry((kind, how, image.kind, image.raw_tile, image.format))
+                            .or_default() += 1;
                         self.report(format!(
                             "image {image:x?} for the program at {:#x} not supported",
                             program.address
@@ -4807,8 +4915,15 @@ impl Backend for Metal {
         let mib = |t: &Retained<Texture>| MTLAllocation::allocatedSize(&**t) as u64;
         let image_bytes: u64 = self.images.values().map(|(_, t)| mib(t)).sum();
         let target_bytes: u64 = self.targets.values().map(|t| mib(&t.texture)).sum();
+        let mut misses: Vec<_> = self.image_misses.iter().collect();
+        misses.sort_by(|a, b| b.1.cmp(a.1));
+        let misses = if misses.is_empty() {
+            String::new()
+        } else {
+            format!(", images not supported {misses:x?}")
+        };
         format!(
-            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} writes in GPU order, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms); waits to read memory programs wrote {:?}, {} HTILE checks on the GPU",
+            "{} drawn, {} dispatched, {} skipped {reasons:?}{misses}, {} writes in GPU order, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms); waits to read memory programs wrote {:?}, {} HTILE checks on the GPU",
             self.draws,
             self.dispatches,
             self.skipped,
@@ -4974,7 +5089,7 @@ fn log_compile(
 
 /// Reports a failure from the compile threads, the first [`REPORTS`] times.
 fn late_report(what: String) {
-    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < REPORTS {
         eprintln!("ps5slop: GPU: {what}");
     }

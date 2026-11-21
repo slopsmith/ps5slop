@@ -2907,7 +2907,12 @@ impl<'a> Tx<'a> {
             5 => TextureKind::Tex2dArray,
             2 => TextureKind::Tex3d,
             3 => TextureKind::Cube,
-            _ => return Err(err(pc, "unsupported image dimension")),
+            d => {
+                return Err(err(
+                    pc,
+                    format!("unsupported image dimension {d} in {name}"),
+                ));
+            }
         };
         let n = mimg_addr_count(name, m.dim, m.a16) as usize;
         let addr_regs: Vec<u16> = (0..n)
