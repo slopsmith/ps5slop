@@ -766,7 +766,17 @@ impl Metal {
     }
 
     fn compile(&mut self, msl: &str, entry: &str) -> Option<Retained<Function>> {
-        match self.device.newLibraryWithSource_options_error(&NSString::from_str(msl), None) {
+        let t = crate::timing::start();
+        let unique;
+        let msl = if std::env::var_os("PS5SLOP_MSL_UNIQUE").is_some() {
+            unique = format!("{msl}\n// {:?}\n", std::time::SystemTime::now());
+            unique.as_str()
+        } else {
+            msl
+        };
+        let lib = self.device.newLibraryWithSource_options_error(&NSString::from_str(msl), None);
+        crate::timing::add(crate::timing::Part::Compile, t);
+        match lib {
             Ok(lib) => lib.newFunctionWithName(&NSString::from_str(entry)),
             Err(e) => {
                 self.report(format!("MSL did not compile: {}", e.localizedDescription()));
@@ -1564,7 +1574,10 @@ impl Metal {
                 desc.setStencilAttachmentPixelFormat(MTLPixelFormat(key.depth));
             }
         }
-        let pipeline = match self.device.newRenderPipelineStateWithDescriptor_error(&desc) {
+        let t = crate::timing::start();
+        let made = self.device.newRenderPipelineStateWithDescriptor_error(&desc);
+        crate::timing::add(crate::timing::Part::Compile, t);
+        let pipeline = match made {
             Ok(p) => Some(p),
             Err(e) => {
                 self.report(format!("render pipeline failed: {}", e.localizedDescription()));
@@ -2221,7 +2234,9 @@ impl Metal {
         let pipeline = match self.computes.get(&id) {
             Some(p) => p.clone(),
             None => {
+                let t = crate::timing::start();
                 let p = self.device.newComputePipelineStateWithFunction_error(&program.function).ok();
+                crate::timing::add(crate::timing::Part::Compile, t);
                 self.computes.insert(id, p.clone());
                 p
             }
