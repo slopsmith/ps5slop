@@ -161,6 +161,9 @@ pub struct Translated {
     pub guest_memory: bool,
     /// The program also writes guest memory (buffer stores and atomics).
     pub writes_memory: bool,
+    /// The V#s every buffer store and atomic goes through, with whether the
+    /// access is indexed; `None` when one of them is not known.
+    pub store_buffers: Option<Vec<(Source, bool)>>,
     /// Compute stage: bytes of threadgroup memory (LDS) the kernel declares.
     pub lds_bytes: u32,
     /// The program uses the global data share, bound at `[[buffer(27)]]`.
@@ -344,6 +347,8 @@ struct Tx<'a> {
     depth: bool,
     mem: bool,
     mem_write: bool,
+    /// See [`Translated::store_buffers`].
+    stores: Option<Vec<(Source, bool)>>,
     lds: bool,
     gds: bool,
     /// The entry point declares `qlane`, the thread's lane in its quad.
@@ -415,6 +420,7 @@ impl<'a> Tx<'a> {
             depth: false,
             mem: false,
             mem_write: false,
+            stores: Some(Vec::new()),
             lds: false,
             gds: false,
             quad_lane: false,
@@ -2181,6 +2187,7 @@ impl<'a> Tx<'a> {
         let vd = b.vdata as u16;
         if let Some(op) = name.strip_prefix("buffer_atomic_") {
             self.mem_write = true;
+            self.note_store(pc, r, b.idxen);
             let data = self.v(vd);
             let call = match op {
                 "add" | "sub" | "and" | "or" | "xor" | "umin" | "umax" | "smin" | "smax"
@@ -2212,6 +2219,7 @@ impl<'a> Tx<'a> {
         };
         if let Some((n, width)) = store {
             self.mem_write = true;
+            self.note_store(pc, r, b.idxen);
             let mut s = format!("long o = buffer_offset({args}); if (o != OOB_OFF) {{");
             for i in 0..n {
                 let v = self.v(vd + i);
@@ -2234,6 +2242,7 @@ impl<'a> Tx<'a> {
         };
         if let Some(n) = store_format {
             self.mem_write = true;
+            self.note_store(pc, r, b.idxen);
             let vals: Vec<String> = (0..4)
                 .map(|i| if i < n { self.v(vd + i) } else { "0u".into() })
                 .collect();
@@ -2476,6 +2485,19 @@ impl<'a> Tx<'a> {
         };
         self.guard(&stmt);
         Ok(())
+    }
+
+    /// Records the V# at `srsrc` that a buffer store or atomic at `pc` uses.
+    fn note_store(&mut self, pc: usize, srsrc: u16, indexed: bool) {
+        let source = self.descriptor_source(pc, srsrc, 4).ok();
+        match (source, &mut self.stores) {
+            (Some(s), Some(list)) => {
+                if !list.contains(&(s.clone(), indexed)) {
+                    list.push((s, indexed));
+                }
+            }
+            _ => self.stores = None,
+        }
     }
 
     fn descriptor_source(&self, pc: usize, first: u16, n: u16) -> Result<Source, TranslateError> {
@@ -3104,6 +3126,7 @@ impl<'a> Tx<'a> {
             writes_depth: self.depth,
             guest_memory: self.mem,
             writes_memory: self.mem_write,
+            store_buffers: self.stores.take(),
             lds_bytes: if self.lds { self.lds_bytes() } else { 0 },
             gds: self.gds,
             loop_guard: self.guarded,

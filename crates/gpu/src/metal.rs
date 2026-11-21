@@ -390,8 +390,11 @@ pub struct Metal {
     /// Keeps the guest memory windows resident between command buffers.
     resident: Option<Retained<ProtocolObject<dyn MTLResidencySet>>>,
     command: Option<Retained<CommandBuffer>>,
-    /// Committed command buffers not waited for yet, with their commit time.
-    inflight: Vec<(Retained<CommandBuffer>, f64)>,
+    /// Committed command buffers not waited for yet, with their commit time
+    /// and the number of the commit that sent them.
+    inflight: Vec<(Retained<CommandBuffer>, f64, u64)>,
+    /// Commits so far, for [`Backend::commit_point`].
+    commits: u64,
     /// Texture uploads for the work in `command`, committed just before it
     /// so they do not split its render passes.
     upload: Option<Retained<CommandBuffer>>,
@@ -415,9 +418,11 @@ pub struct Metal {
     area: Option<Window>,
     /// The command buffer last reported as stuck, so each is reported once.
     reported_stuck: Option<usize>,
-    /// Work encoded since the last wait writes guest memory, so the CPU must
-    /// wait for it before reading guest memory for later work (see `settle`).
-    wrote_memory: bool,
+    /// Guest memory that work encoded since the last wait may write, so the
+    /// CPU must wait for it before reading there (see `settle_for`).
+    written: Written,
+    /// Waits [`Metal::settle_for`] made.
+    settles: u64,
     /// The uncommitted main command buffer holds work that writes guest
     /// memory, so detiles from guest memory must run after it, not before.
     pending_writes: bool,
@@ -631,6 +636,7 @@ impl Metal {
             resident,
             command: None,
             inflight: Vec::new(),
+            commits: 0,
             upload: None,
             replaced_mark: 0,
             pass: None,
@@ -644,7 +650,8 @@ impl Metal {
             windows: Vec::new(),
             area: None,
             reported_stuck: None,
-            wrote_memory: false,
+            written: Written::Nothing,
+            settles: 0,
             pending_writes: false,
             failed_commands: 0,
             guard: None,
@@ -2406,7 +2413,7 @@ impl Metal {
         let slice_bytes =
             (w.div_ceil(8) as u64 * h.div_ceil(8) as u64 * 4).next_multiple_of(64 << 10);
         let at = base + d.slice as u64 * slice_bytes;
-        self.settle();
+        self.settle_for(at, 4);
         let mut word = [0u8; 4];
         if !host.read(at, &mut word) || u32::from_le_bytes(word) & 0xF != 0 {
             return false;
@@ -2426,7 +2433,7 @@ impl Metal {
     fn fast_clear(&mut self, host: &dyn Host, t: &ColorTarget, tex: &Texture) {
         let mut word = [0u8; 4];
         if let Some((cmask, words)) = t.fast_clear {
-            self.settle();
+            self.settle_for(cmask, 4);
             if host.read(cmask, &mut word) && u32::from_le_bytes(word) & 0xF == 0 {
                 host.write(cmask, &(u32::from_le_bytes(word) | 0xF).to_le_bytes());
                 self.fill_raw(t, tex, words);
@@ -2439,7 +2446,7 @@ impl Metal {
             }
         }
         if let Some(dcc) = t.dcc {
-            self.settle();
+            self.settle_for(dcc, 4);
             if !host.read(dcc, &mut word) {
                 return;
             }
@@ -3158,12 +3165,39 @@ impl Metal {
         }
     }
 
-    // Before the CPU reads guest memory: waits for encoded work that wrote it.
-    fn settle(&mut self) {
-        if self.wrote_memory {
-            self.wrote_memory = false;
+    /// Before the CPU reads `len` bytes of guest memory at `at`: waits for
+    /// encoded work that may write there.
+    fn settle_for(&mut self, at: u64, len: u64) {
+        if self.written.covers(at, len) {
+            self.settles += 1;
             self.flush_and_wait();
         }
+    }
+
+    /// Adds what a program encoded with user data `user` may write to `written`.
+    fn note_writes(&mut self, host: &dyn Host, program: &gfx10::Translated, user: &[u32]) {
+        if !program.writes_memory || matches!(self.written, Written::Anything) {
+            return;
+        }
+        let ranges: Option<Vec<(u64, u64)>> = program.store_buffers.as_ref().and_then(|list| {
+            list.iter()
+                .map(|(source, indexed)| {
+                    let v = self.descriptor(host, user, source, 4)?;
+                    Some(buffer_range(&v, *indexed))
+                })
+                .collect()
+        });
+        self.written = match (
+            std::mem::replace(&mut self.written, Written::Anything),
+            ranges,
+        ) {
+            (Written::Nothing, Some(r)) => Written::Ranges(r),
+            (Written::Ranges(mut old), Some(r)) if old.len() + r.len() <= MAX_WRITTEN_RANGES => {
+                old.extend(r);
+                Written::Ranges(old)
+            }
+            _ => Written::Anything,
+        };
     }
 
     /// The resources `program` binds, made ready before any encoder opens
@@ -3499,7 +3533,7 @@ impl Metal {
                     depth: threads[2],
                 },
             );
-            self.wrote_memory |= program.translated.writes_memory;
+            self.note_writes(host, &program.translated, user);
             self.pending_writes |= program.translated.writes_memory;
         }
         if memory
@@ -3777,7 +3811,7 @@ impl Metal {
                     self.window(host, address, len).ok_or("index buffer")?
                 } else {
                     // Metal needs index buffer offsets to be multiples of 4.
-                    self.settle();
+                    self.settle_for(address, len);
                     let (_, hi) = host.extent(address).ok_or("index buffer")?;
                     let src = host.host_pointer(address).ok_or("index buffer")?;
                     let n = (len as usize).min((hi - address) as usize);
@@ -3909,7 +3943,8 @@ impl Metal {
             }
         }
         self.pass_memory |= vertex.translated.writes_memory || pixel.translated.writes_memory;
-        self.wrote_memory |= vertex.translated.writes_memory || pixel.translated.writes_memory;
+        self.note_writes(host, &vertex.translated, vs_data);
+        self.note_writes(host, &pixel.translated, ps_data);
         self.pending_writes |= vertex.translated.writes_memory || pixel.translated.writes_memory;
         Ok(())
     }
@@ -3976,22 +4011,22 @@ impl Metal {
     fn commit(&mut self) {
         self.end_pass();
         let now = crate::timing::host_seconds();
+        self.commits += 1;
         if let Some(cb) = self.upload.take() {
             cb.commit();
-            self.inflight.push((cb, now));
+            self.inflight.push((cb, now, self.commits));
         }
         self.pending_writes = false;
         if let Some(cb) = self.command.take() {
             cb.commit();
-            self.inflight.push((cb, now));
+            self.inflight.push((cb, now, self.commits));
         }
         if self.inflight.len() > 32 {
-            self.inflight
-                .retain(|(cb, _)| cb.status() != MTLCommandBufferStatus::Completed);
+            self.retire_completed();
             if self.inflight.len() > 48 {
                 wait_reporting_hangs(&self.inflight[0].0);
             }
-            if let Some((cb, at)) = self.inflight.first()
+            if let Some((cb, at, _)) = self.inflight.first()
                 && now - at > 2.0
                 && self.reported_stuck != Some(Retained::as_ptr(cb) as usize)
             {
@@ -4007,36 +4042,99 @@ impl Metal {
 
     fn flush_and_wait(&mut self) {
         self.commit();
-        for (cb, committed) in std::mem::take(&mut self.inflight) {
+        self.written = Written::Nothing;
+        for (cb, committed, _) in std::mem::take(&mut self.inflight) {
             wait_reporting_hangs(&cb);
-            let woken = crate::timing::host_seconds();
-            let ns = |s: f64| (s.max(0.0) * 1e9) as u64;
-            crate::timing::add_raw(
-                crate::timing::Part::Submission,
-                ns(cb.kernelStartTime() - committed),
-            );
-            crate::timing::add_raw(crate::timing::Part::WakeUp, ns(woken - cb.GPUEndTime()));
-            if let Some(e) = cb.error() {
-                self.failed_commands += 1;
-                if self.failed_commands <= 8 {
-                    eprintln!(
-                        "ps5slop: GPU: command buffer failed: {}",
-                        e.localizedDescription()
-                    );
-                    report_encoders(&e);
-                }
-            }
-            let busy = cb.GPUEndTime() - cb.GPUStartTime();
-            let scheduled = cb.GPUStartTime() - cb.kernelStartTime();
-            crate::timing::add_raw(
-                crate::timing::Part::Scheduling,
-                (scheduled.max(0.0) * 1e9) as u64,
-            );
-            crate::timing::add_raw(crate::timing::Part::GpuBusy, (busy * 1e9) as u64);
-            crate::timing::add_raw(crate::timing::Part::Syncs, 1_000_000);
+            self.account(&cb, committed, true);
         }
         self.check_guards();
     }
+
+    /// Drops the command buffers that have finished from `inflight`.
+    fn retire_completed(&mut self) {
+        let mut i = 0;
+        while i < self.inflight.len() {
+            if matches!(
+                self.inflight[i].0.status(),
+                MTLCommandBufferStatus::Completed | MTLCommandBufferStatus::Error
+            ) {
+                let (cb, committed, _) = self.inflight.remove(i);
+                self.account(&cb, committed, false);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Adds a finished command buffer's times to the profile and reports its
+    /// error; `waited` when the GPU thread waited for it.
+    fn account(&mut self, cb: &CommandBuffer, committed: f64, waited: bool) {
+        let ns = |s: f64| (s.max(0.0) * 1e9) as u64;
+        crate::timing::add_raw(
+            crate::timing::Part::Submission,
+            ns(cb.kernelStartTime() - committed),
+        );
+        if waited && cb.GPUEndTime() > 0.0 {
+            let woken = crate::timing::host_seconds();
+            crate::timing::add_raw(crate::timing::Part::WakeUp, ns(woken - cb.GPUEndTime()));
+        }
+        if let Some(e) = cb.error() {
+            self.failed_commands += 1;
+            if self.failed_commands <= 8 {
+                eprintln!(
+                    "ps5slop: GPU: command buffer failed: {}",
+                    e.localizedDescription()
+                );
+                report_encoders(&e);
+            }
+        }
+        let busy = cb.GPUEndTime() - cb.GPUStartTime();
+        let scheduled = cb.GPUStartTime() - cb.kernelStartTime();
+        crate::timing::add_raw(
+            crate::timing::Part::Scheduling,
+            (scheduled.max(0.0) * 1e9) as u64,
+        );
+        crate::timing::add_raw(crate::timing::Part::GpuBusy, (busy * 1e9) as u64);
+        if waited {
+            crate::timing::add_raw(crate::timing::Part::Syncs, 1_000_000);
+        }
+    }
+}
+
+/// Guest memory that encoded work may write.
+enum Written {
+    Nothing,
+    /// Start and end addresses.
+    Ranges(Vec<(u64, u64)>),
+    Anything,
+}
+
+/// Ranges past this many are tracked as [`Written::Anything`].
+const MAX_WRITTEN_RANGES: usize = 256;
+
+impl Written {
+    fn covers(&self, at: u64, len: u64) -> bool {
+        match self {
+            Written::Nothing => false,
+            Written::Ranges(r) => r.iter().any(|&(s, e)| s < at + len && at < e),
+            Written::Anything => true,
+        }
+    }
+}
+
+/// The bytes a buffer store through V# `v` can reach: `buffer_offset` checks
+/// the index against the record count when `indexed` (the offset is taken to
+/// stay within one record), else the offset; plus the widest store.
+fn buffer_range(v: &[u32], indexed: bool) -> (u64, u64) {
+    let base = v[0] as u64 | (v[1] as u64 & 0xFFFF) << 32;
+    let stride = ((v[1] >> 16) & 0x3FFF) as u64;
+    let records = v[2] as u64;
+    let len = if indexed && stride != 0 {
+        (records + 1) * stride
+    } else {
+        records
+    };
+    (base, base + len + 16)
 }
 
 /// Waits for `cb`; one still running after 10 s is reported with its label
@@ -4148,6 +4246,16 @@ impl Backend for Metal {
         self.commit();
     }
 
+    fn commit_point(&mut self) -> u64 {
+        self.commit();
+        self.commits
+    }
+
+    fn done(&mut self, point: u64) -> bool {
+        self.retire_completed();
+        self.inflight.first().is_none_or(|(_, _, n)| *n > point)
+    }
+
     fn summary(&self) -> String {
         let mut reasons: Vec<_> = self.reasons.iter().collect();
         reasons.sort_by(|a, b| b.1.cmp(a.1));
@@ -4155,7 +4263,7 @@ impl Backend for Metal {
         let image_bytes: u64 = self.images.values().map(|(_, t)| mib(t)).sum();
         let target_bytes: u64 = self.targets.values().map(|t| mib(&t.texture)).sum();
         format!(
-            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms)",
+            "{} drawn, {} dispatched, {} skipped {reasons:?}, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms); {} waits to read memory programs wrote",
             self.draws,
             self.dispatches,
             self.skipped,
@@ -4174,7 +4282,8 @@ impl Backend for Metal {
             self.compile_waits[0].0,
             self.compile_waits[0].1.as_millis(),
             self.compile_waits[1].0,
-            self.compile_waits[1].1.as_millis()
+            self.compile_waits[1].1.as_millis(),
+            self.settles
         )
     }
 
@@ -4740,6 +4849,26 @@ mod tests {
     }
 
     #[test]
+    fn written_ranges_follow_the_v_sharp_bounds() {
+        // Base 0x10_0000_1000, stride 4, 0x100 records.
+        let v = [0x1000, 0x10 | 4 << 16, 0x100, 0];
+        assert_eq!(
+            buffer_range(&v, true),
+            (0x10_0000_1000, 0x10_0000_1000 + 0x404 + 16)
+        );
+        assert_eq!(
+            buffer_range(&v, false),
+            (0x10_0000_1000, 0x10_0000_1000 + 0x110)
+        );
+        let w = Written::Ranges(vec![buffer_range(&v, false)]);
+        assert!(w.covers(0x10_0000_1100, 4));
+        assert!(!w.covers(0x10_0000_1110, 4));
+        assert!(!w.covers(0x10_0000_0ffc, 4));
+        assert!(!Written::Nothing.covers(0, u64::MAX / 2));
+        assert!(Written::Anything.covers(0, 1));
+    }
+
+    #[test]
     fn integer_targets_take_integer_exports() {
         let mut c = vec![0u32; 0x400];
         for (n, number) in [(0, 4), (1, 7)] {
@@ -4783,7 +4912,7 @@ mod tests {
         metal.commit();
         let start = std::time::Instant::now();
         let mut gpu = 0.0;
-        for (cb, _) in std::mem::take(&mut metal.inflight) {
+        for (cb, _, _) in std::mem::take(&mut metal.inflight) {
             while !matches!(
                 cb.status(),
                 MTLCommandBufferStatus::Completed | MTLCommandBufferStatus::Error

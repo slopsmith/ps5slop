@@ -187,12 +187,40 @@ fn compute_program_uses_group_ids_lds_barriers_stores_and_atomics() {
     // Four user SGPRs, TGID_X_EN, LDS_SIZE of 2 (1 KiB).
     let t = compute(&code, 4, 4 << 1 | 1 << 7 | 2 << 15);
     assert!(t.guest_memory && t.writes_memory);
+    assert_eq!(t.store_buffers, Some(vec![(Source::UserSgpr(0), true)]));
     assert_eq!(t.lds_bytes, 1024);
     assert!(t.msl.contains("s4 = gid.x;"));
     assert!(t.msl.contains("v0 = lid.x;"));
     assert!(t.msl.contains("threadgroup_barrier"));
     assert!(t.msl.contains("device uchar* mem"));
     compile(&t.msl);
+}
+
+#[test]
+fn stores_through_a_v_sharp_the_program_changes_are_not_known() {
+    let code = [
+        0x8000_8400, // s_add_u32 s0, s0, 4
+        0xE070_2000,
+        0x8000_0402, // buffer_store_dword v4, v2, s[0:3], 0 idxen
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 4, 4 << 1);
+    assert!(t.writes_memory);
+    assert_eq!(t.store_buffers, None);
+    let loaded = [
+        0xF408_0001,
+        0xFA00_0040, // s_load_dwordx4 s[0:3], s[2:3], 0x40
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xE070_0000,
+        0x8000_0402, // buffer_store_dword v4, v2, s[0:3], 0
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&loaded, 4, 4 << 1);
+    let table = Source::Memory {
+        pointer: Box::new(Source::UserSgpr(2)),
+        offset: 0x40,
+    };
+    assert_eq!(t.store_buffers, Some(vec![(table, false)]));
 }
 
 #[test]

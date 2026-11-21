@@ -6,7 +6,7 @@
 //! `AgcExports.Submissions.cs`.
 
 use std::collections::HashMap;
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -27,6 +27,9 @@ const MAX_DWORDS: u32 = 0xF_FFFF;
 
 /// How long a submitter waits for the submission before its own at most.
 const THROTTLE_LIMIT: Duration = Duration::from_secs(5);
+/// How often an idle GPU thread checks whether ended submissions' GPU work
+/// is done, so their releases take effect.
+const RETIRE_POLL: Duration = Duration::from_micros(100);
 
 /// Command buffers to run, in order, on one queue.
 struct Job {
@@ -235,7 +238,16 @@ fn gpu_thread(
     let mut last_report = std::time::Instant::now();
     loop {
         let idle = gpu::timing::start();
-        let Ok(job) = jobs.recv() else { break };
+        let job = loop {
+            if !processor.retire(&host) {
+                break jobs.recv().ok();
+            }
+            match jobs.recv_timeout(RETIRE_POLL) {
+                Err(RecvTimeoutError::Timeout) => continue,
+                job => break job.ok(),
+            }
+        };
+        let Some(job) = job else { break };
         gpu::timing::add(gpu::timing::Part::Idle, idle);
         gpu::with_pool(|| {
             for (addr, dwords) in job.buffers {
@@ -243,16 +255,11 @@ fn gpu_thread(
                     eprintln!("ps5slop: GPU: {e}");
                 }
             }
-            if job.ends_frame {
-                processor.finish(&host);
-            } else {
-                processor.drain(&host);
-            }
+            // Unverified: the driver signals each submission's completion; Minecraft
+            // waits for it when its label poll loses the race.
+            processor.end_submission(&host, job.ends_frame);
         });
         host.progress.update(|c| c.finished += 1);
-        // Unverified: the driver signals each submission's completion; Minecraft
-        // waits for it when its label poll loses the race.
-        gpu::Host::interrupt(&host, 0);
         if report && last_report.elapsed().as_secs() >= 1 {
             last_report = std::time::Instant::now();
             let s = &processor.stats;

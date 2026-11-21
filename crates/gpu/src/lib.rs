@@ -50,6 +50,15 @@ pub trait Backend: Send {
     fn flush(&mut self) {
         self.sync();
     }
+    /// As [`Backend::flush`], returning a point [`Backend::done`] checks.
+    fn commit_point(&mut self) -> u64 {
+        self.sync();
+        0
+    }
+    /// Whether the work committed up to `point` has finished.
+    fn done(&mut self, _point: u64) -> bool {
+        true
+    }
     /// As [`Backend::sync`], at a flip that puts the buffer at guest address
     /// `shown` on screen.
     fn frame_done(&mut self, shown: Option<u64>);
@@ -87,6 +96,12 @@ impl Backend for SharedBackend {
     }
     fn flush(&mut self) {
         self.lock().flush()
+    }
+    fn commit_point(&mut self) -> u64 {
+        self.lock().commit_point()
+    }
+    fn done(&mut self, point: u64) -> bool {
+        self.lock().done(point)
     }
     fn frame_done(&mut self, shown: Option<u64>) {
         self.lock().frame_done(shown)

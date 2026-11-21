@@ -46,6 +46,9 @@ const CB_COLOR_CONTROL: u32 = 0x202;
 const GDS_BYTES: usize = 64 << 10;
 /// Largest DMA_DATA transfer carried out, a guard against garbage.
 const DMA_LIMIT: usize = 64 << 20;
+/// DMA_DATA fills up to this size are queued like WRITE_DATA instead of
+/// waiting for the GPU (AGC clears labels this way before waiting on them).
+const DEFERRED_FILL: usize = 64;
 /// Bits of a register-table offset that select something other than the register.
 const TABLE_SELECTOR: u32 = 0x7000_0000;
 
@@ -69,6 +72,13 @@ const MARKER_FLIP_WITH_INTERRUPT: u32 = 0x781;
 fn synchronous_releases() -> bool {
     static SYNCHRONOUS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *SYNCHRONOUS.get_or_init(|| std::env::var_os("PS5SLOP_GPU_SYNC_RELEASES").is_some())
+}
+
+/// Whether each submission waits for its GPU work before its releases take
+/// effect, as before 2026-11-21 (`PS5SLOP_GPU_WAIT_SUBMISSIONS`).
+fn wait_submissions() -> bool {
+    static WAIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WAIT.get_or_init(|| std::env::var_os("PS5SLOP_GPU_WAIT_SUBMISSIONS").is_some())
 }
 
 /// Whether waits, releases and memory writes are logged with their queue
@@ -171,6 +181,9 @@ pub struct Processor {
     /// Releases and memory writes whose earlier GPU work is committed but
     /// not known to be done, in command order.
     pending: Vec<Pending>,
+    /// Pending work of ended submissions, by the backend's commit point that
+    /// must be done before it takes effect (see [`Processor::retire`]).
+    retiring: std::collections::VecDeque<(u64, Vec<Pending>)>,
     watched: Option<u64>,
     /// A register table wrote `CB_COLOR_CONTROL` since the last draw.
     color_control_written: bool,
@@ -189,6 +202,8 @@ enum Pending {
         values: Vec<u32>,
         fixed: bool,
     },
+    /// The queue's interrupt at the end of a submission.
+    Interrupt,
 }
 
 impl Pending {
@@ -239,6 +254,7 @@ impl Default for Processor {
             instances: 1,
             gds: vec![0; GDS_BYTES],
             pending: Vec::new(),
+            retiring: Default::default(),
             watched: None,
             last_flip: None,
             color_control_written: false,
@@ -753,10 +769,27 @@ impl Processor {
         if bytes == 0 || bytes > DMA_LIMIT || dst_sel == 2 || src_register || dst_register {
             return;
         }
-        self.drain(host);
-        self.sync();
         let src = addr(p[1], p[2]);
         let dst = addr(p[3], p[4]);
+        if src_sel == 2
+            && dst_sel != 1
+            && bytes.is_multiple_of(4)
+            && bytes <= DEFERRED_FILL
+            && self.backend.is_some()
+            && !synchronous_releases()
+        {
+            if std::env::var_os("PS5SLOP_TRACE_DMA").is_some() {
+                eprintln!(
+                    "ps5slop: DMA_DATA fill {dst:#x} {bytes:#x} bytes with {:#x}, queued",
+                    p[1]
+                );
+            }
+            let n = if dst_fixed { 1 } else { bytes / 4 };
+            self.write_values(host, dst, &vec![p[1]; n], dst_fixed);
+            return;
+        }
+        self.drain(host);
+        self.sync();
         let mut data = vec![0u8; bytes];
         match src_sel {
             2 => {
@@ -1184,29 +1217,90 @@ impl Processor {
         self.sync();
     }
 
+    /// Ends a submission and raises the queue's interrupt. One that ends a
+    /// frame waits for the GPU ([`Processor::finish`]); for others the work is
+    /// committed and its pending releases, then the interrupt, take effect once
+    /// the GPU has done it ([`Processor::retire`]), without waiting here.
+    pub fn end_submission(&mut self, host: &dyn Host, ends_frame: bool) {
+        let queued = !self.pending.is_empty() || !self.retiring.is_empty();
+        if !ends_frame
+            && queued
+            && !synchronous_releases()
+            && !wait_submissions()
+            && let Some(b) = self.backend.as_mut()
+        {
+            let point = b.commit_point();
+            self.pending.push(Pending::Interrupt);
+            self.retiring
+                .push_back((point, std::mem::take(&mut self.pending)));
+            self.retire(host);
+            return;
+        }
+        if ends_frame {
+            self.finish(host);
+        } else {
+            self.drain(host);
+        }
+        host.interrupt(0);
+    }
+
+    /// Makes the pending work of ended submissions whose GPU work is done take
+    /// effect, in order. Returns whether some is still waiting for the GPU.
+    pub fn retire(&mut self, host: &dyn Host) -> bool {
+        while let Some(&(point, _)) = self.retiring.front() {
+            if !self.backend.as_mut().is_none_or(|b| b.done(point)) {
+                break;
+            }
+            let (_, list) = self.retiring.pop_front().expect("checked above");
+            for p in list {
+                self.apply(host, p);
+            }
+        }
+        !self.retiring.is_empty()
+    }
+
     /// Waits for the GPU work behind pending releases, then makes them take
     /// effect in order. Called before anything that could observe them.
     pub fn drain(&mut self, host: &dyn Host) {
-        if self.pending.is_empty() {
+        if self.pending.is_empty() && self.retiring.is_empty() {
             return;
         }
         self.sync();
-        for p in std::mem::take(&mut self.pending) {
-            match p {
-                Pending::Release {
-                    data,
-                    interrupt,
-                    dest,
-                    value,
-                    context,
-                } => self.apply_release(host, data, interrupt, dest, value, context),
-                Pending::Write {
-                    dest,
-                    values,
-                    fixed,
-                } => Self::apply_write(host, dest, &values, fixed),
+        for (_, list) in std::mem::take(&mut self.retiring) {
+            for p in list {
+                self.apply(host, p);
             }
         }
+        for p in std::mem::take(&mut self.pending) {
+            self.apply(host, p);
+        }
+    }
+
+    fn apply(&mut self, host: &dyn Host, p: Pending) {
+        match p {
+            Pending::Release {
+                data,
+                interrupt,
+                dest,
+                value,
+                context,
+            } => self.apply_release(host, data, interrupt, dest, value, context),
+            Pending::Write {
+                dest,
+                values,
+                fixed,
+            } => Self::apply_write(host, dest, &values, fixed),
+            Pending::Interrupt => host.interrupt(0),
+        }
+    }
+
+    /// The 32-bit value queued work will leave at `address`, the latest first.
+    fn queued_word(&self, address: u64) -> Option<u32> {
+        self.pending
+            .iter()
+            .rev()
+            .chain(self.retiring.iter().rev().flat_map(|(_, l)| l.iter().rev()))
+            .find_map(|p| p.word_at(address))
     }
 
     fn apply_release(
@@ -1264,30 +1358,35 @@ impl Processor {
             "wait {address:#x} & {mask:#x} function {} {reference:#x}",
             control & 7
         ));
-        // GPU work runs in order, so a wait on a label that a pending release
-        // will satisfy passes without waiting for the GPU.
-        let word = |at: u64| self.pending.iter().rev().find_map(|p| p.word_at(at));
-        let value = match (word(address), wide) {
-            (Some(lo), false) => Some(lo as u64),
-            (Some(lo), true) => word(address + 4).map(|hi| lo as u64 | (hi as u64) << 32),
-            (None, _) => None,
+        // GPU work runs in order, so queued releases and writes come first; with
+        // none at the label, memory holds what the wait sees (unless a program writes it).
+        let word = |at: u64| self.queued_word(at);
+        let read = |host: &dyn Host| {
+            if wide {
+                read_u64(host, address)
+            } else {
+                let mut b = [0u8; 4];
+                host.read(address, &mut b);
+                u32::from_le_bytes(b) as u64
+            }
         };
-        let satisfied = value.is_some_and(|v| compare(control, v & mask, reference));
-        if satisfied {
-            self.stats.deferred_waits += 1;
+        let value = match (word(address), wide.then(|| word(address + 4))) {
+            (Some(lo), None) => Some(lo as u64),
+            (Some(lo), Some(Some(hi))) => Some(lo as u64 | (hi as u64) << 32),
+            (None, None | Some(None)) => Some(read(host)),
+            _ => None,
+        };
+        if value.is_some_and(|v| compare(control, v & mask, reference)) {
+            if word(address).is_some() {
+                self.stats.deferred_waits += 1;
+            }
             return;
         }
         self.drain(host);
         let start = Instant::now();
         let mut polling = None;
         loop {
-            let value = if wide {
-                read_u64(host, address)
-            } else {
-                let mut b = [0u8; 4];
-                host.read(address, &mut b);
-                u32::from_le_bytes(b) as u64
-            };
+            let value = read(host);
             if compare(control, value & mask, reference) || host.exiting() {
                 return;
             }
@@ -1424,6 +1523,83 @@ mod tests {
         };
         p.run(&host, 0x100, packets.len() as u32).unwrap();
         assert_eq!(*seen.lock().unwrap(), vec![[2, 3, 1]]);
+    }
+
+    #[test]
+    fn label_waits_pass_without_the_gpu_and_releases_wait_for_it() {
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
+        #[derive(Clone, Default)]
+        struct Gpu {
+            syncs: std::sync::Arc<AtomicU32>,
+            done: std::sync::Arc<AtomicBool>,
+        }
+        impl Backend for Gpu {
+            fn draw(&mut self, _: &dyn Host, _: &State, _: Draw) {}
+            fn dispatch(&mut self, _: &dyn Host, _: &State, _: [u32; 3]) {}
+            fn sync(&mut self) {
+                self.syncs.fetch_add(1, Relaxed);
+                self.done.store(true, Relaxed);
+            }
+            fn flush(&mut self) {}
+            fn commit_point(&mut self) -> u64 {
+                7
+            }
+            fn done(&mut self, point: u64) -> bool {
+                assert_eq!(point, 7);
+                self.done.load(Relaxed)
+            }
+            fn frame_done(&mut self, _: Option<u64>) {}
+        }
+        let host = Fake::default();
+        host.mem.replace(vec![0; 0x1000]);
+        host.write(0x800, &5u32.to_le_bytes());
+        // AGC's barrier: zero a label, release 1 into it, wait for 1.
+        let packets = [
+            header(7, IT_DMA_DATA, 0),
+            2 << 29,
+            0,
+            0x800,
+            0,
+            0,
+            4,
+            header(8, IT_RELEASE_MEM, 0),
+            0,
+            (1 << 29) | (2 << 24),
+            0x800,
+            0,
+            1,
+            0,
+            3,
+            header(7, IT_WAIT_REG_MEM, 0),
+            0x13,
+            0x800,
+            0,
+            1,
+            0xFFFF_FFFF,
+            0,
+        ];
+        let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+        host.write(0x100, &bytes);
+        let gpu = Gpu::default();
+        let mut p = Processor {
+            backend: Some(Box::new(gpu.clone())),
+            ..Processor::default()
+        };
+        p.run(&host, 0x100, packets.len() as u32).unwrap();
+        p.end_submission(&host, false);
+        assert_eq!(gpu.syncs.load(Relaxed), 0);
+        assert_eq!(
+            word(&host, 0x800),
+            5,
+            "nothing takes effect before the GPU is done"
+        );
+        assert!(host.interrupts.borrow().is_empty());
+        assert!(p.retire(&host));
+        gpu.done.store(true, Relaxed);
+        assert!(!p.retire(&host));
+        assert_eq!(word(&host, 0x800), 1);
+        assert_eq!(*host.interrupts.borrow(), [3, 0]);
+        assert_eq!(gpu.syncs.load(Relaxed), 0);
     }
 
     #[test]
