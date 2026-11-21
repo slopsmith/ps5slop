@@ -97,7 +97,7 @@ fn simd_three(op: u16) -> Option<(bool, u32, u32)> {
 
 /// Two-source integer operations done per 128-bit half.
 fn packed_int(op: u16) -> bool {
-    matches!(op, 0x160..=0x16d | 0x1db | 0x1df | 0x1eb | 0x1ef | 0x1e4 | 0x1e5 | 0x1f4..=0x1f6 | 0x200 | 0x22b)
+    matches!(op, 0x160..=0x16d | 0x1db | 0x1df | 0x1eb | 0x1ef | 0x1e4 | 0x1e5 | 0x1f4..=0x1f6 | 0x200 | 0x204 | 0x22b)
         || simd_three(op).is_some()
 }
 
@@ -142,6 +142,7 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x113 | 0x117 => !wide && matches!(p, Pfx::None | Pfx::P66) && i.mem.is_some(),
         _ if fma_scalar(op) || fma_packed(op) => i.vex.is_some() && p == Pfx::P66,
         0x217 => p == Pfx::P66,
+        0x20e | 0x20f => i.vex.is_some() && p == Pfx::P66 && !i.rex_w(),
         0x2f6 => i.vex.is_some() && p == Pfx::F2,
         0x321 => p == Pfx::P66 && !wide,
         0x304 | 0x305 => i.vex.is_some() && p == Pfx::P66 && !i.rex_w(),
@@ -151,7 +152,7 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x16f | 0x17f => matches!(p, Pfx::P66 | Pfx::F3),
         0x110 | 0x111 | 0x128 | 0x129 => matches!(p, Pfx::None | Pfx::P66),
         0x154..=0x157 => matches!(p, Pfx::None | Pfx::P66),
-        0x170 => p == Pfx::P66,
+        0x170 => p != Pfx::None,
         0x171..=0x173 => {
             p == Pfx::P66
                 && i.mem.is_none()
@@ -199,7 +200,7 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
     }
     Some(match op {
         0x12e | 0x12f => (false, writes),
-        0x2f2 | 0x217 | 0x2f3 => (false, writes),
+        0x2f2 | 0x217 | 0x20e | 0x20f | 0x2f3 => (false, writes),
         0x2f7 | 0x2f5 if p == Pfx::None => (false, writes),
         _ => (false, none),
     })
@@ -623,9 +624,14 @@ impl Translator {
                 self.a.ins(if double { 3 } else { 2 }, XA, 0, XR, 0);
                 self.a.str_q(XA, CTX, ymm(i.reg, 0));
             }
-            0x217 => {
+            0x217 | 0x20e | 0x20f => {
                 if flags {
-                    self.ptest(i, halves);
+                    let sign = match op {
+                        0x20e => 32,
+                        0x20f => 64,
+                        _ => 0,
+                    };
+                    self.ptest(i, halves, sign);
                 }
                 return;
             }
@@ -893,6 +899,18 @@ impl Translator {
                     self.a.str_q(XR, CTX, ymm(i.reg, h));
                 }
             }
+            0x170 if p != Pfx::P66 => {
+                let high = (p == Pfx::F3) as u32 * 4;
+                for h in 0..halves {
+                    self.rm_half(i, h, XB);
+                    self.a.vec3(true, false, 2, 0b00011, XR, XB, XB);
+                    for k in 0..4 {
+                        let from = high + ((i.imm as u32 >> (2 * k)) & 3);
+                        self.a.ins(1, XR, high + k, XB, from);
+                    }
+                    self.a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
             0x170 | 0x304 => {
                 for h in 0..halves {
                     self.rm_half(i, h, XB);
@@ -1121,8 +1139,9 @@ impl Translator {
     }
 
     /// PTEST: ZF = (dst AND src) is zero, CF = (src AND NOT dst) is zero,
-    /// the other arithmetic flags clear.
-    fn ptest(&mut self, i: &Insn, halves: u32) {
+    /// the other arithmetic flags clear. VTESTPS/PD (`sign` 32 or 64) look
+    /// only at each element's sign bit.
+    fn ptest(&mut self, i: &Insn, halves: u32, sign: u32) {
         for h in 0..halves {
             let (and, andn) = if h == 0 { (XR, XU) } else { (XT, XS) };
             self.a.ldr_q(XA, CTX, ymm(i.reg, h));
@@ -1133,6 +1152,10 @@ impl Translator {
                 self.a.vec3(true, false, 2, 0b00011, XR, XR, XT);
                 self.a.vec3(true, false, 2, 0b00011, XU, XU, XS);
             }
+        }
+        if sign != 0 {
+            self.a.shr_v(true, false, sign, XR, XR, sign - 1);
+            self.a.shr_v(true, false, sign, XU, XU, sign - 1);
         }
         let (u, a) = (super::U, &mut self.a);
         a.fmov_xd(A, XR);
@@ -1316,6 +1339,17 @@ impl Translator {
                 a.uaddlp(true, 0, XR, XR);
                 a.uaddlp(true, 1, XR, XR);
                 a.uaddlp(true, 2, XR, XR);
+            }
+            0x204 => {
+                a.emit(USHLL | 1 << 19 | vregs(XT, XA));
+                a.emit(USHLL | 1 << 19 | Q | vregs(XS, XA));
+                a.emit(SSHLL | 1 << 19 | vregs(XR, XB));
+                a.emit(SSHLL | 1 << 19 | Q | vregs(XU, XB));
+                a.vec3(true, false, 1, 0b10011, XT, XT, XR);
+                a.vec3(true, false, 1, 0b10011, XS, XS, XU);
+                a.uzp(true, 1, false, XR, XT, XS);
+                a.uzp(true, 1, true, XU, XT, XS);
+                a.vec3(true, false, 1, 0b00001, XR, XR, XU);
             }
             0x200 => {
                 a.movi_b(XT, 0x8f);

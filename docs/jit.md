@@ -77,6 +77,23 @@ Measured (headless, thumbnails every 10 s, another delegate's emulator running):
 
 Superliminal, for comparison: the hottest guest code (38 to 46% of the samples on the menu) is Unity's job workers spinning in a 1,000-step `dec`/`jne` delay loop before they sleep on their event flag, which is the engine's own design and costs CPU, not frame time. Its interpreted instructions in level 1 are mostly `vgatherdps`, variable `vpermilps` and `ldmxcsr`/`stmxcsr` (about 3.5 M exits in 20 s); Astro Bot's loading leaves `pcmpistri` (in `libc`, counted only), `dpps` and `vcvtps2ph` to the interpreter.
 
+## GTA V's intro movie (2026-11-21)
+
+vic saw about 1 MIPS of interpreter in the window title during GTA V's intro, the Rockstar logo movie over moving lights. The profile (headless, release build, 25 to 145 s after start) showed `BinkAsy1`, the game's Bink video decoder, using 115.8 s of CPU in 119.6 s: 73.7 s in translated code at 255 MIPS, 23.5 s in the interpreter and 19.9 s outside both, leaving and entering the VM (69.2 M interpreter exits, 93% of all exits). The interpreted opcodes, looked up in the game's own code (Bink is middleware inside the executable, [legal.md](legal.md#analysing-user-supplied-binaries)): VEX.128 `vpmaddubsw` (99 M in the window), `vpshuflw` (18 M) and `vtestps` (2.4 M, outside Bink). After each such exit the interpreter also ran up to 64 instructions that follow it.
+
+Now translated: `pmaddubsw` (legacy SSE, VEX.128 and VEX.256: bytes widened with USHLL and SSHLL, MUL, the even and odd products split with UZP1 and UZP2 and added with SQADD), `pshuflw`/`pshufhw` in the same three forms (a copy and four INS of halfwords), and `vtestps`/`vtestpd` (PTEST's code on the sign bits only, after a USHR by the element width minus one). Test: `byte_multiply_adds_word_shuffles_and_sign_tests_match_the_interpreter`, with products that saturate both ways, memory and register sources, a source that is also the destination, and VTEST results with ZF and CF set and clear; breaking SQADD, the PSHUFHW lane offset or VTESTPS's sign step each made it fail. The Rosetta fuzzer ([cpu.md](cpu.md), 16 states, seed `0x5eed1234abcd0007`) shows no difference between our interpreter and Rosetta for any of their 66-prefixed and VEX forms. The MMX forms (no prefix) stay unimplemented in both.
+
+Measured headless, release builds, back to back, with another delegate's Superliminal running:
+
+| | Before | After |
+| --- | --- | --- |
+| Interpreter during the movie (`rates`) | 0.9 to 1.2 MIPS | 0.00 to 0.05 MIPS |
+| `BinkAsy1` | 115.8 s CPU per 119.6 s, 23.5 s of it interpreted | 7.5 s CPU per 9.7 s (the whole movie), none interpreted, 2,172 MIPS |
+| Movie ends, first legal page | about 153 s, 160 s | about 14 s, 16 s |
+| Title screen ("Continue") | not reached in 170 s | 32 s |
+
+So the movie now plays in about 10 s instead of about 150. Left in the interpreter during the intro (10 s window): `pcmpistri` in `libc` on the main thread (0.57 M, 0.25 s; Sony's code, counted only), `vcvtps2ph` in the game (17 K), 8-bit `div` and `adc r8, imm`.
+
 ## Tier 2
 
 Off by default; `PS5SLOP_JIT_TIER2=N` compiles a block's region after the block ran `N` times, `PS5SLOP_JIT_TIER2=eager` on its first run (the test mode). Modelled on 86slopper's design ([its `docs/jit-tier2.md`](references.md)), phase 1, synchronous:
