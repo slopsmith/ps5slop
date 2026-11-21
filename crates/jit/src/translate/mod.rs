@@ -150,6 +150,7 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
     let counts = i.rep == Rep::Rep && i.map == Map::M0F && matches!(i.op, 0xb8 | 0xbc | 0xbd);
     let crc32 = i.rep == Rep::Repne && i.map == Map::M0F38 && matches!(i.op, 0xf0 | 0xf1);
     let string = i.map == Map::Primary && matches!(i.op, 0xa4..=0xa7 | 0xaa..=0xaf);
+    let pause = i.rep == Rep::Rep && i.map == Map::Primary && i.op == 0x90 && i.rex & 1 == 0;
     if i.vex.is_none()
         && !i.lock
         && i.seg != Some(Seg::Gs)
@@ -161,7 +162,7 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
     if i.vex.is_some()
         || (i.lock && !lockable(i))
         || i.seg == Some(Seg::Gs)
-        || (i.rep != Rep::None && !counts && !crc32 && !string)
+        || (i.rep != Rep::None && !counts && !crc32 && !string && !pause)
     {
         return None;
     }
@@ -222,6 +223,7 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
             (false, none)
         }
         (Map::Primary, 0x90) if i.rex & 1 == 0 => (false, none),
+        (Map::Primary, 0xf5 | 0xf8 | 0xf9) => (false, both),
         (Map::Primary, 0xb0..=0xbf) => (false, none),
         (Map::Primary, 0xc1 | 0xd1) if matches!(i.ext(), 4 | 5 | 7) && i.osize() >= 4 => (
             false,
@@ -772,7 +774,15 @@ impl Translator {
                 self.a.mov(Size::X, r(i.rm), A);
             }
             (Map::Primary, 0x68 | 0x6a) => self.push_const(i.imm as u64),
+            (Map::Primary, 0x90) if i.rep == Rep::Rep => self.a.isb(),
             (Map::Primary, 0x90) | (Map::M0F, 0x0d | 0x18..=0x1f) => {}
+            (Map::Primary, 0xf5) if flags => self.a.cfinv(),
+            (Map::Primary, 0xf8 | 0xf9) if flags => {
+                // NZCV's C is CF inverted.
+                self.a.mov_imm(Size::X, U, if i.op == 0xf8 { 2 } else { 0 });
+                self.a.rmif(U, 0, 2);
+            }
+            (Map::Primary, 0xf5 | 0xf8 | 0xf9) => {}
             (Map::M0F, 0xc8..=0xcf) => {
                 let s = sz(i.osize());
                 self.a.rev(s, r(i.rm), r(i.rm));
