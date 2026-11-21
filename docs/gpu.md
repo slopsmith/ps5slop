@@ -372,6 +372,25 @@ Earlier single runs of the steps, under the same kind of load: before 19.2 and 2
 
 GPU busy time in the profile adds up each command buffer's own GPU interval; with many command buffers in flight these overlap, so it can exceed the wall time.
 
+## Metal running out of memory (2026-11-22)
+
+Command buffers failed now and then with `kIOGPUCommandBufferCallbackErrorOutOfMemory` ("Insufficient Memory", code 8), dropping their work: Minecraft 2 to 7 per minute at its title, Superliminal 0 or 1 in 40 s at its menu. The failure line now prints the error code, the command buffers in flight, the windows' sizes and Metal's `currentAllocatedSize` against `recommendedMaxWorkingSetSize` (38,338 MiB on vic's 48 GB M4 Pro).
+
+Cause, measured on Minecraft: Metal's allocated size reached 63 to 191 GB at the failures, with no command buffer in flight. The game maps 64 KiB pieces of direct memory inside the GPU area about 10,000 times a minute; mapping physical memory replaces host pages, so the GPU-area window (6 GiB there) was made again about 500 times a minute. The open command buffer kept every window it had bound (a retain count of 2 to 4 on the dropped window), so one command buffer could hold dozens of 6 GiB windows.
+
+Fix: the renderer counts the bytes of windows dropped since the last commit and, before it makes a new window once that passes 1 GiB, commits the open command buffer; if Metal's allocations would then pass half its working set, it also waits for the GPU (`Metal::make_room`). A physical mapping over pages that already map the same physical offsets no longer replaces them (about a third of Minecraft's maps), so it drops no window.
+
+Headless, alternating, 5 runs each (another delegate's emulator ran during runs 3 to 5 of each kind):
+
+| | Minecraft, 60 s | Superliminal, 40 s |
+| --- | --- | --- |
+| Before: failed command buffers per run | 6, 3, 2, 7, 4 | 1, 0, 1, 0, 1 |
+| After | 0, 0, 0, 0, 0 | 0, 0, 0, 0, 0 |
+| Before: flips per run | 298, 319, 335, 321, 399 | 735, 945, 870, 908, 804 |
+| After | 319, 317, 396, 426, 1914 | 957, 791, 895, 710, 862 |
+
+Peak footprints did not change (Minecraft about 2.0 GB, Superliminal 1.6 to 2.1 GB). Single runs with the other delegate's emulator running: Astro Bot to 140 s, 1,211 flips and 7.1 GB before, 1,481 and 7.2 GB after; GTA V to 240 s (title screen), 11,351 flips and 2.9 GB before, 11,186 and 2.9 GB after; no failures in either. Metal's allocated size in Minecraft now peaks near 19 GB. The window is still made again about as often; that costs CPU and GPU page-table work that was not measured.
+
 ## Open questions
 
 - Which AGC functions a GameMaker or LÖVE title calls, and how much of their meaning we can infer from the PM4 they leave behind.

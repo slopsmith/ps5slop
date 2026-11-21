@@ -439,6 +439,9 @@ pub struct Metal {
     /// The furthest programs have pointed into the GPU area, so a window
     /// made again after a mapping change reaches as far as earlier ones.
     area_reach: u64,
+    /// Bytes of windows dropped since the last commit, which the open
+    /// command buffer may still hold.
+    stale: u64,
     /// The command buffer last reported as stuck, so each is reported once.
     reported_stuck: Option<usize>,
     /// Guest memory that work encoded since the last wait may write, so the
@@ -695,6 +698,7 @@ impl Metal {
             windows: Vec::new(),
             area: None,
             area_reach: 0,
+            stale: 0,
             reported_stuck: None,
             written: Written::Nothing,
             settles: Default::default(),
@@ -1044,7 +1048,7 @@ impl Metal {
                         .as_ref()
                         .is_some_and(|w| ranges.iter().any(|&(s, e)| s < w.end && w.start < e))
                     {
-                        self.area = None;
+                        self.stale += self.area.take().map_or(0, |w| w.end - w.start);
                     }
                     gone
                 }
@@ -1054,6 +1058,7 @@ impl Metal {
                     std::mem::take(&mut self.windows)
                 }
             };
+            self.stale += dropped.iter().map(|w| w.end - w.start).sum::<u64>();
             if let Some(r) = &self.resident
                 && !dropped.is_empty()
             {
@@ -1087,6 +1092,7 @@ impl Metal {
                 (stop - start) >> 20
             ));
         }
+        self.make_room(stop - start);
         let ptr = NonNull::new(host.host_pointer(start)?)?;
         // SAFETY: the range is host memory that stays mapped while the address
         // space lives; windows are dropped when its mappings change.
@@ -3902,6 +3908,21 @@ impl Metal {
         })
     }
 
+    /// Before a new window of `len` bytes: commits the open command buffer once
+    /// it may hold 1 GiB of dropped windows, and waits for the GPU when Metal's
+    /// allocations would pass half its working set. A command buffer keeps every
+    /// window it binds, and Metal fails it ("Insufficient Memory") past that.
+    fn make_room(&mut self, len: u64) {
+        if self.stale < 1 << 30 {
+            return;
+        }
+        self.commit();
+        let budget = self.device.recommendedMaxWorkingSetSize() / 2;
+        if self.device.currentAllocatedSize() as u64 + len > budget {
+            self.flush_and_wait();
+        }
+    }
+
     /// The window over the GPU area `[start, end)` reaching at least `need`
     /// and as far as any window before it, made again (in 1 GiB steps) when
     /// it does not reach that far.
@@ -3936,6 +3957,8 @@ impl Metal {
             ));
             return None;
         }
+        self.stale += self.area.take().map_or(0, |w| w.end - w.start);
+        self.make_room(stop - start);
         let ptr = NonNull::new(host.host_pointer(start)?)?;
         // SAFETY: `back` gave every page host memory, which stays mapped; the
         // window is dropped when pages under it are replaced.
@@ -4603,6 +4626,7 @@ impl Metal {
 
     fn commit(&mut self) {
         self.end_pass();
+        self.stale = 0;
         let now = crate::timing::host_seconds();
         self.commits += 1;
         if let Some(cb) = self.upload.take() {
@@ -4675,9 +4699,16 @@ impl Metal {
         if let Some(e) = cb.error() {
             self.failed_commands += 1;
             if self.failed_commands <= 8 {
+                let windows: u64 = self.windows.iter().map(|w| w.end - w.start).sum();
                 eprintln!(
-                    "ps5slop: GPU: command buffer failed: {}",
-                    e.localizedDescription()
+                    "ps5slop: GPU: command buffer failed: {} (code {}); {} in flight, windows {} MiB + area {} MiB, Metal allocated {} MiB of {} MiB",
+                    e.localizedDescription(),
+                    e.code(),
+                    self.inflight.len(),
+                    windows >> 20,
+                    self.area.as_ref().map_or(0, |w| w.end - w.start) >> 20,
+                    self.device.currentAllocatedSize() >> 20,
+                    self.device.recommendedMaxWorkingSetSize() >> 20,
                 );
                 report_encoders(&e);
             }
