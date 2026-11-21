@@ -485,6 +485,9 @@ pub struct Metal {
     /// 2D-array and 3D images programs write, by guest address.
     volumes: HashMap<u64, Retained<Texture>>,
     volume_sources: HashMap<u64, VolumeSource>,
+    /// Addresses of volumes a colour target was drawn to since a program last
+    /// wrote the volume: sampling them reads the target.
+    volume_older: std::collections::HashSet<u64>,
     /// Zero-filled stand-ins for depth-layout images no depth target backs.
     blank: HashMap<(Image, TextureKind), Retained<Texture>>,
     epoch: u64,
@@ -707,6 +710,7 @@ impl Metal {
             images: HashMap::new(),
             volumes: HashMap::new(),
             volume_sources: HashMap::new(),
+            volume_older: Default::default(),
             blank: HashMap::new(),
             epoch: 0,
             detilers: HashMap::new(),
@@ -1439,6 +1443,9 @@ impl Metal {
     ) -> Option<(Retained<Texture>, MTLPixelFormat)> {
         let format = color_format(t.format)?;
         self.color_newer.insert(t.address);
+        if self.volumes.contains_key(&t.address) {
+            self.volume_older.insert(t.address);
+        }
         let slices = t.slices.max(t.slice + 1).min(MAX_TARGET_SLICES);
         let layered = slices > 1;
         if let Some(existing) = self.targets.get(&t.address)
@@ -1566,10 +1573,12 @@ impl Metal {
                 )
             };
         }
-        self.refresh_volume(host, image.address, false);
-        if let Some(v) = self.volume(image, kind, format) {
-            self.note(|| format!("      {:#x} from a 2D array or 3D image", image.address));
-            return Some(v);
+        if !self.volume_older.contains(&image.address) {
+            self.refresh_volume(host, image.address, false);
+            if let Some(v) = self.volume(image, kind, format) {
+                self.note(|| format!("      {:#x} from a 2D array or 3D image", image.address));
+                return Some(v);
+            }
         }
         if image.tile.is_none() && is_depth_layout(image.raw_tile) && kind == TextureKind::Tex2d {
             return self.blank_texture(image, kind, format);
@@ -2955,11 +2964,14 @@ impl Metal {
         if is_compressed(format) {
             return None;
         }
-        let layered = matches!(image.kind, 11 | 13) || self.volumes.contains_key(&image.address);
+        let layered = matches!(image.kind, 11 | 13)
+            || (self.volumes.contains_key(&image.address)
+                && !self.volume_older.contains(&image.address));
         match kind {
             TextureKind::Tex2d if !layered => {}
             TextureKind::Cube => return None,
             _ => {
+                self.volume_older.remove(&image.address);
                 self.refresh_volume(host, image.address, true);
                 if let Some(v) = self.volume(image, kind, format) {
                     return Some(v);
@@ -5610,6 +5622,66 @@ mod tests {
             (1, 2, 0),
             "the polling group never saw the flag"
         );
+    }
+
+    #[test]
+    fn sampling_reads_what_was_written_last_at_an_address() {
+        let Some(mut metal) = Metal::new() else {
+            return;
+        };
+        let mem = Mem::new(4 << 20);
+        let (w, h) = (64u32, 32u32);
+        let array = Image {
+            address: 0x10000,
+            format: 56,
+            width: w,
+            height: h,
+            swizzle: [4, 5, 6, 7],
+            tile: Some(TileMode::RenderTarget),
+            raw_tile: 0x1b,
+            kind: 13,
+            base_level: 0,
+            last_level: 0,
+            depth: 2,
+            base_array: 0,
+        };
+        let flat = Image {
+            kind: 9,
+            depth: 1,
+            ..array
+        };
+        let target = ColorTarget {
+            address: array.address,
+            width: w,
+            height: h,
+            format: regs::ColorFormat {
+                layout: 10,
+                number: 0,
+                swap: 0,
+            },
+            tile: Some(TileMode::RenderTarget),
+            raw_tile: 0x1b,
+            max_mip: 0,
+            mip_level: 0,
+            slice: 0,
+            slices: 1,
+            fast_clear: None,
+            dcc: None,
+        };
+        let volume = metal
+            .storage_image(&mem, array, TextureKind::Tex2dArray)
+            .expect("the 2D array is made");
+        let parent = |t: &Texture| t.parentTexture().map(|p| Retained::as_ptr(&p));
+        let volume = parent(&volume).expect("a view of the 2D array");
+        let (drawn, _) = metal.target(&mem, &target).expect("the target is made");
+        let read = metal.image(&mem, flat, TextureKind::Tex2d).unwrap();
+        assert_eq!(Retained::as_ptr(&read), Retained::as_ptr(&drawn));
+        let rewritten = metal
+            .storage_image(&mem, array, TextureKind::Tex2dArray)
+            .unwrap();
+        assert_eq!(parent(&rewritten), Some(volume));
+        let read = metal.image(&mem, flat, TextureKind::Tex2d).unwrap();
+        assert_eq!(parent(&read), Some(volume));
     }
 
     #[test]

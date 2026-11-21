@@ -494,3 +494,6 @@ When the window over the GPU area is made again after a mapping change, it reach
 
 Frames whose video-out format has top byte `0xC0` (Superliminal's `0xC001000600000000`, RGBA16Float) are encoded as sRGB in the window, `shot` and `frames`. Reason: Superliminal's last pass decodes sRGB before it writes the buffer, so the buffer holds linear light, and showing it as stored made every scene far too dark. No public source names the format; other float formats are assumed alike, and the PS4's float format is left as it was.
 
+## 2026-11-21: A colour target drawn at a 2D array's address hides the array
+
+Sampling an address reads the colour target drawn there when that draw came after the last 2D-array or 3D write to the address; 2D storage writes then go to the target too, and a later array write makes the array current again. Before, arrays were looked up first whenever one existed for the address. Reason: Superliminal reuses the memory of a full-screen surface that a program once wrote as a 2D array, and from then on every read of that surface returned the array's old contents, so the picture froze in level 1's rook corridor while the game ran on ([gpu.md](gpu.md#superliminals-frozen-picture-at-the-rook-2026-11-21)).
