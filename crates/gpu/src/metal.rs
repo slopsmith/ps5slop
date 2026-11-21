@@ -1819,7 +1819,7 @@ impl Metal {
                 let v = self.descriptor(host, user, buffer, 4)?;
                 let base = v[0] as u64 | (v[1] as u64 & 0xFFFF) << 32;
                 let indexed = match *index {
-                    Some((sgpr, shift)) => user.get(sgpr as usize)?.checked_shl(shift as u32)?,
+                    Some((ref of, shift)) => self.descriptor(host, user, of, 1)?[0].checked_shl(shift as u32)?,
                     None => 0,
                 };
                 let mut b = vec![0u8; n * 4];

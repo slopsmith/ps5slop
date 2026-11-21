@@ -457,10 +457,28 @@ fn samplers_from_indexed_buffer_loads_and_constants_resolve() {
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&code, 24, 24 << 1);
-    let buffer = Source::Buffer { buffer: Box::new(Source::UserSgpr(4)), offset: 0, index: Some((2, 4)) };
+    let buffer = Source::Buffer { buffer: Box::new(Source::UserSgpr(4)), offset: 0, index: Some((Box::new(Source::UserSgpr(2)), 4)) };
     assert!(t.resources.contains(&Resource::Sampler { slot: 0, source: buffer }));
     let constant = Source::Constant(vec![0x92, 0xFF_F000, 0x650_0000, 0]);
     assert!(t.resources.contains(&Resource::Sampler { slot: 1, source: constant }));
+    compile(&t.msl);
+}
+
+#[test]
+fn samplers_indexed_by_a_buffer_dword_resolve() {
+    let code = [
+        0xF420_1A82, 0xFA00_0000, // s_buffer_load_dword vcc_lo, s[4:7], null
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0x8F6A_846A, // s_lshl_b32 vcc_lo, vcc_lo, 4
+        0xF428_0202, 0xD400_0000, // s_buffer_load_dwordx4 s[8:11], s[4:7], vcc_lo
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xF080_0F08, 0x0044_0000, // image_sample v[0:3], v[0:1], s[16:23], s[8:11] dmask:0xf dim:2D
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 24, 24 << 1);
+    let dword = Source::Buffer { buffer: Box::new(Source::UserSgpr(4)), offset: 0, index: None };
+    let buffer = Source::Buffer { buffer: Box::new(Source::UserSgpr(4)), offset: 0, index: Some((Box::new(dword), 4)) };
+    assert!(t.resources.contains(&Resource::Sampler { slot: 0, source: buffer }));
     compile(&t.msl);
 }
 

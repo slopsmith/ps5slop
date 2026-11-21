@@ -61,12 +61,12 @@ pub enum Source {
     /// The dwords sit `offset` bytes past a 64-bit pointer, which is the first
     /// two dwords at `pointer`.
     Memory { pointer: Box<Source>, offset: u32 },
-    /// The dwords sit `offset` bytes, plus `user SGPR << shift` when
-    /// `index` is given, into the buffer the V# at `buffer` describes.
-    Buffer { buffer: Box<Source>, offset: u32, index: Option<(u8, u8)> },
-    /// Not descriptor dwords: a user SGPR shifted left, kept to resolve
-    /// buffer load offsets.
-    Scaled { sgpr: u8, shift: u8 },
+    /// The dwords sit `offset` bytes, plus `dword << shift` when `index`
+    /// is given, into the buffer the V# at `buffer` describes.
+    Buffer { buffer: Box<Source>, offset: u32, index: Option<(Box<Source>, u8)> },
+    /// Not descriptor dwords: one dword (a user SGPR or a buffer dword)
+    /// shifted left, kept to resolve buffer load offsets.
+    Scaled { of: Box<Source>, shift: u8 },
     /// Dwords the program builds from constants.
     Constant(Vec<u32>),
 }
@@ -83,9 +83,9 @@ impl Source {
             Source::Buffer { buffer, offset, index } => Source::Buffer {
                 buffer: buffer.clone(),
                 offset: offset.wrapping_add(bytes),
-                index: *index,
+                index: index.clone(),
             },
-            Source::Scaled { .. } => Source::Scaled { sgpr: u8::MAX, shift: 0 },
+            Source::Scaled { .. } => Source::Scaled { of: Box::new(Source::Constant(Vec::new())), shift: 0 },
             Source::Constant(v) => Source::Constant(v.get(bytes as usize / 4..).map_or(Vec::new(), <[u32]>::to_vec)),
         }
     }
@@ -2100,8 +2100,10 @@ impl<'a> Tx<'a> {
                         && (src::ZERO..=src::ZERO + 31).contains(&ssrc1) =>
                 {
                     let shift = (ssrc1 - src::ZERO) as u8;
-                    let scaled = match st[ssrc0 as usize] {
-                        Some(Source::UserSgpr(sgpr)) => Some(Source::Scaled { sgpr, shift }),
+                    let scaled = match &st[ssrc0 as usize] {
+                        Some(of @ (Source::UserSgpr(_) | Source::Buffer { .. })) => {
+                            Some(Source::Scaled { of: Box::new(of.clone()), shift })
+                        }
                         _ => None,
                     };
                     new.insert(sdst as u16, scaled);
@@ -2112,8 +2114,10 @@ impl<'a> Tx<'a> {
                     });
                     let index = match soffset as u16 {
                         src::NULL => Some(None),
-                        r if r < TRACKED_SGPRS => match st[r as usize] {
-                            Some(Source::Scaled { sgpr, shift }) if sgpr != u8::MAX => Some(Some((sgpr, shift))),
+                        r if r < TRACKED_SGPRS => match &st[r as usize] {
+                            Some(Source::Scaled { of, shift }) if !matches!(**of, Source::Constant(_)) => {
+                                Some(Some((of.clone(), *shift)))
+                            }
                             _ => None,
                         },
                         _ => None,
@@ -2124,7 +2128,7 @@ impl<'a> Tx<'a> {
                             new.insert(sdata as u16 + k, Some(Source::Buffer {
                                 buffer: Box::new(v.clone()),
                                 offset: (offset as u32).wrapping_add(4 * k as u32),
-                                index,
+                                index: index.clone(),
                             }));
                         }
                     }
