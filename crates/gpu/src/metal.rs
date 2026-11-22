@@ -111,6 +111,8 @@ pub static SKIP: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
 /// `PS5SLOP_TRACE_TARGETS`: logs each new render target and each image first read from guest memory.
 const PIXEL_SLOTS: usize = 1 << 14;
+/// The longest triangle fan drawn.
+const FAN_MAX: usize = 1 << 16;
 /// How much of a table the user data points to is searched for V#s.
 const TABLE_DWORDS: usize = 64;
 
@@ -537,6 +539,7 @@ pub struct Metal {
     /// `PS5SLOP_TRACE_PIXELS`: a visibility buffer counting the samples
     /// each traced draw passes, and the next free slot.
     pixels: Option<(Retained<Buffer>, usize)>,
+    fan: Option<Retained<Buffer>>,
 }
 
 /// What a detile kernel writes.
@@ -760,6 +763,7 @@ impl Metal {
             }),
             trace: None,
             pixels: None,
+            fan: None,
         })
     }
 
@@ -1595,13 +1599,28 @@ impl Metal {
         let depth_current = !self.color_newer.contains(&image.address);
         if kind == TextureKind::Cube
             && depth_current
-            && let Some(d) = self.depths.get(&image.address).cloned()
+            && let Some(mut d) = self.depths.get(&image.address).cloned()
             && d.width() as u32 == image.width
             && d.height() as u32 == image.height
         {
             let base = image.base_array as usize;
             if d.textureType() != MTLTextureType::Type2DArray || d.arrayLength() < base + 6 {
-                return None;
+                // GTA V's point-light shadow cubes draw only the faces in view.
+                let last = (base + 5) as u32;
+                let target = DepthTarget {
+                    address: image.address,
+                    format: if d.pixelFormat() == MTLPixelFormat::Depth16Unorm {
+                        1
+                    } else {
+                        3
+                    },
+                    stencil: d.pixelFormat() == MTLPixelFormat::Depth32Float_Stencil8,
+                    width: image.width,
+                    height: image.height,
+                    slice: last,
+                    slice_max: last,
+                };
+                d = self.depth_texture(&target, image.width, image.height)?.0;
             }
             self.note(|| {
                 format!(
@@ -2609,6 +2628,28 @@ impl Metal {
             .map(|(_, t, _, slice)| (t.clone(), *slice as usize));
         self.pass = Some((enc.clone(), addresses, colors, depth_texture));
         Some(enc)
+    }
+
+    /// An index buffer that draws a triangle fan of `count` vertices as a
+    /// triangle list (0, i, i + 1); Metal has no fans.
+    fn fan_indices(&mut self, count: u32) -> Result<Retained<Buffer>, &'static str> {
+        if count as usize > FAN_MAX {
+            return Err("triangle fan too long");
+        }
+        if self.fan.is_none() {
+            let indices: Vec<u32> = (1..FAN_MAX as u32 - 1)
+                .flat_map(|i| [0, i, i + 1])
+                .collect();
+            let ptr = NonNull::new(indices.as_ptr() as *mut std::ffi::c_void).ok_or("fan")?;
+            self.fan = unsafe {
+                self.device.newBufferWithBytes_length_options(
+                    ptr,
+                    4 * indices.len(),
+                    MTLResourceOptions::StorageModeShared,
+                )
+            };
+        }
+        self.fan.clone().ok_or("fan index buffer")
     }
 
     /// The depth texture at `d`'s address, holding what a program last
@@ -4560,13 +4601,17 @@ impl Metal {
             let (ptr, w, h) = (Retained::as_ptr(t) as usize, t.width(), t.height());
             self.note(|| format!("bound t{slot} {ptr:#x} {w}x{h}"));
         }
+        let fan = u[uconfig::VGT_PRIMITIVE_TYPE] == 5;
         let primitive = match u[uconfig::VGT_PRIMITIVE_TYPE] {
             1 => MTLPrimitiveType::Point,
             2 => MTLPrimitiveType::Line,
             3 => MTLPrimitiveType::LineStrip,
-            4 | 7 => MTLPrimitiveType::Triangle,
+            4 | 5 | 7 => MTLPrimitiveType::Triangle,
             6 => MTLPrimitiveType::TriangleStrip,
-            _ => return Err("primitive type"),
+            p => {
+                self.note(|| format!("primitive type {p:#x}"));
+                return Err("primitive type");
+            }
         };
         let start = u[uconfig::GE_INDX_OFFSET];
         let counted = match &mut self.pixels {
@@ -4592,6 +4637,25 @@ impl Metal {
                 );
             },
             Draw::Indexed { .. } if rect => return Err("indexed rectangle list"),
+            Draw::Indexed { .. } if fan => return Err("indexed triangle fan"),
+            Draw::Auto { count, instances } if fan => {
+                if count < 3 {
+                    return Ok(());
+                }
+                let indices = self.fan_indices(count)?;
+                unsafe {
+                    enc.drawIndexedPrimitives_indexCount_indexType_indexBuffer_indexBufferOffset_instanceCount_baseVertex_baseInstance(
+                        primitive,
+                        3 * (count as usize - 2),
+                        MTLIndexType::UInt32,
+                        &indices,
+                        0,
+                        instances.max(1) as usize,
+                        start as isize,
+                        0,
+                    );
+                }
+            }
             Draw::Auto { count, instances } => unsafe {
                 enc.drawPrimitives_vertexStart_vertexCount_instanceCount(
                     primitive,

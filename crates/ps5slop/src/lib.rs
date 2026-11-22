@@ -424,6 +424,8 @@ pub fn pad_input(keys: &str) -> hle::PadInput {
                 _ => {}
             }
             p.buttons |= match k {
+                "l3" => 0x2,
+                "r3" => 0x4,
                 "options" => 0x8,
                 "up" => 0x10,
                 "right" => 0x20,
@@ -437,6 +439,7 @@ pub fn pad_input(keys: &str) -> hle::PadInput {
                 "circle" => 0x2000,
                 "cross" => 0x4000,
                 "square" => 0x8000,
+                "touchpad" => 0x10_0000,
                 _ => 0,
             };
             p
