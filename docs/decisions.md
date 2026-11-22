@@ -638,3 +638,6 @@ A thread kicked out of the VM while it should stop (save state, pending exceptio
 
 Scalar 16-bit operations write the low half of their destination (the high half with VOP3 `op_sel[3]`) and keep the other half. Reason: GFX10 does so for all 16-bit operations as LLVM's AMDGPU backend describes it (recalled, not re-read); GTA V's half-precision upscale packs two values per register this way. Not checked on hardware. The older `v_cvt_f16_f32` still clears the high half and was left as it is.
 
+## 2026-11-22: Pending colour fast clears apply before a render target is sampled
+
+Before a render target is bound for sampling, the renderer applies a CMASK or DCC fast clear written since its last draw, as before a draw or a store; the DCC code 0x10101010 ("single") fills the target from its first texel. Reason: GTA V's Performance mode clears the DCC of last frame's picture and then samples it in an additive draw; we added the old picture at full weight, which fed back each frame until the picture was white. The check reads one metadata dword and may wait for the GPU when a program wrote it; the frame rate stayed at 13 to 14 flips a second.

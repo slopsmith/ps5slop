@@ -1880,6 +1880,18 @@ impl Metal {
         if kind == TextureKind::Tex2d
             && let Some(t) = self.targets.get(&image.address)
             && t.texture.textureType() == MTLTextureType::Type2D
+            && t.texture.width() as u32 == image.width
+            && t.texture.height() as u32 == image.height
+            && (t.pixel_format == format || view_compatible(t.pixel_format, format))
+            && let Some(meta) = self.color_meta.get(&image.address).copied()
+        {
+            // A clear made through the metadata since the last draw is what sampling sees.
+            let texture = t.texture.clone();
+            self.fast_clear(host, &meta, &texture);
+        }
+        if kind == TextureKind::Tex2d
+            && let Some(t) = self.targets.get(&image.address)
+            && t.texture.textureType() == MTLTextureType::Type2D
         {
             let tex = &t.texture;
             if tex.width() as u32 == image.width && tex.height() as u32 == image.height {
@@ -3191,11 +3203,27 @@ impl Metal {
                 0x4040_4040 => [0.0, 0.0, 0.0, 1.0],
                 0x8080_8080 => [1.0, 1.0, 1.0, 0.0],
                 0xC0C0_C0C0 => [1.0, 1.0, 1.0, 1.0],
-                0x2020_2020 => [f64::NAN; 4],
+                0x2020_2020 | 0x1010_1010 => [f64::NAN; 4],
                 _ => return,
             };
+            // 0x10 ("single", Mesa's GFX9_DCC_CLEAR_SINGLE): each 256-byte block
+            // holds its colour in its first element, which the clearing program stored.
+            let mut single = [0u8; 8];
+            let bpp = texel_bytes(tex.pixelFormat()).unwrap_or(0).min(8);
+            if code == 0x1010_1010 {
+                self.settle_for(t.address, bpp as u64, "DCC");
+                if bpp == 0 || !host.read(t.address, &mut single[..bpp]) {
+                    return;
+                }
+            }
             host.write(dcc, &u32::MAX.to_le_bytes());
-            if colour[0].is_nan() {
+            if code == 0x1010_1010 {
+                let words = [
+                    u32::from_le_bytes(single[..4].try_into().unwrap()),
+                    u32::from_le_bytes(single[4..].try_into().unwrap()),
+                ];
+                self.fill_raw(t, tex, words);
+            } else if colour[0].is_nan() {
                 let words = t.fast_clear.map_or([0; 2], |f| f.1);
                 self.fill_raw(t, tex, words);
             } else {
