@@ -585,3 +585,15 @@ A `scratch_load` in a program with no `scratch_store` translates to 0 instead of
 ## 2026-11-22: Layered depth targets sampled as cubes grow to six slices
 
 A depth target sampled as a cube with fewer than six slices from its base is made again with six (old slices copied) instead of refusing the draw. Reason: GTA V's point-light shadow cubes only draw the faces in view, so the Metal array never reached six slices and every shadowed light was skipped. Faces never drawn read what the new texture holds (not cleared; the hardware would read whatever the game left there).
+
+## 2026-11-22: Windows reached by GPU address are declared with useResource
+
+The second and third guest memory windows are passed to `useResource` on every encoder that binds them, besides being bound at `buffer(26)` and `buffer(30)`. Reason: translated programs reach them only through GPU address arithmetic, and Metal did not make a bound but undeclared buffer resident: Astro Bot's tile light-list builder read its whole descriptor table as zeros, and the lighting programs walking the lists ran into the loop guard ([gpu.md](gpu.md#astro-bots-light-lists-2026-11-22)). Declaring the buffers as function parameters would also work but adds parameters to every program.
+
+## 2026-11-22: Draws without targets that store to memory run
+
+A draw with no colour and no depth target whose pixel program stores to memory or to an image runs with a stand-in R8 colour target, writes masked off, sized from the scissor and viewport; other such draws are still skipped. Reason: Astro Bot builds per-pixel light lists in such a draw, and skipping it left the lists unended. A Metal render pass without attachments would avoid the texture but needs a separate path through pass and pipeline setup.
+
+## 2026-11-22: A buffer store over a whole cached texture drops it
+
+When a program's store V# starts at a cached 2D texture's address and spans its size (up to twice it), the texture is forgotten, so its next use reads guest memory. Reason: Astro Bot resets a list-head image with a compute buffer fill each frame, and our cached texture kept the old heads, so the per-pixel lists never ended. The size rule keeps arena-sized V#s, which cover memory a program may not touch, from dropping live render targets.

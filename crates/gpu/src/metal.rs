@@ -53,6 +53,8 @@ static FRAMES: OnceLock<Mutex<HashMap<u64, SharedTexture>>> = OnceLock::new();
 const MAX_DEPTH_SLICES: usize = 16;
 /// Color target array slices we keep at most (cube maps use 6).
 const MAX_TARGET_SLICES: u32 = 16;
+/// The pass address of the stand-in target of draws without targets.
+const BLANK_TARGET: u64 = 0xFFFF_FFFF_F000;
 
 fn frames() -> &'static Mutex<HashMap<u64, SharedTexture>> {
     FRAMES.get_or_init(Default::default)
@@ -495,6 +497,8 @@ pub struct Metal {
     missing_inputs: HashMap<(u64, u64), Vec<u32>>,
     generation: u64,
     targets: HashMap<u64, Target>,
+    /// Stand-in colour targets, by size, for draws that only store to memory.
+    blank_targets: HashMap<(u32, u32), Retained<Texture>>,
     images: HashMap<(Image, TextureKind), (u64, Retained<Texture>)>,
     /// 2D-array and 3D images programs write, by guest address.
     volumes: HashMap<u64, Retained<Texture>>,
@@ -657,6 +661,17 @@ impl Slot<'_> {
         }
     }
 
+    /// Makes `b` resident for programs that reach it only through GPU addresses.
+    fn reach(self, b: &Buffer) {
+        let r = ProtocolObject::from_ref(b);
+        let usage = MTLResourceUsage::Read | MTLResourceUsage::Write;
+        match self {
+            Slot::Vertex(e) => e.useResource_usage_stages(r, usage, MTLRenderStages::Vertex),
+            Slot::Fragment(e) => e.useResource_usage_stages(r, usage, MTLRenderStages::Fragment),
+            Slot::Compute(e) => e.useResource_usage(r, usage),
+        }
+    }
+
     fn buffer(self, b: &Buffer, offset: usize, index: usize) {
         unsafe {
             match self {
@@ -732,6 +747,7 @@ impl Metal {
             gds: None,
             generation: 0,
             targets: HashMap::new(),
+            blank_targets: HashMap::new(),
             images: HashMap::new(),
             volumes: HashMap::new(),
             volume_sources: HashMap::new(),
@@ -1378,6 +1394,17 @@ impl Metal {
         desc.setUsage(usage);
         desc.setStorageMode(MTLStorageMode::Private);
         self.device.newTextureWithDescriptor(&desc)
+    }
+
+    fn blank_target(&mut self, width: u32, height: u32) -> Result<Retained<Texture>, &'static str> {
+        if let Some(t) = self.blank_targets.get(&(width, height)) {
+            return Ok(t.clone());
+        }
+        let t = self
+            .new_texture(MTLPixelFormat::R8Unorm, width, height, true)
+            .ok_or("blank target")?;
+        self.blank_targets.insert((width, height), t.clone());
+        Ok(t)
     }
 
     fn new_texture(
@@ -3715,7 +3742,29 @@ impl Metal {
                 })
                 .collect()
         });
+        if let Some(r) = &ranges {
+            self.drop_overwritten(r);
+        }
         self.note_ranges(ranges);
+    }
+
+    /// Forgets 2D textures whose memory a buffer of the encoded stores in
+    /// `ranges` spans, starting at the texture and about its size, so their
+    /// next use reads guest memory (Astro Bot resets a list-head image so).
+    fn drop_overwritten(&mut self, ranges: &[(u64, u64)]) {
+        self.targets.retain(|&address, t| {
+            let tex = &t.texture;
+            if tex.textureType() != MTLTextureType::Type2D || tex.mipmapLevelCount() > 1 {
+                return true;
+            }
+            let Some(bpe) = texel_bytes(t.pixel_format) else {
+                return true;
+            };
+            let len = (tex.width() * tex.height() * bpe) as u64;
+            !ranges
+                .iter()
+                .any(|&(s, e)| s == address && len <= e - s && e - s <= 2 * len + 16)
+        });
     }
 
     /// Adds `ranges` (`None`: anywhere) to what encoded work may write.
@@ -3864,9 +3913,11 @@ impl Metal {
             enc.buffer(&m.buffer, 0, binding::MEM as usize);
             if let Some(b) = &m.second {
                 enc.buffer(b, 0, SECOND_WINDOW);
+                enc.reach(b);
             }
             if let Some(b) = &m.third {
                 enc.buffer(b, 0, THIRD_WINDOW);
+                enc.reach(b);
             }
             enc.bytes(
                 m.win.as_ptr().cast(),
@@ -4394,7 +4445,7 @@ impl Metal {
         }
         let depth_state = DepthState::read(c);
         let wants_depth = depth_state.depth_test() || depth_state.stencil();
-        let size = targets
+        let mut size = targets
             .first()
             .map(|t| (t.1.width() as u32, t.1.height() as u32));
         let mut depth = None;
@@ -4430,7 +4481,22 @@ impl Metal {
             }
         }
         if targets.is_empty() && depth.is_none() {
-            return Err("no color target");
+            let stores = pixel.translated.writes_memory
+                || pixel.translated.resources.iter().any(
+                    |r| matches!(r, Resource::Texture { access, .. } if *access != Access::Sample),
+                );
+            if !stores {
+                return Err("no color target");
+            }
+            let (_, _, x1, y1) = regs::scissor(c);
+            let vp = Viewport::read(c);
+            let w = x1.min((vp.x_offset + vp.x_scale.abs()).ceil().max(1.0) as u32);
+            let h = y1.min((vp.y_offset + vp.y_scale.abs()).ceil().max(1.0) as u32);
+            let tex = self.blank_target(w.clamp(1, 16384), h.clamp(1, 16384))?;
+            key.formats[0] = tex.pixelFormat().0;
+            key.blends[0] = (Blend::read(c, 0), 0);
+            size = Some((tex.width() as u32, tex.height() as u32));
+            targets.push((BLANK_TARGET, tex, 0));
         }
         if let (Some((at, values)), Some(d)) = (gpu_htile, &depth) {
             self.htile_on_gpu(host, at, &targets, d, clear, values)
@@ -6007,6 +6073,8 @@ mod tests {
         len: u64,
         image: Option<(u64, u64)>,
         area: Option<(u64, u64)>,
+        /// Mapped regions; empty means one region over the whole allocation.
+        regions: Vec<(u64, u64)>,
     }
 
     impl Mem {
@@ -6028,6 +6096,7 @@ mod tests {
                 len,
                 image: None,
                 area: None,
+                regions: Vec::new(),
             }
         }
     }
@@ -6062,7 +6131,13 @@ mod tests {
             false
         }
         fn extent(&self, addr: u64) -> Option<(u64, u64)> {
-            (addr < self.len).then_some((0, self.len))
+            if self.regions.is_empty() {
+                return (addr < self.len).then_some((0, self.len));
+            }
+            self.regions
+                .iter()
+                .copied()
+                .find(|&(s, e)| s <= addr && addr < e)
         }
         fn image(&self, addr: u64) -> Option<(u64, u64)> {
             self.image.filter(|&(s, e)| s <= addr && addr < e)
@@ -6452,6 +6527,38 @@ mod tests {
         assert_eq!(results, [0x1234, 0]);
     }
 
+    #[test]
+    fn a_program_reads_a_table_in_a_third_region() {
+        let Some(metal) = Metal::new() else {
+            return;
+        };
+        let (code, table, out) = (0x1000, 0x400_0000, 0x800_0000);
+        let mut mem = Mem::new(0x1000_0000);
+        mem.regions = vec![(0, 0x100_0000), (table, 0x600_0000), (out, 0x1000_0000)];
+        let program: [u32; 7] = [
+            0xF400_0200,
+            0xFA00_0000, // s_load_dword s8, s[0:1], 0x0
+            0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+            0x7E02_0208, // v_mov_b32 v1, s8
+            0xE070_0000,
+            0x8001_0100, // buffer_store_dword v1, off, s[4:7], 0
+            0xBF81_0000, // s_endpgm
+        ];
+        for (i, w) in program.iter().enumerate() {
+            mem.write(code + 4 * i as u64, &w.to_le_bytes());
+        }
+        mem.write(table, &0x5EED_u32.to_le_bytes());
+        let mut p = crate::pm4::Processor::default();
+        let user = [&[table as u32, 0, 0, 0][..], &buffer(out)[..]].concat();
+        let packets = [compute_setup(code, &user), DISPATCH_ONE.to_vec()].concat();
+        let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+        mem.write(0x2000, &bytes);
+        p.backend = Some(Box::new(metal));
+        p.run(&mem, 0x2000, packets.len() as u32).unwrap();
+        p.finish(&mem);
+        assert_eq!(word(&mem, out), 0x5EED);
+    }
+
     // The poll is a guarded loop, so a broken translation ends with a guard
     // trip instead of hanging the GPU.
     #[test]
@@ -6609,6 +6716,64 @@ mod tests {
         assert_eq!(parent(&rewritten), Some(volume));
         let read = metal.image(&mem, flat, TextureKind::Tex2d).unwrap();
         assert_eq!(parent(&read), Some(volume));
+    }
+
+    #[test]
+    fn a_buffer_store_over_a_whole_image_makes_its_next_use_read_memory() {
+        let Some(mut metal) = Metal::new() else {
+            return;
+        };
+        let mem = Mem::new(4 << 20);
+        let store: [u32; 4] = [
+            0x7E02_0204, // v_mov_b32 v1, s4
+            0xE070_0000,
+            0x8000_0100, // buffer_store_dword v1, off, s[0:3], 0
+            0xBF81_0000, // s_endpgm
+        ];
+        for (i, w) in store.iter().enumerate() {
+            mem.write(0x1000 + 4 * i as u64, &w.to_le_bytes());
+        }
+        let image = Image {
+            address: 0x10000,
+            format: 56,
+            width: 64,
+            height: 32,
+            swizzle: [4, 5, 6, 7],
+            tile: Some(TileMode::RenderTarget),
+            raw_tile: 0x1b,
+            kind: 9,
+            base_level: 0,
+            last_level: 0,
+            depth: 1,
+            base_array: 0,
+        };
+        let bytes = 64 * 32 * image_format(56).unwrap().1;
+        let mut kept = Vec::new();
+        for records in [bytes, 16 * bytes] {
+            let made = metal
+                .storage_image(&mem, image, TextureKind::Tex2d)
+                .unwrap();
+            let (c, u) = (vec![0u32; 0x400], vec![0u32; 0x400]);
+            let mut sh = vec![0u32; 0x400];
+            sh[sh::COMPUTE_PGM_LO] = 0x10;
+            sh[sh::COMPUTE_PGM_RSRC2] = 5 << 1;
+            sh[sh::COMPUTE_NUM_THREAD_X] = 1;
+            sh[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + 5]
+                .copy_from_slice(&[0x10000, 0, records, 0x5204, 7]);
+            let state = State {
+                context: &c,
+                sh: &sh,
+                uconfig: &u,
+                color_control_written: false,
+            };
+            metal.dispatch(&mem, &state, crate::Dispatch::groups([1, 1, 1]));
+            let next = metal
+                .storage_image(&mem, image, TextureKind::Tex2d)
+                .unwrap();
+            kept.push(Retained::as_ptr(&made) == Retained::as_ptr(&next));
+        }
+        metal.flush_and_wait();
+        assert_eq!(kept, [false, true], "an arena-sized store keeps the image");
     }
 
     #[test]
