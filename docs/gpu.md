@@ -279,7 +279,9 @@ Evidence for what Performance mode does, from runs from the gta-guard2 state swi
 
 On the way, a second clear code showed up: the forward pass's R16 float target 0x11def60000 is cleared by writing 0x7BFF (65504) into the first dword of each 256-byte block and the DCC code 0x10101010 ("single"), which the renderer ignored, leaving 0 in 7 of 8 texels of every 16x8 block. It is now filled from the first texel. Whether that changed anything visible was not checked separately; the white picture was the clear above.
 
-Measured from the gta-perf state with both changes: the picture matches the Fidelity frame and the PS5 capture in brightness (its colours were still off, see below), stays right over minutes, at 13.5 flips a second (406 in 30 s). A state saved in it is kept outside the repo (see the report of 2026-11-22); saving in it needed the JIT fix in [jit.md](jit.md).
+Measured from the gta-perf state with both changes: the picture matches the Fidelity frame and the PS5 capture in brightness (its colours were still off, see below), stays right over minutes, at 13.5 flips a second (406 in 30 s).
+
+**Red and blue were then swapped** in the scene (the yellow security notice cyan, the brown wood blue), not in the HUD and not in Fidelity mode. The sharpening pass 0x115b16ca00 stores the 4K picture through an 8_8_8_8 image descriptor whose channel selects are BGRA (`[6, 5, 4, 7]`), and the next draw samples it through the same selects. The hardware applies the selects to stores too, so the two cancel; Metal cannot write through a swizzled view, so the renderer stored unswapped and the read swapped. Stores (and read-write loads) through such a descriptor now go through the RGBA8/BGRA8 view with red and blue exchanged; other formats with these selects are left as they were (none seen). Verified against the PS5 capture and our Fidelity frame: the sign is yellow and the wood brown again. A state saved in it is kept outside the repo (see the report of 2026-11-22); saving in it needed the JIT fix in [jit.md](jit.md).
 
 ### Indirect dispatch sizes on the GPU (2026-11-22, late night)
 

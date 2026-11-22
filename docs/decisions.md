@@ -641,3 +641,7 @@ Scalar 16-bit operations write the low half of their destination (the high half 
 ## 2026-11-22: Pending colour fast clears apply before a render target is sampled
 
 Before a render target is bound for sampling, the renderer applies a CMASK or DCC fast clear written since its last draw, as before a draw or a store; the DCC code 0x10101010 ("single") fills the target from its first texel. Reason: GTA V's Performance mode clears the DCC of last frame's picture and then samples it in an additive draw; we added the old picture at full weight, which fed back each frame until the picture was white. The check reads one metadata dword and may wait for the GPU when a program wrote it; the frame rate stayed at 13 to 14 flips a second.
+
+## 2026-11-22: Image stores apply a red and blue swap from their channel selects
+
+When an image a program stores to has channel selects that swap red and blue, the renderer binds the RGBA8 or BGRA8 view with the other order. Reason: the hardware applies the selects to stores as well as loads, and GTA V's Performance-mode sharpening pass relies on that; Metal views with a swizzle are read-only. Only 8-bit four-channel formats are handled; other selects on stores are still ignored.

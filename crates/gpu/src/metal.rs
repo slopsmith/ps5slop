@@ -4150,6 +4150,7 @@ impl Metal {
                             None
                         } else {
                             self.storage_image(host, image, kind)
+                                .and_then(|t| store_swizzled(t, image.swizzle))
                         }
                     } else if image.address == 0 || image.kind < 8 {
                         self.null_texture(kind)
@@ -6249,6 +6250,21 @@ fn sampled_levels(image: Image, layout: Layout) -> u32 {
 /// A 3D image of one texel, whose layout cannot differ from a 2D one.
 fn one_texel_volume(image: Image) -> bool {
     image.width == 1 && image.height == 1 && image.depth == 1
+}
+
+/// A storage texture for an image whose channel selects swap red and blue:
+/// Metal cannot write through a swizzled view, so the swap goes into the format.
+fn store_swizzled(tex: Retained<Texture>, sel: [u8; 4]) -> Option<Retained<Texture>> {
+    use MTLPixelFormat as P;
+    if sel[..3] != [6, 5, 4] {
+        return Some(tex);
+    }
+    let swapped = match tex.pixelFormat() {
+        P::RGBA8Unorm => P::BGRA8Unorm,
+        P::BGRA8Unorm => P::RGBA8Unorm,
+        _ => return Some(tex),
+    };
+    tex.newTextureViewWithPixelFormat(swapped).or(Some(tex))
 }
 
 // Metal allows views of the same bytes per pixel; packed float formats
