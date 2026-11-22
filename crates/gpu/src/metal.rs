@@ -2831,6 +2831,16 @@ impl Metal {
         };
         enc.dispatchThreadgroups_threadsPerThreadgroup(one, one);
         enc.endEncoding();
+        let (dw, dh) = (depth.1.width(), depth.1.height());
+        let targets = if targets
+            .iter()
+            .any(|t| t.1.width() < dw || t.1.height() < dh)
+        {
+            &[]
+        } else {
+            targets
+        };
+        // The clear draw covers the whole depth target only without smaller colour targets.
         let enc = self.pass(targets, Some(depth.clone()), clear)?;
         let mut formats = [0usize; 8];
         for (f, t) in formats.iter_mut().zip(targets) {
@@ -6774,6 +6784,57 @@ mod tests {
         }
         metal.flush_and_wait();
         assert_eq!(kept, [false, true], "an arena-sized store keeps the image");
+    }
+
+    #[test]
+    fn depth_clears_reach_past_a_smaller_color_target() {
+        let mut cleared = Vec::new();
+        for on_gpu in [false, true] {
+            let Some(mut metal) = Metal::new() else {
+                return;
+            };
+            let mem = Mem::new(1 << 20);
+            let texture = |format, w, h| {
+                let d = unsafe {
+                    MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+                        format, w, h, false,
+                    )
+                };
+                d.setUsage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
+                d.setStorageMode(MTLStorageMode::Private);
+                metal.device.newTextureWithDescriptor(&d).unwrap()
+            };
+            let color = texture(MTLPixelFormat::RGBA8Unorm, 32, 32);
+            let depth = texture(MTLPixelFormat::Depth32Float, 64, 32);
+            let targets = [(0x10000, color, 0)];
+            let d = (0x20000, depth.clone(), false, 0);
+            if on_gpu {
+                metal
+                    .htile_on_gpu(&mem, 0x30000, &targets, &d, None, (0.25, 0))
+                    .unwrap();
+            } else {
+                metal.pass(&targets, Some(d), Some((0.25, 0))).unwrap();
+            }
+            metal.end_pass();
+            let out = metal
+                .device
+                .newBufferWithLength_options(64 * 32 * 4, MTLResourceOptions::StorageModeShared)
+                .unwrap();
+            let cb = metal.command();
+            let blit = cb.blitCommandEncoder().unwrap();
+            unsafe {
+                blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage(
+                    &depth, 0, 0, MTLOrigin { x: 0, y: 0, z: 0 }, MTLSize { width: 64, height: 32, depth: 1 }, &out, 0, 64 * 4, 64 * 32 * 4,
+                );
+            }
+            blit.endEncoding();
+            metal.flush_and_wait();
+            let z = |x: usize, y: usize| unsafe {
+                *out.contents().as_ptr().cast::<f32>().add(y * 64 + x)
+            };
+            cleared.push((z(8, 8), z(56, 8)));
+        }
+        assert_eq!(cleared, [(0.25, 0.25), (0.25, 0.25)]);
     }
 
     #[test]

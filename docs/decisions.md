@@ -597,3 +597,8 @@ A draw with no colour and no depth target whose pixel program stores to memory o
 ## 2026-11-22: A buffer store over a whole cached texture drops it
 
 When a program's store V# starts at a cached 2D texture's address and spans its size (up to twice it), the texture is forgotten, so its next use reads guest memory. Reason: Astro Bot resets a list-head image with a compute buffer fill each frame, and our cached texture kept the old heads, so the per-pixel lists never ended. The size rule keeps arena-sized V#s, which cover memory a program may not touch, from dropping live render targets.
+
+## 2026-11-22: GPU HTILE clears run without smaller colour targets
+
+The draw that applies an HTILE fast clear on the GPU opens a pass with the depth target alone when one of the draw's colour targets is smaller than it. Reason: Metal renders a pass only over its smallest attachment, so Astro Bot's clear in a pass with a 1024x1024 colour target left the rest of its 1920x1080 depth buffer holding old frames, which hid its logo's "T" ([gpu.md](gpu.md#astro-bots-grey-t-2026-11-22)). The pass is ended again for the draw, one extra pass per such clear.
+
