@@ -217,6 +217,21 @@ Outside lockstep programs a scalar instruction that writes EXEC (`s_wqm_b64`, `s
 
 `exp mrtz` now writes depth only when its R component is enabled, and its B component (the sample mask) goes to `[[sample_mask]]`. A GTA V program that exports only the sample mask (`exp mrtz off, off, v9, off`) wrote an unexported register as depth before.
 
+## Half precision and 16-bit addresses for GTA V's Performance mode (2026-11-22, late night)
+
+GTA V's upscale and sharpening passes in Performance mode ([gpu.md](gpu.md#gta-vs-graphics-modes-2026-11-22-late-night)) are written in half precision. Added:
+
+- **Scalar 16-bit ops** (`v_add/sub/subrev/mul/min/max/fma/fmac/mad_f16`, `v_min3/max3/med3_f16`, `v_rcp/sqrt/rsq/floor/ceil/trunc/rndne/fract/exp/log_f16`, `v_add_nc/sub_nc_u16/i16`, `v_mul_lo_u16`, 16-bit shifts, min and max), in their 32-bit, VOP3 and SDWA forms, and `v_cmp_*_f16`. Sources are the low half, or the high half with a VOP3 `op_sel` bit; the result goes to the low half, or the high half with `op_sel[3]`, and the other half of the destination is kept. Float inline constants are halves (1.0 is 0x3C00). That GFX10 keeps the other half for every 16-bit op, where GFX9 cleared it for most, is from LLVM's AMDGPU backend as remembered (not re-read; Apache-2.0 with LLVM exception), not checked on hardware.
+- **Packed half ops** (`v_pk_add/mul/min/max/fma_f16`, `v_pk_fmac_f16`): `op_sel` picks each source's half for the low result, `op_sel_hi` for the high one, `neg_lo`/`neg_hi` negate them. A float inline constant is used in both halves (assumed; the programs seen put `op_sel_hi` 0 on constants, which makes it moot).
+- **`a16` image loads and stores**: two 16-bit coordinates per VGPR, low half first. Sampling with `a16` is still refused.
+- `image_gather4_o` and `image_gather4_lz_o` (offsets as for sampling), and `v_min3/max3_u32/i32`.
+
+A GPU test runs one program with packed and scalar half ops, `op_sel`, SDWA and a 16-bit add on Metal and checks the four result words. All 378 programs captured in that run (the held programs left out) translate and compile.
+
+## Bounded compute programs (2026-11-22, late night)
+
+`Request::bounded` makes a compute program read the grid size in threads from `bounds` (`device const uint*` at `[[buffer(24)]]`) and start threads at or past it with EXEC clear; in a lockstep program the active lanes are the prefix of the wave below the bound, so a lockstep program with a group of more than one dimension is refused. The renderer uses it for indirect dispatches whose sizes count threads ([gpu.md](gpu.md#indirect-dispatch-sizes-on-the-gpu-2026-11-22-late-night)); a GPU test dispatches 70 threads in groups of 64 and checks that exactly 70 stores land.
+
 ## Open questions
 
 - The renderer asked for buffers at `[[buffer(1 + slot)]]` with their V#s at `[[buffer(30)]]`. Balatro's vertex programs build their V#s at run time, so the translator reads guest memory instead; static buffer slots could come back as an optimisation where a V# provably sits in user SGPRs.

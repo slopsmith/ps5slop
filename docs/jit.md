@@ -94,6 +94,14 @@ Measured headless, release builds, back to back, with another delegate's Superli
 
 So the movie now plays in about 10 s instead of about 150. Left in the interpreter during the intro (10 s window): `pcmpistri` in `libc` on the main thread (0.57 M, 0.25 s; Sony's code, counted only), `vcvtps2ph` in the game (17 K), 8-bit `div` and `adc r8, imm`.
 
+## Stopping a kicked thread (2026-11-22, late night)
+
+When a thread was kicked out of the VM (`hv_vcpus_exit`) while its stop condition held (a save state asks threads to park, an exception is pending, the process exits), `Engine::run` returned at once without storing the vCPU's registers. The thread kept the x86 state of its last VM entry while memory already held everything the code had done since, so it ran that code again from stale registers when it went on. In GTA V's Performance mode a save stopped the world several times (the graphics queue was waiting on the CPU, see [savestates.md](savestates.md)), the audio mixer thread came back with a stack pointer that no longer matched its stack, and the game faulted on its stack canary right after the save and right after every load of that state.
+
+A kicked vCPU's registers match no x86 instruction boundary, so a stop now waits for the next exit that stores them (a host call, an untranslated instruction, a fault), resuming the VM after each kick; only after 5 s (`STOP_GRACE`, longer than a save's 3 s stop limit) does it leave with the old registers, so a process exit still ends a thread that spins in translated code. Test: `a_thread_stopped_by_a_kick_leaves_with_registers_that_match_memory` (a counting loop kicked every 200 us; before the fix the register held 0 while memory held the count). A thread spinning on a lock held by a parked thread no longer parks, so such a save fails after 3 s and retries instead of saving a broken thread.
+
+The same early return applied to pending exceptions (`sceKernelRaiseException`), whose handlers then ran on stale registers. Whether that is behind Minecraft's rare fault under kicks (above) is not checked.
+
 ## Tier 2
 
 Off by default; `PS5SLOP_JIT_TIER2=N` compiles a block's region after the block ran `N` times, `PS5SLOP_JIT_TIER2=eager` on its first run (the test mode). Modelled on 86slopper's design ([its `docs/jit-tier2.md`](references.md)), phase 1, synchronous:

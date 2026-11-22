@@ -103,6 +103,7 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 | 2026-11-21 | YouTube captures of Astro Bot's PS5 title screen (thumbnails of public videos), saved outside the repo | What the logo looks like on a console | Nothing; used as the visual reference only |
 | 2026-11-21 | Mesa `src/amd/addrlib` (MIT, AMD copyright, SPDX headers), main branch, fetched to a scratch folder: `src/gfx10/gfx10SwizzlePattern.h` (`GFX10_SW_4K_S3_PATINFO`, the pattern nibble tables), `src/gfx10/gfx10addrlib.cpp` (`ComputeSurfaceInfoMacroTiled`, `ComputeSurfaceAddrFromCoordMacroTiled`, `GetMaxNumMipsInTail`), `src/gfx10/gfx10addrlib.h` (`IsInMipTail`), `src/core/addrlib2.cpp` (`GetMipTailDim`) | `SW_4KB_S` 3D layout: the bit pattern per element size, mip levels smallest first, a slab of block-deep slices per mip chain, mip tail limits | Our own `tiling::Volume` in `crates/gpu/src/tiling.rs`, which names the source ([gpu.md](gpu.md)) |
 | 2026-11-21 | YouTube: a GTA V PS5 playthrough of the Prologue (4K, GTASeries.com), frames kept in a scratch folder only | What the depot lobby looks like at "Go to the guard." | Nothing; a visual reference |
+| 2026-11-22 | LLVM AMDGPU backend (Apache-2.0 with LLVM exception), from memory, not re-read | Whether GFX10's 16-bit VALU ops keep the destination's other half (`GCNSubtarget::zeroesHigh16BitsOfDest`) | Fact only, marked unverified ([shaders.md](shaders.md)). No code. |
 
 Add a row whenever someone reads another project's source for this repo.
 

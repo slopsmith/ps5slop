@@ -626,3 +626,15 @@ A texture read from guest memory is detiled again in a later frame only when a 6
 
 `hold`, `release` and `tap` keep input pressed across commands and mash buttons, and `lx=N`-style names set one axis or trigger part way. Reason: playing GTA V's prologue headless needs aiming (L2) while moving and shooting, sprinting by tapping, and gentle turns, which full-edge presses of one command at a time could not do.
 
+## 2026-11-22: Indirect dispatch sizes are read on the GPU
+
+`DISPATCH_INDIRECT` hands its address to the backend, which reads the sizes on the GPU with a one-thread program, turns thread counts into groups and dispatches with Metal's indirect dispatch; a partial last group runs as a bounded program variant whose threads past the grid size start with EXEC clear. Reason: GTA V's culling queue waited for the whole GPU about 115 times a frame to read these sizes on the CPU, and each wait drained the backend every queue shares; Fidelity went from 2.30 to 2.70 flips a second. Kept from the CPU path: the 2^24-group limit (applied on the GPU) and the loop guard. Not chosen: Metal's indirect command buffers, which would also need the partial group handled in the program and bind resources differently from every other dispatch.
+
+## 2026-11-22: A stopped thread leaves translated code only with stored registers
+
+A thread kicked out of the VM while it should stop (save state, pending exception, exit) resumes translated code until an exit that stores its registers, for up to 5 s. Reason: returning at the kick kept the registers of the last VM entry, which broke a GTA V thread at every save in Performance mode. The 5 s bound keeps process exit from hanging on a thread that spins; it is longer than the save's 3 s stop limit, so a save never takes such a thread's stale registers.
+
+## 2026-11-22: 16-bit VALU results keep the other half of their register
+
+Scalar 16-bit operations write the low half of their destination (the high half with VOP3 `op_sel[3]`) and keep the other half. Reason: GFX10 does so for all 16-bit operations as LLVM's AMDGPU backend describes it (recalled, not re-read); GTA V's half-precision upscale packs two values per register this way. Not checked on hardware. The older `v_cvt_f16_f32` still clears the high half and was left as it is.
+
