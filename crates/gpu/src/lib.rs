@@ -69,6 +69,18 @@ pub struct MemoryWrite<'a> {
 pub trait Backend: Send {
     fn draw(&mut self, host: &dyn Host, state: &State, draw: Draw);
     fn dispatch(&mut self, host: &dyn Host, state: &State, dispatch: Dispatch);
+    /// A dispatch whose three dimensions the GPU reads at `at` once earlier
+    /// work is done; they count threads with `threads`. False if the caller
+    /// must read them and dispatch.
+    fn dispatch_indirect(
+        &mut self,
+        _host: &dyn Host,
+        _state: &State,
+        _at: u64,
+        _threads: bool,
+    ) -> bool {
+        false
+    }
     /// Writes `values` (all to `dest` when `fixed`) to guest memory in GPU
     /// order, after the work recorded so far and before later work; false
     /// if the caller must write them itself once that work is done.
@@ -130,6 +142,15 @@ impl Backend for SharedBackend {
     }
     fn dispatch(&mut self, host: &dyn Host, state: &State, dispatch: Dispatch) {
         self.lock().dispatch(host, state, dispatch)
+    }
+    fn dispatch_indirect(
+        &mut self,
+        host: &dyn Host,
+        state: &State,
+        at: u64,
+        threads: bool,
+    ) -> bool {
+        self.lock().dispatch_indirect(host, state, at, threads)
     }
     fn write_memory(&mut self, host: &dyn Host, write: &MemoryWrite) -> bool {
         self.lock().write_memory(host, write)

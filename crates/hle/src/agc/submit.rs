@@ -321,10 +321,10 @@ fn gpu_thread(
             if let Some(b) = processor.backend.as_ref().filter(|_| name == "graphics") {
                 eprintln!("ps5slop: GPU: Metal: {}", b.summary());
             }
-            if !processor.stats.gpu_waits.is_empty() {
+            if !processor.stats.gpu_waits.is_empty() || processor.stats.gpu_indirect > 0 {
                 eprintln!(
-                    "ps5slop: GPU {name}: waits for the GPU by packet: {:?}",
-                    processor.stats.gpu_waits
+                    "ps5slop: GPU {name}: waits for the GPU by packet: {:?}, indirect dispatches sized on the GPU: {}",
+                    processor.stats.gpu_waits, processor.stats.gpu_indirect
                 );
             }
             if std::env::var_os("PS5SLOP_GPU_OPCODES").is_some() {

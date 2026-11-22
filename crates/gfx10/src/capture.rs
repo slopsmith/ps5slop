@@ -70,6 +70,7 @@ impl Capture {
             threads: self.threads,
             uint_textures: self.uint_textures,
             sint_textures: self.sint_textures,
+            bounded: false,
         }
     }
 

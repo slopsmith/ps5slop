@@ -52,6 +52,9 @@ pub struct Request<'a> {
     /// Slot numbers do not depend on these masks.
     pub uint_textures: u32,
     pub sint_textures: u32,
+    /// Compute stage: threads at or past the grid size in `bounds` (three
+    /// dwords at [`binding::BOUNDS`]) start with EXEC clear.
+    pub bounded: bool,
 }
 
 /// Where a descriptor's dwords come from.
@@ -212,6 +215,8 @@ pub mod binding {
     /// of compute programs ([`super::Translated::loop_guard`]): backward
     /// branches taken so far in [`super::GUARD_UNIT`]s, and threads that gave up.
     pub const GUARD: u32 = 25;
+    /// `device const uint* bounds`: the grid size in threads, for bounded programs.
+    pub const BOUNDS: u32 = 24;
 }
 
 /// Backward branches a vertex or pixel invocation may take before it gives up: a
@@ -356,6 +361,12 @@ pub fn translate(req: &Request) -> Result<Translated, TranslateError> {
         .filter(|(_, t)| t.3 == Access::Atomic)
         .fold(0, |m, (i, _)| m | 1 << i);
     tx.run()?;
+    if req.bounded && tx.lockstep && req.threads[1..].iter().any(|&t| t > 1) {
+        return Err(err(
+            0,
+            "bounds of a lockstep program with a multi-dimensional group",
+        ));
+    }
     Ok(tx.finish())
 }
 
@@ -3988,6 +3999,37 @@ impl<'a> Tx<'a> {
         }
     }
 
+    /// Clears EXEC for threads past the grid size in `bounds`. A lockstep
+    /// wave is its whole one-dimensional group, so its active lanes are a prefix.
+    fn bounds_init(&self) -> String {
+        let t = self.req.threads.map(|n| n.max(1));
+        let outside = format!(
+            "any(gid * uint3({}u, {}u, {}u) + lid >= uint3(bounds[0], bounds[1], bounds[2]))",
+            t[0], t[1], t[2]
+        );
+        if !self.lockstep {
+            return if self.regs.contains("exec_lo") {
+                format!("    if ({outside}) exec_lo = 0u;\n")
+            } else {
+                String::new()
+            };
+        }
+        let mut s = format!(
+            "    {{ uint first = gid.x * {}u; uint n = (bounds[0] > first && gid.y < bounds[1] && gid.z < bounds[2]) ? min(bounds[0] - first, 64u) : 0u;\n",
+            t[0]
+        );
+        if self.regs.contains("exec_lo") {
+            s.push_str("      exec_lo = n >= 32u ? 0xffffffffu : (1u << n) - 1u;\n");
+        }
+        if self.regs.contains("exec_hi") {
+            s.push_str(
+                "      exec_hi = n >= 64u ? 0xffffffffu : n > 32u ? (1u << (n - 32u)) - 1u : 0u;\n",
+            );
+        }
+        s.push_str("    }\n");
+        s
+    }
+
     /// Threadgroup memory: `LDS_SIZE` of `COMPUTE_PGM_RSRC2` in 512-byte units,
     /// within what Metal allows.
     fn lds_bytes(&self) -> u32 {
@@ -4243,6 +4285,13 @@ impl<'a> Tx<'a> {
             }
             Stage::Compute => {
                 init.push_str(&self.cs_inputs());
+                if self.req.bounded {
+                    entry_params.push(format!(
+                        "device const uint* bounds [[buffer({})]]",
+                        binding::BOUNDS
+                    ));
+                    init.push_str(&self.bounds_init());
+                }
                 let mut lds = if self.lds {
                     "    threadgroup uint lds[LDS_BYTES / 4];\n"
                 } else {

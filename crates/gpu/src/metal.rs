@@ -389,6 +389,8 @@ struct Variant {
     col_format: u32,
     uint_textures: u32,
     sint_textures: u32,
+    /// Compute: threads past a grid size read from a buffer do nothing.
+    bounded: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -465,6 +467,7 @@ pub struct Metal {
     /// HTILE checks made on the GPU.
     htile_checks: u64,
     htile_helpers: Option<HtileHelpers>,
+    indirect_sizes: Option<Retained<ComputePipeline>>,
     /// By colour formats, depth format and stencil.
     htile_pipelines: HashMap<([usize; 8], usize, bool), Retained<RenderPipeline>>,
     /// The uncommitted main command buffer holds work that writes guest
@@ -759,6 +762,7 @@ impl Metal {
             gpu_htiles: Default::default(),
             htile_checks: 0,
             htile_helpers: None,
+            indirect_sizes: None,
             htile_pipelines: HashMap::new(),
             pending_writes: false,
             failed_commands: 0,
@@ -2355,6 +2359,7 @@ impl Metal {
     /// The program at `address` as the bound descriptors need it: translated
     /// again with integer texture types when a T# has an integer format.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn typed_program(
         &mut self,
         host: &dyn Host,
@@ -2365,11 +2370,13 @@ impl Metal {
         ngg: bool,
         col_format: u32,
         user: &[u32],
+        bounded: bool,
     ) -> Option<Arc<Program>> {
         let base = Variant {
             col_format,
             uint_textures: 0,
             sint_textures: 0,
+            bounded,
         };
         let program = self.program(host, state, stage, address, user_sgprs, ngg, base)?;
         let mut variant = base;
@@ -2466,6 +2473,7 @@ impl Metal {
                     .map(|i| (state.sh[sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1)),
                 uint_textures: variant.uint_textures,
                 sint_textures: variant.sint_textures,
+                bounded: variant.bounded,
             };
             if let Some(dir) = std::env::var_os("PS5SLOP_SHADER_DUMP") {
                 let path = std::path::Path::new(&dir)
@@ -2935,6 +2943,64 @@ impl Metal {
             )),
             _ => self.window(host, at, len),
         }
+    }
+
+    /// Encodes a one-thread program that reads the dimensions at `at` once
+    /// earlier work is done and writes threadgroup counts and, 16 bytes on,
+    /// the grid size in threads, into the returned buffer.
+    fn indirect_sizes(
+        &mut self,
+        host: &dyn Host,
+        at: u64,
+        size: [usize; 3],
+        threads: bool,
+    ) -> Option<(Retained<Buffer>, usize)> {
+        let (start, end) = host.gpu_area()?;
+        if !at.is_multiple_of(4) || at < start || at + 12 > end {
+            return None;
+        }
+        let (dims, dims_at) = self.memory_buffer(host, at, 12)?;
+        let (out, out_at) = self.scratch(32)?;
+        if self.indirect_sizes.is_none() {
+            let msl = INDIRECT_MSL.replace("LIMIT", &crate::pm4::MAX_GROUPS.to_string());
+            let lib = self
+                .device
+                .newLibraryWithSource_options_error(&NSString::from_str(&msl), None)
+                .ok()?;
+            let f = lib.newFunctionWithName(&NSString::from_str("indirect_sizes"))?;
+            self.indirect_sizes = Some(
+                self.device
+                    .newComputePipelineStateWithFunction_error(&f)
+                    .ok()?,
+            );
+        }
+        let pipeline = self.indirect_sizes.clone()?;
+        self.end_pass();
+        let command = self.command();
+        let enc = command.computeCommandEncoder()?;
+        if let Some(f) = self.wait_memory() {
+            enc.waitForFence(f);
+        }
+        enc.setComputePipelineState(&pipeline);
+        let p = [
+            size[0] as u32,
+            size[1] as u32,
+            size[2] as u32,
+            threads as u32,
+        ];
+        unsafe {
+            enc.setBuffer_offset_atIndex(Some(&dims), dims_at, 0);
+            enc.setBuffer_offset_atIndex(Some(&out), out_at, 1);
+            enc.setBytes_length_atIndex(NonNull::new(p.as_ptr() as *mut _)?, 16, 2);
+        }
+        let one = MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        };
+        enc.dispatchThreadgroups_threadsPerThreadgroup(one, one);
+        enc.endEncoding();
+        Some((out, out_at))
     }
 
     /// Checks the HTILE word at `at` on the GPU, after the work that may write
@@ -4363,9 +4429,12 @@ impl Metal {
         &mut self,
         host: &dyn Host,
         state: &State,
-        dispatch: crate::Dispatch,
+        grid: Grid,
     ) -> Result<(), &'static str> {
-        let groups = dispatch.groups;
+        let (groups, bounded) = match grid {
+            Grid::Direct(d) => (d.groups, false),
+            Grid::Indirect { threads, .. } => ([0; 3], threads),
+        };
         let s = state.sh;
         let address =
             ((s[sh::COMPUTE_PGM_LO] as u64) | (s[sh::COMPUTE_PGM_LO + 1] as u64) << 32) << 8;
@@ -4385,12 +4454,27 @@ impl Metal {
             )
         });
         let program = self
-            .typed_program(host, state, Stage::Compute, address, users, false, 0, user)
-            .ok_or("compute program")?;
+            .typed_program(
+                host,
+                state,
+                Stage::Compute,
+                address,
+                users,
+                false,
+                0,
+                user,
+                bounded,
+            )
+            .ok_or(if bounded {
+                INDIRECT_ON_CPU
+            } else {
+                "compute program"
+            })?;
         self.trace_user_memory(host, &user[..users as usize], false);
         let task = program.compute.as_ref().ok_or("compute pipeline")?;
-        let grid = dispatch.threads.unwrap_or(groups);
-        if groups.contains(&0) || grid.contains(&0) {
+        if let Grid::Direct(d) = grid
+            && (groups.contains(&0) || d.threads.unwrap_or(groups).contains(&0))
+        {
             return Ok(());
         }
         let pipeline = match task.poll() {
@@ -4408,6 +4492,13 @@ impl Metal {
             return Err("threadgroup too large");
         }
         let bound = self.resolve(host, &program, user);
+        let sizes = match grid {
+            Grid::Indirect { at, threads: t } if bound.is_some() => Some(
+                self.indirect_sizes(host, at, threads, t)
+                    .ok_or(INDIRECT_ON_CPU)?,
+            ),
+            _ => None,
+        };
         self.end_pass();
         let command = self.command();
         let enc = command.computeCommandEncoder().ok_or("compute encoder")?;
@@ -4441,8 +4532,22 @@ impl Metal {
                 height: threads[1],
                 depth: threads[2],
             };
-            match dispatch.threads {
-                Some(t) => enc.dispatchThreads_threadsPerThreadgroup(
+            match grid {
+                Grid::Indirect { threads, .. } => {
+                    if let Some((args, at)) = &sizes {
+                        if threads {
+                            Slot::Compute(&enc).buffer(args, at + 16, binding::BOUNDS as usize);
+                        }
+                        unsafe {
+                            enc.dispatchThreadgroupsWithIndirectBuffer_indirectBufferOffset_threadsPerThreadgroup(
+                                args, *at, per_group,
+                            )
+                        }
+                    }
+                }
+                Grid::Direct(crate::Dispatch {
+                    threads: Some(t), ..
+                }) => enc.dispatchThreads_threadsPerThreadgroup(
                     MTLSize {
                         width: t[0] as usize,
                         height: t[1] as usize,
@@ -4450,7 +4555,7 @@ impl Metal {
                     },
                     per_group,
                 ),
-                None => enc.dispatchThreadgroups_threadsPerThreadgroup(
+                Grid::Direct(_) => enc.dispatchThreadgroups_threadsPerThreadgroup(
                     MTLSize {
                         width: groups[0] as usize,
                         height: groups[1] as usize,
@@ -4558,6 +4663,7 @@ impl Metal {
                 ngg,
                 0,
                 vs_data,
+                false,
             )
             .ok_or("vertex program")?;
         let pixel = self
@@ -4570,6 +4676,7 @@ impl Metal {
                 false,
                 col_format,
                 ps_data,
+                false,
             )
             .ok_or("pixel program")?;
         self.note(|| format!("vertex user {:x?}", &vs_data[..vs_users as usize]));
@@ -5162,6 +5269,36 @@ struct HtileHelpers {
     states: [Retained<ProtocolObject<dyn MTLDepthStencilState>>; 3],
 }
 
+/// How a compute program's grid is given.
+#[derive(Clone, Copy)]
+enum Grid {
+    Direct(crate::Dispatch),
+    /// Three dimensions in guest memory at `at`, counting threads with `threads`.
+    Indirect {
+        at: u64,
+        threads: bool,
+    },
+}
+
+/// Why an indirect dispatch goes back to the command processor, which reads
+/// its dimensions on the CPU.
+const INDIRECT_ON_CPU: &str = "indirect dimensions read on the CPU";
+
+/// Turns an indirect dispatch's dimensions into Metal's threadgroup counts,
+/// then the grid size in threads: none past the command processor's limit.
+const INDIRECT_MSL: &str = r#"#include <metal_stdlib>
+using namespace metal;
+kernel void indirect_sizes(device const uint* dims [[buffer(0)]], device uint* out [[buffer(1)]], constant uint4& p [[buffer(2)]]) {
+    uint3 size = max(p.xyz, uint3(1u));
+    uint3 n = uint3(dims[0], dims[1], dims[2]);
+    uint3 g = p.w != 0u ? n / size + select(uint3(0u), uint3(1u), n % size != 0u) : n;
+    ulong total = ulong(g.x) * ulong(g.y) * ulong(g.z);
+    if (total > LIMITul) g = uint3(0u);
+    out[0] = g.x; out[1] = g.y; out[2] = g.z; out[3] = 0u;
+    out[4] = n.x; out[5] = n.y; out[6] = n.z; out[7] = 0u;
+}
+"#;
+
 const HTILE_MSL: &str = r#"#include <metal_stdlib>
 using namespace metal;
 kernel void htile_check(device uint* word [[buffer(0)]], device uint* draw [[buffer(1)]]) {
@@ -5577,7 +5714,7 @@ impl Backend for Metal {
     fn dispatch(&mut self, host: &dyn Host, state: &State, dispatch: crate::Dispatch) {
         self.trace = self.tracing().then(Vec::new);
         let groups = dispatch.groups;
-        let result = self.try_dispatch(host, state, dispatch);
+        let result = self.try_dispatch(host, state, Grid::Direct(dispatch));
         self.end_trace(|| format!("dispatch {groups:?}"), result);
         match result {
             Ok(()) => self.dispatches += 1,
@@ -5586,6 +5723,30 @@ impl Backend for Metal {
                 *self.reasons.entry(why).or_default() += 1;
             }
         }
+    }
+
+    fn dispatch_indirect(
+        &mut self,
+        host: &dyn Host,
+        state: &State,
+        at: u64,
+        threads: bool,
+    ) -> bool {
+        self.trace = self.tracing().then(Vec::new);
+        let result = self.try_dispatch(host, state, Grid::Indirect { at, threads });
+        if result == Err(INDIRECT_ON_CPU) {
+            self.trace = None;
+            return false;
+        }
+        self.end_trace(|| format!("dispatch with dimensions at {at:#x}"), result);
+        match result {
+            Ok(()) => self.dispatches += 1,
+            Err(why) => {
+                self.skipped += 1;
+                *self.reasons.entry(why).or_default() += 1;
+            }
+        }
+        true
     }
 
     fn write_memory(&mut self, host: &dyn Host, write: &crate::MemoryWrite) -> bool {
@@ -6649,6 +6810,98 @@ mod tests {
             (7, 9),
             "the dispatch must read the write before it, and the write after it must not run first"
         );
+    }
+
+    #[test]
+    fn an_indirect_dispatch_in_threads_runs_the_threads_earlier_gpu_work_asked_for() {
+        let Some(metal) = Metal::new() else {
+            return;
+        };
+        let mut mem = Mem::new(1 << 20);
+        mem.area = Some((0, 1 << 20));
+        let (dims, out) = (0x8000u64, 0x9000u64);
+        mem.write(dims, &[0u32, 1, 1].map(u32::to_le_bytes).concat());
+        let size: &[u32] = &[
+            0x7E02_02FF,
+            0x0000_0046, // v_mov_b32 v1, 70
+            0xE070_0000,
+            0x8000_0100, // buffer_store_dword v1, off, s[0:3], 0
+            0xBF81_0000, // s_endpgm
+        ];
+        let mark: &[u32] = &[
+            0xD746_0001,
+            0x0401_0C04, // v_lshl_add_u32 v1, s4, 6, v0
+            0x3402_0282, // v_lshlrev_b32 v1, 2, v1
+            0x7E04_0281, // v_mov_b32 v2, 1
+            0xE070_1000,
+            0x8000_0201, // buffer_store_dword v2, v1, s[0:3], 0 offen
+            0xBF81_0000, // s_endpgm
+        ];
+        for (at, code) in [(0x1000u64, size), (0x1100, mark)] {
+            for (i, w) in code.iter().enumerate() {
+                mem.write(at + 4 * i as u64, &w.to_le_bytes());
+            }
+        }
+        let set = |reg: usize, values: &[u32]| {
+            let mut p = vec![
+                0xC000_0000 | (values.len() as u32) << 16 | 0x76 << 8,
+                reg as u32,
+            ];
+            p.extend_from_slice(values);
+            p
+        };
+        let packets = [
+            compute_setup(0x1000, &buffer(dims)),
+            DISPATCH_ONE.to_vec(),
+            set(sh::COMPUTE_PGM_LO, &[0x11, 0]),
+            set(sh::COMPUTE_PGM_RSRC2, &[4 << 1 | 1 << 7]),
+            set(sh::COMPUTE_NUM_THREAD_X, &[64, 1, 1]),
+            set(sh::COMPUTE_USER_DATA_0, &[out as u32, 0, 0x1000, 0x5204]),
+            vec![0xC002_1600, dims as u32, 0, 0x21],
+        ]
+        .concat();
+        let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+        mem.write(0x2000, &bytes);
+        let mut p = crate::pm4::Processor::default();
+        p.backend = Some(Box::new(metal));
+        p.run(&mem, 0x2000, packets.len() as u32).unwrap();
+        p.finish(&mem);
+        assert_eq!(p.stats.gpu_indirect, 1);
+        let marked: Vec<u32> = (0..128).map(|i| word(&mem, out + 4 * i)).collect();
+        assert_eq!(marked, [[1; 70].as_slice(), &[0; 58]].concat());
+    }
+
+    #[test]
+    fn an_indirect_dispatch_past_the_group_limit_runs_nothing() {
+        let Some(metal) = Metal::new() else {
+            return;
+        };
+        let mut mem = Mem::new(1 << 20);
+        mem.area = Some((0, 1 << 20));
+        let (dims, out) = (0x8000u64, 0x9000u64);
+        mem.write(dims, &[1u32 << 25, 1, 1].map(u32::to_le_bytes).concat());
+        let mark: &[u32] = &[
+            0x7E04_0281, // v_mov_b32 v2, 1
+            0xE070_0000,
+            0x8000_0200, // buffer_store_dword v2, off, s[0:3], 0
+            0xBF81_0000, // s_endpgm
+        ];
+        for (i, w) in mark.iter().enumerate() {
+            mem.write(0x1000 + 4 * i as u64, &w.to_le_bytes());
+        }
+        let packets = [
+            compute_setup(0x1000, &buffer(out)),
+            vec![0xC002_1600, dims as u32, 0, 1],
+        ]
+        .concat();
+        let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+        mem.write(0x2000, &bytes);
+        let mut p = crate::pm4::Processor::default();
+        p.backend = Some(Box::new(metal));
+        p.run(&mem, 0x2000, packets.len() as u32).unwrap();
+        p.finish(&mem);
+        assert_eq!(p.stats.gpu_indirect, 1);
+        assert_eq!(word(&mem, out), 0);
     }
 
     #[test]

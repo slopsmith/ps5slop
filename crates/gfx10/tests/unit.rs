@@ -55,6 +55,7 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
         threads: [1, 1, 1],
         uint_textures: 0,
         sint_textures: 0,
+        bounded: false,
     })
     .unwrap()
 }
@@ -135,6 +136,7 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
         threads: [1, 1, 1],
         uint_textures: 0,
         sint_textures: 0,
+        bounded: false,
     })
     .unwrap();
     assert_eq!(t.msl.matches("[[user(locn0)").count(), 1);
@@ -159,6 +161,7 @@ fn compute(code: &[u32], user_sgprs: u32, rsrc2: u32) -> gfx10::Translated {
         threads: [64, 1, 1],
         uint_textures: 0,
         sint_textures: 0,
+        bounded: false,
     })
     .unwrap()
 }
@@ -365,6 +368,7 @@ fn integer_colour_formats_export_integers() {
         threads: [1, 1, 1],
         uint_textures: 0,
         sint_textures: 0,
+        bounded: false,
     };
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("uint4 c0 [[color(0)]]"));
@@ -399,6 +403,7 @@ fn integer_texture_slots_read_and_write_integers() {
         threads: [64, 1, 1],
         uint_textures,
         sint_textures,
+        bounded: false,
     };
     let float = translate(&request(0, 0)).unwrap();
     let typed = translate(&request(1, 2)).unwrap();
@@ -569,6 +574,7 @@ fn getpc_gives_the_address_of_the_next_instruction() {
         threads: [64, 1, 1],
         uint_textures: 0,
         sint_textures: 0,
+        bounded: false,
     };
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("0x500001004ul"));

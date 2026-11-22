@@ -95,6 +95,18 @@ fn sync_dispatches() -> bool {
     *SYNC.get_or_init(|| std::env::var_os("PS5SLOP_GPU_SYNC_DISPATCHES").is_some())
 }
 
+/// Whether indirect dispatches read their dimensions on the CPU, after
+/// waiting for the GPU (`PS5SLOP_GPU_CPU_INDIRECT`), as before 2026-11-22.
+fn cpu_indirect() -> bool {
+    static CPU: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CPU.get_or_init(|| std::env::var_os("PS5SLOP_GPU_CPU_INDIRECT").is_some())
+}
+
+fn gpu_watching() -> bool {
+    static WATCH: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WATCH.get_or_init(|| std::env::var_os("PS5SLOP_GPU_WATCH").is_some())
+}
+
 /// `PS5SLOP_GPU_PROBE=ADDR`: dispatches of the compute program at ADDR are
 /// printed with their groups and user data.
 fn probed(program: u64) -> bool {
@@ -161,7 +173,7 @@ impl Deadline {
 
 /// Dispatches with more thread groups than this are skipped: Metal would run
 /// them for minutes, and a real title's are far smaller.
-const MAX_GROUPS: u64 = 1 << 24;
+pub(crate) const MAX_GROUPS: u64 = 1 << 24;
 /// Flips wait for the display's next refresh, at 60 Hz.
 const VBLANK: Duration = Duration::from_micros(16_667);
 
@@ -180,6 +192,8 @@ pub struct Stats {
     pub deferred_waits: u64,
     /// Dispatches skipped for their size ([`MAX_GROUPS`]).
     pub huge_dispatches: u64,
+    /// Indirect dispatches whose dimensions the backend read on the GPU.
+    pub gpu_indirect: u64,
     /// The longest time between two flips.
     pub longest_flip_gap: Duration,
     /// Times between two flips over a second, for the next report to print.
@@ -671,13 +685,11 @@ impl Processor {
             // The compute queues' form has a 64-bit address instead of an
             // offset from SET_BASE (Mesa's radv builds both).
             IT_DISPATCH_INDIRECT if p.len() >= 3 => {
-                self.wait_gpu(host, "indirect arguments");
-                let a = read_dwords(host, addr(p[0], p[1]), 3).unwrap_or_else(|_| vec![0; 3]);
-                self.dispatch(host, [a[0], a[1], a[2]], p[2]);
+                self.dispatch_indirect(host, addr(p[0], p[1]), p[2]);
             }
             IT_DISPATCH_INDIRECT if !p.is_empty() => {
-                let a = self.indirect_args(host, p[0], 3);
-                self.dispatch(host, [a[0], a[1], a[2]], p.get(1).copied().unwrap_or(0));
+                let at = self.indirect_base + p[0] as u64;
+                self.dispatch_indirect(host, at, p.get(1).copied().unwrap_or(0));
             }
             _ => {}
         }
@@ -946,6 +958,40 @@ impl Processor {
             trace(format_args!("dispatch done"));
         }
         self.gpu_watch(host, || format!("dispatch {groups:?} of {program:#x}"));
+    }
+
+    /// A dispatch whose dimensions are at `at`: the backend reads them on the
+    /// GPU when it can, or they are read here once earlier GPU work is done.
+    fn dispatch_indirect(&mut self, host: &dyn Host, at: u64, initiator: u32) {
+        let program = (self.sh[crate::regs::sh::COMPUTE_PGM_LO] as u64
+            | (self.sh[crate::regs::sh::COMPUTE_PGM_LO + 1] as u64) << 32)
+            << 8;
+        let debugging = sync_dispatches() || probed(program) || gpu_watching();
+        if !debugging
+            && !cpu_indirect()
+            && let Some(b) = self.backend.as_mut()
+        {
+            let state = State {
+                context: &self.context,
+                sh: &self.sh,
+                uconfig: &self.uconfig,
+                color_control_written: self.color_control_written,
+            };
+            let t = crate::timing::start();
+            let done = b.dispatch_indirect(host, &state, at, initiator & 0x20 != 0);
+            crate::timing::add(crate::timing::Part::Dispatch, t);
+            if done {
+                self.stats.dispatches += 1;
+                self.stats.gpu_indirect += 1;
+                trace(format_args!(
+                    "dispatch with dimensions at {at:#x} on the GPU, program {program:#x}"
+                ));
+                return;
+            }
+        }
+        self.wait_gpu(host, "indirect arguments");
+        let a = read_dwords(host, at, 3).unwrap_or_else(|_| vec![0; 3]);
+        self.dispatch(host, [a[0], a[1], a[2]], initiator);
     }
 
     /// With USE_THREAD_DIMENSIONS (initiator bit 5) the dimensions count
