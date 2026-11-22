@@ -141,6 +141,24 @@ const WRITE_DATA_MEMORY: [u32; 4] = [1, 2, 4, 5];
 const MAX_DEPTH: u32 = 8;
 /// How long a wait polls before giving up and moving on.
 const WAIT_LIMIT: Duration = Duration::from_secs(5);
+
+/// [`WAIT_LIMIT`] from now, not counting time a command processor spends
+/// waiting for a compile: the queue that would end the wait may be that one.
+struct Deadline(Instant);
+
+impl Deadline {
+    fn start() -> Self {
+        Self(Instant::now())
+    }
+
+    fn passed(&mut self) -> bool {
+        if crate::compile::blocked() {
+            self.0 = Instant::now();
+        }
+        self.0.elapsed() > WAIT_LIMIT
+    }
+}
+
 /// Dispatches with more thread groups than this are skipped: Metal would run
 /// them for minutes, and a real title's are far smaller.
 const MAX_GROUPS: u64 = 1 << 24;
@@ -702,7 +720,7 @@ impl Processor {
         let command = (p[0] >> 8) & 0xF;
         let (address, source, compare) = (addr(p[1], p[2]), addr(p[3], p[4]), addr(p[5], p[6]));
         self.wait_gpu(host, "ATOMIC_MEM");
-        let start = Instant::now();
+        let mut deadline = Deadline::start();
         let mut polling = None;
         loop {
             let passed = atomic(host, address, wide, |v| atomic_op(op, v, source, compare));
@@ -710,7 +728,7 @@ impl Processor {
                 return;
             }
             polling.get_or_insert_with(|| Polling::start(host));
-            if start.elapsed() > WAIT_LIMIT {
+            if deadline.passed() {
                 self.stats.timeouts += 1;
                 return;
             }
@@ -733,7 +751,7 @@ impl Processor {
             }
             7 => {
                 self.drain(host);
-                let start = Instant::now();
+                let mut deadline = Deadline::start();
                 let mut polling = None;
                 while atomic(host, address, true, |v| (v != 0, v.saturating_sub(1))) == Some(false)
                 {
@@ -741,7 +759,7 @@ impl Processor {
                     if host.exiting() {
                         return;
                     }
-                    if start.elapsed() > WAIT_LIMIT {
+                    if deadline.passed() {
                         self.stats.timeouts += 1;
                         eprintln!("ps5slop: GPU: semaphore wait at {address:#x} timed out");
                         return;
@@ -1507,14 +1525,14 @@ impl Processor {
             return;
         }
         self.drain(host);
-        let start = Instant::now();
+        let mut deadline = Deadline::start();
         let mut polling = None;
         loop {
             let value = read(host);
             if compare(control, value & mask, reference) || host.exiting() {
                 return;
             }
-            if start.elapsed() > WAIT_LIMIT {
+            if deadline.passed() {
                 self.stats.timeouts += 1;
                 if self.stats.timeouts <= 16 {
                     eprintln!(

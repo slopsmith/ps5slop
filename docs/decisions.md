@@ -569,3 +569,7 @@ The Metal renderer's render targets, depth targets and program-written volumes a
 ## 2026-11-22: The guest's wall clock can run behind the host's
 
 Wall-clock reads the guest sees (`clock_gettime` realtime, `gettimeofday`, `time`, `rdtsc`, `sceKernelReadTsc`, RTC ticks, GPU timestamps) go through `savestate::clock`, which a load sets to go on from the saved time. Reason: a state loaded hours later would otherwise show the guest a jump of hours in one frame.
+
+## 2026-11-22: Label waits pause while a command processor waits for a compile
+
+The 5 s limit on `WAIT_REG_MEM`, `ATOMIC_MEM` and `MEM_SEMAPHORE` waits does not run while any command processor waits for a pipeline compile, and dispatches with zero groups do not wait for their pipeline. Reason: Astro Bot's compute queues wait on labels the graphics queue writes after dispatches of its ray-traced lighting programs, whose pipelines take seconds to compile when Metal's cache misses; the waits gave up (5 to 6 a run) and the queues ran on unsynchronised. Compiles are our cost, not the guest's, so they should not count against a guest wait; the limit still catches a label nobody writes once compiles end. Skipping the wait (draws skip when compiling) is not possible for dispatches ([gpu.md](gpu.md#astro-bots-wait-timeouts-2026-11-22)).

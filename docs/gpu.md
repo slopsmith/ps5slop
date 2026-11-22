@@ -281,7 +281,7 @@ Translated programs used to be compiled (MSL to `MTLLibrary`, then the pipeline 
 
 - Translation stays on the GPU thread. Each program's MSL is queued on a pool of compile threads (one per performance core since 2026-11-21, 4 before; `PS5SLOP_COMPILE_THREADS=n`) as soon as it is translated. A compute program's pipeline, and a render pipeline at the first draw that needs it, are queued (at the front) once their functions are done, so they never hold a thread while waiting; a vertex variant is queued when first needed. A draw skipped again in a later frame moves its programs' compiles to the front (see [Superliminal's gloss, slow level starts and noise square](#superliminals-gloss-slow-level-starts-and-noise-square-2026-11-21-later)). The caches hold the pending results, so each one compiles once however many draws ask for it.
 - A thread that waits for work no thread has started yet runs it itself. Waiting therefore never queues behind unrelated compiles, and a pipeline that waits for its functions cannot block the pool.
-- Dispatches always wait for their pipeline: the guest may wait on their results, and we cannot tell which ones it reads.
+- Dispatches always wait for their pipeline: the guest may wait on their results, and we cannot tell which ones it reads. Since 2026-11-22 a dispatch with zero groups does not wait, and label waits on other queues do not count time while a dispatch or draw waits ([Astro Bot's wait timeouts](#astro-bots-wait-timeouts-2026-11-22)).
 - A draw whose pipeline is not ready waits up to 4 ms (8 ms per frame for all such draws together). Then it is skipped for this frame if every target it draws to (colour and depth, matched by address, pixel format and width) was first drawn to in an earlier frame and also drawn to in the last two frames, or is a display buffer, and neither of its programs writes memory. Otherwise it waits. A skipped draw that carries a depth clear (a fresh depth texture or an HTILE fast clear) still opens its pass, so the clear is not lost. `PS5SLOP_COMPILE_WAIT=1` makes every draw wait.
 - Skipped draws count as "compiling" in the `PS5SLOP_GPU_STATS` Metal line, which also shows the compiles still queued and how many draws and dispatches waited, and for how long. The profile's GPU line has "compiling (compile threads)", summed over the threads, and "waiting for compiles (in encoding)". The stats report prints each gap between flips over 1 s (and the longest gap).
 
@@ -390,6 +390,28 @@ Headless, alternating, 5 runs each (another delegate's emulator ran during runs 
 | After | 319, 317, 396, 426, 1914 | 957, 791, 895, 710, 862 |
 
 Peak footprints did not change (Minecraft about 2.0 GB, Superliminal 1.6 to 2.1 GB). Single runs with the other delegate's emulator running: Astro Bot to 140 s, 1,211 flips and 7.1 GB before, 1,481 and 7.2 GB after; GTA V to 240 s (title screen), 11,351 flips and 2.9 GB before, 11,186 and 2.9 GB after; no failures in either. Metal's allocated size in Minecraft now peaks near 19 GB. The window is still made again about as often; that costs CPU and GPU page-table work that was not measured.
+
+## Astro Bot's wait timeouts (2026-11-22)
+
+Since the lighting programs translate (see [Astro Bot's logo](#astro-bots-logo-2026-11-21-later)), Astro Bot printed 5 to 7 `WAIT_REG_MEM` timeouts on its compute queues 0x40 and 0x48 (and sometimes graphics), all on labels in 0x4_xxxxxxxx, 10 to 20 s into a run, before the title level. Found with `PS5SLOP_GPU_TRACE_SYNC`, `PS5SLOP_GPU_SYNC_DISPATCHES` and `sample`:
+
+- The graphics queue writes those labels (`RELEASE_MEM`, data 2) right after a run of one-group dispatches of the ray-traced lighting programs (0x50057eb00, 0x5005d8600, 0x500638d00, 0x50069e100, each 320 to 380 KB of MSL in two variants that differ in one texture's sample type). Each of those dispatches held the graphics queue 1 to 3 s, so the compute queues' waits passed the 5 s limit and went on without the label.
+- The time is not the programs' own: with every dispatch waited for alone, each takes 2 to 60 ms. `sample` showed the graphics GPU thread waiting for their compute pipelines (about 6 of 14 s). Metal's compiler needs 0.9 to 1.3 s for each of their libraries when its cache misses (`compile_times`; fast math does not help). Metal's cache misses whenever other builds on the Mac have pushed these programs out, so whether a run timed out depended on what ran before it.
+
+Fix: a queue's wait for a label (`WAIT_REG_MEM`, `ATOMIC_MEM` loops and `MEM_SEMAPHORE` waits) does not count time during which some command processor waits for a compile (`compile::blocked`), since the queue that would write the label may be that one. A dispatch with zero groups (some of these programs are first dispatched that way) returns once its pipeline is queued, without waiting for it.
+
+Headless, 160 s each, alternating, while another delegate's emulator ran; the title is the first screenshot (every 10 s) showing the logo:
+
+| | Before | After |
+| --- | --- | --- |
+| Cold (`PS5SLOP_MSL_UNIQUE=1`): timeouts | 6, 5, 5 | 0, 0, 0 |
+| Cold: title at | 80, 80, 80 s | 70, 70, 70 s |
+| Warm: timeouts | 0, 0, 0 | 0, 0, 0 |
+| Warm: title at | 50, 50, 50 s | 50, 50, 50 s |
+
+Cold runs still wait about 20 s for dispatch pipelines up to 160 s; only the timeouts on top of that are gone. The lit logo looks the same.
+
+Seen along the way: 0x5005d8600 and 0x500638d00 give up their loops at every one-group dispatch (16,384 branches per thread). The loop walks a light list (heads at one V#, `next` at `8 * index + 4` in another, both in the 0x5_xxxxxxxx window) until it reads -1, the same pattern as the logo's pixel program that once hung the GPU, so the list builder is probably what our emulation gets wrong. Not traced further.
 
 ## Open questions
 

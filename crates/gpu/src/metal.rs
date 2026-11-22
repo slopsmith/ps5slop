@@ -4047,11 +4047,15 @@ impl Metal {
             .ok_or("compute program")?;
         self.trace_user_memory(host, &user[..users as usize], false);
         let task = program.compute.as_ref().ok_or("compute pipeline")?;
+        let grid = dispatch.threads.unwrap_or(groups);
+        if groups.contains(&0) || grid.contains(&0) {
+            return Ok(());
+        }
         let pipeline = match task.poll() {
             Some(p) => p,
             None => {
                 let t = std::time::Instant::now();
-                let p = task.wait();
+                let p = task.wait_blocking();
                 self.note_wait(1, t);
                 p
             }
@@ -4402,7 +4406,7 @@ impl Metal {
             }
             None => {
                 let t = std::time::Instant::now();
-                let p = pipeline.wait();
+                let p = pipeline.wait_blocking();
                 self.note_wait(0, t);
                 p
             }

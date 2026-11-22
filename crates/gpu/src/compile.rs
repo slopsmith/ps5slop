@@ -3,10 +3,19 @@
 
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 type Job<T> = Box<dyn FnOnce() -> Option<T> + Send>;
+
+static BLOCKED: AtomicUsize = AtomicUsize::new(0);
+
+/// Whether some command processor is waiting for a compile. A queue waiting
+/// for another queue's label does not count that time against its limit.
+pub fn blocked() -> bool {
+    BLOCKED.load(Ordering::Relaxed) != 0
+}
 
 enum Status<T> {
     Queued(Job<T>),
@@ -129,6 +138,15 @@ impl<T: Clone + Send + 'static> Task<T> {
                 }
             }
         }
+    }
+
+    /// [`Task::wait`] for a command processor that cannot go on without the
+    /// result; while it waits, [`blocked`] is true.
+    pub fn wait_blocking(&self) -> Option<T> {
+        BLOCKED.fetch_add(1, Ordering::Relaxed);
+        let value = self.wait();
+        BLOCKED.fetch_sub(1, Ordering::Relaxed);
+        value
     }
 
     fn finish(&self, job: Job<T>) -> Option<T> {
@@ -310,6 +328,18 @@ mod tests {
         let task: Arc<Task<u32>> = Task::spawn(|| None);
         assert_eq!(task.wait(), None);
         assert_eq!(task.poll(), Some(None));
+    }
+
+    #[test]
+    fn a_blocking_wait_counts_as_blocked_while_it_waits() {
+        let task = Task::spawn(|| {
+            let start = Instant::now();
+            while !blocked() && start.elapsed() < Duration::from_secs(10) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Some(blocked())
+        });
+        assert_eq!(task.wait_blocking(), Some(true));
     }
 
     #[test]
