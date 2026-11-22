@@ -469,6 +469,75 @@ pub fn pad_input(keys: &str) -> hle::PadInput {
         })
 }
 
+/// Default folder for hotkey and unnamed captures: `PS5SLOP_CAPTURE_DIR` if
+/// set, else `~/Library/Application Support/ps5slop/captures`.
+pub fn default_capture_dir() -> std::path::PathBuf {
+    if let Some(dir) = &diag::config().gpu.capture_dir {
+        return dir.clone();
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return std::path::PathBuf::from(home).join("Library/Application Support/ps5slop/captures");
+    }
+    std::env::temp_dir().join("ps5slop-captures")
+}
+
+/// Builds a timestamped, non-colliding capture path in `dir` such as
+/// `<dir>/<tag>-20261122-143015.<ext>`.
+pub fn capture_path(dir: &std::path::Path, tag: &str, ext: &str) -> std::path::PathBuf {
+    let stamp = utc_timestamp(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    );
+    capture_path_at(dir, tag, &stamp, ext)
+}
+
+fn capture_path_at(dir: &std::path::Path, tag: &str, stamp: &str, ext: &str) -> std::path::PathBuf {
+    let clean: String = tag
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let stem = clean.trim_matches('-');
+    let prefix = if stem.is_empty() { "capture" } else { stem };
+    let first = dir.join(format!("{prefix}-{stamp}.{ext}"));
+    if !first.exists() {
+        return first;
+    }
+    for n in 1u32.. {
+        let candidate = dir.join(format!("{prefix}-{stamp}-{n}.{ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    first
+}
+
+/// Formats Unix epoch seconds as UTC `YYYYMMDD-HHMMSS` (Howard Hinnant's civil
+/// date algorithm, public domain).
+fn utc_timestamp(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+    let yr = y + i64::from(mo <= 2);
+    format!("{yr:04}{mo:02}{d:02}-{h:02}{m:02}{s:02}")
+}
+
 /// Builds the per-run problem report from GPU/PM4 events, HLE placeholder and
 /// unimplemented calls, and JIT interpreter fallbacks. Empty when none occurred.
 pub fn problem_report(kernel: &Kernel) -> String {
@@ -536,5 +605,27 @@ mod tests {
     #[test]
     fn an_axis_value_out_of_range_counts_for_nothing() {
         assert_eq!(pad_input("lx=300"), hle::PadInput::REST);
+    }
+
+    #[test]
+    fn capture_paths_sanitize_names_and_avoid_collisions() {
+        assert_eq!(utc_timestamp(0), "19700101-000000");
+        assert_eq!(utc_timestamp(1_700_000_000), "20231114-221320");
+        let dir =
+            std::env::temp_dir().join(format!("ps5slop-capture-path-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = capture_path_at(&dir, "GTA V / PPSA03420", "20261122-140000", "ps5frame");
+        assert_eq!(
+            first.file_name().unwrap(),
+            "GTA-V---PPSA03420-20261122-140000.ps5frame"
+        );
+        std::fs::write(&first, b"").unwrap();
+        let second = capture_path_at(&dir, "GTA V / PPSA03420", "20261122-140000", "ps5frame");
+        assert_eq!(
+            second.file_name().unwrap(),
+            "GTA-V---PPSA03420-20261122-140000-1.ps5frame"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

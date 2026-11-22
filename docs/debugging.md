@@ -83,6 +83,8 @@ Reports that would repeat every frame are rate-limited (`diag::FirstN`, `diag::D
 | `PS5SLOP_GPU_HTILE_CPU` | HTILE words programs may write are read on the CPU after a wait |
 | `PS5SLOP_GPU_CPU_INDIRECT` | Indirect dispatches read their sizes on the CPU after a wait |
 | `PS5SLOP_GPU_NO_THROTTLE` | Submitters may run ahead of the GPU thread |
+| `PS5SLOP_CAPTURE_DIR=DIR` | Folder where hotkey and unnamed `gpucapture`/`metalcapture` files are written (default `~/Library/Application Support/ps5slop/captures`) |
+| `PS5SLOP_FRAME_CAPTURES=DIR` | Folder of local `*.ps5frame` + `*.golden.png`/`.ppm` pairs checked by `cargo test -p gpu --test frame_replay` (default `captures/`) |
 
 The last group restores an older way of doing something, for comparing ([gpu.md](gpu.md)).
 
@@ -115,8 +117,8 @@ The protocol is the one 86slopper uses: one command per line, and each answer en
 | `profile on` / `profile off` / `profile [N]` | Starts a fresh profile window, stops profiling, or reports the window so far (top N rows): per guest thread the time in translated code, the interpreter, translating and host functions, the time in none of these (exits, locks, the engine), the CPU time used and the guest instructions per second of translated-code time; memory map changes; the hottest guest code by sample (module and offset); host functions by time and calls; the instructions and addresses the interpreter ran most; VM exits by cause (host call, interpreter, new block, lookup table collision, fault, kick), each with its hottest guest RIPs or host functions; translations and evicted cache segments. Samples at a VM entry point are counted as "kicked before entering": the sampler's kick was pending while the thread was outside the VM |
 | `problems [PATH]` | Prints the per-run problem report (or writes it to `PATH`): skipped draws and dispatches (including compiling skips), untranslated programs with the failing instruction, failed Metal compilations/pipelines with Metal's reason, unsupported formats/primitives/tile modes, memory window failures, loop-guard trips, PM4 wait timeouts, unimplemented and placeholder HLE calls, and JIT interpreter fallbacks by opcode, grouped by reason and sorted by impact (count and per-frame rate) |
 | `gpusnap DIR [FIRST]` | During the next frame, copies every attachment of each render pass when the pass ends (from pass FIRST on, decimal), and writes them as `NNN-Dd-PROGRAMS-mrtN-ADDR-sS.ppm` and `...-depthS-ADDR.ppm`: the frame's composition pass by pass. Depth is stretched from its nearest to its farthest value below 1; colours are clamped to [0, 1]. At most 1 GiB of copies |
-| `gpucapture PATH` | Captures the next frame (PM4 command streams across all queues, initial queue register/GDS state, GPU-only render/depth/volume textures, and the non-zero 16 KiB guest memory pages referenced during the frame) to `PATH` (`.ps5frame`) for deterministic offline replay with `ps5slop-replay` |
-| `metalcapture PATH` | Captures the next frame as an Apple Metal `.gputrace` bundle at `PATH` via `MTLCaptureManager`, for inspection in Xcode's GPU debugger. Requires `METAL_CAPTURE_ENABLED=1` in the process environment (also available offline via `ps5slop-replay dump --gputrace`) |
+| `gpucapture [PATH]` | Captures the next frame (PM4 command streams across all queues, initial queue register/GDS state, GPU-only render/depth/volume textures, and the non-zero 16 KiB guest memory pages referenced during the frame) to `PATH` (or a timestamped `.ps5frame` in `PS5SLOP_CAPTURE_DIR`) for deterministic offline replay with `ps5slop-replay`. Requests made while another capture is armed, recording or writing are queued and run in order |
+| `metalcapture [PATH]` | Captures the next frame as an Apple Metal `.gputrace` bundle at `PATH` (or a timestamped `.gputrace` in `PS5SLOP_CAPTURE_DIR`) via `MTLCaptureManager`, for inspection in Xcode's GPU debugger. Requires `METAL_CAPTURE_ENABLED=1` in the process environment (also available offline via `ps5slop-replay dump --gputrace`) |
 | `gpuskip [ADDR...]` | Skips every draw and dispatch that uses one of these program addresses (vertex, pixel or compute); with none, skips nothing. Comparing screenshots with and without a pass shows which pass causes a bug. Careful with compute programs: a skipped program's output may hold the arguments of a later indirect dispatch or draw, which then reads garbage (see GTA V, [gpu.md](gpu.md#gta-vs-prologue-played-on-2026-11-22)) |
 | `gpureload` | Translates every program again at the end of the frame, reading `PS5SLOP_MSL_OVERRIDE` files again |
 | `shot PATH` | Writes the screen as PPM; with `press`, this drives menus step by step |
@@ -165,16 +167,34 @@ A Metal frame capture (`MTLCaptureManager` to a `.gputrace`, opened in Xcode) is
 
 ## GPU frame capture and replay
 
-`gpucapture PATH` over the control socket captures one complete frame into a zstd-compressed `.ps5frame` file (command streams, initial queue states, GPU-only render/depth/volume textures, and non-zero 16 KiB guest memory pages). Captures hold game data and are blocked from commits by `.gitignore` and `scripts/check-forbidden`.
+In windowed mode, press **F9** to capture the next frame as a zstd-compressed `.ps5frame` file, or **F10** to capture an Apple Metal `.gputrace` bundle (launch with `METAL_CAPTURE_ENABLED=1`). Captures are written off the render thread to `~/Library/Application Support/ps5slop/captures/<title>-YYYYMMDD-HHMMSS.ps5frame` (override the folder with `PS5SLOP_CAPTURE_DIR`), and the exact output path is logged to stderr (`gpu::snap`). Pressing F9 (or running `gpucapture` over the control socket) while a capture is already armed, recording or writing queues the new request so multiple captures in one run all complete in order. Captures hold game data and are blocked from commits by `.gitignore` and `scripts/check-forbidden`.
 
-`cargo run --release -p gpu --bin ps5slop-replay -- ...` replays a capture directly through the PM4 processor and Metal renderer without the game or hypervisor, waiting synchronously for every pipeline so results are deterministic:
+`ps5slop-replay` replays a `.ps5frame` capture directly through the PM4 processor and Metal renderer without the game or hypervisor, waiting synchronously for every pipeline so results are deterministic (`ps5slop-replay --help` lists all subcommands and options):
 
-- `ps5slop-replay list CAPTURE`: lists every draw (programs, primitive type, counts, targets, scissor) and compute dispatch.
-- `ps5slop-replay dump CAPTURE OUT_DIR [--draw N] [--target HEX] [--gputrace PATH]`: replays up to draw `N` (or the whole frame) and writes render/depth targets and `shown.ppm` as PPM; optionally captures a Metal `.gputrace`.
-- `ps5slop-replay time CAPTURE [--warmup]`: commits and times each render pass and compute dispatch (Metal GPU ms and CPU encoding ms), sorted by GPU time.
-- `ps5slop-replay check CAPTURE GOLDEN.ppm [--draw N] [--target HEX] [--tolerance N] [--update]`: compares the rendered target against a golden PPM (or writes it with `--update`).
+```sh
+# 1. Capture a frame in windowed mode: press F9 (or F10 for a Metal .gputrace)
+#    and note the printed path, e.g. ~/Library/Application Support/ps5slop/captures/PPSA03420-20261122-143015.ps5frame
 
-`cargo test -p gpu --test frame_replay` runs a synthetic capture-and-replay regression test always, and replays any local `*.ps5frame` + `*.golden.ppm` pairs in `PS5SLOP_FRAME_CAPTURES` (default `captures/` at repo root, skipped when absent).
+# 2. Turn the capture into a PNG of the final frame
+cargo run --release -p gpu --bin ps5slop-replay -- render CAPTURE.ps5frame final.png
+
+# 3. List every draw (programs, primitive type, counts, targets, scissor) and compute dispatch
+cargo run --release -p gpu --bin ps5slop-replay -- list CAPTURE.ps5frame
+
+# 4. Render the target after draw N (0-based) to a PNG (add --target HEX to pick a specific target)
+cargo run --release -p gpu --bin ps5slop-replay -- render CAPTURE.ps5frame after-draw-42.png --draw 42
+
+# 5. Dump every color and depth target (plus shown.png) to a folder, optionally recording a .gputrace
+cargo run --release -p gpu --bin ps5slop-replay -- dump CAPTURE.ps5frame /tmp/targets --draw 42
+
+# 6. Time every render pass and compute dispatch (sorted by GPU ms)
+cargo run --release -p gpu --bin ps5slop-replay -- time CAPTURE.ps5frame --warmup
+
+# 7. Compare against a golden PNG (or write/update the golden with --update)
+cargo run --release -p gpu --bin ps5slop-replay -- check CAPTURE.ps5frame golden.png
+```
+
+`cargo test -p gpu --test frame_replay` runs a synthetic capture-and-replay regression test always, and replays any local `*.ps5frame` + `*.golden.png` (or `.golden.ppm`) pairs in `PS5SLOP_FRAME_CAPTURES` (default `captures/` at repo root, skipped when absent).
 
 With `RUST_LOG=gpu::stats=info`, the Metal line ends its skip reasons with `images not supported [((KIND, ACCESS, TYPE, SWIZZLE, FORMAT), COUNT), ...]` once any image could not be bound: the numbers are hex, as in the `image Image { ... } not supported` reports (so `raw_tile: 18` is mode 24, `SW_64KB_Z_X`). It tallies what the first-seen reports cannot: Astro Bot's 6,237 "resources" skips in 300 s were three kinds of image, all in its first minute.
 

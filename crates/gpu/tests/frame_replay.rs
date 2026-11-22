@@ -8,7 +8,10 @@ use std::path::PathBuf;
 use gpu::capture::{FrameCapture, FrameRecorder, read_command_buffer};
 use gpu::metal::{Metal, read_rgba};
 use gpu::regs::{context, sh, uconfig};
-use gpu::replay::{ReplayOptions, compare_rgba_to_ppm, read_ppm, replay, write_ppm};
+use gpu::replay::{
+    ReplayOptions, compare_rgba_to_ppm, read_image, read_png, read_ppm, replay, write_png,
+    write_ppm,
+};
 use gpu::{Flip, Host, Processor};
 
 const IT_NOP: u32 = 0x10;
@@ -324,17 +327,28 @@ fn synthetic_frame_capture_and_replay_matches_expected_pixels() {
     let (_, _, rgba0) = read_rgba(tex0).unwrap();
     assert_eq!(&rgba0[..4], &[0, 255, 0, 255], "draw 0 painted solid green");
 
-    // 3. Verify golden PPM round-trip and mismatch detection.
-    let tmp = std::env::temp_dir().join(format!(
+    // 3. Verify golden PNG and PPM round-trip and mismatch detection.
+    let tmp_ppm = std::env::temp_dir().join(format!(
         "ps5slop-frame-replay-test-{}.ppm",
         std::process::id()
     ));
-    write_ppm(&tmp, rw, rh, &rgba).unwrap();
-    let (gw, gh, mut grgb) = read_ppm(&tmp).unwrap();
-    let _ = std::fs::remove_file(&tmp);
+    write_ppm(&tmp_ppm, rw, rh, &rgba).unwrap();
+    let (gw, gh, mut grgb) = read_ppm(&tmp_ppm).unwrap();
+    let _ = std::fs::remove_file(&tmp_ppm);
     let same = compare_rgba_to_ppm(rw, rh, &rgba, gw, gh, &grgb).unwrap();
     assert_eq!(same.max_channel_diff, 0);
     assert_eq!(same.differing_pixels, 0);
+
+    let tmp_png = std::env::temp_dir().join(format!(
+        "ps5slop-frame-replay-test-{}.png",
+        std::process::id()
+    ));
+    write_png(&tmp_png, rw, rh, &rgba).unwrap();
+    let (pw, ph, prgb) = read_png(&tmp_png).unwrap();
+    let _ = std::fs::remove_file(&tmp_png);
+    let same_png = compare_rgba_to_ppm(rw, rh, &rgba, pw, ph, &prgb).unwrap();
+    assert_eq!(same_png.max_channel_diff, 0);
+    assert_eq!(same_png.differing_pixels, 0);
 
     grgb[0] = 0;
     let diff = compare_rgba_to_ppm(rw, rh, &rgba, gw, gh, &grgb).unwrap();
@@ -344,8 +358,10 @@ fn synthetic_frame_capture_and_replay_matches_expected_pixels() {
 
 #[test]
 fn local_game_captures_match_golden_images() {
-    let dir = std::env::var_os("PS5SLOP_FRAME_CAPTURES")
-        .map(PathBuf::from)
+    let dir = diag::config()
+        .gpu
+        .frame_captures
+        .clone()
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../captures"));
     let Ok(entries) = std::fs::read_dir(&dir) else {
         eprintln!("skipped: no local captures dir at {}", dir.display());
@@ -363,10 +379,15 @@ fn local_game_captures_match_golden_images() {
     }
     let mut checked = 0usize;
     for cap_path in captures {
-        let golden_path = cap_path.with_extension("golden.ppm");
-        if !golden_path.is_file() {
+        let golden_path = [
+            cap_path.with_extension("golden.png"),
+            cap_path.with_extension("golden.ppm"),
+        ]
+        .into_iter()
+        .find(|p| p.is_file());
+        let Some(golden_path) = golden_path else {
             continue;
-        }
+        };
         let cap = FrameCapture::load(&cap_path).expect("load local frame capture");
         let res = replay(&cap, ReplayOptions::default()).expect("replay local frame capture");
         let target_addr = res
@@ -379,7 +400,7 @@ fn local_game_captures_match_golden_images() {
             .find(|(a, _)| *a == target_addr)
             .expect("target found");
         let (w, h, rgba) = read_rgba(tex).expect("read back target");
-        let (gw, gh, grgb) = read_ppm(&golden_path).expect("read golden PPM");
+        let (gw, gh, grgb) = read_image(&golden_path).expect("read golden image");
         let diff = compare_rgba_to_ppm(w, h, &rgba, gw, gh, &grgb).expect("compare images");
         assert!(
             diff.max_channel_diff <= 2,

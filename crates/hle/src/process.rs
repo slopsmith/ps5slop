@@ -425,9 +425,15 @@ impl Kernel {
         }
     }
 
-    /// Schedules a one-frame GPU capture to `path` starting at the next flip.
-    pub fn request_frame_capture(&self, path: std::path::PathBuf) {
-        self.agc.request_frame_capture(path);
+    /// Schedules a one-frame GPU capture to `path` starting at the next flip,
+    /// queueing behind any active or writing capture.
+    pub fn request_frame_capture(&self, path: std::path::PathBuf) -> String {
+        self.agc.request_frame_capture(path)
+    }
+
+    /// Waits for any in-flight background frame capture write to finish.
+    pub fn finish_captures(&self) {
+        self.agc.finish_captures();
     }
 
     /// Guest instructions run so far: (interpreted, translated).

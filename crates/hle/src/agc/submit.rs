@@ -106,18 +106,6 @@ impl Progress {
 /// The graphics queue's key; compute queues are keyed by their owner.
 const GRAPHICS: u64 = u64::MAX;
 
-/// One-frame capture state shared across all GPU queue threads.
-#[derive(Default)]
-enum CaptureState {
-    #[default]
-    Idle,
-    Armed(std::path::PathBuf),
-    Active {
-        path: std::path::PathBuf,
-        recorder: gpu::capture::FrameRecorder,
-    },
-}
-
 /// The GPU threads' queues, each started by its first submission.
 #[derive(Default)]
 pub(super) struct Gpu {
@@ -131,14 +119,20 @@ pub(super) struct Gpu {
     gds_restored: std::sync::atomic::AtomicBool,
     /// GPU-only textures from a loaded save state, for the backend once made.
     textures: Mutex<Option<Vec<u8>>>,
-    /// Next-frame GPU capture requested over the control socket.
-    capture: Arc<Mutex<CaptureState>>,
+    /// One-frame GPU capture queue shared across all GPU threads and background writers.
+    capture: gpu::capture::CaptureManager,
 }
 
 impl Gpu {
-    /// Schedules a one-frame GPU capture to `path` starting at the next flip.
-    pub(super) fn request_capture(&self, path: std::path::PathBuf) {
-        *lock(&self.capture) = CaptureState::Armed(path);
+    /// Schedules a one-frame GPU capture to `path` starting at the next flip,
+    /// queueing it if another capture is already armed, active or writing.
+    pub(super) fn request_capture(&self, path: std::path::PathBuf) -> String {
+        self.capture.request(path).describe()
+    }
+
+    /// Waits for any background capture write to finish on process exit.
+    pub(super) fn finish_captures(&self) {
+        self.capture.finish_on_exit();
     }
 
     /// `sceAgcDcbSetFlip` and friends built a flip packet at `at`.
@@ -264,7 +258,7 @@ fn gpu_thread(
     host: Host,
     jobs: Receiver<Job>,
     backend: Arc<OnceLock<Option<gpu::SharedBackend>>>,
-    capture: Arc<Mutex<CaptureState>>,
+    capture: gpu::capture::CaptureManager,
     queue_id: u64,
     name: String,
     restored: Option<(gpu::Saved, bool)>,
@@ -301,40 +295,53 @@ fn gpu_thread(
         let Some(job) = job else { break };
         gpu::timing::add(gpu::timing::Part::Idle, idle);
         gpu::with_pool(|| {
-            let active_recorder = match &*lock(&capture) {
-                CaptureState::Active { recorder, .. } => Some(recorder.clone()),
-                _ => None,
-            };
+            let flips_before = processor.stats.flips;
+            let active_recorder = capture.active_recorder();
             if let Some(recorder) = &active_recorder {
                 recorder.note_queue(queue_id, || processor.saved());
-                let cmd_bufs: Vec<_> = job
-                    .buffers
-                    .iter()
-                    .map(|&(addr, dwords)| gpu::capture::read_command_buffer(&host, addr, dwords))
-                    .collect();
+                // Snapshot mapped GPU-area spans before the frame's first GPU work runs
+                // so CPU writes made after the previous flip are captured.
+                recorder.snapshot_mapped_spans_once(&host, || {
+                    let (area_lo, area_hi) = crate::dmem::GPU_AREA;
+                    host.mem
+                        .region_spans()
+                        .into_iter()
+                        .filter(|r| !r.trap && r.end > area_lo && r.start < area_hi)
+                        .map(|r| (r.start.max(area_lo), r.end.min(area_hi)))
+                        .collect()
+                });
                 let rec_host = recorder.recording_host(&host);
                 for (addr, dwords) in &job.buffers {
                     if let Err(e) = processor.run(&rec_host, *addr, *dwords) {
                         tracing::error!("{e}");
                     }
                 }
+                // Read command buffers after `run` (and before `end_submission` releases
+                // fences to the CPU) so REWIND-patched packets are captured.
+                let cmd_bufs: Vec<_> = job
+                    .buffers
+                    .iter()
+                    .map(|&(addr, dwords)| gpu::capture::read_command_buffer(&host, addr, dwords))
+                    .collect();
+                let flipped = job.ends_frame || processor.stats.flips > flips_before;
                 // Unverified: the driver signals each submission's completion.
-                processor.end_submission(&rec_host, job.ends_frame);
-                recorder.record_submission(queue_id, cmd_bufs, job.ends_frame);
+                processor.end_submission(&rec_host, flipped);
+                recorder.record_submission(queue_id, cmd_bufs, flipped);
             } else {
                 for (addr, dwords) in &job.buffers {
                     if let Err(e) = processor.run(&host, *addr, *dwords) {
                         tracing::error!("{e}");
                     }
                 }
+                let flipped = job.ends_frame || processor.stats.flips > flips_before;
                 // Unverified: the driver signals each submission's completion.
-                processor.end_submission(&host, job.ends_frame);
+                processor.end_submission(&host, flipped);
             }
-            if queue_id == GRAPHICS && job.ends_frame {
-                let mut state = lock(&capture);
-                match std::mem::take(&mut *state) {
-                    CaptureState::Idle => {}
-                    CaptureState::Armed(path) => {
+            let flipped = job.ends_frame || processor.stats.flips > flips_before;
+            if queue_id == GRAPHICS && flipped {
+                match capture.on_frame_end() {
+                    gpu::capture::FrameBoundary::None => {}
+                    gpu::capture::FrameBoundary::Start(path) => {
                         let textures = processor
                             .backend
                             .as_mut()
@@ -342,32 +349,11 @@ fn gpu_thread(
                             .unwrap_or_default();
                         let recorder =
                             gpu::capture::FrameRecorder::new(gpu::Host::gpu_area(&host), textures);
-                        // Snapshot mapped readable GPU-area spans at frame start so shaders
-                        // reading through the area window see their exact initial bytes.
-                        let (area_lo, area_hi) = crate::dmem::GPU_AREA;
-                        let spans: Vec<(u64, u64)> = host
-                            .mem
-                            .region_spans()
-                            .into_iter()
-                            .filter(|r| !r.trap && r.end > area_lo && r.start < area_hi)
-                            .map(|r| (r.start.max(area_lo), r.end.min(area_hi)))
-                            .collect();
-                        recorder.snapshot_mapped_spans(&host, &spans);
-                        *state = CaptureState::Active { path, recorder };
+                        capture.activate(path, recorder);
                     }
-                    CaptureState::Active { path, recorder } => {
-                        drop(state);
+                    gpu::capture::FrameBoundary::Finish { path, recorder } => {
                         let cap = recorder.finish();
-                        let subs = cap.submissions.len();
-                        let pages = cap.pages.len();
-                        match cap.save(&path) {
-                            Ok(()) => tracing::info!(
-                                target: "gpu::snap",
-                                "captured frame to {} ({subs} submissions, {pages} non-zero pages)",
-                                path.display()
-                            ),
-                            Err(e) => tracing::error!("frame capture failed: {e}"),
-                        }
+                        capture.spawn_writer(path, cap);
                     }
                 }
             }

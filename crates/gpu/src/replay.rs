@@ -640,6 +640,122 @@ pub fn replay(capture: &FrameCapture, options: ReplayOptions) -> Result<ReplayRe
     })
 }
 
+/// Human-readable name for a `VGT_PRIMITIVE_TYPE` value.
+pub fn primitive_name(prim: u32) -> &'static str {
+    match prim {
+        1 => "PointList",
+        2 => "LineList",
+        3 => "LineStrip",
+        4 => "TriList",
+        5 => "TriFan",
+        6 => "TriStrip",
+        9 => "Patch",
+        10 => "LineListAdj",
+        11 => "LineStripAdj",
+        12 => "TriListAdj",
+        13 => "TriStripAdj",
+        17 => "RectList",
+        18 => "LineLoop",
+        19 => "QuadList",
+        20 => "QuadStrip",
+        21 => "Polygon",
+        _ => "Unknown",
+    }
+}
+
+/// Writes `width`x`height` RGBA8 pixels as a PNG file (RGB8, opaque).
+pub fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
+    if rgba.len() != width as usize * height as usize * 4 {
+        return Err(format!(
+            "RGBA length {} does not match {width}x{height}",
+            rgba.len()
+        ));
+    }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    }
+    let file = std::fs::File::create(path)
+        .map_err(|e| format!("cannot create {}: {e}", path.display()))?;
+    let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
+    for px in rgba.as_chunks::<4>().0 {
+        rgb.extend_from_slice(&px[..3]);
+    }
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|e| format!("PNG header error for {}: {e}", path.display()))?;
+    writer
+        .write_image_data(&rgb)
+        .map_err(|e| format!("PNG write error for {}: {e}", path.display()))
+}
+
+/// Reads a PNG file as `(width, height, rgb_bytes)`.
+pub fn read_png(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
+    let file =
+        std::fs::File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("cannot decode PNG {}: {e}", path.display()))?;
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("cannot read PNG frame {}: {e}", path.display()))?;
+    let bytes = &buf[..info.buffer_size()];
+    let pixels = info.width as usize * info.height as usize;
+    let mut rgb = Vec::with_capacity(pixels * 3);
+    match info.color_type {
+        png::ColorType::Rgb => rgb.extend_from_slice(bytes),
+        png::ColorType::Rgba => {
+            for px in bytes.as_chunks::<4>().0 {
+                rgb.extend_from_slice(&px[..3]);
+            }
+        }
+        png::ColorType::Grayscale => {
+            for &g in bytes {
+                rgb.extend_from_slice(&[g, g, g]);
+            }
+        }
+        png::ColorType::GrayscaleAlpha => {
+            for px in bytes.as_chunks::<2>().0 {
+                rgb.extend_from_slice(&[px[0], px[0], px[0]]);
+            }
+        }
+        other => return Err(format!("unsupported PNG color type {other:?}")),
+    }
+    Ok((info.width, info.height, rgb))
+}
+
+/// Writes RGBA8 pixels as PNG or PPM depending on `path`'s extension (defaulting to PNG).
+pub fn write_image(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
+    if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("ppm"))
+    {
+        write_ppm(path, width, height, rgba)
+    } else {
+        write_png(path, width, height, rgba)
+    }
+}
+
+/// Reads a PNG or PPM file as `(width, height, rgb_bytes)`.
+pub fn read_image(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
+    if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("ppm"))
+    {
+        read_ppm(path)
+    } else {
+        read_png(path)
+    }
+}
+
 /// Writes `width`x`height` RGBA8 pixels as a binary PPM (P6) file.
 pub fn write_ppm(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
     if rgba.len() != width as usize * height as usize * 4 {
@@ -647,6 +763,12 @@ pub fn write_ppm(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<()
             "RGBA length {} does not match {width}x{height}",
             rgba.len()
         ));
+    }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
     let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
     ppm.reserve(width as usize * height as usize * 3);
@@ -762,4 +884,26 @@ pub fn compare_rgba_to_ppm(
             sum_err as f64 / (total_pixels as f64 * 3.0)
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn png_round_trips_and_compares_against_rgba() {
+        let dir = std::env::temp_dir().join(format!("ps5slop-png-test-{}", std::process::id()));
+        let path = dir.join("sample.png");
+        let rgba = [
+            255, 0, 0, 255, 0, 255, 0, 255, // row 0
+            0, 0, 255, 255, 12, 34, 56, 255, // row 1
+        ];
+        write_png(&path, 2, 2, &rgba).unwrap();
+        let (w, h, rgb) = read_png(&path).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!((w, h), (2, 2));
+        let diff = compare_rgba_to_ppm(2, 2, &rgba, w, h, &rgb).unwrap();
+        assert_eq!(diff.max_channel_diff, 0);
+        assert_eq!(diff.differing_pixels, 0);
+    }
 }

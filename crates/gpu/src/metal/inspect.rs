@@ -55,8 +55,40 @@ pub(super) struct Snap {
 /// pipelines at the end of the frame, so `PS5SLOP_MSL_OVERRIDE` files are read again.
 pub static RELOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Where the next frame's Metal `.gputrace` is written (`metalcapture` command).
+/// Where the next frame's Metal `.gputrace` is written (`metalcapture` command or hotkey).
 pub static METAL_CAPTURE: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
+/// Whether a live Metal `.gputrace` capture is currently recording.
+static METAL_CAPTURE_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Arms a one-frame Metal `.gputrace` capture to `path`, refusing cleanly if
+/// one is already armed or recording.
+pub fn request_metal_capture(path: std::path::PathBuf) -> Result<String, String> {
+    if METAL_CAPTURE_ACTIVE.load(std::sync::atomic::Ordering::Acquire) {
+        return Err(
+            "Metal capture already in progress; wait for the current frame to finish".into(),
+        );
+    }
+    let mut slot = METAL_CAPTURE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(existing) = slot.as_ref() {
+        return Err(format!(
+            "Metal capture already armed for {}; wait for it to finish",
+            existing.display()
+        ));
+    }
+    *slot = Some(path.clone());
+    if std::env::var_os("METAL_CAPTURE_ENABLED").is_none() {
+        Ok(format!(
+            "armed Metal capture to {} (warning: METAL_CAPTURE_ENABLED=1 is not set)",
+            path.display()
+        ))
+    } else {
+        Ok(format!(
+            "capturing the next frame's Metal .gputrace to {}",
+            path.display()
+        ))
+    }
+}
 
 /// Programs whose draws and dispatches are skipped, for finding the pass
 /// that causes a rendering bug (the control socket's `gpuskip`).
@@ -330,7 +362,8 @@ impl Metal {
                 .startCaptureWithDescriptor_error(&desc)
                 .map_err(|e| format!("MTLCaptureManager failed: {}", e.localizedDescription()))?;
         }
-        self.metal_capturing = true;
+        self.metal_capture_path = Some(abs.clone());
+        METAL_CAPTURE_ACTIVE.store(true, std::sync::atomic::Ordering::Release);
         tracing::info!(
             target: "gpu::snap",
             "started Metal capture to {}",
@@ -341,19 +374,23 @@ impl Metal {
 
     /// Stops an active Metal GPU trace capture started by [`Metal::begin_metal_capture`].
     pub fn end_metal_capture(&mut self) {
-        if !self.metal_capturing {
+        let Some(path) = self.metal_capture_path.take() else {
             return;
-        }
+        };
         self.flush_and_wait();
         let manager = unsafe { objc2_metal::MTLCaptureManager::sharedCaptureManager() };
         manager.stopCapture();
-        self.metal_capturing = false;
-        tracing::info!(target: "gpu::snap", "finished Metal capture");
+        METAL_CAPTURE_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+        tracing::info!(
+            target: "gpu::snap",
+            "wrote Metal capture to {}",
+            path.display()
+        );
     }
 
     /// Starts what `gpusnap` and `metalcapture` asked for the next frame.
     pub(super) fn frame_tools(&mut self) {
-        if self.metal_capturing {
+        if self.metal_capture_path.is_some() {
             self.end_metal_capture();
         }
         if let Some(path) = METAL_CAPTURE.lock().ok().and_then(|mut s| s.take())

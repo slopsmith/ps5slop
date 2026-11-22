@@ -124,6 +124,14 @@ fn main() -> ExitCode {
     }
     let label = title.label();
     let title_id = title.id();
+    let capture_tag = title_id
+        .clone()
+        .or_else(|| {
+            title
+                .fallback_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "capture".into());
     tracing::info!("running {label}");
     let data = data.or_else(|| default_data(&title));
     let temp = data.as_ref().map(|d| beside(d, "temp"));
@@ -182,7 +190,8 @@ fn main() -> ExitCode {
                 hle::trace_calls(Some(f), filter.clone());
             }
             let kernel_for_report = booted.kernel.clone();
-            let result = run(booted, headless, label);
+            let result = run(booted, headless, label, capture_tag);
+            kernel_for_report.finish_captures();
             let report = ps5slop::problem_report(&kernel_for_report);
             if !report.is_empty() {
                 if let Some(path) = &config.run.report {
@@ -211,17 +220,27 @@ fn main() -> ExitCode {
 }
 
 #[cfg(all(target_os = "macos", feature = "window"))]
-fn run(booted: ps5slop::Booted, headless: bool, label: String) -> Result<i32, ps5slop::Error> {
+fn run(
+    booted: ps5slop::Booted,
+    headless: bool,
+    label: String,
+    capture_tag: String,
+) -> Result<i32, ps5slop::Error> {
     if headless {
         booted.run()
     } else {
         booted.kernel.use_audio_device();
-        ps5slop::window::run(booted, label)
+        ps5slop::window::run(booted, label, capture_tag)
     }
 }
 
 #[cfg(not(all(target_os = "macos", feature = "window")))]
-fn run(booted: ps5slop::Booted, _headless: bool, _label: String) -> Result<i32, ps5slop::Error> {
+fn run(
+    booted: ps5slop::Booted,
+    _headless: bool,
+    _label: String,
+    _capture_tag: String,
+) -> Result<i32, ps5slop::Error> {
     booted.run()
 }
 

@@ -146,6 +146,10 @@ pub struct Gpu {
     pub cpu_indirect: bool,
     pub no_throttle: bool,
     pub probe_flat: bool,
+    /// Where hotkey captures (`.ps5frame` and `.gputrace`) are written.
+    pub capture_dir: Option<PathBuf>,
+    /// Folder holding local `.ps5frame` + golden pairs for `frame_replay` tests.
+    pub frame_captures: Option<PathBuf>,
 }
 
 impl Default for Gpu {
@@ -242,6 +246,8 @@ impl Config {
                 cpu_indirect: flag("PS5SLOP_GPU_CPU_INDIRECT"),
                 no_throttle: flag("PS5SLOP_GPU_NO_THROTTLE"),
                 probe_flat: flag("PS5SLOP_PROBE_FLAT"),
+                capture_dir: path("PS5SLOP_CAPTURE_DIR"),
+                frame_captures: path("PS5SLOP_FRAME_CAPTURES"),
             },
         }
     }
@@ -380,5 +386,15 @@ mod tests {
             with(&[("PS5SLOP_CHECK_CODE", "")]).run.check_code,
             Some(Duration::from_millis(100))
         );
+    }
+
+    #[test]
+    fn capture_dirs_read_from_environment() {
+        let c = with(&[
+            ("PS5SLOP_CAPTURE_DIR", "/tmp/caps"),
+            ("PS5SLOP_FRAME_CAPTURES", "/tmp/goldens"),
+        ]);
+        assert_eq!(c.gpu.capture_dir, Some(PathBuf::from("/tmp/caps")));
+        assert_eq!(c.gpu.frame_captures, Some(PathBuf::from("/tmp/goldens")));
     }
 }

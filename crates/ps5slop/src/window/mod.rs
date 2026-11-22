@@ -42,7 +42,7 @@ enum Start {
 /// Runs `booted` on a new thread. Once the title opens its video output, a
 /// window shows its frames until the guest exits or the window closes (which
 /// ends it). Returns the guest's exit status.
-pub fn run(booted: Booted, label: String) -> Result<i32, Error> {
+pub fn run(booted: Booted, label: String, capture_tag: String) -> Result<i32, Error> {
     let kernel = booted.kernel.clone();
     let (start, started) = std::sync::mpsc::channel();
     let opened = Mutex::new(start.clone());
@@ -103,6 +103,7 @@ pub fn run(booted: Booted, label: String) -> Result<i32, Error> {
         feedback: feedback::Feedback::default(),
         rate_at: (Instant::now(), kernel.instructions()),
         label,
+        capture_tag,
         size: None,
         flips_then: 0,
     };
@@ -128,6 +129,8 @@ struct App {
     rate_at: (Instant, (u64, u64)),
     /// The game's name, version and title id.
     label: String,
+    /// Prefix for hotkey capture filenames (title id or sanitized name).
+    capture_tag: String,
     /// The size of the last frame shown.
     size: Option<(u32, u32)>,
     /// `flips` when the title was last refreshed.
@@ -158,11 +161,43 @@ fn button(code: KeyCode) -> Option<u32> {
 const L2: u32 = 0x0100;
 const R2: u32 = 0x0200;
 
+/// Hotkey for capturing the next GPU frame to a `.ps5frame` file.
+const HOTKEY_FRAME_CAPTURE: KeyCode = KeyCode::F9;
+/// Hotkey for capturing the next frame as a Metal `.gputrace` bundle.
+const HOTKEY_METAL_CAPTURE: KeyCode = KeyCode::F10;
+
 impl App {
     fn key(&mut self, ev: KeyEvent) {
         let PhysicalKey::Code(code) = ev.physical_key else {
             return;
         };
+        if ev.state == ElementState::Pressed && !ev.repeat {
+            match code {
+                HOTKEY_FRAME_CAPTURE => {
+                    let path = crate::capture_path(
+                        &crate::default_capture_dir(),
+                        &self.capture_tag,
+                        "ps5frame",
+                    );
+                    let msg = self.kernel.request_frame_capture(path);
+                    tracing::info!(target: "gpu::snap", "{msg}");
+                    return;
+                }
+                HOTKEY_METAL_CAPTURE => {
+                    let path = crate::capture_path(
+                        &crate::default_capture_dir(),
+                        &self.capture_tag,
+                        "gputrace",
+                    );
+                    match hle::gpu::metal::request_metal_capture(path) {
+                        Ok(msg) => tracing::info!(target: "gpu::snap", "{msg}"),
+                        Err(e) => tracing::warn!(target: "gpu::snap", "{e}"),
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
         let Some(bit) = button(code) else { return };
         if ev.state == ElementState::Pressed {
             self.keys.buttons |= bit;
@@ -311,5 +346,17 @@ impl ApplicationHandler<Wake> for App {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_hotkeys_do_not_clash_with_pad_mapping() {
+        assert_eq!(button(HOTKEY_FRAME_CAPTURE), None);
+        assert_eq!(button(HOTKEY_METAL_CAPTURE), None);
+        assert_ne!(HOTKEY_FRAME_CAPTURE, HOTKEY_METAL_CAPTURE);
     }
 }

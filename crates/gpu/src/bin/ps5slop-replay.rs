@@ -1,53 +1,229 @@
-//! Standalone GPU frame replay tool: lists draws, dumps render targets after
-//! any draw, times passes, checks golden images and captures Metal `.gputrace`s
-//! without running the game or hypervisor.
+//! Standalone GPU frame replay tool: renders captured `.ps5frame` files to
+//! PNG, lists draws, dumps render targets after any draw, times passes, checks
+//! golden images and captures Metal `.gputrace` bundles without running the
+//! game or hypervisor.
 
-#[cfg(not(target_os = "macos"))]
-fn main() {
-    eprintln!("ps5slop-replay requires macOS Metal");
-    std::process::exit(1);
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use clap::{Parser, Subcommand, ValueEnum};
+
+/// Replays captured `.ps5frame` GPU frames offline through the Metal renderer.
+#[derive(Parser)]
+#[command(name = "ps5slop-replay")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
 }
 
-#[cfg(target_os = "macos")]
-fn main() {
+/// Output image format for multi-target dumps.
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+enum ImageFormat {
+    /// Portable Network Graphics (`.png`, default).
+    #[default]
+    Png,
+    /// Binary Portable Pixmap (`.ppm`).
+    Ppm,
+}
+
+impl ImageFormat {
+    fn ext(self) -> &'static str {
+        match self {
+            ImageFormat::Png => "png",
+            ImageFormat::Ppm => "ppm",
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Renders the final frame (or a specific draw/target) to one PNG file.
+    Render {
+        /// Path to the `.ps5frame` capture file.
+        capture: PathBuf,
+        /// Output image path (defaults to `<capture>.png` or `<capture>.draw<N>.png`).
+        #[arg(value_name = "OUT.png")]
+        output: Option<PathBuf>,
+        /// Stop right after this 0-based draw index and save its render target.
+        #[arg(long, value_name = "N")]
+        draw: Option<usize>,
+        /// Guest hex address of a specific color or depth target to save.
+        #[arg(long, value_name = "HEX", value_parser = parse_hex)]
+        target: Option<u64>,
+    },
+    /// Lists every draw and compute dispatch recorded in a capture.
+    List {
+        /// Path to the `.ps5frame` capture file.
+        capture: PathBuf,
+    },
+    /// Dumps every color and depth target (plus `shown.png`) after a draw or the full frame.
+    Dump {
+        /// Path to the `.ps5frame` capture file.
+        capture: PathBuf,
+        /// Directory to write target images into (created if missing).
+        out_dir: PathBuf,
+        /// Stop right after this 0-based draw index.
+        #[arg(long, value_name = "N")]
+        draw: Option<usize>,
+        /// Only write the target at this guest hex address.
+        #[arg(long, value_name = "HEX", value_parser = parse_hex)]
+        target: Option<u64>,
+        /// Also record an Apple Metal `.gputrace` bundle (needs `METAL_CAPTURE_ENABLED=1`).
+        #[arg(long, value_name = "PATH")]
+        gputrace: Option<PathBuf>,
+        /// Image file format to write.
+        #[arg(long, value_enum, default_value_t = ImageFormat::Png)]
+        format: ImageFormat,
+    },
+    /// Commits and times every render pass and compute dispatch, sorted by GPU time.
+    Time {
+        /// Path to the `.ps5frame` capture file.
+        capture: PathBuf,
+        /// Run one untimed replay first to warm Metal's pipeline cache.
+        #[arg(long)]
+        warmup: bool,
+    },
+    /// Compares a replayed target against a golden PNG or PPM image.
+    Check {
+        /// Path to the `.ps5frame` capture file.
+        capture: PathBuf,
+        /// Path to the golden `.png` or `.ppm` image.
+        golden: PathBuf,
+        /// Stop right after this 0-based draw index.
+        #[arg(long, value_name = "N")]
+        draw: Option<usize>,
+        /// Guest hex address of the color target to compare (defaults to the shown buffer).
+        #[arg(long, value_name = "HEX", value_parser = parse_hex)]
+        target: Option<u64>,
+        /// Maximum allowed per-channel difference (0 to 255).
+        #[arg(long, value_name = "N", default_value_t = 2)]
+        tolerance: u8,
+        /// Overwrite `GOLDEN` with the rendered output instead of comparing.
+        #[arg(long)]
+        update: bool,
+    },
+}
+
+fn parse_hex(s: &str) -> Result<u64, String> {
+    u64::from_str_radix(s.trim().trim_start_matches("0x"), 16)
+        .map_err(|_| format!("invalid hex address: {s}"))
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
     diag::init_logging();
-    if let Err(e) = run() {
-        eprintln!("error: {e}");
-        std::process::exit(1);
+    let _ = diag::config();
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = cli;
+        tracing::error!("ps5slop-replay requires macOS Metal");
+        return ExitCode::FAILURE;
+    }
+    #[cfg(target_os = "macos")]
+    match run(cli.command) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            tracing::error!("{e}");
+            ExitCode::FAILURE
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn usage() -> &'static str {
-    "\
-usage:
-  ps5slop-replay list CAPTURE
-  ps5slop-replay dump CAPTURE OUT_DIR [--draw N] [--target HEX_ADDR] [--gputrace PATH]
-  ps5slop-replay time CAPTURE [--warmup]
-  ps5slop-replay check CAPTURE GOLDEN.ppm [--draw N] [--target HEX_ADDR] [--tolerance N] [--update]"
+fn default_render_path(capture: &std::path::Path, draw: Option<usize>) -> PathBuf {
+    match draw {
+        Some(n) => capture.with_extension(format!("draw{n}.png")),
+        None => capture.with_extension("png"),
+    }
 }
 
 #[cfg(target_os = "macos")]
-fn parse_hex(s: &str) -> Result<u64, String> {
-    u64::from_str_radix(s.trim_start_matches("0x"), 16)
-        .map_err(|_| format!("invalid hex address: {s}"))
+fn select_target(
+    res: &gpu::replay::ReplayResult,
+    requested: Option<u64>,
+) -> Result<(u64, u32, u32, Vec<u8>), String> {
+    use gpu::metal::{read_depth_rgba, read_rgba};
+
+    if let Some(addr) = requested {
+        if let Some((_, tex)) = res.targets.iter().find(|(a, _)| *a == addr) {
+            let (w, h, rgba) =
+                read_rgba(tex).ok_or_else(|| format!("cannot read color target {addr:#x}"))?;
+            return Ok((addr, w, h, rgba));
+        }
+        if let Some((_, tex)) = res.depths.iter().find(|(a, _)| *a == addr) {
+            let (w, h, rgba) = read_depth_rgba(tex)
+                .ok_or_else(|| format!("cannot read depth target {addr:#x}"))?;
+            return Ok((addr, w, h, rgba));
+        }
+        return Err(format!("target {addr:#x} not found"));
+    }
+
+    // If we stopped at a draw, prefer that draw's first color (or depth) target.
+    if res.shown.is_none()
+        && let Some(last) = res.draws.last()
+    {
+        if let Some(&(addr, _, _)) = last.color_targets.first()
+            && let Some((_, tex)) = res.targets.iter().find(|(a, _)| *a == addr)
+            && let Some((w, h, rgba)) = read_rgba(tex)
+        {
+            return Ok((addr, w, h, rgba));
+        }
+        if let Some((addr, _, _)) = last.depth_target
+            && let Some((_, tex)) = res.depths.iter().find(|(a, _)| *a == addr)
+            && let Some((w, h, rgba)) = read_depth_rgba(tex)
+        {
+            return Ok((addr, w, h, rgba));
+        }
+    }
+
+    let addr = res
+        .shown
+        .or_else(|| res.targets.first().map(|(a, _)| *a))
+        .ok_or("capture produced no render targets")?;
+    let (_, tex) = res
+        .targets
+        .iter()
+        .find(|(a, _)| *a == addr)
+        .ok_or_else(|| format!("render target {addr:#x} not found"))?;
+    let (w, h, rgba) = read_rgba(tex).ok_or_else(|| format!("cannot read target {addr:#x}"))?;
+    Ok((addr, w, h, rgba))
 }
 
 #[cfg(target_os = "macos")]
-fn run() -> Result<(), String> {
+fn run(cmd: Command) -> Result<(), String> {
     use gpu::capture::FrameCapture;
     use gpu::metal::{read_depth_rgba, read_rgba};
-    use gpu::replay::{ReplayOptions, compare_rgba_to_ppm, read_ppm, replay, write_ppm};
-    use std::path::PathBuf;
-
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let Some(cmd) = args.first().map(String::as_str) else {
-        return Err(usage().into());
+    use gpu::replay::{
+        ReplayOptions, compare_rgba_to_ppm, primitive_name, read_image, replay, write_image,
+        write_png, write_ppm,
     };
+
     match cmd {
-        "list" => {
-            let path = args.get(1).ok_or_else(|| usage().to_owned())?;
-            let cap = FrameCapture::load(std::path::Path::new(path))?;
+        Command::Render {
+            capture,
+            output,
+            draw,
+            target,
+        } => {
+            let out_path = output.unwrap_or_else(|| default_render_path(&capture, draw));
+            let cap = FrameCapture::load(&capture)?;
+            let res = replay(
+                &cap,
+                ReplayOptions {
+                    stop_after_draw: draw,
+                    ..ReplayOptions::default()
+                },
+            )?;
+            let (addr, w, h, rgba) = select_target(&res, target)?;
+            write_image(&out_path, w, h, &rgba)?;
+            println!(
+                "wrote {} ({w}x{h}, target {addr:#x}, {} draws replayed)",
+                out_path.display(),
+                res.draws.len()
+            );
+        }
+        Command::List { capture } => {
+            let cap = FrameCapture::load(&capture)?;
             let res = replay(&cap, ReplayOptions::default())?;
             println!(
                 "capture: {} submissions, {} draws, {} dispatches, shown {:?}",
@@ -67,11 +243,12 @@ fn run() -> Result<(), String> {
                     .map(|(a, w, h)| format!(" depth={a:#x}({w}x{h})"))
                     .unwrap_or_default();
                 println!(
-                    "  draw #{:04} q={:#x} vs={:#x} ps={:#x} prim={:#x} {:?} targets=[{}]{depth} scissor={:?}",
+                    "  draw #{:04} q={:#x} vs={:#x} ps={:#x} prim={}({:#x}) {:?} targets=[{}]{depth} scissor={:?}",
                     d.index,
                     d.queue,
                     d.vs,
                     d.ps,
+                    primitive_name(d.primitive),
                     d.primitive,
                     d.draw,
                     targets.join(", "),
@@ -86,62 +263,51 @@ fn run() -> Result<(), String> {
             }
             println!("Metal: {}", res.summary);
         }
-        "dump" => {
-            let cap_path = args.get(1).ok_or_else(|| usage().to_owned())?;
-            let out_dir = PathBuf::from(args.get(2).ok_or_else(|| usage().to_owned())?);
-            let mut opts = ReplayOptions::default();
-            let mut target_filter: Option<u64> = None;
-            let mut i = 3;
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--draw" => {
-                        i += 1;
-                        opts.stop_after_draw = Some(
-                            args.get(i)
-                                .ok_or("missing --draw N")?
-                                .parse()
-                                .map_err(|_| "invalid --draw N")?,
-                        );
-                    }
-                    "--target" => {
-                        i += 1;
-                        target_filter =
-                            Some(parse_hex(args.get(i).ok_or("missing --target ADDR")?)?);
-                    }
-                    "--gputrace" => {
-                        i += 1;
-                        opts.metal_capture =
-                            Some(PathBuf::from(args.get(i).ok_or("missing --gputrace PATH")?));
-                    }
-                    other => return Err(format!("unknown option {other}\n{}", usage())),
-                }
-                i += 1;
-            }
+        Command::Dump {
+            capture,
+            out_dir,
+            draw,
+            target,
+            gputrace,
+            format,
+        } => {
             std::fs::create_dir_all(&out_dir)
                 .map_err(|e| format!("cannot create {}: {e}", out_dir.display()))?;
-            let cap = FrameCapture::load(std::path::Path::new(cap_path))?;
-            let res = replay(&cap, opts)?;
+            let cap = FrameCapture::load(&capture)?;
+            let res = replay(
+                &cap,
+                ReplayOptions {
+                    stop_after_draw: draw,
+                    metal_capture: gputrace,
+                    ..ReplayOptions::default()
+                },
+            )?;
+            let write_fmt = |path: &std::path::Path, w, h, rgba: &[u8]| match format {
+                ImageFormat::Png => write_png(path, w, h, rgba),
+                ImageFormat::Ppm => write_ppm(path, w, h, rgba),
+            };
+            let ext = format.ext();
             let mut written = 0usize;
             for (addr, tex) in &res.targets {
-                if target_filter.is_some_and(|f| f != *addr) {
+                if target.is_some_and(|f| f != *addr) {
                     continue;
                 }
                 if let Some((w, h, rgba)) = read_rgba(tex) {
-                    let file = out_dir.join(format!("color-{addr:x}.ppm"));
-                    write_ppm(&file, w, h, &rgba)?;
+                    let file = out_dir.join(format!("color-{addr:x}.{ext}"));
+                    write_fmt(&file, w, h, &rgba)?;
                     written += 1;
                     if res.shown == Some(*addr) {
-                        write_ppm(&out_dir.join("shown.ppm"), w, h, &rgba)?;
+                        write_fmt(&out_dir.join(format!("shown.{ext}")), w, h, &rgba)?;
                     }
                 }
             }
             for (addr, tex) in &res.depths {
-                if target_filter.is_some_and(|f| f != *addr) {
+                if target.is_some_and(|f| f != *addr) {
                     continue;
                 }
                 if let Some((w, h, rgba)) = read_depth_rgba(tex) {
-                    let file = out_dir.join(format!("depth-{addr:x}.ppm"));
-                    write_ppm(&file, w, h, &rgba)?;
+                    let file = out_dir.join(format!("depth-{addr:x}.{ext}"));
+                    write_fmt(&file, w, h, &rgba)?;
                     written += 1;
                 }
             }
@@ -151,10 +317,8 @@ fn run() -> Result<(), String> {
                 res.draws.len()
             );
         }
-        "time" => {
-            let cap_path = args.get(1).ok_or_else(|| usage().to_owned())?;
-            let warmup = args.iter().any(|a| a == "--warmup");
-            let cap = FrameCapture::load(std::path::Path::new(cap_path))?;
+        Command::Time { capture, warmup } => {
+            let cap = FrameCapture::load(&capture)?;
             if warmup {
                 let _ = replay(&cap, ReplayOptions::default())?;
             }
@@ -186,64 +350,32 @@ fn run() -> Result<(), String> {
                 );
             }
         }
-        "check" => {
-            let cap_path = args.get(1).ok_or_else(|| usage().to_owned())?;
-            let golden_path = PathBuf::from(args.get(2).ok_or_else(|| usage().to_owned())?);
-            let mut opts = ReplayOptions::default();
-            let mut target_addr: Option<u64> = None;
-            let mut tolerance: u8 = 2;
-            let mut update = false;
-            let mut i = 3;
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--draw" => {
-                        i += 1;
-                        opts.stop_after_draw = Some(
-                            args.get(i)
-                                .ok_or("missing --draw N")?
-                                .parse()
-                                .map_err(|_| "invalid --draw N")?,
-                        );
-                    }
-                    "--target" => {
-                        i += 1;
-                        target_addr = Some(parse_hex(args.get(i).ok_or("missing --target ADDR")?)?);
-                    }
-                    "--tolerance" => {
-                        i += 1;
-                        tolerance = args
-                            .get(i)
-                            .ok_or("missing --tolerance N")?
-                            .parse()
-                            .map_err(|_| "invalid --tolerance N")?;
-                    }
-                    "--update" => update = true,
-                    other => return Err(format!("unknown option {other}\n{}", usage())),
-                }
-                i += 1;
-            }
-            let cap = FrameCapture::load(std::path::Path::new(cap_path))?;
-            let res = replay(&cap, opts)?;
-            let want = target_addr
-                .or(res.shown)
-                .or_else(|| res.targets.first().map(|(a, _)| *a))
-                .ok_or("capture produced no render targets")?;
-            let (_, tex) = res
-                .targets
-                .iter()
-                .find(|(a, _)| *a == want)
-                .ok_or_else(|| format!("render target {want:#x} not found"))?;
-            let (w, h, rgba) =
-                read_rgba(tex).ok_or_else(|| format!("cannot read target {want:#x}"))?;
+        Command::Check {
+            capture,
+            golden,
+            draw,
+            target,
+            tolerance,
+            update,
+        } => {
+            let cap = FrameCapture::load(&capture)?;
+            let res = replay(
+                &cap,
+                ReplayOptions {
+                    stop_after_draw: draw,
+                    ..ReplayOptions::default()
+                },
+            )?;
+            let (addr, w, h, rgba) = select_target(&res, target)?;
             if update {
-                write_ppm(&golden_path, w, h, &rgba)?;
-                println!("updated golden {} ({w}x{h})", golden_path.display());
+                write_image(&golden, w, h, &rgba)?;
+                println!("updated golden {} ({w}x{h})", golden.display());
                 return Ok(());
             }
-            let (gw, gh, grgb) = read_ppm(&golden_path)?;
+            let (gw, gh, grgb) = read_image(&golden)?;
             let diff = compare_rgba_to_ppm(w, h, &rgba, gw, gh, &grgb)?;
             println!(
-                "target {want:#x} ({w}x{h}): max_diff={} differing={}/{} mae={:.3}",
+                "target {addr:#x} ({w}x{h}): max_diff={} differing={}/{} mae={:.3}",
                 diff.max_channel_diff,
                 diff.differing_pixels,
                 diff.total_pixels,
@@ -252,12 +384,11 @@ fn run() -> Result<(), String> {
             if diff.max_channel_diff > tolerance {
                 return Err(format!(
                     "image differs from {} (max channel diff {} > tolerance {tolerance})",
-                    golden_path.display(),
+                    golden.display(),
                     diff.max_channel_diff
                 ));
             }
         }
-        _ => return Err(usage().into()),
     }
     Ok(())
 }

@@ -7,7 +7,7 @@ How a title's pad (libScePad) is fed and what it can make the controller do. The
 All three are merged into one pad for user 1 (buttons from all, sticks and triggers from whichever is pushed further):
 
 - **Controllers** through Apple's GameController framework (`GCController`). The first connected controller with an extended gamepad profile is used: DualSense, DualShock 4, Xbox and other MFi pads, over USB or Bluetooth. The list is asked for on every poll (every 8 ms and after window events), so plugging in or removing a controller needs nothing else; the log says `ps5slop: controller: ...` when the controller changes. Buttons, both sticks, analogue L2/R2 and the touch pad click (DualSense and DualShock 4) are mapped. Touch points and motion sensors are not.
-- **Keyboard** in the window: arrows, Z/X/C/V for square/cross/circle/triangle, Q/E for L1/R1, 1/3 for L2/R2, Enter for Options, T for the touch pad.
+- **Keyboard** in the window: arrows, Z/X/C/V for square/cross/circle/triangle, Q/E for L1/R1, 1/3 for L2/R2, Enter for Options, T for the touch pad. Debug capture hotkeys: F9 saves a `.ps5frame` GPU frame capture, F10 saves a Metal `.gputrace` bundle (with `METAL_CAPTURE_ENABLED=1`); see [debugging.md](debugging.md#gpu-frame-capture-and-replay).
 - **Control socket** `press BUTTONS [MS]` (see [debugging.md](debugging.md)), which also works headless.
 
 Background events are on (`shouldMonitorBackgroundEvents`), so a controller keeps working while another window has focus.

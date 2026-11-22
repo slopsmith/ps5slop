@@ -34,8 +34,8 @@ profile [N]                 report the window so far (top N rows, default 20)
 problems [PATH]             list skipped draws, failed shaders/pipelines, timeouts, stubs and JIT fallbacks (or write to PATH)
 gputrace N                  trace every draw of the next N frames on stderr (decimal)
 gpusnap DIR [FIRST]         write every render pass attachment of the next frame (from pass FIRST, decimal) as PPM
-gpucapture PATH             capture one frame (command streams, guest memory and GPU targets) to PATH for ps5slop-replay
-metalcapture PATH           capture the next frame as a Metal .gputrace bundle for Xcode (needs METAL_CAPTURE_ENABLED=1)
+gpucapture [PATH]           capture one frame (command streams, guest memory and GPU targets) for ps5slop-replay
+metalcapture [PATH]         capture the next frame as a Metal .gputrace bundle for Xcode (needs METAL_CAPTURE_ENABLED=1)
 gpureload                   translate every program again (and read PS5SLOP_MSL_OVERRIDE files again)
 gpuskip [ADDR...]           skip draws and dispatches using these programs (none: skip nothing)
 targets DIR                 write every render target and texture as PPM (the first call starts recording)
@@ -280,29 +280,21 @@ fn run(kernel: &Arc<Kernel>, line: &str) -> String {
             None => "usage: gpusnap DIR [FIRST_PASS]".into(),
         },
         #[cfg(target_os = "macos")]
-        "gpucapture" => match it.next() {
-            Some(path) => {
-                kernel.request_frame_capture(path.into());
-                format!("capturing the next frame to {path}")
-            }
-            None => "usage: gpucapture PATH".into(),
-        },
+        "gpucapture" => {
+            let path = it.next().map(PathBuf::from).unwrap_or_else(|| {
+                crate::capture_path(&crate::default_capture_dir(), "capture", "ps5frame")
+            });
+            kernel.request_frame_capture(path)
+        }
         #[cfg(target_os = "macos")]
-        "metalcapture" => match it.next() {
-            Some(path) => {
-                *hle::gpu::metal::METAL_CAPTURE
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner()) = Some(path.into());
-                if std::env::var_os("METAL_CAPTURE_ENABLED").is_none() {
-                    format!(
-                        "armed Metal capture to {path} (warning: METAL_CAPTURE_ENABLED=1 is not set)"
-                    )
-                } else {
-                    format!("capturing the next frame's Metal .gputrace to {path}")
-                }
+        "metalcapture" => {
+            let path = it.next().map(PathBuf::from).unwrap_or_else(|| {
+                crate::capture_path(&crate::default_capture_dir(), "capture", "gputrace")
+            });
+            match hle::gpu::metal::request_metal_capture(path) {
+                Ok(msg) | Err(msg) => msg,
             }
-            None => "usage: metalcapture PATH".into(),
-        },
+        }
         #[cfg(target_os = "macos")]
         "gpureload" => {
             hle::gpu::metal::RELOAD.store(true, std::sync::atomic::Ordering::Relaxed);

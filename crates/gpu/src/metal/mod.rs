@@ -57,7 +57,10 @@ use draw::*;
 use formats::*;
 use htile::*;
 use images::*;
-pub use inspect::{DUMP_TARGETS, METAL_CAPTURE, RELOAD, SKIP, SNAP, TRACE_NEXT, all_frames, frame};
+pub use inspect::{
+    DUMP_TARGETS, METAL_CAPTURE, RELOAD, SKIP, SNAP, TRACE_NEXT, all_frames, frame,
+    request_metal_capture,
+};
 use inspect::{Snap, frames, record, skipped};
 use memory::*;
 use programs::*;
@@ -238,8 +241,8 @@ pub struct Metal {
     fan: Option<Retained<Buffer>>,
     /// Deterministic replay waits for every pipeline instead of skipping draws.
     wait_for_compiles: bool,
-    /// Active Metal GPU trace capture (`MTLCaptureManager`).
-    metal_capturing: bool,
+    /// Active Metal GPU trace capture (`MTLCaptureManager`) output path.
+    metal_capture_path: Option<std::path::PathBuf>,
     /// Accumulated GPU busy time (seconds) since the last `take_gpu_time_secs`.
     gpu_time_accum: f64,
 }
@@ -343,7 +346,7 @@ impl Metal {
             pixels: None,
             fan: None,
             wait_for_compiles: false,
-            metal_capturing: false,
+            metal_capture_path: None,
             gpu_time_accum: 0.0,
         })
     }
