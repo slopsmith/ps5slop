@@ -53,7 +53,8 @@ pub struct Request<'a> {
     pub uint_textures: u32,
     pub sint_textures: u32,
     /// Compute stage: threads at or past the grid size in `bounds` (three
-    /// dwords at [`binding::BOUNDS`]) start with EXEC clear.
+    /// dwords at [`binding::BOUNDS`]) start with EXEC clear. Pixel stage: no
+    /// depth target is bound, so a depth export is dropped.
     pub bounded: bool,
 }
 
@@ -2747,7 +2748,7 @@ impl<'a> Tx<'a> {
             (Stage::Pixel, 8) => {
                 // MRTZ: depth in R, stencil in G, the sample mask in B.
                 let mut stmt = String::new();
-                if en & 1 != 0 {
+                if en & 1 != 0 && !self.req.bounded {
                     self.depth = true;
                     stmt += &format!("o.depth = F({});", comps[0].1);
                 }

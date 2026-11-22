@@ -4695,6 +4695,10 @@ impl Metal {
                 false,
             )
             .ok_or("vertex program")?;
+        let depth_bound = DepthTarget::read(c).is_some() && {
+            let d = DepthState::read(c);
+            d.depth_test() || d.stencil() || c[context::DB_RENDER_CONTROL] & 3 != 0
+        };
         let pixel = self
             .typed_program(
                 host,
@@ -4705,7 +4709,7 @@ impl Metal {
                 false,
                 col_format,
                 ps_data,
-                false,
+                !depth_bound,
             )
             .ok_or("pixel program")?;
         self.note(|| format!("vertex user {:x?}", &vs_data[..vs_users as usize]));
