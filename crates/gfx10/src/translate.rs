@@ -53,9 +53,10 @@ pub struct Request<'a> {
     pub uint_textures: u32,
     pub sint_textures: u32,
     /// Compute stage: threads at or past the grid size in `bounds` (three
-    /// dwords at [`binding::BOUNDS`]) start with EXEC clear. Pixel stage: no
-    /// depth target is bound, so a depth export is dropped.
-    pub bounded: bool,
+    /// dwords at [`binding::BOUNDS`]) start with EXEC clear.
+    pub grid_bounds: bool,
+    /// Pixel stage: no depth target is bound, so a depth export is dropped.
+    pub drop_depth_export: bool,
     /// Pixel stage, for debugging: the first flat input's raw value goes to
     /// colour output 1 in place of what the program computes.
     pub probe_flat: bool,
@@ -219,7 +220,7 @@ pub mod binding {
     /// of compute programs ([`super::Translated::loop_guard`]): backward
     /// branches taken so far in [`super::GUARD_UNIT`]s, and threads that gave up.
     pub const GUARD: u32 = 25;
-    /// `device const uint* bounds`: the grid size in threads, for bounded programs.
+    /// `device const uint* bounds`: the grid size in threads, for [`Request::grid_bounds`].
     pub const BOUNDS: u32 = 24;
 }
 
@@ -365,7 +366,7 @@ pub fn translate(req: &Request) -> Result<Translated, TranslateError> {
         .filter(|(_, t)| t.3 == Access::Atomic)
         .fold(0, |m, (i, _)| m | 1 << i);
     tx.run()?;
-    if req.bounded && tx.lockstep && req.threads[1..].iter().any(|&t| t > 1) {
+    if req.grid_bounds && tx.lockstep && req.threads[1..].iter().any(|&t| t > 1) {
         return Err(err(
             0,
             "bounds of a lockstep program with a multi-dimensional group",
@@ -2751,7 +2752,7 @@ impl<'a> Tx<'a> {
             (Stage::Pixel, 8) => {
                 // MRTZ: depth in R, stencil in G, the sample mask in B.
                 let mut stmt = String::new();
-                if en & 1 != 0 && !self.req.bounded {
+                if en & 1 != 0 && !self.req.drop_depth_export {
                     self.depth = true;
                     stmt += &format!("o.depth = F({});", comps[0].1);
                 }
@@ -4288,7 +4289,7 @@ impl<'a> Tx<'a> {
             }
             Stage::Compute => {
                 init.push_str(&self.cs_inputs());
-                if self.req.bounded {
+                if self.req.grid_bounds {
                     entry_params.push(format!(
                         "device const uint* bounds [[buffer({})]]",
                         binding::BOUNDS

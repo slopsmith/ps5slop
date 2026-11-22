@@ -55,7 +55,8 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
         threads: [1, 1, 1],
         uint_textures: 0,
         sint_textures: 0,
-        bounded: false,
+        grid_bounds: false,
+        drop_depth_export: false,
         probe_flat: false,
     })
     .unwrap()
@@ -137,7 +138,8 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
         threads: [1, 1, 1],
         uint_textures: 0,
         sint_textures: 0,
-        bounded: false,
+        grid_bounds: false,
+        drop_depth_export: false,
         probe_flat: false,
     })
     .unwrap();
@@ -163,7 +165,8 @@ fn compute(code: &[u32], user_sgprs: u32, rsrc2: u32) -> gfx10::Translated {
         threads: [64, 1, 1],
         uint_textures: 0,
         sint_textures: 0,
-        bounded: false,
+        grid_bounds: false,
+        drop_depth_export: false,
         probe_flat: false,
     })
     .unwrap()
@@ -371,7 +374,8 @@ fn integer_colour_formats_export_integers() {
         threads: [1, 1, 1],
         uint_textures: 0,
         sint_textures: 0,
-        bounded: false,
+        grid_bounds: false,
+        drop_depth_export: false,
         probe_flat: false,
     };
     let t = translate(&req).unwrap();
@@ -407,7 +411,8 @@ fn integer_texture_slots_read_and_write_integers() {
         threads: [64, 1, 1],
         uint_textures,
         sint_textures,
-        bounded: false,
+        grid_bounds: false,
+        drop_depth_export: false,
         probe_flat: false,
     };
     let float = translate(&request(0, 0)).unwrap();
@@ -445,6 +450,41 @@ fn version_1_captures_still_load() {
     );
     let again = gfx10::capture::Capture::from_bytes(&c.to_bytes()).unwrap();
     assert_eq!((again.threads, again.code), (c.threads, c.code));
+}
+
+#[test]
+fn captures_keep_the_grid_bounds_and_depth_export_flags() {
+    let code = [0xBF81_0000u32];
+    let req = Request {
+        stage: Stage::Compute,
+        code: &code,
+        address: 0x1000,
+        user_sgprs: 0,
+        ngg: false,
+        ps_input_ena: 0,
+        ps_input_addr: 0,
+        ps_input_cntl: &[],
+        col_format: 0,
+        compute_rsrc2: 0,
+        threads: [64, 1, 1],
+        uint_textures: 0,
+        sint_textures: 0,
+        grid_bounds: true,
+        drop_depth_export: false,
+        probe_flat: false,
+    };
+    let bytes = gfx10::capture::Capture::new(&req).to_bytes();
+    let c = gfx10::capture::Capture::from_bytes(&bytes).unwrap();
+    let again = c.request();
+    assert_eq!(
+        (
+            again.grid_bounds,
+            again.drop_depth_export,
+            again.address,
+            again.code
+        ),
+        (true, false, 0x1000, &code[..])
+    );
 }
 
 #[test]
@@ -579,7 +619,8 @@ fn getpc_gives_the_address_of_the_next_instruction() {
         threads: [64, 1, 1],
         uint_textures: 0,
         sint_textures: 0,
-        bounded: false,
+        grid_bounds: false,
+        drop_depth_export: false,
         probe_flat: false,
     };
     let t = translate(&req).unwrap();

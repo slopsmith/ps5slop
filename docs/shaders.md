@@ -117,7 +117,7 @@ Checked by drawing: Balatro's title screen and Minecraft's main-menu UI (logo, b
 Semantics from AMD's RDNA ISA guide (as recalled) and Mesa's opcode table; each has a hand-written test in `tests/unit.rs` that translates it and compiles the MSL with Metal (no oracle checks the values):
 
 - **`buffer_store_format_x/xy/xyz/xyzw`**: the inverse of `buffer_load_format`: the first n data dwords are packed into the format's first n components (UNORM and SNORM rounded and clamped, scaled formats converted to integers, 16-bit floats to half), other components left as they are. Destination selects are not applied to stores (assumed).
-- **`s_getpc_b64`**: the guest address of the next instruction. `Request::address` carries the program's address (captures are version 3 and store it; older ones load with 0). Astro Bot's full-screen vertex programs read their corner table from right after their own code this way; the code's extent is a candidate for the memory window already.
+- **`s_getpc_b64`**: the guest address of the next instruction. `Request::address` carries the program's address (captures from version 3 on store it; older ones load with 0). Astro Bot's full-screen vertex programs read their corner table from right after their own code this way; the code's extent is a candidate for the memory window already.
 - **`v_mad_u64_u32`, `v_mad_i64_i32`, `v_cmp_*_u64/i64`, `s_bfm_b64`, `s_bitset0/1_b32`**; **`s_trap`** is ignored.
 - **`d16`** on `image_load`, `image_store` and the sample instructions: two 16-bit values per VGPR, low half first (half floats for float textures).
 - **`image_sample*_o`**: the offset dword (6-bit signed texel offsets) shifts the coordinates by offset / size, rather than Metal's constant offsets. 2D and 2D arrays only.
@@ -230,7 +230,7 @@ A GPU test runs one program with packed and scalar half ops, `op_sel`, SDWA and 
 
 ## Bounded compute programs (2026-11-22, late night)
 
-`Request::bounded` makes a compute program read the grid size in threads from `bounds` (`device const uint*` at `[[buffer(24)]]`) and start threads at or past it with EXEC clear; in a lockstep program the active lanes are the prefix of the wave below the bound, so a lockstep program with a group of more than one dimension is refused. The renderer uses it for indirect dispatches whose sizes count threads ([gpu.md](gpu.md#indirect-dispatch-sizes-on-the-gpu-2026-11-22-late-night)); a GPU test dispatches 70 threads in groups of 64 and checks that exactly 70 stores land.
+`Request::grid_bounds` makes a compute program read the grid size in threads from `bounds` (`device const uint*` at `[[buffer(24)]]`) and start threads at or past it with EXEC clear; in a lockstep program the active lanes are the prefix of the wave below the bound, so a lockstep program with a group of more than one dimension is refused. The renderer uses it for indirect dispatches whose sizes count threads ([gpu.md](gpu.md#indirect-dispatch-sizes-on-the-gpu-2026-11-22-late-night)); a GPU test dispatches 70 threads in groups of 64 and checks that exactly 70 stores land. `Request::drop_depth_export` makes a pixel program drop its depth export, for draws without a depth target. Captures from version 4 on store both flags.
 
 ## Open questions
 

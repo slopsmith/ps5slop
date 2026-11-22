@@ -375,14 +375,16 @@ struct Program {
 }
 
 /// What a program is translated for besides its code and registers.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 struct Variant {
     /// `SPI_SHADER_COL_FORMAT`, with integer targets' exports made integer.
     col_format: u32,
     uint_textures: u32,
     sint_textures: u32,
     /// Compute: threads past a grid size read from a buffer do nothing.
-    bounded: bool,
+    grid_bounds: bool,
+    /// Pixel: no depth target is bound, so a depth export is dropped.
+    drop_depth_export: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -2375,7 +2377,6 @@ impl Metal {
     /// The program at `address` as the bound descriptors need it: translated
     /// again with integer texture types when a T# has an integer format.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn typed_program(
         &mut self,
         host: &dyn Host,
@@ -2384,16 +2385,9 @@ impl Metal {
         address: u64,
         user_sgprs: u32,
         ngg: bool,
-        col_format: u32,
         user: &[u32],
-        bounded: bool,
+        base: Variant,
     ) -> Option<Arc<Program>> {
-        let base = Variant {
-            col_format,
-            uint_textures: 0,
-            sint_textures: 0,
-            bounded,
-        };
         let program = self.program(host, state, stage, address, user_sgprs, ngg, base)?;
         let mut variant = base;
         for r in &program.translated.resources {
@@ -2489,7 +2483,8 @@ impl Metal {
                     .map(|i| (state.sh[sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1)),
                 uint_textures: variant.uint_textures,
                 sint_textures: variant.sint_textures,
-                bounded: variant.bounded,
+                grid_bounds: variant.grid_bounds,
+                drop_depth_export: variant.drop_depth_export,
                 probe_flat: diag::config().gpu.probe_flat,
             };
             if let Some(dir) = &diag::config().gpu.shader_dump {
@@ -4481,7 +4476,7 @@ impl Metal {
         state: &State,
         grid: Grid,
     ) -> Result<(), &'static str> {
-        let (groups, bounded) = match grid {
+        let (groups, grid_bounds) = match grid {
             Grid::Direct(d) => (d.groups, false),
             Grid::Indirect { threads, .. } => ([0; 3], threads),
         };
@@ -4511,11 +4506,13 @@ impl Metal {
                 address,
                 users,
                 false,
-                0,
                 user,
-                bounded,
+                Variant {
+                    grid_bounds,
+                    ..Variant::default()
+                },
             )
-            .ok_or(if bounded {
+            .ok_or(if grid_bounds {
                 INDIRECT_ON_CPU
             } else {
                 "compute program"
@@ -4705,9 +4702,8 @@ impl Metal {
                 vs_addr,
                 vs_users,
                 ngg,
-                0,
                 vs_data,
-                false,
+                Variant::default(),
             )
             .ok_or("vertex program")?;
         let depth_bound = DepthTarget::read(c).is_some() && {
@@ -4722,9 +4718,12 @@ impl Metal {
                 ps_addr,
                 ps_users,
                 false,
-                col_format,
                 ps_data,
-                !depth_bound,
+                Variant {
+                    col_format,
+                    drop_depth_export: !depth_bound,
+                    ..Variant::default()
+                },
             )
             .ok_or("pixel program")?;
         self.note(|| format!("vertex user {:x?}", &vs_data[..vs_users as usize]));

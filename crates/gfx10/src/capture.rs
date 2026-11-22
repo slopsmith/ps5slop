@@ -5,13 +5,16 @@
 //! NGG flag, `SPI_PS_INPUT_ENA`, `SPI_PS_INPUT_ADDR`, `SPI_SHADER_COL_FORMAT`,
 //! `COMPUTE_PGM_RSRC2`, the three thread counts, the unsigned and signed
 //! integer texture masks, the number of `SPI_PS_INPUT_CNTL` values and those
-//! values, the program address (two dwords), then the code. Version 1 files
-//! have no texture masks, version 2 files no address.
+//! values, the program address (two dwords), the flags (bit 0 grid bounds,
+//! bit 1 dropped depth export), then the code. Version 1 files have no
+//! texture masks, version 2 files no address, version 3 files no flags.
 
 use crate::translate::{Request, Stage, program};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"g10c");
-const VERSION: u32 = 3;
+const VERSION: u32 = 4;
+const GRID_BOUNDS: u32 = 1;
+const DROP_DEPTH_EXPORT: u32 = 2;
 
 /// A request with its own storage.
 #[derive(Clone, Debug)]
@@ -28,6 +31,8 @@ pub struct Capture {
     pub uint_textures: u32,
     pub sint_textures: u32,
     pub address: u64,
+    pub grid_bounds: bool,
+    pub drop_depth_export: bool,
     pub code: Vec<u32>,
 }
 
@@ -51,6 +56,8 @@ impl Capture {
             uint_textures: req.uint_textures,
             sint_textures: req.sint_textures,
             address: req.address,
+            grid_bounds: req.grid_bounds,
+            drop_depth_export: req.drop_depth_export,
             code: req.code[..len.min(req.code.len())].to_vec(),
         }
     }
@@ -70,7 +77,8 @@ impl Capture {
             threads: self.threads,
             uint_textures: self.uint_textures,
             sint_textures: self.sint_textures,
-            bounded: false,
+            grid_bounds: self.grid_bounds,
+            drop_depth_export: self.drop_depth_export,
             probe_flat: false,
         }
     }
@@ -99,7 +107,13 @@ impl Capture {
             self.ps_input_cntl.len() as u32,
         ];
         w.extend_from_slice(&self.ps_input_cntl);
-        w.extend_from_slice(&[self.address as u32, (self.address >> 32) as u32]);
+        let flags = if self.grid_bounds { GRID_BOUNDS } else { 0 }
+            | if self.drop_depth_export {
+                DROP_DEPTH_EXPORT
+            } else {
+                0
+            };
+        w.extend_from_slice(&[self.address as u32, (self.address >> 32) as u32, flags]);
         w.extend_from_slice(&self.code);
         w.iter().flat_map(|x| x.to_le_bytes()).collect()
     }
@@ -133,6 +147,11 @@ impl Capture {
             address = *w.get(code_at)? as u64 | (*w.get(code_at + 1)? as u64) << 32;
             code_at += 2;
         }
+        let mut flags = 0;
+        if w[1] >= 4 {
+            flags = *w.get(code_at)?;
+            code_at += 1;
+        }
         Some(Capture {
             stage,
             user_sgprs: w[3],
@@ -146,6 +165,8 @@ impl Capture {
             sint_textures: masks[1],
             ps_input_cntl: cntl,
             address,
+            grid_bounds: flags & GRID_BOUNDS != 0,
+            drop_depth_export: flags & DROP_DEPTH_EXPORT != 0,
             code: w[code_at..].to_vec(),
         })
     }

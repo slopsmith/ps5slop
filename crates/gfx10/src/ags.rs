@@ -203,7 +203,8 @@ impl Ags<'_> {
             threads: [64, 1, 1],
             uint_textures: 0,
             sint_textures: 0,
-            bounded: false,
+            grid_bounds: false,
+            drop_depth_export: false,
             probe_flat: false,
         }
     }
