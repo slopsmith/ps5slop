@@ -18,6 +18,7 @@ pub mod context {
     pub const DB_Z_WRITE_BASE: usize = 0x014;
     pub const DB_STENCIL_WRITE_BASE: usize = 0x015;
     pub const DB_Z_WRITE_BASE_HI: usize = 0x01C;
+    pub const DB_STENCIL_WRITE_BASE_HI: usize = 0x01D;
     pub const DB_HTILE_DATA_BASE_HI: usize = 0x01E;
     pub const DB_STENCIL_CONTROL: usize = 0x10B;
     pub const DB_STENCIL_REF_MASK: usize = 0x10C;
@@ -196,6 +197,8 @@ pub struct DepthTarget {
     /// 0 none, 1 16-bit unorm, 3 32-bit float.
     pub format: u32,
     pub stencil: bool,
+    /// Where the stencil plane lives (`DB_STENCIL_WRITE_BASE`).
+    pub stencil_address: u64,
     /// From `DB_DEPTH_SIZE_XY`; zero when the title did not write it.
     pub width: u32,
     pub height: u32,
@@ -224,6 +227,9 @@ impl DepthTarget {
             address,
             format,
             stencil: c[DB_STENCIL_INFO] & 1 != 0,
+            stencil_address: ((c[DB_STENCIL_WRITE_BASE] as u64)
+                | ((c[DB_STENCIL_WRITE_BASE_HI] as u64 & 0xFF) << 32))
+                << 8,
             width: w,
             height: h,
             slice: c[DB_DEPTH_VIEW] & 0x1FFF,

@@ -431,6 +431,8 @@ pub struct Metal {
     pass: Option<OpenPass>,
     snap: Option<Snap>,
     depths: HashMap<u64, Retained<Texture>>,
+    /// Stencil plane addresses and the depth target they belong to.
+    stencils: HashMap<u64, u64>,
     /// Depth-layout images a program wrote since their depth texture was
     /// last used: the depth texture takes their contents first.
     depth_stores: std::collections::HashSet<u64>,
@@ -715,6 +717,7 @@ impl Metal {
             pass: None,
             snap: None,
             depths: HashMap::new(),
+            stencils: HashMap::new(),
             depth_stores: Default::default(),
             color_newer: Default::default(),
             shown: HashMap::new(),
@@ -1705,6 +1708,7 @@ impl Metal {
                         3
                     },
                     stencil: d.pixelFormat() == MTLPixelFormat::Depth32Float_Stencil8,
+                    stencil_address: 0,
                     width: image.width,
                     height: image.height,
                     slice: last,
@@ -1767,6 +1771,9 @@ impl Metal {
                     objc2_foundation::NSRange::new(image.base_array as usize, count),
                 )
             };
+        }
+        if let Some(view) = self.stencil_view(image, kind, format) {
+            return Some(view);
         }
         if !self.volume_older.contains(&image.address) {
             self.refresh_volume(host, image.address, false);
@@ -3146,6 +3153,56 @@ impl Metal {
         });
         if let Some(enc) = command.renderCommandEncoderWithDescriptor(&pass) {
             enc.endEncoding();
+        }
+    }
+
+    /// The stencil plane of a depth target, read as 8-bit integers.
+    fn stencil_view(
+        &mut self,
+        image: Image,
+        kind: TextureKind,
+        format: MTLPixelFormat,
+    ) -> Option<Retained<Texture>> {
+        if format != MTLPixelFormat::R8Uint
+            || !matches!(kind, TextureKind::Tex2d | TextureKind::Tex2dArray)
+        {
+            return None;
+        }
+        let depth = *self.stencils.get(&image.address)?;
+        let d = self.depths.get(&depth)?.clone();
+        if d.pixelFormat() != MTLPixelFormat::Depth32Float_Stencil8
+            || d.width() as u32 != image.width
+            || d.height() as u32 != image.height
+        {
+            return None;
+        }
+        let base = image.base_array as usize;
+        let count = if kind == TextureKind::Tex2dArray {
+            (image.depth as usize).min(d.arrayLength().saturating_sub(base))
+        } else {
+            1
+        };
+        if count == 0 {
+            return None;
+        }
+        let ty = if kind == TextureKind::Tex2dArray {
+            MTLTextureType::Type2DArray
+        } else {
+            MTLTextureType::Type2D
+        };
+        self.note(|| {
+            format!(
+                "      {:#x} the stencil plane of depth target {depth:#x}",
+                image.address
+            )
+        });
+        unsafe {
+            d.newTextureViewWithPixelFormat_textureType_levels_slices(
+                MTLPixelFormat::X32_Stencil8,
+                ty,
+                objc2_foundation::NSRange::new(0, 1),
+                objc2_foundation::NSRange::new(base, count),
+            )
         }
     }
 
@@ -4558,6 +4615,9 @@ impl Metal {
             self.note(|| format!("depth {d:x?} test {wants_depth}"));
             let (dw, dh) = size.unwrap_or((d.width, d.height));
             if let Some((tex, format, fresh)) = self.depth(&d, dw, dh) {
+                if d.stencil && d.stencil_address != 0 {
+                    self.stencils.insert(d.stencil_address, d.address);
+                }
                 key.depth = format.0;
                 key.stencil = d.stencil;
                 let (zs, zo) = regs::depth_range(c, gl_clip);
