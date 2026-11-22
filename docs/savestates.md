@@ -50,6 +50,8 @@ Frames come right after the load; most of GTA V's stop and load time is reading 
 
 The GTA V prologue state was loaded three times into fresh processes and played for 130 s each: frames flipped throughout (about 2 a second; the rate just before the save was not measured), the depot and HUD rendered as before the save, `press lup` and `press rright` moved and turned the player, no faults, no failed command buffers, footprint about 3.4 GB. Balatro's menu went on animating and took pad input.
 
+Load reliability (2026-11-22, 34 loads of the GTA V prologue state on one build line): every load came up and rendered the depot by 30 to 40 s. Five logged `wait timed out on gpu compute 0x20` (2 to 6 times each), and in one of them the screen was still black at about 20 s and fine at 30 s. Four of the five compiled new Metal programs (shader dumps, MSL overrides, new translations; a load starts with no pipelines) and the fifth was the first load of the session; none of the 29 other runs timed out. The likely reading is the culling queue waiting more than 5 s on work held up behind compiles rather than lost state (not proven); nothing was changed in the save state.
+
 ## Limits and unknowns
 
 - Host files the guest wrote after the save keep their newer contents; a load sees the folder as it is.

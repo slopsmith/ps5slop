@@ -573,3 +573,15 @@ Wall-clock reads the guest sees (`clock_gettime` realtime, `gettimeofday`, `time
 ## 2026-11-22: Label waits pause while a command processor waits for a compile
 
 The 5 s limit on `WAIT_REG_MEM`, `ATOMIC_MEM` and `MEM_SEMAPHORE` waits does not run while any command processor waits for a pipeline compile, and dispatches with zero groups do not wait for their pipeline. Reason: Astro Bot's compute queues wait on labels the graphics queue writes after dispatches of its ray-traced lighting programs, whose pipelines take seconds to compile when Metal's cache misses; the waits gave up (5 to 6 a run) and the queues ran on unsynchronised. Compiles are our cost, not the guest's, so they should not count against a guest wait; the limit still catches a label nobody writes once compiles end. Skipping the wait (draws skip when compiling) is not possible for dispatches ([gpu.md](gpu.md#astro-bots-wait-timeouts-2026-11-22)).
+
+## 2026-11-22: Memory windows follow V# tables the user data points to
+
+`guest_window` reads the first 64 dwords behind each plain, aligned pointer in a program's user data and counts the bases of V#s found there as candidates for its second and third windows, ranked after aligned pointers in the user data and before unaligned ones. Reason: GTA V's vertex programs reach their vertex buffers through such a table, in pools mapped at fixed addresses above the GPU area, so every streamed model (characters, ceiling, counter, partitions) read zeros and collapsed. Reading one table level is cheap (two small reads per draw in GTA V) and keeps the three-window design; a window per run-time address would need feedback from the GPU. Ranking unaligned pointers last stops a V#'s stride and record count from passing for a pointer. Risk: a table of something else that happens to look like V#s can take a window from the region a program needs; none seen.
+
+## 2026-11-22: Scratch loads in programs that never store to scratch read zero
+
+A `scratch_load` in a program with no `scratch_store` translates to 0 instead of being rejected. Reason: GTA V's ray-tracing programs keep their traversal stack in LDS and read scratch only on an overflow path, so the memory they would read is never written by them; rejecting the whole program for it skipped the pass. Programs that store to scratch are still rejected until scratch is emulated.
+
+## 2026-11-22: Layered depth targets sampled as cubes grow to six slices
+
+A depth target sampled as a cube with fewer than six slices from its base is made again with six (old slices copied) instead of refusing the draw. Reason: GTA V's point-light shadow cubes only draw the faces in view, so the Metal array never reached six slices and every shadowed light was skipped. Faces never drawn read what the new texture holds (not cleared; the hardware would read whatever the game left there).
