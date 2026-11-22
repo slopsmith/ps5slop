@@ -27,5 +27,5 @@ What each title does under ps5slop, from our own runs on an Apple Silicon Mac.
 | PPSA03311 | The Binding of Isaac: Repentance | 🟢 Playable | 01.000: plays at about 52 fps. Screen filter setting not rechecked. |
 | PPSA04263 | Grand Theft Auto V | 🟡 Ingame | EU v1.011.001 (.pkg): prologue plays; depot and NPCs drawn, player unseen, lighting dim; no audio. |
 | PPSA06084 | Superliminal | 🟡 Ingame | 01.010 (.pkg): menu ~20 s; level 1 passes the rook and looks as on PC (lighting, AO, no glows). |
-| PPSA21564 | Astro Bot | 🟠 Menus | v1.019 (.pkg): title at 50-70 s, logo lit (T grey, fly-in dark); ship and Astro missing. Needs `scripts/fetch-fonts`. |
+| PPSA21564 | Astro Bot | 🟠 Menus | v1.019 (.pkg): title at 50-70 s, logo as on PS5, backdrop pink; ship and Astro missing. Needs `scripts/fetch-fonts`. |
 | CUSA52463 | Deltarune (PS4) | ⚫ Nothing | v1.12 (patch over base .pkg): game loop runs; nothing drawn, PS4 Gnm rendering is out of scope. |
