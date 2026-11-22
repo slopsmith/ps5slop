@@ -138,6 +138,7 @@ impl Kernel {
                     }
                 }
             }
+            eprintln!("ps5slop: save state: not stopped yet: {last}");
             std::thread::sleep(Duration::from_millis(300));
         }
         let Some((_guard, cpus, gpu)) = stopped else {

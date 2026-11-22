@@ -6202,11 +6202,19 @@ fn is_depth_layout(raw: u32) -> bool {
 
 /// Bytes per texel of an uncompressed format, from the image format table.
 fn texel_bytes(f: MTLPixelFormat) -> Option<usize> {
-    (0..256).find_map(|n| {
-        image_format(n)
-            .filter(|(m, _)| *m == f)
-            .map(|(_, b)| b as usize)
-    })
+    use MTLPixelFormat as P;
+    (0..256)
+        .find_map(|n| {
+            image_format(n)
+                .filter(|(m, _)| *m == f)
+                .map(|(_, b)| b as usize)
+        })
+        .or(match f {
+            P::BGRA8Unorm | P::BGRA8Unorm_sRGB | P::RGBA8Unorm_sRGB | P::BGR10A2Unorm => Some(4),
+            P::R8Unorm_sRGB => Some(1),
+            P::RG8Unorm_sRGB => Some(2),
+            _ => None,
+        })
 }
 
 /// Formats made with atomic usage, for image atomics.
