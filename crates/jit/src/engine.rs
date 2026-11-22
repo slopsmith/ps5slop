@@ -390,6 +390,28 @@ pub fn recent_blocks() -> Vec<u64> {
     RECENT.with(|r| r.borrow().iter().copied().collect())
 }
 
+fn log_probe(x: &X86, mem: &Memory) {
+    use x86::cpu::reg::*;
+    let r = &x.regs;
+    let mut at_rax = [0u8; 32];
+    let _ = mem.read(r[RAX], &mut at_rax);
+    eprintln!(
+        "ps5slop: probe {:#x} rax {:#x} rbx {:#x} rcx {:#x} rdx {:#x} rsi {:#x} rdi {:#x} r8 {:#x} r9 {:#x} rsp {:#x} xmm0 {} [rax] {:02x?}",
+        x.rip,
+        r[RAX],
+        r[RBX],
+        r[RCX],
+        r[RDX],
+        r[RSI],
+        r[RDI],
+        r[R8],
+        r[R9],
+        r[RSP],
+        f32::from_bits(x.xmm[0][0] as u32),
+        at_rax,
+    );
+}
+
 fn note_block(rip: u64) {
     RECENT.with(|r| {
         let mut r = r.borrow_mut();
@@ -812,6 +834,9 @@ impl Engine {
             let started = crate::profile::start();
             while steps < INTERP_RUN {
                 steps += 1;
+                if crate::is_probe(x.rip) {
+                    log_probe(x, mem);
+                }
                 count_insn(x, mem);
                 match x86::step(x, mem) {
                     x86::Exit::Continue => {}

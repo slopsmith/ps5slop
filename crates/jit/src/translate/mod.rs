@@ -279,6 +279,9 @@ fn scan(mem: &Memory, rip: u64) -> Vec<(Insn, u64, FlagUse)> {
         let Some((ends, flags)) = classify(&insn) else {
             break;
         };
+        if at != rip && crate::is_probe(at) {
+            break;
+        }
         let len = insn.len as u64;
         out.push((insn, at, flags));
         at += len;

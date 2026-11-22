@@ -170,6 +170,24 @@ pub fn unwatch() -> Result<(), Error> {
     Ok(())
 }
 
+/// Guest addresses from `PS5SLOP_PROBE_RIP` (hex, comma-separated). They are
+/// never translated, so every arrival there is interpreted and logged.
+pub fn probes() -> &'static [u64] {
+    static PROBES: OnceLock<Vec<u64>> = OnceLock::new();
+    PROBES.get_or_init(|| {
+        std::env::var("PS5SLOP_PROBE_RIP")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|a| u64::from_str_radix(a.trim().trim_start_matches("0x"), 16).ok())
+            .collect()
+    })
+}
+
+pub(crate) fn is_probe(rip: u64) -> bool {
+    let p = probes();
+    !p.is_empty() && p.contains(&rip)
+}
+
 /// Makes calls to the host function at trap address `addr` run `native`
 /// inside the VM (not in verify mode, which checks the host versions).
 pub fn set_native(addr: u64, native: Native) {
@@ -726,6 +744,10 @@ impl Machine {
     /// Translates the block at `rip` and enters it in the lookup table;
     /// false if it cannot be translated or the cache is full.
     fn translate(&mut self, mem: &Memory, rip: u64) -> bool {
+        if is_probe(rip) {
+            self.enter(rip, INTERP_EXIT);
+            return false;
+        }
         if let Some(place) = self.regions.get(&rip).map(|r| r.place) {
             engine::note_exit(engine::Cause::Region, rip);
             self.enter(rip, place);

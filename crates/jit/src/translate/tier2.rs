@@ -231,6 +231,12 @@ pub fn region(mem: &Memory, rip: u64, place: usize, dispatch: usize) -> Option<(
     if blocks.len() < 2 && blocks[0].insns.len() < 2 {
         return None;
     }
+    if blocks
+        .iter()
+        .any(|b| crate::is_probe(b.start) || b.insns.iter().any(|(_, at)| crate::is_probe(*at)))
+    {
+        return None;
+    }
     let after = demand(&blocks);
     let mut t = Translator {
         a: a64::Asm::new(),
