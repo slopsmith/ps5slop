@@ -609,3 +609,11 @@ In compute programs whose group is one wave64 without `s_barrier` (lockstep prog
 ## 2026-11-22: Render targets keep their mip chain and their array
 
 A colour target is made with the mip levels its view names, a draw to level n renders into a one-level view of it, and a sampled render target is viewed with the descriptor's base and last level. A draw to one slice of a target that is already an array keeps the array; a target that must grow copies its old slices, and takes over what programs stored at its address since it was last drawn. Reason: GTA V draws its reflection cube one face at a time (each view one slice wide) after a compute pass stored into it, and builds its reflection map's mip chain by drawing each level from the last; the renderer replaced the cube's texture for every face and skipped every level above 0, so the reflections were never built. Copying beats sharing one texture between array stores and draws for now because the two caches track different things (volumes follow CPU writes to guest memory, targets do not).
+
+## 2026-11-22: A depth target's stencil plane is sampled through a stencil view
+
+An image sampled at a depth target's `DB_STENCIL_WRITE_BASE` with an 8-bit integer format binds an `X32_Stencil8` view of that depth texture instead of a zero-filled texture. Reason: GTA V's deferred lighting reads the G-buffer's stencil to tell materials apart, and with zeros it lit nothing properly. Only `Depth32Float_Stencil8` textures of the image's size qualify; stencil-only targets (Z format 0) are still not made.
+
+## 2026-11-22: Outside lockstep programs, scalar writes of EXEC keep one bit
+
+When a scalar instruction writes EXEC in a program that is not lockstep, the result keeps bit 0 and `exec_hi` becomes 0. Reason: `s_wqm_b64` (and `s_mov_b64 exec, -1`) set bits for lanes that, in the one-lane-per-thread model, are other threads; GTA V's glass programs then spun in a waterfall loop until its cap and discarded every fragment. Risk: code that compares EXEC with a full mask (`s_cmp_eq_u64 exec, -1`) now sees a partial wave; none found in the captured programs.

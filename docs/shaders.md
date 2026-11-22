@@ -211,6 +211,12 @@ The lockstep set grew too: a one-wave group without `s_barrier` is lockstep when
 
 Cost: every mask write in these programs is a barrier. GTA V's prologue went from 1.9 to 1.57 flips a second, because the program that still trips the guard (0x4203300) now pays a barrier per compare on every turn of its runaway loop (1.15 with two barriers per exchange). Why that program loops is not known; see [gpu.md](gpu.md#gta-vs-player-camera-and-compute-programs-2026-11-22).
 
+## One lane's EXEC outside lockstep programs (2026-11-22)
+
+Outside lockstep programs a scalar instruction that writes EXEC (`s_wqm_b64`, `s_mov_b64 exec, -1`, `s_and_saveexec_b64`, ...) now keeps only bit 0 of the result and clears `exec_hi`. Before, `s_wqm_b64 exec, exec` turned this lane's 1 into 0xF (the whole quad), and a waterfall loop (`v_readfirstlane`, `v_cmpx`, `s_andn2_b64 s[n], s[n], exec`, `s_cbranch_scc1` back) never ran out of lanes: `v_cmpx` clears only bit 0, so lanes 1 to 3 stayed set in the saved mask. The loop hit its 1024-turn cap and the fragment was discarded. GTA V's forward glass programs (the depot's wire-glass partition, 0x115a7a9a00 and 0x115a7a4c00) run such a loop over their light list, and every pane fragment was dropped. In the single-lane model the quad's other lanes are other threads, so no scalar result can make them this thread's work.
+
+`exp mrtz` now writes depth only when its R component is enabled, and its B component (the sample mask) goes to `[[sample_mask]]`. A GTA V program that exports only the sample mask (`exp mrtz off, off, v9, off`) wrote an unexported register as depth before.
+
 ## Open questions
 
 - The renderer asked for buffers at `[[buffer(1 + slot)]]` with their V#s at `[[buffer(30)]]`. Balatro's vertex programs build their V#s at run time, so the translator reads guest memory instead; static buffer slots could come back as an optimisation where a V# provably sits in user SGPRs.
