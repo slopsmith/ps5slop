@@ -1414,6 +1414,17 @@ impl Metal {
         height: u32,
         target: bool,
     ) -> Option<Retained<Texture>> {
+        self.new_texture_levels(format, width, height, target, 1)
+    }
+
+    fn new_texture_levels(
+        &self,
+        format: MTLPixelFormat,
+        width: u32,
+        height: u32,
+        target: bool,
+        levels: u32,
+    ) -> Option<Retained<Texture>> {
         let desc = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
                 format,
@@ -1422,6 +1433,9 @@ impl Metal {
                 false,
             )
         };
+        let most = 32 - width.max(height).max(1).leading_zeros();
+        // SAFETY: at most the full chain for this size.
+        unsafe { desc.setMipmapLevelCount(levels.clamp(1, most) as usize) };
         let mut usage = MTLTextureUsage::ShaderRead
             | MTLTextureUsage::ShaderWrite
             | MTLTextureUsage::PixelFormatView;
@@ -1560,20 +1574,47 @@ impl Metal {
         } else {
             self.color_meta.remove(&t.address);
         }
+        let volume_newer =
+            self.volumes.contains_key(&t.address) && !self.volume_older.contains(&t.address);
         if self.volumes.contains_key(&t.address) {
             self.volume_older.insert(t.address);
         }
-        let slices = t.slices.max(t.slice + 1).min(MAX_TARGET_SLICES);
-        let layered = slices > 1;
-        if let Some(existing) = self.targets.get(&t.address)
-            && existing.pixel_format == format
-            && existing.texture.width() == t.width as usize
-            && existing.texture.height() == t.height as usize
-            && (existing.texture.textureType() == MTLTextureType::Type2DArray) == layered
-            && existing.texture.arrayLength() >= slices as usize
+        let fits = |tex: &Texture| {
+            tex.pixelFormat() == format
+                && tex.width() == t.width as usize
+                && tex.height() == t.height as usize
+        };
+        let old = self
+            .targets
+            .get(&t.address)
+            .map(|e| e.texture.clone())
+            .filter(|e| fits(e));
+        // What a program stored at this address since the target was last drawn.
+        let volume = self
+            .volumes
+            .get(&t.address)
+            .filter(|v| volume_newer && fits(v) && v.textureType() == MTLTextureType::Type2DArray)
+            .cloned();
+        let mut slices = t.slices.max(t.slice + 1);
+        // A face of a cube drawn on its own (one slice in the view) keeps the array.
+        if let Some(tex) = &old
+            && tex.textureType() == MTLTextureType::Type2DArray
         {
-            record(t.address | 2, &existing.texture, false);
-            return Some((existing.texture.clone(), format));
+            slices = slices.max(tex.arrayLength() as u32);
+        }
+        let slices = slices.min(MAX_TARGET_SLICES);
+        let layered = slices > 1;
+        let levels = if layered { 1 } else { t.max_mip + 1 };
+        if let Some(existing) = &old
+            && (existing.textureType() == MTLTextureType::Type2DArray) == layered
+            && existing.arrayLength() >= slices as usize
+            && (levels == 1 || existing.mipmapLevelCount() > t.mip_level as usize)
+        {
+            if let Some(v) = &volume {
+                self.copy_slices(v, existing);
+            }
+            record(t.address | 2, existing, false);
+            return Some((existing.clone(), format));
         }
         if trace_targets() {
             eprintln!(
@@ -1592,9 +1633,11 @@ impl Metal {
         let texture = if layered {
             self.new_target_array(format, t.width, t.height, slices)?
         } else {
-            self.new_texture(format, t.width, t.height, true)?
+            self.new_texture_levels(format, t.width, t.height, true, levels)?
         };
-        if let (Some(mode), Some(bpe)) = (t.tile, t.format.bytes())
+        if let Some(old) = &old {
+            self.copy_slices(old, &texture);
+        } else if let (Some(mode), Some(bpe)) = (t.tile, t.format.bytes())
             && let Some(layout) = Layout::new(mode, bpe, t.width, t.height)
         {
             let at = t.address + layout.mip0_offset(t.max_mip + 1);
@@ -1602,6 +1645,9 @@ impl Metal {
             for slice in 0..slices as usize {
                 self.detile_into(host, &texture, slice, at + slice as u64 * stride, layout);
             }
+        }
+        if let Some(v) = &volume {
+            self.copy_slices(v, &texture);
         }
         self.targets.insert(
             t.address,
@@ -1612,6 +1658,23 @@ impl Metal {
         );
         record(t.address | 2, &texture, true);
         Some((texture, format))
+    }
+
+    /// Copies level 0 of every slice the two same-sized textures share.
+    fn copy_slices(&mut self, src: &Texture, dst: &Texture) {
+        self.end_pass();
+        let command = self.command();
+        let Some(blit) = command.blitCommandEncoder() else {
+            return;
+        };
+        for slice in 0..src.arrayLength().min(dst.arrayLength()) {
+            unsafe {
+                blit.copyFromTexture_sourceSlice_sourceLevel_toTexture_destinationSlice_destinationLevel_sliceCount_levelCount(
+                    src, slice, 0, dst, slice, 0, 1, 1,
+                );
+            }
+        }
+        blit.endEncoding();
     }
 
     /// The texture for image descriptor `image` read as `kind`: a render
@@ -1777,7 +1840,19 @@ impl Metal {
             if tex.width() as u32 == image.width && tex.height() as u32 == image.height {
                 // Memory reused for another surface: read guest memory below.
                 if t.pixel_format == format || view_compatible(t.pixel_format, format) {
-                    let found = if t.pixel_format == format {
+                    let count = tex.mipmapLevelCount();
+                    let base = (image.base_level as usize).min(count - 1);
+                    let last = (image.last_level as usize).clamp(base, count - 1);
+                    let found = if base > 0 || last + 1 < count {
+                        unsafe {
+                            tex.newTextureViewWithPixelFormat_textureType_levels_slices(
+                                format,
+                                MTLTextureType::Type2D,
+                                objc2_foundation::NSRange::new(base, last + 1 - base),
+                                objc2_foundation::NSRange::new(0, 1),
+                            )
+                        }
+                    } else if t.pixel_format == format {
                         Some(tex.clone())
                     } else {
                         tex.newTextureViewWithPixelFormat(format)
@@ -4438,12 +4513,28 @@ impl Metal {
                 continue;
             };
             self.note(|| format!("mrt{n} {t:x?}"));
-            if t.mip_level != 0 {
-                return Err("draw to a mip level above 0");
-            }
             let (tex, format) = self.target(host, &t).ok_or("color target format")?;
             self.note(|| format!("      texture {:p}", Retained::as_ptr(&tex)));
             self.fast_clear(host, &t, &tex);
+            let (tex, address) = if t.mip_level == 0 {
+                (tex, t.address)
+            } else {
+                let level = t.mip_level as usize;
+                if level >= tex.mipmapLevelCount() {
+                    return Err("draw to a mip level above 0");
+                }
+                let view = unsafe {
+                    tex.newTextureViewWithPixelFormat_textureType_levels_slices(
+                        tex.pixelFormat(),
+                        tex.textureType(),
+                        objc2_foundation::NSRange::new(level, 1),
+                        objc2_foundation::NSRange::new(0, tex.arrayLength()),
+                    )
+                }
+                .ok_or("mip level view")?;
+                // Bits 40 and up keep the level's passes apart from level 0's.
+                (view, t.address | (t.mip_level as u64) << 40)
+            };
             key.formats[targets.len()] = format.0;
             key.blends[targets.len()] = (Blend::read(c, n), write_mask(write, t.format.swap) as u8);
             let slice = if tex.textureType() == MTLTextureType::Type2DArray {
@@ -4451,7 +4542,7 @@ impl Metal {
             } else {
                 0
             };
-            targets.push((t.address, tex, slice));
+            targets.push((address, tex, slice));
         }
         let depth_state = DepthState::read(c);
         let wants_depth = depth_state.depth_test() || depth_state.stencil();
