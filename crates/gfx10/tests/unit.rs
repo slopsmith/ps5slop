@@ -647,6 +647,87 @@ fn depth_compare_samples_read_the_compare_function_from_the_sampler() {
 }
 
 #[test]
+fn explicit_derivative_samples_become_gradient_samples() {
+    let code = [
+        0xF088_0F08,
+        0x0082_0000, // image_sample_d v[0:3], v[0:5], s[8:15], s[16:19] dmask:0xf dim:2D
+        0xF08C_0F08,
+        0x0082_0000, // image_sample_d_cl v[0:3], v[0:6], s[8:15], s[16:19] dmask:0xf dim:2D
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 20, 20 << 1);
+    assert!(
+        t.msl
+            .contains("gradient2d(float2(F(v0), F(v1)), float2(F(v2), F(v3)))")
+    );
+    assert!(t.msl.contains("float2(F(v4), F(v5))"));
+    assert!(t.msl.contains("min_lod_clamp(F(v6))"));
+    compile(&t.msl);
+}
+
+#[test]
+fn sixteen_bit_compares_read_the_low_halves() {
+    let code = [
+        0x7D32_0300, // v_cmpx_lt_i16_e32 v0, v1
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 0, 0);
+    assert!(t.msl.contains("int(short(v0)) < int(short(v1))"));
+    compile(&t.msl);
+}
+
+#[test]
+fn bit_replication_doubles_each_bit() {
+    let code = [
+        0xBE82_3B00, // s_bitreplicate_b64_b32 s[2:3], s0
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 0, 0);
+    assert!(t.msl.contains("* 3ul << (2u * i)"));
+    compile(&t.msl);
+}
+
+#[test]
+fn flat_and_global_stores_write_guest_memory() {
+    let code = [
+        0xDC70_0000,
+        0x007D_0200, // flat_store_dword v[0:1], v2
+        0xDC74_8010,
+        0x0004_0200, // global_store_dwordx2 v0, v[2:3], s[4:5] offset:16
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 0, 0);
+    assert!(t.writes_memory);
+    assert!(
+        t.msl
+            .contains("flat_store_offset(mem_base, (ulong(v0) | (ulong(v1) << 32))")
+    );
+    assert!(t.msl.contains("*(device uint*)(mem + o + 4) = v3;"));
+    compile(&t.msl);
+}
+
+#[test]
+fn packed_sixteen_bit_adds_pick_halves_by_op_sel() {
+    let code = [
+        0xCC02_4001,
+        0x1802_02FF,
+        0x0004_0100, // v_pk_add_i16 v1, 0x40100, v1
+        0xCC03_4802,
+        0x1002_0903, // v_pk_sub_i16 v2, v3, v4 op_sel:[1,0] op_sel_hi:[0,1]
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 0, 0);
+    assert!(
+        t.msl
+            .contains("((0x40100u & 0xffffu) + (v1 & 0xffffu)) & 0xffffu")
+    );
+    assert!(t.msl.contains(
+        "v2 = (((v3 >> 16) - (v4 & 0xffffu)) & 0xffffu) | (((v3 & 0xffffu) - (v4 >> 16)) << 16);"
+    ));
+    compile(&t.msl);
+}
+
+#[test]
 fn quad_permutations_shuffle_within_the_quad() {
     let code = [
         0x7E02_02FA,

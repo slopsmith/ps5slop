@@ -358,6 +358,8 @@ struct Tx<'a> {
     req: &'a Request<'a>,
     insts: Vec<(usize, Inst)>,
     has_barrier: bool,
+    /// The program stores to scratch (private per-thread memory).
+    scratch_stores: bool,
     /// A compute program with backward branches (see [`Translated::loop_guard`]).
     guarded: bool,
     body: String,
@@ -466,6 +468,7 @@ impl<'a> Tx<'a> {
             wave32,
             lockstep,
             has_barrier: false,
+            scratch_stores: false,
             guarded: false,
             body: String::new(),
             open_guard: None,
@@ -649,6 +652,10 @@ impl<'a> Tx<'a> {
         self.regions = structured && loops.is_some();
         let loops = loops.unwrap_or_default();
         self.has_barrier = self.insts.iter().any(|(_, i)| i.op.name == "s_barrier");
+        self.scratch_stores = self
+            .insts
+            .iter()
+            .any(|(_, i)| i.op.name.starts_with("scratch_store"));
         self.guarded = self.req.stage == Stage::Compute
             && self
                 .insts
@@ -993,6 +1000,15 @@ impl<'a> Tx<'a> {
             }
             let scc = if scc { " scc = r != 0u;" } else { "" };
             self.line(&format!("{{ uint r = uint({e});{scc} {d} = r; }}"));
+            return Ok(());
+        }
+        if name == "s_bitreplicate_b64_b32" {
+            let a = self.src32(s0, lit, pc)?;
+            self.line(&format!(
+                "{{ uint a = {a}; ulong r = 0ul; for (uint i = 0u; i < 32u; i++) r |= ulong((a >> i) & 1u) * 3ul << (2u * i);"
+            ));
+            self.set64(sdst, "r");
+            self.line("}");
             return Ok(());
         }
         if b64 {
@@ -1505,6 +1521,12 @@ impl<'a> Tx<'a> {
         ) {
             return self.fma_mix(pc, inst, v);
         }
+        if matches!(
+            name,
+            "v_pk_add_i16" | "v_pk_add_u16" | "v_pk_sub_i16" | "v_pk_sub_u16"
+        ) {
+            return self.pk_add16(pc, inst, v);
+        }
         if name.starts_with("v_movrel") || name == "v_swaprel_b32" {
             return self.movrel(pc, inst, v);
         }
@@ -2000,6 +2022,41 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
+    /// Packed 16-bit integer adds and subtracts: `op_sel` picks each source's
+    /// half for the low result, `op_sel_hi` for the high one; wrapping.
+    fn pk_add16(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
+        if v.clamp {
+            return Err(err(pc, format!("unsupported form of {}", inst.op.name)));
+        }
+        let half = |u: &str, hi: bool| {
+            if hi {
+                format!("({u} >> 16)")
+            } else {
+                format!("({u} & 0xffffu)")
+            }
+        };
+        let (a, b) = (self.usrc(pc, inst, v, 0)?, self.usrc(pc, inst, v, 1)?);
+        let op = if inst.op.name.starts_with("v_pk_add") {
+            "+"
+        } else {
+            "-"
+        };
+        let lo = format!(
+            "(({} {op} {}) & 0xffffu)",
+            half(&a, v.opsel & 1 != 0),
+            half(&b, v.opsel & 2 != 0)
+        );
+        let hi = format!(
+            "(({} {op} {}) << 16)",
+            half(&a, v.opsel_hi & 1 != 0),
+            half(&b, v.opsel_hi & 2 != 0)
+        );
+        let d = self.v(v.vdst as u16);
+        self.regs.insert(format!("v{}", v.vdst));
+        self.guard(&format!("{d} = {lo} | {hi};"));
+        Ok(())
+    }
+
     /// Indexed VGPR moves through M0. VGPRs are named locals, so an indexed
     /// access is a `switch` whose cases `emit` fills in (`VREAD`, `VWRITE`).
     fn movrel(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
@@ -2099,12 +2156,13 @@ impl<'a> Tx<'a> {
                 fcmp(op, &a, &b)
                     .ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?
             }
-            "i32" | "u32" => {
+            "i32" | "u32" | "i16" | "u16" => {
                 let (a, b) = (self.usrc(pc, inst, v, 0)?, self.usrc(pc, inst, v, 1)?);
-                let (a, b) = if ty == "i32" {
-                    (format!("int({a})"), format!("int({b})"))
-                } else {
-                    (a, b)
+                let (a, b) = match ty {
+                    "i32" => (format!("int({a})"), format!("int({b})")),
+                    "i16" => (format!("int(short({a}))"), format!("int(short({b}))")),
+                    "u16" => (format!("({a} & 0xffffu)"), format!("({b} & 0xffffu)")),
+                    _ => (a, b),
                 };
                 match op {
                     "f" => "false".into(),
@@ -2315,14 +2373,25 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
-    /// FLAT and GLOBAL loads, reading guest memory through the memory window.
+    /// FLAT and GLOBAL loads and stores, through the memory window.
     fn flat(
         &mut self,
         pc: usize,
         name: &str,
         f: &crate::decode::Flat,
     ) -> Result<(), TranslateError> {
-        let (n, call): (u16, &str) = match name.split_once('_').map_or("", |(_, x)| x) {
+        let op = name.split_once('_').map_or("", |(_, x)| x);
+        let store = match op {
+            "store_byte" => Some((1u16, "8")),
+            "store_short" => Some((1, "16")),
+            "store_dword" => Some((1, "")),
+            "store_dwordx2" => Some((2, "")),
+            "store_dwordx3" => Some((3, "")),
+            "store_dwordx4" => Some((4, "")),
+            _ => None,
+        };
+        let (n, call): (u16, &str) = match op {
+            _ if store.is_some() => (0, ""),
             "load_ubyte" => (1, "flat_load_ubyte"),
             "load_sbyte" => (1, "flat_load_sbyte"),
             "load_ushort" => (1, "flat_load_ushort"),
@@ -2333,6 +2402,16 @@ impl<'a> Tx<'a> {
             "load_dwordx4" => (4, "flat_load_raw"),
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
+        if name.starts_with("scratch_load") && !self.scratch_stores && !f.lds {
+            // Nothing this program runs writes scratch, so a read finds nothing
+            // defined; GTA V's ray-tracing stacks read it only past their LDS part.
+            let mut s = String::new();
+            for i in 0..n {
+                write!(s, "{} = 0u; ", self.v(f.vdst as u16 + i)).unwrap();
+            }
+            self.guard(s.trim_end());
+            return Ok(());
+        }
         if f.lds || !(name.starts_with("flat_") || name.starts_with("global_")) {
             return Err(err(pc, format!("unsupported instruction {name}")));
         }
@@ -2345,6 +2424,26 @@ impl<'a> Tx<'a> {
             let hi = self.v(f.addr as u16 + 1);
             format!("(ulong({lo}) | (ulong({hi}) << 32))")
         };
+        if let Some((n, width)) = store {
+            self.mem_write = true;
+            self.stores = None;
+            let mut s = format!(
+                "long o = flat_store_offset(mem_base, {addr} + ulong(long({}))); if (o != OOB_OFF) {{",
+                f.offset
+            );
+            for i in 0..n {
+                let v = self.v(f.data as u16 + i);
+                match width {
+                    "8" => write!(s, " mem[o] = uchar({v});").unwrap(),
+                    "16" => write!(s, " *(device ushort*)(mem + o) = ushort({v});").unwrap(),
+                    _ if f.glc => write!(s, " store_atomic(mem, o + {}, {v});", 4 * i).unwrap(),
+                    _ => write!(s, " *(device uint*)(mem + o + {}) = {v};", 4 * i).unwrap(),
+                }
+            }
+            s.push_str(" }");
+            self.guard(&s);
+            return Ok(());
+        }
         let mut s = format!(
             "uint4 r = {call}(mem, goff(mem_base, {addr} + ulong(long({}))));",
             f.offset
@@ -2840,6 +2939,21 @@ impl<'a> Tx<'a> {
                             });
                     new.insert(sdst as u16, mask.map(|m| Source::Constant(vec![m])));
                 }
+                Kind::Sop2 { sdst, ssrc0, ssrc1 } if inst.op.name == "s_bfm_b64" => {
+                    let mask =
+                        constant(inst, ssrc0)
+                            .zip(constant(inst, ssrc1))
+                            .map(|(width, offset)| {
+                                1u64.checked_shl(width & 63)
+                                    .map_or(u64::MAX, |b| b.wrapping_sub(1))
+                                    << (offset & 63)
+                            });
+                    new.insert(sdst as u16, mask.map(|m| Source::Constant(vec![m as u32])));
+                    new.insert(
+                        sdst as u16 + 1,
+                        mask.map(|m| Source::Constant(vec![(m >> 32) as u32])),
+                    );
+                }
                 // Bits a program ORs or ANDs into a descriptor dword at run
                 // time are dropped; the result keeps where the dword came
                 // from (the destination's, when it is one of the two).
@@ -2964,7 +3078,7 @@ impl<'a> Tx<'a> {
                     Some(d) => vcc(d),
                     None => {
                         let n = inst.op.name;
-                        n.starts_with("v_cmp")
+                        (n.starts_with("v_cmp") && !n.starts_with("v_cmpx_"))
                             || n.contains("_co_")
                             || (n.starts_with("v_read") && n.contains("lane") && vcc(v.vdst))
                     }
@@ -3127,16 +3241,39 @@ impl<'a> Tx<'a> {
             flags.remove(0);
         }
         let mut at = offset as usize;
-        let (level, bias) = match flags.as_slice() {
+        let derivs = matches!(flags.as_slice(), ["d"] | ["d", "cl"]);
+        let (mut level, bias) = match flags.as_slice() {
             [] => (None, false),
             ["lz"] => (Some("level(0.0f)".to_string()), false),
             ["l"] => (Some(format!("level({})", addr[addr.len() - 1])), false),
             ["b"] => (Some(format!("bias({})", addr[at])), true),
+            ["d"] | ["d", "cl"] => (None, false),
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
         at += bias as usize;
         let dref = compare.then(|| addr[at].clone());
         at += compare as usize;
+        if derivs {
+            // Derivatives come before the coordinates: d/dx of each, then d/dy.
+            let g = &addr[at..];
+            let grad = match kind {
+                TextureKind::Tex2d | TextureKind::Tex2dArray => format!(
+                    "gradient2d(float2({}, {}), float2({}, {}))",
+                    g[0], g[1], g[2], g[3]
+                ),
+                TextureKind::Tex3d => format!(
+                    "gradient3d(float3({}, {}, {}), float3({}, {}, {}))",
+                    g[0], g[1], g[2], g[3], g[4], g[5]
+                ),
+                TextureKind::Cube => return Err(err(pc, format!("unsupported form of {name}"))),
+            };
+            at += if kind == TextureKind::Tex3d { 6 } else { 4 };
+            level = Some(if flags.len() == 2 {
+                format!("{grad}, min_lod_clamp({})", addr[addr.len() - 1])
+            } else {
+                grad
+            });
+        }
         let c = &addr[at..];
         let shift = |i: usize, size: &str| {
             if offset {
@@ -4098,6 +4235,12 @@ static inline uint4 buffer_load_ushort(device const uchar* mem, Win mem_base, ui
 static inline uint4 buffer_load_sshort(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
     long o = buffer_offset(mem_base, vs, index, offset, idxen);
     return uint4(o == OOB_OFF ? 0u : uint(int(*(device const short*)(mem + o))), 0u, 0u, 0u);
+}
+
+// Stores skip the image of a loaded module, as buffer stores do.
+static inline long flat_store_offset(Win w, ulong a) {
+    if (a >= w.ro && a < w.ro_end) return OOB_OFF;
+    return goff(w, a);
 }
 
 static inline uint4 flat_load_raw(device const uchar* mem, long o) {
