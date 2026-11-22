@@ -397,11 +397,34 @@ fn write_ppm(mut f: hle::Frame, out: &std::path::Path) -> Result<(), String> {
 
 /// Pad input named in `keys`, joined by `+` (`cross+up`): buttons, `l2` and
 /// `r2` pulled fully, and sticks pushed fully as `ls-left` or `lleft`,
-/// `rs-right` or `rright` and so on. Unknown names count for nothing.
+/// `rs-right` or `rright` and so on. `lx=N`, `ly=N`, `rx=N`, `ry=N` set one
+/// stick axis (0 to 255, 128 centred; y grows downwards) and `l2=N`, `r2=N`
+/// pull a trigger part way. Unknown names count for nothing.
 pub fn pad_input(keys: &str) -> hle::PadInput {
     keys.split('+')
         .filter(|k| !k.is_empty())
         .fold(hle::PadInput::default(), |mut p, k| {
+            if let Some((name, value)) = k.split_once('=') {
+                let Ok(v) = value.parse::<u8>() else {
+                    return p;
+                };
+                match name {
+                    "lx" => p.left.0 = v,
+                    "ly" => p.left.1 = v,
+                    "rx" => p.right.0 = v,
+                    "ry" => p.right.1 = v,
+                    "l2" => {
+                        p.l2 = v;
+                        p.buttons |= 0x100 * u32::from(v > 0);
+                    }
+                    "r2" => {
+                        p.r2 = v;
+                        p.buttons |= 0x200 * u32::from(v > 0);
+                    }
+                    _ => {}
+                }
+                return p;
+            }
             let stick = |s: &mut (u8, u8), dir: &str| match dir {
                 "left" => s.0 = 0,
                 "right" => s.0 = 255,
@@ -444,4 +467,29 @@ pub fn pad_input(keys: &str) -> hle::PadInput {
             };
             p
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn axis_values_set_one_stick_axis_or_a_trigger_part_way() {
+        let p = pad_input("lx=200+ry=10+r2=100+cross");
+        assert_eq!(
+            p,
+            hle::PadInput {
+                buttons: 0x4000 | 0x200,
+                left: (200, 128),
+                right: (128, 10),
+                l2: 0,
+                r2: 100,
+            }
+        );
+    }
+
+    #[test]
+    fn an_axis_value_out_of_range_counts_for_nothing() {
+        assert_eq!(pad_input("lx=300"), hle::PadInput::REST);
+    }
 }

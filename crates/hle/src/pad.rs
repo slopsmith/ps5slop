@@ -30,12 +30,61 @@ pub struct PadInput {
 
 impl Default for PadInput {
     fn default() -> Self {
+        Self::REST
+    }
+}
+
+impl PadInput {
+    /// Nothing pressed, sticks centred.
+    pub const REST: Self = Self {
+        buttons: 0,
+        left: (128, 128),
+        right: (128, 128),
+        l2: 0,
+        r2: 0,
+    };
+
+    /// Both inputs at once: buttons of either, each stick axis and trigger
+    /// from whichever is pushed further.
+    pub fn merge(self, other: Self) -> Self {
+        let axis = |a: u8, b: u8| {
+            if (i16::from(b) - 128).abs() > (i16::from(a) - 128).abs() {
+                b
+            } else {
+                a
+            }
+        };
         Self {
-            buttons: 0,
-            left: (128, 128),
-            right: (128, 128),
-            l2: 0,
-            r2: 0,
+            buttons: self.buttons | other.buttons,
+            left: (
+                axis(self.left.0, other.left.0),
+                axis(self.left.1, other.left.1),
+            ),
+            right: (
+                axis(self.right.0, other.right.0),
+                axis(self.right.1, other.right.1),
+            ),
+            l2: self.l2.max(other.l2),
+            r2: self.r2.max(other.r2),
+        }
+    }
+
+    /// This input without what `other` presses: its buttons are released, and
+    /// every stick axis or trigger it moves goes back to rest.
+    pub fn without(self, other: Self) -> Self {
+        let axis = |a: u8, b: u8, rest: u8| if b != rest { rest } else { a };
+        Self {
+            buttons: self.buttons & !other.buttons,
+            left: (
+                axis(self.left.0, other.left.0, 128),
+                axis(self.left.1, other.left.1, 128),
+            ),
+            right: (
+                axis(self.right.0, other.right.0, 128),
+                axis(self.right.1, other.right.1, 128),
+            ),
+            l2: axis(self.l2, other.l2, 0),
+            r2: axis(self.r2, other.r2, 0),
         }
     }
 }
@@ -446,6 +495,56 @@ impl Pad {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merged_inputs_press_both_and_push_each_axis_the_further_way() {
+        let walk = PadInput {
+            left: (128, 0),
+            ..PadInput::REST
+        };
+        let aim = PadInput {
+            buttons: 0x100,
+            right: (200, 128),
+            l2: 255,
+            ..PadInput::REST
+        };
+        let both = walk.merge(aim);
+        assert_eq!(
+            both,
+            PadInput {
+                buttons: 0x100,
+                left: (128, 0),
+                right: (200, 128),
+                l2: 255,
+                r2: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn releasing_part_of_an_input_keeps_the_rest() {
+        let held = PadInput {
+            buttons: 0x100 | 0x4000,
+            left: (128, 0),
+            l2: 255,
+            ..PadInput::REST
+        };
+        let aim = PadInput {
+            buttons: 0x100,
+            l2: 255,
+            ..PadInput::REST
+        };
+        let left = held.without(aim);
+        assert_eq!(
+            left,
+            PadInput {
+                buttons: 0x4000,
+                left: (128, 0),
+                ..PadInput::REST
+            }
+        );
+        assert_eq!(left.without(left), PadInput::REST);
+    }
 
     #[test]
     fn pad_data_puts_buttons_sticks_and_connection_where_orbis_expects() {

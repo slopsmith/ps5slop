@@ -37,7 +37,11 @@ gpureload                   translate every program again (and read PS5SLOP_MSL_
 gpuskip [ADDR...]           skip draws and dispatches using these programs (none: skip nothing)
 targets DIR                 write every render target and texture as PPM (the first call starts recording)
 press BUTTONS [MS]          hold pad buttons (cross+up, ...) for MS ms (default 400, decimal);
-                            also l2, r2 and stick pushes lup, ldown, lleft, lright, rup, ...
+                            also l2, r2 and stick pushes lup, ldown, lleft, lright, rup, ...;
+                            lx=N, ly=N, rx=N, ry=N, l2=N, r2=N set an axis (0..255, decimal)
+tap BUTTONS [COUNT [MS]]    press and let go COUNT times, MS ms each (default 1, 600)
+hold BUTTONS                keep these pressed until `release`; press and tap add to them
+release [BUTTONS]           let go of held buttons (all, or these)
 rates                       guest MIPS (JIT, interpreter) since the last `rates`, as the window title shows
 quit                        end the guest
 Numbers are hex; a 0x prefix is optional.";
@@ -321,13 +325,46 @@ fn run(kernel: &Arc<Kernel>, line: &str) -> String {
         "press" => match it.next().map(crate::pad_input) {
             Some(input) if input != hle::PadInput::default() => {
                 let ms = it.next().and_then(|m| m.parse().ok()).unwrap_or(400);
-                kernel.set_pad_input(input);
+                let held = *lock(&HELD);
+                kernel.set_pad_input(held.merge(input));
                 std::thread::sleep(std::time::Duration::from_millis(ms));
-                kernel.set_pad_input(hle::PadInput::default());
+                kernel.set_pad_input(*lock(&HELD));
                 "ok".into()
             }
             _ => "usage: press BUTTONS [MS]".into(),
         },
+        "tap" => match it.next().map(crate::pad_input) {
+            Some(input) if input != hle::PadInput::default() => {
+                let count: u32 = it.next().and_then(|m| m.parse().ok()).unwrap_or(1);
+                let ms = it.next().and_then(|m| m.parse().ok()).unwrap_or(600);
+                for _ in 0..count.min(1000) {
+                    kernel.set_pad_input(lock(&HELD).merge(input));
+                    std::thread::sleep(std::time::Duration::from_millis(ms));
+                    kernel.set_pad_input(*lock(&HELD));
+                    std::thread::sleep(std::time::Duration::from_millis(ms));
+                }
+                "ok".into()
+            }
+            _ => "usage: tap BUTTONS [COUNT [MS]]".into(),
+        },
+        "hold" => match it.next().map(crate::pad_input) {
+            Some(input) if input != hle::PadInput::default() => {
+                let mut held = lock(&HELD);
+                *held = held.merge(input);
+                kernel.set_pad_input(*held);
+                format!("holding {:?}", *held)
+            }
+            _ => "usage: hold BUTTONS".into(),
+        },
+        "release" => {
+            let mut held = lock(&HELD);
+            *held = match it.next().map(crate::pad_input) {
+                Some(input) => held.without(input),
+                None => hle::PadInput::default(),
+            };
+            kernel.set_pad_input(*held);
+            format!("holding {:?}", *held)
+        }
         "profile" => match it.next() {
             Some("on") => {
                 PROFILE_GENERATION.store(
@@ -497,6 +534,12 @@ fn hits(kernel: &Kernel, last: usize, (lo, hi): (u64, u64)) -> String {
 
 static RATES: std::sync::Mutex<Option<(std::time::Instant, (u64, u64))>> =
     std::sync::Mutex::new(None);
+
+static HELD: std::sync::Mutex<hle::PadInput> = std::sync::Mutex::new(hle::PadInput::REST);
+
+fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 static PROFILE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
