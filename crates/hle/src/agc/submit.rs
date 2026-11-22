@@ -316,12 +316,12 @@ fn gpu_thread(
                         tracing::error!("{e}");
                     }
                 }
-                // Read command buffers after `run` (and before `end_submission` releases
-                // fences to the CPU) so REWIND-patched packets are captured.
+                // Guest memory cannot be read back here: labels the run wrote already let
+                // the title reuse the buffers. The recorder kept what the processor read.
                 let cmd_bufs: Vec<_> = job
                     .buffers
                     .iter()
-                    .map(|&(addr, dwords)| gpu::capture::read_command_buffer(&host, addr, dwords))
+                    .map(|&(addr, dwords)| recorder.command_buffer(addr, dwords))
                     .collect();
                 let flipped = job.ends_frame || processor.stats.flips > flips_before;
                 // Unverified: the driver signals each submission's completion.

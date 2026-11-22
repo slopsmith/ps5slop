@@ -258,6 +258,10 @@ pub trait Host {
     /// The command processor starts (`true`) or stops polling memory that
     /// only other work or the CPU can change.
     fn waiting(&self, _polling: bool) {}
+    /// The command processor fetched these command dwords from `addr`. REWIND
+    /// fetches a buffer's remainder again after the CPU patched it, so the same
+    /// range can be reported more than once; the last report is what ran.
+    fn commands_read(&self, _addr: u64, _words: &[u32]) {}
 }
 
 /// A flip request from a command buffer.

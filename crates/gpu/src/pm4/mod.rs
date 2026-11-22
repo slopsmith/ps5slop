@@ -299,6 +299,7 @@ impl Processor {
         let (mut base, mut dwords) = (base, dwords);
         'chain: loop {
             let words = read_dwords(host, base, dwords as usize)?;
+            host.commands_read(base, &words);
             let mut at = 0usize;
             while at < words.len() {
                 let header = words[at];

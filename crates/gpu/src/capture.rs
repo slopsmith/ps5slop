@@ -235,6 +235,21 @@ impl RecorderState {
         }
     }
 
+    /// Makes the captured pages hold `words` at `addr`, the command dwords the
+    /// processor ran, whatever the CPU wrote there since the page was read.
+    fn overlay_commands(&mut self, addr: u64, words: &[u32]) {
+        let mut at = addr;
+        for word in words {
+            let page = self
+                .pages
+                .entry(at & !(PAGE_SIZE - 1))
+                .or_insert_with(|| vec![0u8; PAGE_SIZE as usize]);
+            let offset = (at & (PAGE_SIZE - 1)) as usize;
+            page[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
+            at += 4;
+        }
+    }
+
     fn snapshot_extent(&mut self, host: &dyn Host, lo: u64, hi: u64, speculative: bool) {
         self.extents.insert((lo, hi));
         if !speculative && !self.snapshotted_extents.insert((lo, hi)) {
@@ -284,6 +299,26 @@ impl FrameRecorder {
             buffers,
             ends_frame,
         });
+    }
+
+    /// The `dwords` command dwords at `address` as the processor read them while
+    /// running the submission. Reading guest memory afterwards would see what the
+    /// title wrote once the run released it, which may be the next frame's buffer.
+    pub fn command_buffer(&self, address: u64, dwords: u32) -> CommandBuffer {
+        let s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let words = (0..dwords as u64)
+            .map(|i| {
+                let at = address + i * 4;
+                s.pages.get(&(at & !(PAGE_SIZE - 1))).map_or(0, |page| {
+                    let o = (at & (PAGE_SIZE - 1)) as usize;
+                    u32::from_le_bytes([page[o], page[o + 1], page[o + 2], page[o + 3]])
+                })
+            })
+            .collect();
+        CommandBuffer {
+            address,
+            dwords: words,
+        }
     }
 
     /// Snapshots guest memory spans mapped inside the GPU area so shaders
@@ -601,6 +636,11 @@ impl Host for RecordingHost<'_> {
         self.inner.write(addr, data)
     }
 
+    fn commands_read(&self, addr: u64, words: &[u32]) {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        s.overlay_commands(addr, words);
+    }
+
     fn interrupt(&self, context: u32) {
         self.inner.interrupt(context);
     }
@@ -678,6 +718,33 @@ pub fn read_command_buffer(host: &dyn Host, address: u64, dwords: u32) -> Comman
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct MemHost(Mutex<Vec<u8>>);
+    impl Host for MemHost {
+        fn read(&self, addr: u64, buf: &mut [u8]) -> bool {
+            let m = self.0.lock().unwrap();
+            let start = addr as usize;
+            let Some(slice) = m.get(start..start + buf.len()) else {
+                return false;
+            };
+            buf.copy_from_slice(slice);
+            true
+        }
+        fn write(&self, addr: u64, data: &[u8]) -> bool {
+            let mut m = self.0.lock().unwrap();
+            let start = addr as usize;
+            let Some(slice) = m.get_mut(start..start + data.len()) else {
+                return false;
+            };
+            slice.copy_from_slice(data);
+            true
+        }
+        fn interrupt(&self, _: u32) {}
+        fn flip(&self, _: Flip) {}
+        fn exiting(&self) -> bool {
+            false
+        }
+    }
 
     #[test]
     fn frame_capture_round_trips_through_bytes() {
@@ -836,33 +903,6 @@ mod tests {
 
     #[test]
     fn explicit_read_refreshes_speculative_area_snapshot_without_clobbering_gpu_writes() {
-        struct MemHost(Mutex<Vec<u8>>);
-        impl Host for MemHost {
-            fn read(&self, addr: u64, buf: &mut [u8]) -> bool {
-                let m = self.0.lock().unwrap();
-                let start = addr as usize;
-                let Some(slice) = m.get(start..start + buf.len()) else {
-                    return false;
-                };
-                buf.copy_from_slice(slice);
-                true
-            }
-            fn write(&self, addr: u64, data: &[u8]) -> bool {
-                let mut m = self.0.lock().unwrap();
-                let start = addr as usize;
-                let Some(slice) = m.get_mut(start..start + data.len()) else {
-                    return false;
-                };
-                slice.copy_from_slice(data);
-                true
-            }
-            fn interrupt(&self, _: u32) {}
-            fn flip(&self, _: Flip) {}
-            fn exiting(&self) -> bool {
-                false
-            }
-        }
-
         let host = MemHost(Mutex::new(vec![0u8; PAGE_SIZE as usize * 2]));
         host.write(0, &[0x11, 0x22, 0x33, 0x44]);
         host.write(PAGE_SIZE, &[0xAA, 0xBB]);
@@ -882,5 +922,29 @@ mod tests {
         let cap = rec.finish();
         assert_eq!(&cap.pages[&0][..4], &[0x55, 0x66, 0x77, 0x88]);
         assert_eq!(&cap.pages[&PAGE_SIZE][..2], &[0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn command_buffer_is_what_the_processor_read_not_what_the_title_wrote_after() {
+        const NOP: u32 = 0xC000_1000;
+        let host = MemHost(Mutex::new(vec![0u8; PAGE_SIZE as usize]));
+        let ran = [NOP, 1, NOP, 2, NOP, 3];
+        for (i, w) in ran.iter().enumerate() {
+            host.write(0x100 + i as u64 * 4, &w.to_le_bytes());
+        }
+
+        let rec = FrameRecorder::new(None, Vec::new());
+        let rhost = rec.recording_host(&host);
+        crate::Processor::default()
+            .run(&rhost, 0x100, ran.len() as u32)
+            .unwrap();
+
+        // The title reuses the buffer as soon as the run releases it.
+        for i in 0..ran.len() as u64 {
+            host.write(0x100 + i * 4, &0xDEAD_BEEFu32.to_le_bytes());
+        }
+
+        assert_eq!(rec.command_buffer(0x100, ran.len() as u32).dwords, ran);
+        assert_eq!(read_command_buffer(&host, 0x100, 1).dwords, [0xDEAD_BEEF]);
     }
 }
