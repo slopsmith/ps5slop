@@ -196,8 +196,23 @@ Semantics from AMD's RDNA ISA guide (as recalled); each has a test in `tests/uni
 
 Of the 326 programs captured from GTA V's prologue state, 323 translate; the other three pick textures by a run-time index (bindless hit shading).
 
+## Whole-wave lane masks in lockstep programs (2026-11-22)
+
+Outside lockstep programs a lane mask is one bit per thread (bit 0 of the low SGPR), which is exact as long as no lane looks at another lane's bit. Lockstep programs (one wave64 per group, no `s_barrier`) now hold every lane mask as the whole wave's 64-bit value, the same in all 64 threads, as on the hardware (semantics from AMD's RDNA ISA guide, as recalled):
+
+- **Writes from the vector unit** (compares, `v_cmpx`, carries out): a ballot of both SIMD groups through threadgroup memory (`wave_ballot`); inactive lanes give 0. EXEC starts as all 64 lanes.
+- **Reads of this lane's bit** (the EXEC guard, `v_cndmask`, carries in, `VCCZ`/`EXECZ`): bit `wl` of the pair, `wl` being `32 * simdgroup + lane in SIMD group`, so it matches the ballot by construction.
+- **`v_readlane_b32`** (not a spill) and **`v_readfirstlane_b32`** read the lane from either SIMD group (`wave_readlane`); `readfirstlane` takes the lowest lane in EXEC, lane 0 when EXEC is empty.
+- **`v_mbcnt_lo/hi_u32_b32`** count the mask's bits below `wl`; DPP row masks use `wl`'s row.
+- Scalar instructions need nothing new: masks are plain 64-bit values, so `s_and_b64 s[0:1], exec, 1`, `s_bcnt1_i32_b64` or `s_cmp_lg_u64 vcc, 0` give what the hardware gives.
+- Each exchange uses the other half of a 4-word threadgroup array, so it needs one barrier. Control flow stays the same in both SIMD groups because branches are still voted.
+
+The lockstep set grew too: a one-wave group without `s_barrier` is lockstep when it uses LDS or an instruction that needs whole-wave masks (`crosses_lanes`: a non-spill `v_readlane`, `v_mbcnt`, 64-bit lane counts, `s_cmp_*_u64`, a 64-bit scalar operation that picks lanes out of EXEC or VCC with a constant, a 64-bit vector shift of EXEC or VCC). GTA V's prologue has 20 such programs (8 more than before). Checked on the GPU by `one_wave64_group_sees_whole_wave_masks_and_lanes` (our own program: a lane-0 atomic, lanes 0 and 63 read by all, `v_mbcnt` and a count of a compare mask). Three of GTA V's compute programs (0x4241400, 0x4242400, 0x4244000) stopped tripping the loop guard; whether their results are now right is not checked.
+
+Cost: every mask write in these programs is a barrier. GTA V's prologue went from 1.9 to 1.57 flips a second, because the program that still trips the guard (0x4203300) now pays a barrier per compare on every turn of its runaway loop (1.15 with two barriers per exchange). Why that program loops is not known; see [gpu.md](gpu.md#gta-vs-player-camera-and-compute-programs-2026-11-22).
+
 ## Open questions
 
 - The renderer asked for buffers at `[[buffer(1 + slot)]]` with their V#s at `[[buffer(30)]]`. Balatro's vertex programs build their V#s at run time, so the translator reads guest memory instead; static buffer slots could come back as an optimisation where a V# provably sits in user SGPRs.
-- Not translated yet: ballots, `ds_swizzle`, `ds_permute`, wave operations that cross 32 lanes (except the lockstep case below), scratch (except unwritten reads, above), GDS ordered counts, 64-bit atomics other than the bitwise ones and `swap_x2` (see GTA V below), and the `a16` form of `image_bvh_intersect_ray`. NGG programs that use LDS and barriers need a mesh-shader path (above).
+- Not translated yet: ballots, `ds_swizzle`, `ds_permute`, wave operations that cross 32 lanes outside lockstep programs, scratch (except unwritten reads, above), GDS ordered counts, 64-bit atomics other than the bitwise ones and `swap_x2` (see GTA V below), and the `a16` form of `image_bvh_intersect_ray`. NGG programs that use LDS and barriers need a mesh-shader path (above).
 - How AGC programs reach the GPU: the header's program-address registers are patched by `sceAgcCreateShader`, and the renderer finds the code through `SPI_SHADER_PGM_LO_*`; the `.ags` parsing here is only for tests.

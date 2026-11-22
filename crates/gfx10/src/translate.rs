@@ -2,7 +2,8 @@
 //!
 //! The model is a straight register one, see `docs/shaders.md`: every Metal thread
 //! is one lane, SGPRs and VGPRs are local `uint`s, a lane mask holds this lane in
-//! bit 0 of its low half, and branches become a `switch` inside a loop.
+//! bit 0 of its low half (the whole wave's mask in lockstep programs), and branches
+//! become a `switch` inside a loop.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -287,6 +288,38 @@ fn loop_regions(insts: &[(usize, Inst)], leaders: &BTreeSet<usize>) -> Option<Ve
     Some(loops)
 }
 
+/// Whether `inst` needs lane masks as whole-wave values: it reads another lane, counts
+/// lanes, or picks lanes out of EXEC or VCC with a constant (`s_and_b64 s[0:1], exec, 1`).
+fn crosses_lanes(inst: &Inst, insts: &[(usize, Inst)]) -> bool {
+    let name = inst.op.name;
+    let mask = |c: u16| c == 106 || c == 126;
+    let picks = |c: u16| (129..=208).contains(&c) && c != 193 || c == src::LITERAL;
+    match inst.kind {
+        Kind::Valu(v) if name == "v_readlane_b32" && v.src[0] >= 256 => {
+            !insts.iter().any(|(_, w)| {
+                w.op.name == "v_writelane_b32"
+                    && matches!(w.kind, Kind::Valu(x) if x.vdst as u16 + 256 == v.src[0])
+            })
+        }
+        Kind::Valu(v) if matches!(name, "v_lshrrev_b64" | "v_lshlrev_b64") => mask(v.src[1]),
+        Kind::Valu(_) => name.starts_with("v_mbcnt_"),
+        Kind::Sopc { .. } => name.ends_with("_u64"),
+        Kind::Sop1 { sdst, ssrc0 } => {
+            matches!(
+                name,
+                "s_bcnt1_i32_b64" | "s_ff1_i32_b64" | "s_flbit_i32_b64"
+            ) || name.ends_with("_b64") && (mask(sdst as u16) && picks(ssrc0))
+        }
+        Kind::Sop2 { sdst, ssrc0, ssrc1 } => {
+            name.ends_with("_b64")
+                && (mask(sdst as u16) && (picks(ssrc0) || picks(ssrc1))
+                    || mask(ssrc0) && picks(ssrc1)
+                    || mask(ssrc1) && picks(ssrc0))
+        }
+        _ => false,
+    }
+}
+
 fn branch_target(pc: usize, inst: &Inst) -> Option<usize> {
     let name = inst.op.name;
     match inst.kind {
@@ -459,9 +492,9 @@ impl<'a> Tx<'a> {
             && !wave32
             && req.threads.iter().product::<u32>() == 64
             && !insts.iter().any(|(_, i)| i.op.name == "s_barrier")
-            && insts
-                .iter()
-                .any(|(_, i)| matches!(i.kind, Kind::Ds { gds: false, .. }));
+            && insts.iter().any(|(_, i)| {
+                matches!(i.kind, Kind::Ds { gds: false, .. }) || crosses_lanes(i, &insts)
+            });
         Tx {
             req,
             insts,
@@ -567,14 +600,8 @@ impl<'a> Tx<'a> {
                     0x3E22_F983
                 ][code as usize - 240]
             ),
-            src::VCCZ => {
-                let lo = self.s(106);
-                format!("uint(({lo} & 1u) == 0u)")
-            }
-            src::EXECZ => {
-                let lo = self.s(126);
-                format!("uint(({lo} & 1u) == 0u)")
-            }
+            src::VCCZ => format!("uint(!{})", self.mask_any(106)),
+            src::EXECZ => format!("uint(!{})", self.mask_any(126)),
             src::SCC => {
                 self.regs.insert("scc".into());
                 "uint(scc)".into()
@@ -614,7 +641,8 @@ impl<'a> Tx<'a> {
         })
     }
 
-    // Assigns a VALU lane mask (this thread's bit) to `dst`: an SGPR pair, or one in wave32.
+    // Assigns a VALU lane mask to `dst` (an SGPR pair, or one in wave32): this
+    // thread's bit, or in lockstep programs the whole wave's mask.
     fn set_mask(&mut self, dst: u16, bit: &str) -> String {
         self.written(dst);
         let lo = self.s(dst);
@@ -623,7 +651,32 @@ impl<'a> Tx<'a> {
         }
         self.written(dst + 1);
         let hi = self.s(dst + 1);
+        if self.lockstep {
+            return format!(
+                " {{ ulong m = wave_ballot({bit}, lockstep_vote, sgi, wk); {lo} = uint(m); {hi} = uint(m >> 32); }}"
+            );
+        }
         format!(" {lo} = uint({bit}); {hi} = 0u;")
+    }
+
+    // Whether this thread's lane is set in the mask in SGPRs `code` and `code + 1`.
+    fn mask_on(&mut self, code: u16) -> String {
+        let lo = self.s(code);
+        if self.lockstep {
+            let hi = self.s(code + 1);
+            return format!("lane_on({lo}, {hi}, wl)");
+        }
+        format!("(({lo} & 1u) != 0u)")
+    }
+
+    // Whether any lane is set in the mask in SGPRs `code` and `code + 1`.
+    fn mask_any(&mut self, code: u16) -> String {
+        let lo = self.s(code);
+        if self.lockstep {
+            let hi = self.s(code + 1);
+            return format!("(({lo} | {hi}) != 0u)");
+        }
+        format!("(({lo} & 1u) != 0u)")
     }
 
     fn set64(&mut self, code: u16, value: &str) {
@@ -826,7 +879,7 @@ impl<'a> Tx<'a> {
                 let t = branch_target(pc, inst).unwrap();
                 let cond = match n {
                     "s_cbranch_scc0" | "s_cbranch_scc1" if self.lockstep => {
-                        let any = "wave_any(scc, lockstep_vote, sgi)";
+                        let any = "wave_any(scc, lockstep_vote, sgi, wk)";
                         if n.ends_with('0') {
                             format!("!{any}")
                         } else {
@@ -837,17 +890,13 @@ impl<'a> Tx<'a> {
                     "s_cbranch_scc1" => "scc".to_string(),
                     "s_cbranch_vccz" | "s_cbranch_vccnz" | "s_cbranch_execz"
                     | "s_cbranch_execnz" => {
-                        let mask = if n.contains("vcc") {
-                            self.s(106)
-                        } else {
-                            self.s(126)
-                        };
+                        let any = self.mask_any(if n.contains("vcc") { 106 } else { 126 });
                         let any = if self.lockstep {
-                            format!("wave_any(({mask} & 1u) != 0u, lockstep_vote, sgi)")
+                            format!("wave_any({any}, lockstep_vote, sgi, wk)")
                         } else if self.req.stage == Stage::Compute {
-                            format!("simd_any(({mask} & 1u) != 0u)")
+                            format!("simd_any({any})")
                         } else {
-                            format!("(({mask} & 1u) != 0u)")
+                            any
                         };
                         if n.ends_with("nz") {
                             any
@@ -1323,15 +1372,19 @@ impl<'a> Tx<'a> {
     // instruction made Metal's compiler several times slower.
     fn guard(&mut self, stmt: &str) {
         let e = self.s(126);
+        let on = self.mask_on(126);
         let extra = if self.dpp_lane_off { " && dpp_on" } else { "" };
-        let cond = format!("({e} & 1u) != 0u{extra}");
+        let cond = format!("{on}{extra}");
         if self.open_guard.as_ref() != Some(&cond) {
             self.close_guard();
             self.body.push_str(&format!("        if ({cond}) {{\n"));
             self.open_guard = Some(cond);
         }
         self.body.push_str(&format!("        {{ {stmt} }}\n"));
-        if stmt.contains(&format!("{e} =")) || stmt.contains("dpp_on =") {
+        if stmt.contains(&format!("{e} ="))
+            || stmt.contains("exec_hi =")
+            || stmt.contains("dpp_on =")
+        {
             self.close_guard();
         }
     }
@@ -1423,7 +1476,18 @@ impl<'a> Tx<'a> {
 
     fn lane_bit(&mut self, pc: usize, v: &Valu, i: usize) -> Result<String, TranslateError> {
         let code = v.src[i];
+        if self.lockstep {
+            return Ok(format!(
+                "uint(({} >> wl) & 1ul)",
+                self.src64(code, None, pc)?
+            ));
+        }
         Ok(format!("({} & 1u)", self.src32(code, None, pc)?))
+    }
+
+    // This thread's bit of VCC as a `uint`.
+    fn vcc_bit(&mut self) -> String {
+        format!("uint({})", self.mask_on(106))
     }
 
     fn valu(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
@@ -1470,6 +1534,19 @@ impl<'a> Tx<'a> {
                 .filter(|n| self.regs.contains(n));
             let s = match spilled {
                 Some(n) => n,
+                None if self.lockstep && v.src[0] >= 256 => {
+                    let a = self.usrc(pc, inst, v, 0)?;
+                    let k = if name == "v_readfirstlane_b32" {
+                        let e = self.src64(126, None, pc)?;
+                        format!("({e} == 0ul ? 0u : uint(ctz({e})))")
+                    } else {
+                        match lane(v.src[1]) {
+                            Some(k) => format!("{}u", k & 63),
+                            None => format!("({} & 63u)", self.src32(v.src[1], inst.literal, pc)?),
+                        }
+                    };
+                    format!("wave_readlane({a}, {k}, lockstep_vote, sgi, wk)")
+                }
                 None => {
                     let a = self.usrc(pc, inst, v, 0)?;
                     match lane(v.src[1]) {
@@ -1508,10 +1585,10 @@ impl<'a> Tx<'a> {
                 "v_lshrrev_b64" => format!("{x} >> ({shift} & 63u)"),
                 _ => format!("ulong(long({x}) >> ({shift} & 63u))"),
             };
-            let exec = self.s(126);
+            let exec = self.mask_on(126);
             let (lo, hi) = (self.v(v.vdst as u16), self.v(v.vdst as u16 + 1));
             self.line(&format!(
-                "{{ ulong r = {value}; if (({exec} & 1u) != 0u) {{ {lo} = uint(r); {hi} = uint(r >> 32); }} }}"
+                "{{ ulong r = {value}; if ({exec}) {{ {lo} = uint(r); {hi} = uint(r >> 32); }} }}"
             ));
             return Ok(());
         }
@@ -1658,7 +1735,7 @@ impl<'a> Tx<'a> {
                 let sel = if matches!(v.enc, VEnc::E64) {
                     self.lane_bit(pc, v, 2)?
                 } else {
-                    format!("({} & 1u)", self.s(106))
+                    self.vcc_bit()
                 };
                 let (a, b) = if v.neg != 0 || v.abs != 0 {
                     (format!("U({})", f(self, 0)?), format!("U({})", f(self, 1)?))
@@ -1799,6 +1876,16 @@ impl<'a> Tx<'a> {
                 let a = u(self, 0)?;
                 format!("({a} == 0u ? 0xffffffffu : ctz({a}))")
             }
+            "v_mbcnt_lo_u32_b32" if self.lockstep => format!(
+                "popcount({} & (wl >= 32u ? 0xffffffffu : (1u << wl) - 1u)) + {}",
+                u(self, 0)?,
+                u(self, 1)?
+            ),
+            "v_mbcnt_hi_u32_b32" if self.lockstep => format!(
+                "popcount({} & (wl < 32u ? 0u : (1u << (wl - 32u)) - 1u)) + {}",
+                u(self, 0)?,
+                u(self, 1)?
+            ),
             "v_mbcnt_lo_u32_b32" | "v_mbcnt_hi_u32_b32" => u(self, 1)?.to_string(),
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
@@ -1878,8 +1965,9 @@ impl<'a> Tx<'a> {
         } else {
             (v.dpp.row_mask, v.dpp.bank_mask)
         };
+        let row = if self.lockstep { "wl" } else { "i" };
         self.line(&format!(
-            "{{ uint i = slane; dpp0 = simd_shuffle({a}, ushort({src} & 31u)); bool dpp_on = ({rows:#x}u >> ((i >> 4) & 3u) & 1u) != 0u && ({banks:#x}u >> ((i >> 2) & 3u) & 1u) != 0u; bool dpp_in = {inside};"
+            "{{ uint i = slane; dpp0 = simd_shuffle({a}, ushort({src} & 31u)); bool dpp_on = ({rows:#x}u >> (({row} >> 4) & 3u) & 1u) != 0u && ({banks:#x}u >> ((i >> 2) & 3u) & 1u) != 0u; bool dpp_in = {inside};"
         ));
         if v.dpp.bound_ctrl {
             self.line("if (!dpp_in) dpp0 = 0u; ");
@@ -1901,7 +1989,7 @@ impl<'a> Tx<'a> {
         } else if e64 {
             self.lane_bit(pc, v, 2)?
         } else {
-            format!("({} & 1u)", self.s(106))
+            self.vcc_bit()
         };
         let (a, b) = if name.starts_with("v_subrev") {
             (b, a)
@@ -1921,10 +2009,10 @@ impl<'a> Tx<'a> {
         } else {
             106
         };
-        let exec = self.s(126);
+        let exec = self.mask_on(126);
         let d = self.v(v.vdst as u16);
         let mut s = format!(
-            "{{ uint a = {a}; uint b = {b}; uint c = {cin}; ulong r = {value}; bool on = ({exec} & 1u) != 0u; bool k = ({carry}) && on;"
+            "{{ uint a = {a}; uint b = {b}; uint c = {cin}; ulong r = {value}; bool on = {exec}; bool k = ({carry}) && on;"
         );
         if v.clamp {
             return Err(err(pc, "clamped carry arithmetic"));
@@ -1969,10 +2057,10 @@ impl<'a> Tx<'a> {
         } else {
             (format!("ulong({a}) * ulong({b}) + {c}"), format!("r < {c}"))
         };
-        let exec = self.s(126);
+        let exec = self.mask_on(126);
         let (lo, hi) = (self.v(v.vdst as u16), self.v(v.vdst as u16 + 1));
         let mut s = format!(
-            "{{ ulong r = {value}; bool on = ({exec} & 1u) != 0u; bool k = ({carry}) && on; if (on) {{ {lo} = uint(r); {hi} = uint(r >> 32); }}"
+            "{{ ulong r = {value}; bool on = {exec}; bool k = ({carry}) && on; if (on) {{ {lo} = uint(r); {hi} = uint(r >> 32); }}"
         );
         let dst = v.sdst.map_or(src::NULL, |s| s as u16);
         if dst != src::NULL {
@@ -2199,7 +2287,7 @@ impl<'a> Tx<'a> {
             }
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
-        let e = self.s(126);
+        let e = self.mask_on(126);
         let dst = if cmpx {
             126
         } else {
@@ -2213,9 +2301,7 @@ impl<'a> Tx<'a> {
             return Ok(());
         }
         let set = self.set_mask(dst, "c");
-        self.line(&format!(
-            "{{ bool c = ({cond}) && ({e} & 1u) != 0u;{set} }}"
-        ));
+        self.line(&format!("{{ bool c = ({cond}) && {e};{set} }}"));
         Ok(())
     }
 
@@ -3602,6 +3688,10 @@ impl<'a> Tx<'a> {
 
     fn emit(&mut self) -> String {
         let mut out = String::from(PRELUDE);
+        if self.lockstep {
+            self.simd_lane = true;
+            out.push_str(WAVE_PRELUDE);
+        }
         if self.lds {
             out.push_str(&format!(
                 "#define LDS_BYTES {}u\n{LDS_PRELUDE}",
@@ -3694,7 +3784,14 @@ impl<'a> Tx<'a> {
                 init.push_str(&format!("    s{r} = user[{i}];\n"));
             }
         }
-        if self.regs.contains("exec_lo") {
+        if self.lockstep {
+            init.push_str("    uint wl = uint(sgi) * 32u + uint(slane);\n    uint wk = 0u;\n");
+            for r in ["exec_lo", "exec_hi"] {
+                if self.regs.contains(r) {
+                    init.push_str(&format!("    {r} = 0xffffffffu;\n"));
+                }
+            }
+        } else if self.regs.contains("exec_lo") {
             init.push_str("    exec_lo = 1u;\n");
         }
         match stage {
@@ -3841,7 +3938,7 @@ impl<'a> Tx<'a> {
                 }
                 let mut params = entry_params.join(", ");
                 if self.lockstep {
-                    lds.push_str("    threadgroup uint lockstep_vote[2];\n");
+                    lds.push_str("    threadgroup uint lockstep_vote[4];\n");
                     params.push_str(", ushort sgi [[simdgroup_index_in_threadgroup]]");
                 }
                 out.push_str(&format!(
@@ -4512,15 +4609,40 @@ static inline void buffer_store_format(device uchar* mem, Win mem_base, uint4 vs
 
 "#;
 
-const LDS_PRELUDE: &str = r#"// A branch vote over a wave64 group run as two SIMD groups (lockstep programs).
-static inline bool wave_any(bool x, threadgroup uint* vote, ushort sgi) {
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+// Lockstep programs: a wave64 group run as two SIMD groups that meet at every
+// call below, so lane masks and lane reads span the whole wave.
+const WAVE_PRELUDE: &str = r#"
+// Each exchange uses the other half of `vote`, so one barrier per exchange is enough.
+static inline bool wave_any(bool x, threadgroup uint* vote, ushort sgi, thread uint& k) {
+    threadgroup uint* v = vote + 2u * (k++ & 1u);
     bool a = simd_any(x);
-    if (simd_is_first()) vote[sgi & 1] = a ? 1u : 0u;
+    if (simd_is_first()) v[sgi & 1] = a ? 1u : 0u;
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    return (vote[0] | vote[1]) != 0u;
+    return (v[0] | v[1]) != 0u;
 }
 
+static inline ulong wave_ballot(bool x, threadgroup uint* vote, ushort sgi, thread uint& k) {
+    threadgroup uint* v = vote + 2u * (k++ & 1u);
+    uint m = uint(static_cast<simd_vote::vote_t>(simd_ballot(x)));
+    if (simd_is_first()) v[sgi & 1] = m;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return ulong(v[1]) << 32 | ulong(v[0]);
+}
+
+static inline uint wave_readlane(uint x, uint lane, threadgroup uint* vote, ushort sgi, thread uint& k) {
+    threadgroup uint* v = vote + 2u * (k++ & 1u);
+    uint r = simd_shuffle(x, ushort(lane & 31u));
+    if ((sgi & 1) == ushort(lane >> 5 & 1u) && simd_is_first()) v[0] = r;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return v[0];
+}
+
+static inline bool lane_on(uint lo, uint hi, uint wl) {
+    return ((wl < 32u ? lo : hi) >> (wl & 31u) & 1u) != 0u;
+}
+"#;
+
+const LDS_PRELUDE: &str = r#"
 static inline uint lds_rmw_add(threadgroup uint* lds, uint a, uint v) {
     if (a >= LDS_BYTES) return 0u;
     return uint(atomic_fetch_add_explicit((threadgroup atomic_uint*)&lds[a >> 2], v, memory_order_relaxed));

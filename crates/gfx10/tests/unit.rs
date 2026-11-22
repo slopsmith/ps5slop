@@ -529,14 +529,17 @@ fn one_wave64_group_talking_through_lds_runs_in_step() {
     ];
     let t = compute(&code, 1, 0);
     assert!(
-        t.msl.contains("wave_any(scc, lockstep_vote, sgi)"),
+        t.msl.contains("wave_any(scc, lockstep_vote, sgi, wk)"),
         "{}",
         t.msl
     );
     assert!(
         t.msl
-            .contains("wave_any((vcc_lo & 1u) != 0u, lockstep_vote, sgi)")
+            .contains("wave_any(((vcc_lo | vcc_hi) != 0u), lockstep_vote, sgi, wk)"),
+        "{}",
+        t.msl
     );
+    assert!(t.msl.contains("wave_ballot("), "{}", t.msl);
     assert!(
         t.msl
             .matches("threadgroup_barrier(mem_flags::mem_threadgroup);")

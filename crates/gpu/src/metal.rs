@@ -6503,6 +6503,68 @@ mod tests {
         assert_eq!((word(&mem, d), word(&mem, d + 4)), (0xF, 0xF0), "swap_x2");
     }
 
+    // A lane-0 ticket broadcast with `v_readlane`, as GTA V's look-back scans take one.
+    #[test]
+    fn one_wave64_group_sees_whole_wave_masks_and_lanes() {
+        let Some(metal) = Metal::new() else {
+            return;
+        };
+        let mut mem = Mem::new(1 << 20);
+        mem.area = Some((0, 1 << 20));
+        let (a, b) = (0x8000u64, 0x9000u64);
+        mem.write(a, &5u32.to_le_bytes());
+        let program: &[u32] = &[
+            0x8790_817E, // s_and_b64 s[16:17], exec, 1
+            0xBEFE_0410, // s_mov_b64 exec, s[16:17]
+            0x7E02_0281, // v_mov_b32_e32 v1, 1
+            0xE0C8_4000,
+            0x8000_0100, // buffer_atomic_add v1, off, s[0:3], 0 glc
+            0xBF8C_3F70, // s_waitcnt vmcnt(0)
+            0xD760_0008,
+            0x0001_0101, // v_readlane_b32 s8, v1, 0
+            0xBEFE_04C1, // s_mov_b64 exec, -1
+            0xD765_0002,
+            0x0001_00C1, // v_mbcnt_lo_u32_b32 v2, -1, 0
+            0xD766_0002,
+            0x0002_04C1, // v_mbcnt_hi_u32_b32 v2, -1, v2
+            0x7D88_04A8, // v_cmp_gt_u32_e32 vcc, 40, v2
+            0xBE89_106A, // s_bcnt1_i32_b64 s9, vcc
+            0xD760_000A,
+            0x0001_7F02, // v_readlane_b32 s10, v2, 63
+            0x8F08_9808, // s_lshl_b32 s8, s8, 24
+            0x8F09_9009, // s_lshl_b32 s9, s9, 16
+            0x8F0A_880A, // s_lshl_b32 s10, s10, 8
+            0x8808_0908, // s_or_b32 s8, s8, s9
+            0x8808_0A08, // s_or_b32 s8, s8, s10
+            0x3806_0408, // v_or_b32_e32 v3, s8, v2
+            0x3408_0482, // v_lshlrev_b32_e32 v4, 2, v2
+            0xE070_1000,
+            0x8001_0304, // buffer_store_dword v3, v4, s[4:7], 0 offen
+            0xBF81_0000, // s_endpgm
+        ];
+        for (i, w) in program.iter().enumerate() {
+            mem.write(0x1000 + 4 * i as u64, &w.to_le_bytes());
+        }
+        let out = [b as u32, (b >> 32) as u32, 256, 0x5204];
+        let mut packets = [
+            compute_setup(0x1000, &[buffer(a), out].concat()),
+            DISPATCH_ONE.to_vec(),
+        ]
+        .concat();
+        // COMPUTE_NUM_THREAD_X: one wave64 group.
+        packets[9] = 64;
+        let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+        mem.write(0x2000, &bytes);
+        let mut p = crate::pm4::Processor::default();
+        p.backend = Some(Box::new(metal));
+        p.run(&mem, 0x2000, packets.len() as u32).unwrap();
+        p.finish(&mem);
+        assert_eq!(word(&mem, a), 6, "only lane 0 takes a ticket");
+        let lanes: Vec<u32> = (0..64).map(|i| word(&mem, b + 4 * i)).collect();
+        let want: Vec<u32> = (0..64).map(|i| 5 << 24 | 40 << 16 | 63 << 8 | i).collect();
+        assert_eq!(lanes, want);
+    }
+
     #[test]
     fn programs_do_not_store_into_a_loaded_module() {
         let store: [u32; 4] = [
