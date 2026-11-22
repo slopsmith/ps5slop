@@ -7268,6 +7268,63 @@ mod tests {
     }
 
     #[test]
+    fn half_operations_select_and_keep_the_halves_they_should() {
+        let Some(mut metal) = Metal::new() else {
+            return;
+        };
+        let mem = Mem::new(1 << 20);
+        let code: [u32; 26] = [
+            0xBE85_03FF,
+            0x4000_3C00, // s_mov_b32 s5, halves 1.0 and 2.0
+            0xBE86_03FF,
+            0x4400_4200, // s_mov_b32 s6, halves 3.0 and 4.0
+            0x7E04_0205, // v_mov_b32 v2, s5
+            0x7E06_0206, // v_mov_b32 v3, s6
+            0x7E0A_0206, // v_mov_b32 v5, s6
+            0x7E0C_0205, // v_mov_b32 v6, s5
+            0x7E0E_0280, // v_mov_b32 v7, 0
+            0xCC0E_4004,
+            0x1C0A_0702, // v_pk_fma_f16 v4, v2, v3, v2
+            0xD74B_5805,
+            0x040A_0702, // v_fma_f16 v5, v2, v3, v2 op_sel:[1,1,0,1]
+            0xD703_0806,
+            0x0001_8302, // v_add_nc_u16 v6, v2, -1 op_sel:[1,0,0]
+            0x6A0E_06F9,
+            0x0405_1502, // v_mul_f16_sdwa v7, v2, v3 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE src0_sel:WORD_1 src1_sel:WORD_0
+            0xD757_0007,
+            0x0409_E103, // v_med3_f16 v7, v3, 0.5, v2
+            0xE078_0000,
+            0x8000_0400, // buffer_store_dwordx4 v[4:7], off, s[0:3], 0
+            0xBF81_0000, // s_endpgm
+            0,
+            0,
+            0,
+            0,
+        ];
+        for (i, w) in code.iter().enumerate() {
+            mem.write(0x1000 + 4 * i as u64, &w.to_le_bytes());
+        }
+        let (c, u) = (vec![0u32; 0x400], vec![0u32; 0x400]);
+        let mut sh = vec![0u32; 0x400];
+        sh[sh::COMPUTE_PGM_LO] = 0x10;
+        sh[sh::COMPUTE_PGM_RSRC2] = 4 << 1;
+        sh[sh::COMPUTE_NUM_THREAD_X] = 1;
+        sh[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + 4]
+            .copy_from_slice(&[0x8000, 0, 16, 0x5204]);
+        let state = State {
+            context: &c,
+            sh: &sh,
+            uconfig: &u,
+            color_control_written: false,
+        };
+        metal.dispatch(&mem, &state, crate::Dispatch::groups([1, 1, 1]));
+        assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
+        metal.flush_and_wait();
+        let got: Vec<u32> = (0..4).map(|i| word(&mem, 0x8000 + 4 * i)).collect();
+        assert_eq!(got, [0x4900_4400, 0x4880_4200, 0x4000_3FFF, 0x4600_3C00]);
+    }
+
+    #[test]
     fn detiling_a_render_target_on_the_gpu_matches_the_cpu_layout() {
         let Some(mut metal) = Metal::new() else {
             return;
