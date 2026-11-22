@@ -645,3 +645,12 @@ Before a render target is bound for sampling, the renderer applies a CMASK or DC
 ## 2026-11-22: Image stores apply a red and blue swap from their channel selects
 
 When an image a program stores to has channel selects that swap red and blue, the renderer binds the RGBA8 or BGRA8 view with the other order. Reason: the hardware applies the selects to stores as well as loads, and GTA V's Performance-mode sharpening pass relies on that; Metal views with a swizzle are read-only. Only 8-bit four-channel formats are handled; other selects on stores are still ignored.
+
+## 2026-11-22: Ajm MP3 jobs report whole frames of silence
+
+`sceAjmBatchJobDecode` on an MP3 instance splits its input into MPEG audio frames, keeps an incomplete frame for the next job, writes each frame's samples as silence and reports consumed bytes, written bytes and the running sample count. Reason: GTA V decodes all its audio as MP3 through Ajm in 960-byte jobs, and our placeholder reported nothing written and no samples, which a stream player could read as a stalled stream. Real decoding (a decoder crate or a port) was not chosen yet: silence with correct sizes is enough to test whether timing depends on it, and a decoder needs a dependency decision. Instances are not kept in save states, so old states still load.
+
+## 2026-11-22: Probes on guest addresses run in the interpreter
+
+`PS5SLOP_PROBE_RIP` keeps listed guest addresses out of translated code and logs registers at each arrival. Reason: following GTA V's script natives needed "was this called, with what", which write watches cannot show; making only those addresses interpreted leaves the rest of the game at full speed, unlike `PS5SLOP_JIT_TRACE`.
+

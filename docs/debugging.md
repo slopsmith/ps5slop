@@ -144,6 +144,8 @@ A title's own code may be disassembled locally to learn what it expects of us; S
 
 `PS5SLOP_TRACE_APR=1` prints every APR read as it runs: the file, offset, length, bytes read and destination. With the package's own bytes (`ps5slop-pkg cat`) it shows whether a read was whole and where it went; that is how GTA V's reads were ruled out as the cause of its streamer assert.
 
+`PS5SLOP_PROBE_RIP=ADDR[,ADDR...]` (hex guest addresses) logs every arrival of any thread at those addresses: `ps5slop: probe ADDR` with rax, rbx, rcx, rdx, rsi, rdi, r8, r9, rsp, the low float of xmm0 and the 32 bytes rax points at. The JIT never translates code at a probe (blocks end before it, regions that contain it are not built), so each arrival runs in the interpreter; away from the probes everything runs as usual. It answers "is this function called, with what" for a title's own code without a debugger, for example which script natives GTA V's prologue calls with which arguments ([gpu.md](gpu.md#gta-vs-blast-wall-2026-11-22)). Only for a title's own code ([legal.md](legal.md)).
+
 `PS5SLOP_HOLD_ON_FAULT=1` keeps a thread that faulted from ending the process: it prints the fault and its registers and waits, so the control socket can still read memory (`mem`, `regions`, `threads`) at the moment of the fault. Other threads keep running. `quit` ends it. Hold only as long as the inspection takes: a held guest keeps all its memory.
 
 ## Files a title asks for
