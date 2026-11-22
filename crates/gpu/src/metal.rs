@@ -111,17 +111,11 @@ pub static RELOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 /// that causes a rendering bug (the control socket's `gpuskip`).
 pub static SKIP: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
-/// `PS5SLOP_TRACE_TARGETS`: logs each new render target and each image first read from guest memory.
 const PIXEL_SLOTS: usize = 1 << 14;
 /// The longest triangle fan drawn.
 const FAN_MAX: usize = 1 << 16;
 /// How much of a table the user data points to is searched for V#s.
 const TABLE_DWORDS: usize = 64;
-
-fn trace_targets() -> bool {
-    static ENV: OnceLock<bool> = OnceLock::new();
-    *ENV.get_or_init(|| std::env::var_os("PS5SLOP_TRACE_TARGETS").is_some())
-}
 
 fn skipped(address: u64) -> bool {
     SKIP.lock().is_ok_and(|s| s.contains(&address))
@@ -326,7 +320,7 @@ const IMAGE_LIFETIME: u64 = 300;
 /// Guest memory is wrapped in windows of about this size.
 const WINDOW: u64 = 64 << 20;
 const PAGE: u64 = 0x4000;
-/// How many different problems are reported; repeats are not printed.
+/// How many different problems are reported; repeats are not logged.
 const REPORTS: usize = 64;
 /// Time per frame draws to redrawn targets may wait for their pipelines
 /// before they are skipped.
@@ -533,7 +527,7 @@ pub struct Metal {
     /// Draws and dispatches that waited for a pipeline: how many, and how long.
     compile_waits: [(u64, std::time::Duration); 2],
     samplers: HashMap<Sampler, Retained<ProtocolObject<dyn MTLSamplerState>>>,
-    reports: std::collections::HashSet<String>,
+    reports: diag::Distinct,
     /// Images no texture could be made for: (read as, access, T# type,
     /// swizzle mode, format) and how often.
     image_misses: HashMap<(TextureKind, &'static str, u32, u32, u32), u64>,
@@ -798,7 +792,7 @@ impl Metal {
             compile_budget: COMPILE_BUDGET,
             compile_waits: Default::default(),
             samplers: HashMap::new(),
-            reports: std::collections::HashSet::new(),
+            reports: diag::Distinct::new(REPORTS),
             image_misses: HashMap::new(),
             null: HashMap::new(),
             draws: 0,
@@ -833,9 +827,15 @@ impl Metal {
         }
     }
 
-    fn report(&mut self, what: String) {
-        if self.reports.len() < REPORTS && self.reports.insert(what.clone()) {
-            eprintln!("ps5slop: GPU: {what}");
+    /// Logs `what` the first time it happens, until [`REPORTS`] different reports were made.
+    fn report(&mut self, level: tracing::Level, what: String) {
+        if !self.reports.first(&what) {
+            return;
+        }
+        match level {
+            tracing::Level::ERROR => tracing::error!("{what}"),
+            tracing::Level::WARN => tracing::warn!("{what}"),
+            _ => tracing::info!("{what}"),
         }
     }
 
@@ -1087,8 +1087,9 @@ impl Metal {
                 );
             }
         }
-        eprintln!(
-            "ps5slop: GPU: gpusnap wrote {n} attachments of {} passes to {}",
+        tracing::info!(
+            target: "gpu::snap",
+            "gpusnap wrote {n} attachments of {} passes to {}",
             snap.passes,
             snap.dir.display()
         );
@@ -1156,10 +1157,13 @@ impl Metal {
             .next_multiple_of(PAGE)
             .min(hi);
         if stop - start > 512 << 20 {
-            self.report(format!(
-                "guest memory window of {} MiB at {start:#x} for {len:#x} bytes at {addr:#x}",
-                (stop - start) >> 20
-            ));
+            self.report(
+                tracing::Level::INFO,
+                format!(
+                    "guest memory window of {} MiB at {start:#x} for {len:#x} bytes at {addr:#x}",
+                    (stop - start) >> 20
+                ),
+            );
         }
         self.make_room(stop - start);
         let ptr = NonNull::new(host.host_pointer(start)?)?;
@@ -1657,9 +1661,10 @@ impl Metal {
             record(t.address | 2, existing, false);
             return Some((existing.clone(), format));
         }
-        if trace_targets() {
-            eprintln!(
-                "ps5slop: targets: frame {} new target {:#x} {}x{} {format:?}{}",
+        if tracing::enabled!(target: "gpu::targets", tracing::Level::DEBUG) {
+            tracing::debug!(
+                target: "gpu::targets",
+                "frame {} new target {:#x} {}x{} {format:?}{}",
                 self.epoch,
                 t.address,
                 t.width,
@@ -1861,10 +1866,13 @@ impl Metal {
                 _ => return None,
             };
             if have != format && !view_compatible(have, format) {
-                self.report(format!(
-                    "render target at {:#x} ({have:?}) cannot be viewed as {format:?}",
-                    image.address
-                ));
+                self.report(
+                    tracing::Level::ERROR,
+                    format!(
+                        "render target at {:#x} ({have:?}) cannot be viewed as {format:?}",
+                        image.address
+                    ),
+                );
                 return None;
             }
             self.note(|| format!("      {:#x} from a layered render target", image.address));
@@ -1963,9 +1971,12 @@ impl Metal {
             self.image_checks[if old.is_some() { 1 } else { 2 }] += 1;
         }
         self.note(|| format!("      {:#x} detiled from guest memory", image.address));
-        if trace_targets() && !self.images.contains_key(&(image, kind)) {
-            eprintln!(
-                "ps5slop: targets: frame {} image {:#x} {}x{} from guest memory",
+        if tracing::enabled!(target: "gpu::targets", tracing::Level::DEBUG)
+            && !self.images.contains_key(&(image, kind))
+        {
+            tracing::debug!(
+                target: "gpu::targets",
+                "frame {} image {:#x} {}x{} from guest memory",
                 self.epoch, image.address, image.width, image.height
             );
         }
@@ -2077,12 +2088,15 @@ impl Metal {
         let tex = match self.images.get(&(image, TextureKind::Tex3d)) {
             Some((_, t)) => t.clone(),
             None => {
-                if trace_targets() {
-                    eprintln!(
-                        "ps5slop: targets: frame {} linear volume {:#x} {}x{}x{} from guest memory",
-                        self.epoch, image.address, image.width, image.height, image.depth
-                    );
-                }
+                tracing::debug!(
+                    target: "gpu::targets",
+                    "frame {} linear volume {:#x} {}x{}x{} from guest memory",
+                    self.epoch,
+                    image.address,
+                    image.width,
+                    image.height,
+                    image.depth
+                );
                 let desc = MTLTextureDescriptor::new();
                 desc.setPixelFormat(format);
                 desc.setTextureType(MTLTextureType::Type3D);
@@ -2495,9 +2509,10 @@ impl Metal {
             let translate_start = std::time::Instant::now();
             match shader::translate(&request) {
                 Ok(mut translated) => {
-                    if compile_log() {
-                        eprintln!(
-                            "ps5slop: compile: {:.3} s translated {stage:?} {address:#x} key {key:016x} in {:.2} ms, {} bytes of MSL, {} queued",
+                    if tracing::enabled!(target: "gpu::compile", tracing::Level::DEBUG) {
+                        tracing::debug!(
+                            target: "gpu::compile",
+                            "{:.3} s translated {stage:?} {address:#x} key {key:016x} in {:.2} ms, {} bytes of MSL, {} queued",
                             log_clock(),
                             translate_start.elapsed().as_secs_f64() * 1e3,
                             translated.msl.len(),
@@ -2509,15 +2524,17 @@ impl Metal {
                             std::path::Path::new(&dir).join(format!("{stage:?}-{address:x}.metal")),
                         )
                     {
-                        eprintln!(
-                            "ps5slop: GPU: {stage:?} program at {address:#x} replaced from {}",
+                        tracing::warn!(
+                            "{stage:?} program at {address:#x} replaced from {}",
                             dir.to_string_lossy()
                         );
                         translated.msl = msl;
                     }
-                    if std::env::var_os("PS5SLOP_MSL_DUMP").is_some() {
-                        eprintln!("=== {stage:?} {address:#x}\n{}", translated.msl);
-                    }
+                    tracing::trace!(
+                        target: "gpu::msl",
+                        "{stage:?} {address:#x}\n{}",
+                        translated.msl
+                    );
                     let label = format!("{stage:?} {address:#x} key {key:016x}");
                     let function = self.compile_later(
                         translated.msl.clone(),
@@ -2561,9 +2578,10 @@ impl Metal {
                     }))
                 }
                 Err(e) => {
-                    self.report(format!(
-                        "{stage:?} program at {address:#x} not translated: {e}"
-                    ));
+                    self.report(
+                        tracing::Level::ERROR,
+                        format!("{stage:?} program at {address:#x} not translated: {e}"),
+                    );
                     None
                 }
             }
@@ -3372,10 +3390,13 @@ impl Metal {
             (width, height)
         };
         if d.slice >= MAX_DEPTH_SLICES as u32 {
-            self.report(format!(
-                "depth target slice {} at {:#x} not supported",
-                d.slice, d.address
-            ));
+            self.report(
+                tracing::Level::ERROR,
+                format!(
+                    "depth target slice {} at {:#x} not supported",
+                    d.slice, d.address
+                ),
+            );
             return None;
         }
         let slices = (d.slice.max(d.slice_max) as usize + 1).min(MAX_DEPTH_SLICES);
@@ -3733,9 +3754,12 @@ impl Metal {
             return;
         }
         let changed = new.iter().zip(old).filter(|(a, b)| a != b).count();
-        self.report(format!(
-            "2D array at {address:#x}: {changed} bytes changed in guest memory, copying them in"
-        ));
+        self.report(
+            tracing::Level::INFO,
+            format!(
+                "2D array at {address:#x}: {changed} bytes changed in guest memory, copying them in"
+            ),
+        );
         let stride = (src.len / src.slices as u64) as usize;
         let size = layout.size() as usize;
         for slice in 0..src.slices as usize {
@@ -4001,8 +4025,8 @@ impl Metal {
             if gave_up != 0 {
                 self.guard_trips += 1;
                 if self.guard_trips <= 16 {
-                    eprintln!(
-                        "ps5slop: GPU: compute program {program:#x}: {gave_up} threads gave up their loops ({units} of {} branch units), user data {user:x?}",
+                    tracing::warn!(
+                        "compute program {program:#x}: {gave_up} threads gave up their loops ({units} of {} branch units), user data {user:x?}",
                         gfx10::translate::GUARD_BUDGET
                     );
                 }
@@ -4093,10 +4117,13 @@ impl Metal {
         }
         if program.translated.guest_memory {
             let Some(m) = self.guest_window(host, user, program.address) else {
-                self.report(format!(
-                    "no guest memory window for the program at {:#x}, user data {user:x?}",
-                    program.address
-                ));
+                self.report(
+                    tracing::Level::ERROR,
+                    format!(
+                        "no guest memory window for the program at {:#x}, user data {user:x?}",
+                        program.address
+                    ),
+                );
                 return None;
             };
             let win = m.win;
@@ -4120,9 +4147,10 @@ impl Metal {
                         )
                     });
                     if kind == TextureKind::Cube && access != Access::Sample {
-                        self.report(format!(
-                            "{kind:?} textures with {access:?} access not supported"
-                        ));
+                        self.report(
+                            tracing::Level::ERROR,
+                            format!("{kind:?} textures with {access:?} access not supported"),
+                        );
                         return None;
                     }
                     let tex = if access == Access::Atomic {
@@ -4169,10 +4197,13 @@ impl Metal {
                             .image_misses
                             .entry((kind, how, image.kind, image.raw_tile, image.format))
                             .or_default() += 1;
-                        self.report(format!(
-                            "image {image:x?} for the program at {:#x} not supported",
-                            program.address
-                        ));
+                        self.report(
+                            tracing::Level::ERROR,
+                            format!(
+                                "image {image:x?} for the program at {:#x} not supported",
+                                program.address
+                            ),
+                        );
                         return None;
                     };
                     bound.textures.push((slot as usize, tex));
@@ -4383,13 +4414,13 @@ impl Metal {
             .min(end)
             .min(start + max);
         if need > stop {
-            self.report(format!(
+            self.report(tracing::Level::ERROR, format!(
                 "GPU area window: {need:#x} is past what a window may reach ({stop:#x}; area {start:#x}..{end:#x}, Metal's limit {max:#x})"
             ));
             return None;
         }
         if !host.back(start, stop) {
-            self.report(format!(
+            self.report(tracing::Level::ERROR, format!(
                 "GPU area window: guest memory {start:#x}..{stop:#x} could not be given host pages"
             ));
             return None;
@@ -4409,7 +4440,7 @@ impl Metal {
                 )
         };
         let Some(buffer) = buffer else {
-            self.report(format!(
+            self.report(tracing::Level::ERROR, format!(
                 "GPU area window: Metal refused a {} MiB buffer over guest memory ({} MiB allocated)",
                 (stop - start) >> 20,
                 self.device.currentAllocatedSize() >> 20
@@ -4420,10 +4451,13 @@ impl Metal {
         // window does not use up the reports.
         static LARGEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         if LARGEST.fetch_max(stop - start, std::sync::atomic::Ordering::Relaxed) < stop - start {
-            self.report(format!(
-                "GPU area window of {} MiB at {start:#x}",
-                (stop - start) >> 20
-            ));
+            self.report(
+                tracing::Level::INFO,
+                format!(
+                    "GPU area window of {} MiB at {start:#x}",
+                    (stop - start) >> 20
+                ),
+            );
         }
         self.note(|| format!("      new GPU area window of {} MiB", (stop - start) >> 20));
         self.area = Some(Window {
@@ -4898,9 +4932,10 @@ impl Metal {
                 if clear.is_some() {
                     self.pass(&targets, depth, clear).ok_or("render pass")?;
                 }
-                if compile_log() {
-                    eprintln!(
-                        "ps5slop: compile: {:.3} s skipped draw in frame {} vertex {:#x} pixel {:#x} targets {:x?} count {:?}",
+                if tracing::enabled!(target: "gpu::compile", tracing::Level::DEBUG) {
+                    tracing::debug!(
+                        target: "gpu::compile",
+                        "{:.3} s skipped draw in frame {} vertex {:#x} pixel {:#x} targets {:x?} count {:?}",
                         log_clock(),
                         self.epoch,
                         vertex.address,
@@ -5165,10 +5200,11 @@ impl Metal {
 
     fn end_trace(&mut self, what: impl FnOnce() -> String, result: Result<(), &'static str>) {
         if let Some(lines) = self.trace.take() {
-            eprintln!("ps5slop: trace: {} -> {result:?}", what());
+            let mut out = format!("{} -> {result:?}", what());
             for l in lines {
-                eprintln!("ps5slop: trace:     {l}");
+                out += &format!("\n    {l}");
             }
+            tracing::info!(target: "gpu::trace", "{out}");
         }
     }
 
@@ -5196,8 +5232,8 @@ impl Metal {
                 && self.reported_stuck != Some(Retained::as_ptr(cb) as usize)
             {
                 self.reported_stuck = Some(Retained::as_ptr(cb) as usize);
-                eprintln!(
-                    "ps5slop: GPU: command buffer {:?} still running after 2 s (status {:?})",
+                tracing::warn!(
+                    "command buffer {:?} still running after 2 s (status {:?})",
                     cb.label().map(|l| l.to_string()),
                     cb.status()
                 );
@@ -5248,8 +5284,8 @@ impl Metal {
             self.failed_commands += 1;
             if self.failed_commands <= 8 {
                 let windows: u64 = self.windows.iter().map(|w| w.end - w.start).sum();
-                eprintln!(
-                    "ps5slop: GPU: command buffer failed: {} (code {}); {} in flight, windows {} MiB + area {} MiB, Metal allocated {} MiB of {} MiB",
+                tracing::error!(
+                    "command buffer failed: {} (code {}); {} in flight, windows {} MiB + area {} MiB, Metal allocated {} MiB of {} MiB",
                     e.localizedDescription(),
                     e.code(),
                     self.inflight.len(),
@@ -5398,8 +5434,8 @@ fn wait_reporting_hangs(cb: &CommandBuffer) {
         MTLCommandBufferStatus::Completed | MTLCommandBufferStatus::Error
     ) {
         if start.elapsed() > std::time::Duration::from_secs(10) {
-            eprintln!(
-                "ps5slop: GPU: command buffer {:?} still running after 10 s (status {:?})",
+            tracing::warn!(
+                "command buffer {:?} still running after 10 s (status {:?})",
                 cb.label().map(|l| l.to_string()),
                 cb.status()
             );
@@ -5410,7 +5446,7 @@ fn wait_reporting_hangs(cb: &CommandBuffer) {
     }
 }
 
-/// Prints the encoders a failed command buffer reports as faulted or pending
+/// Logs the encoders a failed command buffer reports as faulted or pending
 /// (`PS5SLOP_GPU_ENCODER_STATUS`), with their labels and signposts.
 fn report_encoders(e: &objc2_foundation::NSError) {
     use objc2_metal::{
@@ -5434,8 +5470,8 @@ fn report_encoders(e: &objc2_foundation::NSError) {
                 .map(|p| p.iter().map(|s| s.to_string()).collect())
                 .unwrap_or_default();
             let n = posts.len();
-            eprintln!(
-                "ps5slop: GPU:   encoder {:?} {} {:?}",
+            tracing::error!(
+                "  encoder {:?} {} {:?}",
                 state.0,
                 enc.label(),
                 &posts[n.saturating_sub(4)..]
@@ -5676,7 +5712,7 @@ impl Backend for Metal {
             Ok(t) => out.push(t),
             Err(e) => {
                 skipped += 1;
-                eprintln!("ps5slop: save state: {e}");
+                tracing::warn!("save state: {e}");
             }
         };
         for (&a, t) in &self.targets {
@@ -5689,7 +5725,7 @@ impl Backend for Metal {
             keep(self.saved_texture(CACHE_VOLUME, a, t, t.pixelFormat()));
         }
         if skipped > 0 {
-            eprintln!("ps5slop: save state: {skipped} GPU textures not saved");
+            tracing::warn!("save state: {skipped} GPU textures not saved");
         }
         out.sort_by_key(|t| (t.cache, t.address));
         Ok(savestate::to_bytes(&out))
@@ -5854,7 +5890,7 @@ impl Backend for Metal {
         self.pending_writes = true;
         self.ordered_writes += 1;
         if self.ordered_writes.is_power_of_two() {
-            eprintln!("ps5slop: GPU: {} writes in GPU order", self.ordered_writes);
+            tracing::debug!("{} writes in GPU order", self.ordered_writes);
         }
         true
     }
@@ -5960,7 +5996,7 @@ impl Backend for Metal {
                     Retained::as_ptr(&src) as usize,
                     Retained::as_ptr(&copy) as usize,
                 );
-                eprintln!("ps5slop: trace: shown {addr:#x} copied from {a:#x} into {b:#x}");
+                tracing::info!(target: "gpu::trace", "shown {addr:#x} copied from {a:#x} into {b:#x}");
             }
             if let Ok(mut f) = frames().lock() {
                 f.insert(addr, SharedTexture(copy));
@@ -5977,11 +6013,12 @@ impl Backend for Metal {
                 let counts =
                     unsafe { std::slice::from_raw_parts(b.contents().as_ptr() as *const u64, n) };
                 for (slot, c) in counts.iter().enumerate() {
-                    eprintln!("ps5slop: trace: pixels slot {slot}: {c}");
+                    tracing::info!(target: "gpu::trace", "pixels slot {slot}: {c}");
                 }
             }
-            eprintln!(
-                "ps5slop: trace: frame {} done, showing {shown:x?}",
+            tracing::info!(
+                target: "gpu::trace",
+                "frame {} done, showing {shown:x?}",
                 self.epoch
             );
         }
@@ -6019,18 +6056,10 @@ fn compile(device: &Device, msl: &str, entry: &str) -> Option<Retained<Function>
         Ok(lib) => lib.newFunctionWithName(&NSString::from_str(entry)),
         Err(e) => {
             late_report(format!("MSL did not compile: {}", e.localizedDescription()));
-            if std::env::var_os("PS5SLOP_MSL_ERRORS").is_some() {
-                eprintln!("{msl}");
-            }
+            tracing::debug!(target: "gpu::msl", "{msl}");
             None
         }
     }
-}
-
-/// `PS5SLOP_COMPILE_LOG`: one line per translation and per compile job.
-fn compile_log() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("PS5SLOP_COMPILE_LOG").is_some())
 }
 
 /// Seconds since the first compile log line.
@@ -6052,14 +6081,15 @@ fn log_compile(
     start: std::time::Instant,
     ready: Option<std::time::Instant>,
 ) {
-    if !compile_log() {
+    if !tracing::enabled!(target: "gpu::compile", tracing::Level::DEBUG) {
         return;
     }
     let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
     let now = std::time::Instant::now();
     let ready = ready.unwrap_or(start);
-    eprintln!(
-        "ps5slop: compile: {:.3} s {kind} {label} bytes {bytes} queued {:.1} ms waited {:.1} ms ran {:.1} ms on {}",
+    tracing::debug!(
+        target: "gpu::compile",
+        "{:.3} s {kind} {label} bytes {bytes} queued {:.1} ms waited {:.1} ms ran {:.1} ms on {}",
         log_clock(),
         ms(start - queued),
         ms(ready - start),
@@ -6068,11 +6098,11 @@ fn log_compile(
     );
 }
 
-/// Reports a failure from the compile threads, the first [`REPORTS`] times.
+/// Logs a failure from the compile threads, the first [`REPORTS`] times.
 fn late_report(what: String) {
-    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < REPORTS {
-        eprintln!("ps5slop: GPU: {what}");
+    static LIMIT: diag::FirstN = diag::FirstN::new(REPORTS as u32);
+    if LIMIT.allow() {
+        tracing::error!("{what}");
     }
 }
 

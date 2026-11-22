@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 savestate = { path = "../savestate" }
+diag = { path = "../diag" }
+tracing.workspace = true
 gpu = { path = "../gpu" }
 jit = { path = "../jit" }
 loader = { path = "../loader" }

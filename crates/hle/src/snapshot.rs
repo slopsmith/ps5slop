@@ -138,7 +138,7 @@ impl Kernel {
                     }
                 }
             }
-            eprintln!("ps5slop: save state: not stopped yet: {last}");
+            tracing::warn!("save state: not stopped yet: {last}");
             std::thread::sleep(Duration::from_millis(300));
         }
         let Some((_guard, cpus, gpu)) = stopped else {
@@ -287,8 +287,8 @@ impl Kernel {
             ));
         }
         if header.build != build_id() {
-            eprintln!(
-                "ps5slop: save state written by {}, loading in {}",
+            tracing::warn!(
+                "save state written by {}, loading in {}",
                 header.build,
                 build_id()
             );
@@ -526,8 +526,8 @@ impl Kernel {
     pub fn save_state_in_background(self: &Arc<Self>, path: std::path::PathBuf) {
         let kernel = self.clone();
         std::thread::spawn(move || match kernel.save_state(&path) {
-            Ok(r) => eprintln!("ps5slop: {}", r.describe()),
-            Err(e) => eprintln!("ps5slop: {e}"),
+            Ok(r) => tracing::info!("{}", r.describe()),
+            Err(e) => tracing::error!("{e}"),
         });
     }
 }

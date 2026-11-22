@@ -263,8 +263,8 @@ impl Booted {
         };
         let start = std::time::Instant::now();
         let cpus = self.kernel.load_state(&path).map_err(Error::State)?;
-        eprintln!(
-            "ps5slop: loaded {} ({} threads) in {:.2} s",
+        tracing::info!(
+            "loaded {} ({} threads) in {:.2} s",
             path.display(),
             cpus.len(),
             start.elapsed().as_secs_f64()
@@ -352,7 +352,7 @@ pub fn write_frame(kernel: &Kernel, out: &std::path::Path) -> Result<(), String>
 pub fn write_frames(kernel: std::sync::Arc<Kernel>, dir: std::path::PathBuf, count: usize) {
     std::thread::spawn(move || {
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            eprintln!("ps5slop: frames: {}: {e}", dir.display());
+            tracing::warn!("frames: {}: {e}", dir.display());
             return;
         }
         let mut last = kernel.frame().map(|f| f.flips);
@@ -363,7 +363,7 @@ pub fn write_frames(kernel: std::sync::Arc<Kernel>, dir: std::path::PathBuf, cou
                     last = Some(f.flips);
                     let out = dir.join(format!("{:06}.ppm", f.flips));
                     if let Err(e) = write_ppm(f, &out) {
-                        eprintln!("ps5slop: frames: {e}");
+                        tracing::warn!("frames: {e}");
                         return;
                     }
                     written += 1;
@@ -371,7 +371,7 @@ pub fn write_frames(kernel: std::sync::Arc<Kernel>, dir: std::path::PathBuf, cou
                 _ => std::thread::sleep(std::time::Duration::from_millis(1)),
             }
         }
-        eprintln!("ps5slop: frames: wrote {written} to {}", dir.display());
+        tracing::info!("frames: wrote {written} to {}", dir.display());
     });
 }
 

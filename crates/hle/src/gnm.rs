@@ -165,7 +165,7 @@ fn gpu_thread(host: Host, jobs: Receiver<Job>) {
     while let Ok(job) = jobs.recv() {
         for (addr, dwords) in job.buffers {
             if let Err(e) = processor.run(&host, addr, dwords) {
-                eprintln!("ps5slop: GPU: {e}");
+                tracing::error!("{e}");
             }
         }
         processor.drain(&host);

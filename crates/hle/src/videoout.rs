@@ -118,9 +118,7 @@ impl Kernel {
         };
         #[cfg(target_os = "macos")]
         if let Some(texture) = gpu::metal::frame(addr) {
-            if std::env::var_os("PS5SLOP_TRACE_SHOT").is_some() {
-                eprintln!("ps5slop: frame {addr:#x} texture {:p}", &*texture.0);
-            }
+            tracing::debug!("frame {addr:#x} texture {:p}", &*texture.0);
             return Some(Frame {
                 width: layout.width,
                 height: layout.height,

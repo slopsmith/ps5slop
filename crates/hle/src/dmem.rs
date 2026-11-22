@@ -74,18 +74,14 @@ impl DirectMemory {
             return None;
         }
         allocated.insert(at, (len, kind));
-        if std::env::var_os("PS5SLOP_TRACE_ALIAS").is_some() {
-            eprintln!("ps5slop: dalloc: {at:#x}+{len:#x} type {kind}");
-        }
+        tracing::debug!("dalloc: {at:#x}+{len:#x} type {kind}");
         Some(at)
     }
 
     /// Frees `[start, start + len)`, keeping what allocations around it
     /// stick out on either side.
     fn release(&self, start: u64, len: u64) {
-        if std::env::var_os("PS5SLOP_TRACE_ALIAS").is_some() {
-            eprintln!("ps5slop: dfree: {start:#x}+{len:#x}");
-        }
+        tracing::debug!("dfree: {start:#x}+{len:#x}");
         let end = start + len;
         let mut allocated = lock(&self.allocated);
         let hit: Vec<(u64, u64, i32)> = allocated
@@ -141,13 +137,13 @@ impl DirectMemory {
     fn note_map(&self, addr: u64, len: u64, offset: u64) {
         let mut mapped = lock(&self.mapped);
         cut(&mut mapped, addr, addr + len);
-        if std::env::var_os("PS5SLOP_TRACE_ALIAS").is_some() {
-            eprintln!("ps5slop: dmap: {addr:#x}+{len:#x} direct {offset:#x}");
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            tracing::debug!("dmap: {addr:#x}+{len:#x} direct {offset:#x}");
             for (&v, &(v_end, delta)) in mapped.iter() {
                 let (p, p_end) = (v.wrapping_add(delta), v_end.wrapping_add(delta));
                 if p < offset + len && p_end > offset {
-                    eprintln!(
-                        "ps5slop: alias: {addr:#x}+{len:#x} maps direct {offset:#x}, already mapped at {v:#x}..{v_end:#x} (direct {p:#x}..{p_end:#x})"
+                    tracing::debug!(
+                        "alias: {addr:#x}+{len:#x} maps direct {offset:#x}, already mapped at {v:#x}..{v_end:#x} (direct {p:#x}..{p_end:#x})"
                     );
                 }
             }
@@ -157,9 +153,7 @@ impl DirectMemory {
 
     /// Forgets the direct memory behind `[addr, addr + len)`.
     pub(crate) fn note_unmap(&self, addr: u64, len: u64) {
-        if std::env::var_os("PS5SLOP_TRACE_ALIAS").is_some() {
-            eprintln!("ps5slop: dunmap: {addr:#x}+{len:#x}");
-        }
+        tracing::debug!("dunmap: {addr:#x}+{len:#x}");
         cut(&mut lock(&self.mapped), addr, addr.saturating_add(len));
         cut(&mut lock(&self.prot), addr, addr.saturating_add(len));
     }
@@ -248,12 +242,14 @@ fn cut(ranges: &mut BTreeMap<u64, (u64, u64)>, start: u64, end: u64) {
     }
 }
 
-/// Reports a failed memory call on stderr the first time its kind happens,
+/// Reports a failed memory call the first time its kind happens,
 /// with the state of direct memory and the address space.
 pub(crate) fn failure(env: &Env, kind: &'static str, detail: std::fmt::Arguments) {
     if env.kernel.dmem.failed(kind) {
-        eprintln!("ps5slop: memory: {kind} ({detail}); later ones are only counted");
-        eprintln!("{}", report(env.kernel));
+        tracing::error!(
+            "{kind} ({detail}); later ones are only counted\n{}",
+            report(env.kernel)
+        );
     }
 }
 
@@ -508,10 +504,7 @@ fn map_direct(
     }
     let bits = prot;
     let prot = gpu_as_cpu(prot);
-    if flags & MAP_FIXED != 0
-        && std::env::var_os("PS5SLOP_TRACE_ALIAS").is_some()
-        && len <= 0x10_0000
-    {
+    if flags & MAP_FIXED != 0 && tracing::enabled!(tracing::Level::DEBUG) && len <= 0x10_0000 {
         let mut old = vec![0u8; len as usize];
         if env.mem.read(wanted, &mut old).is_ok() {
             let live = old
@@ -520,8 +513,8 @@ fn map_direct(
                 .iter()
                 .filter(|q| **q != [0; 8] && **q != [0xff; 8])
                 .count();
-            eprintln!(
-                "ps5slop: dremap: {wanted:#x}+{len:#x} over {live} qwords that are neither 0 nor all ones"
+            tracing::debug!(
+                "dremap: {wanted:#x}+{len:#x} over {live} qwords that are neither 0 nor all ones"
             );
         }
     }
@@ -671,8 +664,8 @@ fn batch(env: &Env, entries: u64, count: u64, done: u64, flags: u64) -> Result<O
             _ => Err(errno::EINVAL),
         };
         if let Err(e) = r {
-            eprintln!(
-                "ps5slop: sceKernelBatchMap entry {k} (op {op}, {start:#x}+{len:#x}, prot {prot:#x}) failed with errno {e}"
+            tracing::warn!(
+                "sceKernelBatchMap entry {k} (op {op}, {start:#x}+{len:#x}, prot {prot:#x}) failed with errno {e}"
             );
             result = sce_error(e);
             break;

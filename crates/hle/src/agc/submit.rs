@@ -256,7 +256,7 @@ fn gpu_thread(
     if let Some((saved, gds)) = restored {
         processor.restore(saved, gds);
     }
-    let report = std::env::var_os("PS5SLOP_GPU_STATS").is_some();
+    let report = tracing::enabled!(target: "gpu::stats", tracing::Level::INFO);
     let mut last_report = std::time::Instant::now();
     loop {
         let idle = gpu::timing::start();
@@ -283,7 +283,7 @@ fn gpu_thread(
         gpu::with_pool(|| {
             for (addr, dwords) in job.buffers {
                 if let Err(e) = processor.run(&host, addr, dwords) {
-                    eprintln!("ps5slop: GPU: {e}");
+                    tracing::error!("{e}");
                 }
             }
             // Unverified: the driver signals each submission's completion; Minecraft
@@ -294,8 +294,9 @@ fn gpu_thread(
         if report && last_report.elapsed().as_secs() >= 1 {
             last_report = std::time::Instant::now();
             let s = &processor.stats;
-            eprintln!(
-                "ps5slop: GPU {name}: {} submissions, {} packets, {} draws, {} dispatches, {} flips, {} interrupts, {} wait timeouts, {} waits met by pending releases, {} memory writes, longest flip gap {} ms",
+            tracing::info!(
+                target: "gpu::stats",
+                "{name}: {} submissions, {} packets, {} draws, {} dispatches, {} flips, {} interrupts, {} wait timeouts, {} waits met by pending releases, {} memory writes, longest flip gap {} ms",
                 s.submissions,
                 s.packets,
                 s.draws,
@@ -314,25 +315,26 @@ fn gpu_thread(
                     .drain(..)
                     .map(|g| g.as_millis())
                     .collect();
-                eprintln!(
-                    "ps5slop: GPU {name}: flip gaps over 1 s since the last report (ms): {gaps:?}"
+                tracing::info!(
+                    target: "gpu::stats",
+                    "{name}: flip gaps over 1 s since the last report (ms): {gaps:?}"
                 );
             }
             if let Some(b) = processor.backend.as_ref().filter(|_| name == "graphics") {
-                eprintln!("ps5slop: GPU: Metal: {}", b.summary());
+                tracing::info!(target: "gpu::stats", "Metal: {}", b.summary());
             }
             if !processor.stats.gpu_waits.is_empty() || processor.stats.gpu_indirect > 0 {
-                eprintln!(
-                    "ps5slop: GPU {name}: waits for the GPU by packet: {:?}, indirect dispatches sized on the GPU: {}",
+                tracing::info!(
+                    target: "gpu::stats",
+                    "{name}: waits for the GPU by packet: {:?}, indirect dispatches sized on the GPU: {}",
                     processor.stats.gpu_waits, processor.stats.gpu_indirect
                 );
             }
-            if std::env::var_os("PS5SLOP_GPU_OPCODES").is_some() {
-                eprintln!(
-                    "ps5slop: GPU: packets by opcode: {:x?}",
-                    processor.stats.opcodes
-                );
-            }
+            tracing::debug!(
+                target: "gpu::stats",
+                "{name}: packets by opcode: {:x?}",
+                processor.stats.opcodes
+            );
         }
         if host.kernel.has_exited() {
             break;
@@ -356,7 +358,7 @@ fn enqueue(env: &Env, queue: u64, buffers: Vec<(u64, u32)>) {
             && let Some(b) = backend.get_or_init(new_backend)
             && let Err(e) = gpu::Backend::restore_textures(&mut b.clone(), &textures)
         {
-            eprintln!("ps5slop: save state: GPU textures not restored: {e}");
+            tracing::warn!("save state: GPU textures not restored: {e}");
         }
         let name = if queue == GRAPHICS {
             "graphics".to_string()

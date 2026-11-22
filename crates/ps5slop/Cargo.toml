@@ -12,6 +12,8 @@ window = ["dep:winit", "dep:objc2", "dep:objc2-foundation", "dep:objc2-metal", "
 
 [dependencies]
 savestate = { path = "../savestate" }
+diag = { path = "../diag" }
+tracing.workspace = true
 clap = { version = "4.5", features = ["derive"] }
 hle = { path = "../hle" }
 jit = { path = "../jit" }

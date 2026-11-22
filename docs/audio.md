@@ -9,7 +9,7 @@ A PS5 title hands samples to the system in one of two ways:
 - **AudioOut directly.** The title mixes its own audio, opens a port with `sceAudioOutOpen` and pushes one buffer at a time with `sceAudioOutOutput`, which blocks for about one buffer period. Titles use that blocking as their audio clock.
 - **NGS2, then AudioOut.** The title builds a voice graph in libSceNgs2: sampler voices play waveform blocks, their output ports patch into submixer or mastering voices, and `sceNgs2SystemRender` mixes one grain (256 frames by default) into a buffer the title then passes to `sceAudioOutOutput`.
 
-Balatro (LÖVE) uses the second path: one stereo S16 port of 256 frames, one NGS2 system, a sampler rack (id `0x1000`, up to 128 voices, one per sound) and a mastering rack (id `0x3000`, one stereo voice). Every sound is a 16-bit stereo or mono WAVE file at 48 kHz in `resources/sounds`. Short effects are queued as one block covering the whole file; the five music tracks are streamed in 7 to 16 KiB blocks with the "continue" flag. All of this comes from tracing Balatro's calls (`PS5SLOP_NGS2_TRACE=1`), not from Sony's code.
+Balatro (LÖVE) uses the second path: one stereo S16 port of 256 frames, one NGS2 system, a sampler rack (id `0x1000`, up to 128 voices, one per sound) and a mastering rack (id `0x3000`, one stereo voice). Every sound is a 16-bit stereo or mono WAVE file at 48 kHz in `resources/sounds`. Short effects are queued as one block covering the whole file; the five music tracks are streamed in 7 to 16 KiB blocks with the "continue" flag. All of this comes from tracing Balatro's calls (`RUST_LOG=hle::ngs2=debug`), not from Sony's code.
 
 ## What is implemented
 
@@ -35,7 +35,7 @@ Two choices differ from SharpEmu-mac, both forced by Balatro:
 - A voice ends when it plays out its last block, not whenever its queue is empty. Balatro starts its music voices before queueing their first block, and SharpEmu-mac's rule stopped them at the first render. A voice fed with streamed blocks (flag 1) waits for more instead of ending.
 - A block's sample count is clamped to the data it carries. Balatro's streamed blocks give the whole track's length (for example 8,332,853 frames for a 16 KiB block of `music1.wav`), which SharpEmu-mac refuses for PCM.
 
-Placeholders (`STUBS`, they print `STUB!`): `sceNgs2SystemGetInfo`.
+Placeholders (`STUBS`, they log on the `hle::stub` target): `sceNgs2SystemGetInfo`.
 
 ### libSceAudioIn
 

@@ -74,6 +74,7 @@ fn main() -> ExitCode {
         control,
         load_state,
     } = Cli::parse().command;
+    diag::init_logging();
     let control = control.unwrap_or_else(|| {
         std::env::temp_dir().join(format!("ps5slop-{}.sock", std::process::id()))
     });
@@ -84,55 +85,53 @@ fn main() -> ExitCode {
     {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("ps5slop: {e}");
+            tracing::error!("{e}");
             return ExitCode::FAILURE;
         }
     };
     let title = match Title::open(&path, patch.as_deref(), &passcode) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("ps5slop: {e}");
+            tracing::error!("{e}");
             return ExitCode::FAILURE;
         }
     };
     let file = match title.eboot() {
         Ok(f) => f,
         Err(e) => {
-            eprintln!(
-                "ps5slop: cannot read the executable of {}: {e}",
-                path.display()
-            );
+            tracing::error!("cannot read the executable of {}: {e}", path.display());
             return ExitCode::FAILURE;
         }
     };
     let process = match Process::load(file, title.files().as_deref()) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("ps5slop: {e}");
+            tracing::error!("{e}");
             return ExitCode::FAILURE;
         }
     };
     if !process.unimplemented.is_empty() {
-        eprintln!(
-            "ps5slop: {} imported functions are not implemented yet",
+        tracing::warn!(
+            "{} imported functions are not implemented yet",
             process.unimplemented.len()
         );
-        if std::env::var_os("PS5SLOP_LIST_UNIMPLEMENTED").is_some() {
-            for (library, nid, name) in &process.unimplemented {
-                eprintln!("  {library} {nid} {}", name.as_deref().unwrap_or(""));
-            }
+        for (library, nid, name) in &process.unimplemented {
+            tracing::debug!(
+                "not implemented: {library} {nid} {}",
+                name.as_deref().unwrap_or("")
+            );
         }
     }
     let label = title.label();
     let title_id = title.id();
-    eprintln!("ps5slop: running {label}");
+    tracing::info!("running {label}");
     let data = data.or_else(|| default_data(&title));
     let temp = data.as_ref().map(|d| beside(d, "temp"));
     let saves = data.as_ref().map(|d| beside(d, "savedata"));
     let download = data.as_ref().map(|d| beside(d, "download0"));
     for d in data.iter().chain(&temp).chain(&saves).chain(&download) {
         if let Err(e) = std::fs::create_dir_all(d) {
-            eprintln!("ps5slop: cannot make {}: {e}", d.display());
+            tracing::warn!("cannot make {}: {e}", d.display());
         }
     }
     let mut vfs = hle::Vfs::new(None, data);
@@ -189,7 +188,7 @@ fn main() -> ExitCode {
     match status {
         Ok(code) => ExitCode::from(code as u8),
         Err(e) => {
-            eprintln!("ps5slop: {e}");
+            tracing::error!("{e}");
             ExitCode::FAILURE
         }
     }
@@ -227,8 +226,8 @@ fn check_code(mem: memory::Memory, ms: u64) {
         })
         .collect();
     let total: usize = code.iter().map(|(_, b)| b.len()).sum();
-    eprintln!(
-        "ps5slop: checking {} code regions ({} MiB) every {ms} ms",
+    tracing::info!(
+        "checking {} code regions ({} MiB) every {ms} ms",
         code.len(),
         total >> 20
     );
@@ -247,8 +246,8 @@ fn check_code(mem: memory::Memory, ms: u64) {
                     let last = page.iter().zip(&*now).rposition(|(a, b)| a != b).unwrap();
                     let differ = page.iter().zip(&*now).filter(|(a, b)| a != b).count();
                     let show = first..(first + 32).min(page.len());
-                    eprintln!(
-                        "ps5slop: code changed at {:.3} s: {:#x}..{:#x} ({differ} bytes differ)\n  was {:02x?}\n  now {:02x?}",
+                    tracing::warn!(
+                        "code changed at {:.3} s: {:#x}..{:#x} ({differ} bytes differ)\n  was {:02x?}\n  now {:02x?}",
                         start.elapsed().as_secs_f64(),
                         at + first as u64,
                         at + last as u64 + 1,
@@ -332,7 +331,7 @@ fn play_input(kernel: std::sync::Arc<hle::Kernel>, script: String) {
 
 fn write_frame(kernel: &hle::Kernel, out: &std::path::Path) {
     if let Err(e) = ps5slop::write_frame(kernel, out) {
-        eprintln!("ps5slop: {e}");
+        tracing::error!("{e}");
     }
 }
 
@@ -363,12 +362,8 @@ fn default_data(title: &Title) -> Option<PathBuf> {
     let dir = root.join(&id);
     if let Some(old) = fallback.filter(|old| old.is_dir() && !dir.exists() && *old != dir) {
         match std::fs::rename(&old, &dir) {
-            Ok(()) => eprintln!("ps5slop: moved {} to {}", old.display(), dir.display()),
-            Err(e) => eprintln!(
-                "ps5slop: cannot move {} to {}: {e}",
-                old.display(),
-                dir.display()
-            ),
+            Ok(()) => tracing::info!("moved {} to {}", old.display(), dir.display()),
+            Err(e) => tracing::warn!("cannot move {} to {}: {e}", old.display(), dir.display()),
         }
     }
     Some(dir.join("data"))

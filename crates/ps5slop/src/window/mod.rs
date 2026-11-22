@@ -80,7 +80,7 @@ pub fn run(booted: Booted, label: String) -> Result<i32, Error> {
     let event_loop = match EventLoop::<Wake>::with_user_event().build() {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("ps5slop: cannot open a window ({e}), running without one");
+            tracing::warn!("cannot open a window ({e}), running without one");
             return take(guest);
         }
     };
@@ -107,7 +107,7 @@ pub fn run(booted: Booted, label: String) -> Result<i32, Error> {
         flips_then: 0,
     };
     if let Err(e) = event_loop.run_app(&mut app) {
-        eprintln!("ps5slop: window: {e}");
+        tracing::error!("window: {e}");
     }
     if !kernel.has_exited() {
         kernel.exit(Ok(0));
@@ -252,7 +252,7 @@ impl ApplicationHandler<Wake> for App {
         let window = match event_loop.create_window(attrs) {
             Ok(w) => w,
             Err(e) => {
-                eprintln!("ps5slop: cannot open a window: {e}");
+                tracing::error!("cannot open a window: {e}");
                 event_loop.exit();
                 return;
             }
@@ -260,7 +260,7 @@ impl ApplicationHandler<Wake> for App {
         match Presenter::new(&window) {
             Ok(p) => self.presenter = Some(p),
             Err(e) => {
-                eprintln!("ps5slop: cannot draw into the window: {e}");
+                tracing::error!("cannot draw into the window: {e}");
                 event_loop.exit();
                 return;
             }

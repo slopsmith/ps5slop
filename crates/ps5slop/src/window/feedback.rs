@@ -53,9 +53,9 @@ impl Feedback {
         if controller != self.controller.as_ref() {
             self.reset();
             if let Some(c) = controller {
-                eprintln!("ps5slop: controller: {}", unsafe { describe(c) });
+                tracing::info!("controller: {}", unsafe { describe(c) });
             } else if self.controller.is_some() {
-                eprintln!("ps5slop: controller disconnected");
+                tracing::info!("controller disconnected");
             }
             self.controller = controller.cloned();
             self.applied = None;
@@ -141,7 +141,7 @@ unsafe fn describe(c: &GCController) -> String {
 impl Rumble {
     unsafe fn new(c: &GCController) -> Self {
         let Some(haptics) = (unsafe { c.haptics() }) else {
-            eprintln!("ps5slop: controller: no haptics, vibration ignored");
+            tracing::info!("controller: no haptics, vibration ignored");
             return Self::Single(None);
         };
         let supported = unsafe { haptics.supportedLocalities() };
@@ -168,14 +168,11 @@ impl Motor {
         let engine: Option<Retained<CHHapticEngine>> =
             unsafe { msg_send![haptics, createEngineWithLocality: at] };
         let Some(engine) = engine else {
-            eprintln!("ps5slop: controller: no haptic engine at {at}");
+            tracing::warn!("controller: no haptic engine at {at}");
             return None;
         };
         if let Err(e) = unsafe { engine.startAndReturnError() } {
-            eprintln!(
-                "ps5slop: controller: haptics at {at}: {}",
-                e.localizedDescription()
-            );
+            tracing::warn!("controller: haptics at {at}: {}", e.localizedDescription());
             return None;
         }
         Some(Self {
@@ -231,10 +228,7 @@ impl Motor {
                 })
         };
         if let Err(e) = r {
-            eprintln!(
-                "ps5slop: controller: vibration: {}",
-                e.localizedDescription()
-            );
+            tracing::warn!("controller: vibration: {}", e.localizedDescription());
             *slot = None;
         }
     }

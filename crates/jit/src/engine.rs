@@ -82,7 +82,7 @@ pub(crate) enum Count {
     Region,
 }
 
-/// Statistics mode (`PS5SLOP_JIT_STATS`): what the interpreter runs, by
+/// Statistics mode (the `jit::stats` log target): what the interpreter runs, by
 /// opcode and address, and why the VM is left.
 #[derive(Default)]
 struct Stats {
@@ -176,7 +176,7 @@ thread_local! {
 
 fn stats_on() -> bool {
     static ENV: OnceLock<bool> = OnceLock::new();
-    *ENV.get_or_init(|| std::env::var_os("PS5SLOP_JIT_STATS").is_some()) || crate::profile::on()
+    *ENV.get_or_init(crate::stats_enabled) || crate::profile::on()
 }
 
 /// Runs `f` on this thread's statistics, if statistics or profiling are on.
@@ -256,9 +256,9 @@ fn count_insn(x: &X86, mem: &Memory) {
     });
 }
 
-/// Prints what statistics mode gathered, if it is on.
+/// Logs what statistics mode gathered, if it is on.
 pub fn report(mem: &Memory) {
-    if std::env::var_os("PS5SLOP_JIT_STATS").is_none() {
+    if !crate::stats_enabled() {
         return;
     }
     let Some(s) = stats() else { return };
@@ -267,7 +267,7 @@ pub fn report(mem: &Memory) {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(20);
-    eprintln!("ps5slop: JIT statistics: {jit} instructions translated, {interp} interpreted");
+    let mut out = format!("{jit} instructions translated, {interp} interpreted");
     let names = [
         "lookup misses",
         "untranslated",
@@ -285,21 +285,21 @@ pub fn report(mem: &Memory) {
         .zip(s.exits)
         .map(|(n, c)| format!("{n} {c}"))
         .collect();
-    eprintln!("  exits: {}", exits.join(", "));
+    out += &format!("\n  exits: {}", exits.join(", "));
     let mut ops: Vec<_> = s.opcodes.iter().collect();
     ops.sort_by(|a, b| b.1.cmp(a.1));
-    eprintln!("  interpreted opcodes (map, opcode, /ext):");
+    out += "\n  interpreted opcodes (map, opcode, /ext):";
     for ((map, op, ext), n) in ops.iter().take(top.max(30)) {
         let ext = if *ext == 0xff {
             String::new()
         } else {
             format!(" /{ext}")
         };
-        eprintln!("    {n:>12}  map {map} {op:02x}{ext}");
+        out += &format!("\n    {n:>12}  map {map} {op:02x}{ext}");
     }
     let mut rips: Vec<_> = s.rips.iter().collect();
     rips.sort_by(|a, b| b.1.cmp(a.1));
-    eprintln!("  interpreted addresses:");
+    out += "\n  interpreted addresses:";
     for (rip, n) in rips.iter().take(top) {
         let mut code = [0u8; 15];
         let bytes = match mem.fetch(**rip, &mut code) {
@@ -310,8 +310,9 @@ pub fn report(mem: &Memory) {
                 .join(" "),
             Err(_) => String::new(),
         };
-        eprintln!("    {n:>12}  {rip:#x}  {bytes}");
+        out += &format!("\n    {n:>12}  {rip:#x}  {bytes}");
     }
+    tracing::info!(target: "jit::stats", "{out}");
 }
 
 fn count_interpreted(n: u64) {
@@ -395,8 +396,9 @@ fn log_probe(x: &X86, mem: &Memory) {
     let r = &x.regs;
     let mut at_rax = [0u8; 32];
     let _ = mem.read(r[RAX], &mut at_rax);
-    eprintln!(
-        "ps5slop: probe {:#x} rax {:#x} rbx {:#x} rcx {:#x} rdx {:#x} rsi {:#x} rdi {:#x} r8 {:#x} r9 {:#x} rsp {:#x} xmm0 {} [rax] {:02x?}",
+    tracing::info!(
+        target: "jit::probe",
+        "{:#x} rax {:#x} rbx {:#x} rcx {:#x} rdx {:#x} rsi {:#x} rdi {:#x} r8 {:#x} r9 {:#x} rsp {:#x} xmm0 {} [rax] {:02x?}",
         x.rip,
         r[RAX],
         r[RBX],
@@ -988,15 +990,16 @@ impl Engine {
         if diffs.is_empty() {
             return Ok(Entry::Dispatch(self.cpsr()? & NZCV));
         }
-        eprintln!("ps5slop: JIT verify: the block at {rip:#x} ({insns} instructions) differs:");
+        let mut report = format!("the block at {rip:#x} ({insns} instructions) differs:");
         for d in diffs {
-            eprintln!("  {d}");
+            report += &format!("\n  {d}");
         }
         let mut code = [0u8; 64];
         if mem.fetch(rip, &mut code).is_ok() {
             let hex: Vec<String> = code.iter().map(|b| format!("{b:#04x}")).collect();
-            eprintln!("  code: {}", hex.join(" "));
+            report += &format!("\n  code: {}", hex.join(" "));
         }
+        tracing::error!("verify: {report}");
         for (&addr, &b) in &last {
             mem.write_host(addr, &[b])
                 .expect("the interpreter just wrote there");
@@ -1006,12 +1009,12 @@ impl Engine {
     }
 }
 
-/// Where to go on after a cancel at `pc`. A cancel inside the resume stub
-/// keeps the stub's own target, which ELR no longer holds.
 /// How long a stopped thread may keep running translated code before it
 /// leaves at a kick, with registers from its last VM entry.
 const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Where to go on after a cancel at `pc`. A cancel inside the resume stub
+/// keeps the stub's own target, which ELR no longer holds.
 fn resume_after_cancel(previous: Entry, pc: u64, cpsr: u64) -> Entry {
     let stub = crate::layout::va(RESUME_FLUSH)..crate::layout::va(crate::DISPATCH);
     match previous {

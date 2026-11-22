@@ -113,8 +113,8 @@ fn json_parse(env: &mut Env) -> Result<Outcome, CallError> {
     let size = (env.arg(2) as usize).min(256);
     let mut text = vec![0u8; size];
     if env.mem.read(env.arg(1), &mut text).is_ok() {
-        eprintln!(
-            "ps5slop: sce::Json::Parser::parse({:?})",
+        tracing::debug!(
+            "sce::Json::Parser::parse({:?})",
             String::from_utf8_lossy(&text)
         );
     }

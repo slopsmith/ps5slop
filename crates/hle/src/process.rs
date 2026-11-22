@@ -628,21 +628,19 @@ impl Kernel {
                         _ => bytes(),
                     };
                     if let CpuFault::Memory(f) = kind {
-                        eprintln!(
-                            "ps5slop: fault at {:#x}: region {}",
+                        let mut report = format!(
+                            "fault at {:#x}: region {}",
                             f.addr,
                             mem.describe_region(f.addr).unwrap_or_else(|| "none".into())
                         );
                         for line in mem.changes_near(f.addr, 1 << 20) {
-                            eprintln!("  {line}");
+                            report += &format!("\n  {line}");
                         }
+                        tracing::error!("{report}");
                     }
                     let frames = return_addresses(&mem, cpu.regs[RBP]);
                     if !frames.is_empty() {
-                        eprintln!(
-                            "ps5slop: return addresses by frame pointer: {}",
-                            frames.join(" ")
-                        );
+                        tracing::error!("return addresses by frame pointer: {}", frames.join(" "));
                     }
                     let recent = jit::recent_blocks();
                     if std::env::var_os("PS5SLOP_JIT_TRACE").is_some() && !recent.is_empty() {
@@ -654,8 +652,8 @@ impl Kernel {
                         ));
                     }
                     if std::env::var_os("PS5SLOP_HOLD_ON_FAULT").is_some() {
-                        eprintln!(
-                            "ps5slop: fault {kind:?} at {:#x} held (PS5SLOP_HOLD_ON_FAULT); `quit` ends it\n{}",
+                        tracing::error!(
+                            "fault {kind:?} at {:#x} held (PS5SLOP_HOLD_ON_FAULT); `quit` ends it\n{}",
                             cpu.rip,
                             dump(&cpu)
                         );

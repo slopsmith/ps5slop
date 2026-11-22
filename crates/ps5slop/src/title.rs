@@ -59,7 +59,7 @@ impl Title {
                     path.display()
                 )
             })?;
-            eprintln!("ps5slop: base package {}", base_path.display());
+            tracing::info!("base package {}", base_path.display());
             let base = open_package(&base_path)?;
             (base_path, base, Some((path.to_path_buf(), package)))
         } else {

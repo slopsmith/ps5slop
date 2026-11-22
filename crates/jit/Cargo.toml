@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 a64 = { path = "../a64" }
+diag = { path = "../diag" }
+tracing.workspace = true
 hvf = { path = "../hvf" }
 memory = { path = "../memory" }
 x86 = { path = "../x86" }

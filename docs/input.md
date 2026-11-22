@@ -14,7 +14,7 @@ Background events are on (`shouldMonitorBackgroundEvents`), so a controller keep
 
 ## Controller output
 
-The guest's calls only record what it wants in `PadOutput`; the window applies changes to the current controller on its next poll, and applies the whole state again when a different controller appears. Nothing happens when no controller is connected, and calls still succeed. `scePadClose` and the window closing stop the motors and switch trigger effects off. `PS5SLOP_PAD_TRACE=1` logs each change of `PadOutput` with the call that caused it.
+The guest's calls only record what it wants in `PadOutput`; the window applies changes to the current controller on its next poll, and applies the whole state again when a different controller appears. Nothing happens when no controller is connected, and calls still succeed. `scePadClose` and the window closing stop the motors and switch trigger effects off. `RUST_LOG=hle::pad=debug` logs each change of `PadOutput` with the call that caused it.
 
 | Call | Parameter (unverified on a PS5) | Host |
 | --- | --- | --- |
@@ -55,7 +55,7 @@ None beyond the hypervisor entitlement. GameController works in an unbundled, un
 ## What is verified
 
 - Parameter decoding: unit tests in `pad.rs` (trigger mask, every mode's bytes, rejection of unknown modes) and the scale mapping in `feedback.rs`.
-- Isaac (2026-11-20, headless, `PS5SLOP_PAD_TRACE=1`): at start it calls `scePadSetVibrationMode(handle, 2)`; a bomb explosion in a run gives `scePadSetVibration` with `(255, 255)` and then `(0, 0)`. It does not set the light bar or trigger effects.
+- Isaac (2026-11-20, headless, `RUST_LOG=hle::pad=debug`): at start it calls `scePadSetVibrationMode(handle, 2)`; a bomb explosion in a run gives `scePadSetVibration` with `(255, 255)` and then `(0, 0)`. It does not set the light bar or trigger effects.
 - Isaac with the window and a Bluetooth DualShock 4 (2026-11-20): the controller is detected and described; a bomb explosion rumbles the controller (felt by vic) and stops afterwards.
 
 - GTA V (2026-11-21, headless, control socket): its pad thread reads `scePadReadState` on handle 1 about 75 times a second and gates on the connected byte at offset 0x4C; `press cross` reached its per-pad state and moved its menus (see [hle-kernel.md](hle-kernel.md)).

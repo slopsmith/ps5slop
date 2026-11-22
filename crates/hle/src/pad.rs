@@ -230,18 +230,13 @@ impl Kernel {
     }
 }
 
-fn trace() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("PS5SLOP_PAD_TRACE").is_some())
-}
-
-/// Changes the output state, and logs the change when tracing.
+/// Changes the output state, and logs the change.
 fn update_output(env: &Env, call: &str, change: impl FnOnce(&mut PadOutput)) {
     let mut out = lock(&env.kernel.pad.output);
     let before = *out;
     change(&mut out);
-    if trace() && *out != before {
-        eprintln!("ps5slop: pad: {call}: {:?}", *out);
+    if *out != before {
+        tracing::debug!("{call}: {:?}", *out);
     }
 }
 

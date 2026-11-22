@@ -129,7 +129,7 @@ pub fn start_sampler() {
             }
         });
     if let Err(e) = spawned {
-        eprintln!("ps5slop: cannot start the JIT sampler: {e}");
+        tracing::error!("cannot start the JIT sampler: {e}");
     }
 }
 
@@ -177,8 +177,8 @@ impl Machine {
             return;
         };
         if EVICTIONS.fetch_add(1, Ordering::Relaxed) == 0 {
-            eprintln!(
-                "ps5slop: the JIT's code cache is full; evicting its coldest segments from now on"
+            tracing::warn!(
+                "the JIT's code cache is full; evicting its coldest segments from now on"
             );
         }
         self.evict(s);

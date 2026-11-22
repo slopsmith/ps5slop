@@ -52,11 +52,11 @@ pub fn serve(kernel: Arc<Kernel>, path: PathBuf) {
     let listener = match UnixListener::bind(&path) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("ps5slop: cannot listen on {}: {e}", path.display());
+            tracing::error!("cannot listen on {}: {e}", path.display());
             return;
         }
     };
-    eprintln!("ps5slop: control socket at {}", path.display());
+    tracing::info!("control socket at {}", path.display());
     std::thread::spawn(move || {
         for conn in listener.incoming() {
             let Ok(conn) = conn else { continue };

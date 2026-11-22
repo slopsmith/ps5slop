@@ -78,12 +78,6 @@ fn ok(_: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// Whether `PS5SLOP_NGS2_TRACE` asks for a log of voice controls.
-fn tracing() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("PS5SLOP_NGS2_TRACE").is_some())
-}
-
 struct System {
     grain: usize,
     rate: u32,
@@ -269,9 +263,7 @@ fn rack_voice(env: &mut Env) -> Result<Outcome, CallError> {
             h
         }
     };
-    if tracing() {
-        eprintln!("ngs2: rack {rack:#x} voice {index} is {handle:#x}");
-    }
+    tracing::debug!("rack {rack:#x} voice {index} is {handle:#x}");
     env.mem.write_u64(out, handle)?;
     ret(0)
 }

@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 savestate = { path = "../savestate" }
+diag = { path = "../diag" }
+tracing.workspace = true
 gfx10 = { path = "../gfx10" }
 
 [target.'cfg(target_os = "macos")'.dependencies]

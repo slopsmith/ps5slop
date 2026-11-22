@@ -81,13 +81,6 @@ fn wait_submissions() -> bool {
     *WAIT.get_or_init(|| std::env::var_os("PS5SLOP_GPU_WAIT_SUBMISSIONS").is_some())
 }
 
-/// Whether waits, releases and memory writes are logged with their queue
-/// (`PS5SLOP_GPU_TRACE_SYNC`).
-fn trace_sync() -> bool {
-    static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *TRACE.get_or_init(|| std::env::var_os("PS5SLOP_GPU_TRACE_SYNC").is_some())
-}
-
 /// Whether every dispatch is waited for (`PS5SLOP_GPU_SYNC_DISPATCHES`), so a
 /// program that never ends is the last one traced.
 fn sync_dispatches() -> bool {
@@ -120,30 +113,24 @@ fn probed(program: u64) -> bool {
 
 /// Reports a packet form the processor drops, once per form and register.
 fn unhandled(what: std::fmt::Arguments) {
-    static SEEN: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
-        std::sync::Mutex::new(None);
+    static SEEN: diag::Distinct = diag::Distinct::new(usize::MAX);
     let what = what.to_string();
-    if SEEN
-        .lock()
-        .unwrap()
-        .get_or_insert_default()
-        .insert(what.clone())
-    {
-        eprintln!("ps5slop: GPU: {what} dropped");
+    if SEEN.first(&what) {
+        tracing::warn!("{what} dropped");
     }
 }
 
+/// Logs a submission, wait, release or memory write with its queue (the `gpu::sync` target).
 fn trace(what: std::fmt::Arguments) {
-    if trace_sync() {
-        eprintln!(
-            "ps5slop: GPU sync {:.3} [{}]: {what}",
-            crate::seconds(),
-            std::thread::current().name().unwrap_or("?")
-        );
-    }
+    tracing::debug!(
+        target: "gpu::sync",
+        "{:.3} [{}]: {what}",
+        crate::seconds(),
+        std::thread::current().name().unwrap_or("?")
+    );
 }
 
-/// `PS5SLOP_GPU_TRACE_SYNC`: a line in the sync trace from outside the command processors.
+/// A line in the sync trace from outside the command processors.
 pub fn trace_sync_event(what: std::fmt::Arguments) {
     trace(what);
 }
@@ -622,7 +609,6 @@ impl Processor {
             IT_DRAW_INDEX_AUTO if !p.is_empty() => self.draw(
                 host,
                 op,
-                p,
                 Draw::Auto {
                     count: p[0],
                     instances: self.instances,
@@ -634,7 +620,7 @@ impl Processor {
                     address: addr(p[1], p[2]),
                     instances: self.instances,
                 };
-                self.draw(host, op, p, draw)
+                self.draw(host, op, draw)
             }
             IT_DRAW_INDEX_OFFSET_2 if p.len() >= 3 => {
                 let size = if self.uconfig[0x243] & 3 == 1 { 4 } else { 2 };
@@ -644,7 +630,7 @@ impl Processor {
                     address,
                     instances: self.instances,
                 };
-                self.draw(host, op, p, draw)
+                self.draw(host, op, draw)
             }
             IT_SET_BASE if p.len() >= 3 && p[0] & 0xF == 1 => self.indirect_base = addr(p[1], p[2]),
             IT_DMA_DATA if p.len() >= 6 => self.dma_data(host, p),
@@ -655,7 +641,6 @@ impl Processor {
                 self.draw(
                     host,
                     op,
-                    p,
                     Draw::Indexed {
                         count: a[0],
                         address,
@@ -668,7 +653,6 @@ impl Processor {
                 self.draw(
                     host,
                     op,
-                    p,
                     Draw::Auto {
                         count: a[0],
                         instances: a[1].max(1),
@@ -775,7 +759,7 @@ impl Processor {
                     }
                     if deadline.passed() {
                         self.stats.timeouts += 1;
-                        eprintln!("ps5slop: GPU: semaphore wait at {address:#x} timed out");
+                        tracing::warn!("semaphore wait at {address:#x} timed out");
                         return;
                     }
                     std::thread::sleep(Duration::from_micros(200));
@@ -804,8 +788,8 @@ impl Processor {
         while !valid(host) && !host.exiting() {
             if !warned && start.elapsed() > WAIT_LIMIT {
                 warned = true;
-                eprintln!(
-                    "ps5slop: GPU: REWIND at {:#x} still not valid after {} s",
+                tracing::warn!(
+                    "REWIND at {:#x} still not valid after {} s",
                     body - 4,
                     WAIT_LIMIT.as_secs()
                 );
@@ -846,12 +830,11 @@ impl Processor {
             && self.backend.is_some()
             && !synchronous_releases()
         {
-            if std::env::var_os("PS5SLOP_TRACE_DMA").is_some() {
-                eprintln!(
-                    "ps5slop: DMA_DATA fill {dst:#x} {bytes:#x} bytes with {:#x}, queued",
-                    p[1]
-                );
-            }
+            tracing::debug!(
+                target: "gpu::dma",
+                "fill {dst:#x} {bytes:#x} bytes with {:#x}, queued",
+                p[1]
+            );
             let n = if dst_fixed { 1 } else { bytes / 4 };
             self.write_values(host, dst, &vec![p[1]; n], dst_fixed);
             return;
@@ -884,17 +867,16 @@ impl Processor {
                 host.read(src, &mut data);
             }
         }
-        if std::env::var_os("PS5SLOP_TRACE_DMA").is_some() {
-            eprintln!(
-                "ps5slop: DMA_DATA src_sel {src_sel} {src:#x} dst_sel {dst_sel} {dst:#x} {bytes:#x} bytes, first word {:#x}",
-                u32::from_le_bytes([
-                    data[0],
-                    *data.get(1).unwrap_or(&0),
-                    *data.get(2).unwrap_or(&0),
-                    *data.get(3).unwrap_or(&0)
-                ])
-            );
-        }
+        tracing::debug!(
+            target: "gpu::dma",
+            "src_sel {src_sel} {src:#x} dst_sel {dst_sel} {dst:#x} {bytes:#x} bytes, first word {:#x}",
+            u32::from_le_bytes([
+                data[0],
+                *data.get(1).unwrap_or(&0),
+                *data.get(2).unwrap_or(&0),
+                *data.get(3).unwrap_or(&0)
+            ])
+        );
         if dst_fixed {
             let n = data.len().min(4);
             data.drain(..data.len() - n);
@@ -928,16 +910,17 @@ impl Processor {
         if probed(program) {
             let user = &self.sh
                 [crate::regs::sh::COMPUTE_USER_DATA_0..crate::regs::sh::COMPUTE_USER_DATA_0 + 16];
-            eprintln!(
-                "ps5slop: GPU probe [{}]: dispatch {groups:?} of {program:#x}, user data {user:x?}",
+            tracing::info!(
+                target: "gpu::probe",
+                "[{}]: dispatch {groups:?} of {program:#x}, user data {user:x?}",
                 std::thread::current().name().unwrap_or("?")
             );
         }
         if total > MAX_GROUPS {
             self.stats.huge_dispatches += 1;
             if self.stats.huge_dispatches <= 16 {
-                eprintln!(
-                    "ps5slop: GPU: dispatch of {groups:?} groups of the program at {program:#x} skipped"
+                tracing::error!(
+                    "dispatch of {groups:?} groups of the program at {program:#x} skipped"
                 );
             }
             return;
@@ -1033,8 +1016,9 @@ impl Processor {
             if self.watched.is_some() {
                 let user = &self.sh[crate::regs::sh::COMPUTE_USER_DATA_0
                     ..crate::regs::sh::COMPUTE_USER_DATA_0 + 16];
-                eprintln!(
-                    "ps5slop: GPU watch {:.3}: {at:#x} {:#x?} -> {now:#x} after {} on {} (compute user {user:x?})",
+                tracing::info!(
+                    target: "gpu::watch",
+                    "{:.3}: {at:#x} {:#x?} -> {now:#x} after {} on {} (compute user {user:x?})",
                     crate::seconds(),
                     self.watched,
                     what(),
@@ -1045,9 +1029,8 @@ impl Processor {
         }
     }
 
-    fn draw(&mut self, host: &dyn Host, op: u32, p: &[u32], draw: Draw) {
+    fn draw(&mut self, host: &dyn Host, op: u32, draw: Draw) {
         self.stats.draws += 1;
-        self.dump_draw(op, p);
         if let Some(b) = self.backend.as_mut() {
             let state = State {
                 context: &self.context,
@@ -1077,89 +1060,6 @@ impl Processor {
             b.sync();
             crate::timing::add(crate::timing::Part::Sync, t);
         }
-    }
-
-    fn dump_draw(&self, op: u32, p: &[u32]) {
-        static LEFT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(i64::MIN);
-        use std::sync::atomic::Ordering::Relaxed;
-        if LEFT.load(Relaxed) == i64::MIN {
-            let n = std::env::var("PS5SLOP_GPU_DUMP")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0);
-            LEFT.store(n, Relaxed);
-        }
-        static SKIP: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(i64::MIN);
-        if SKIP.load(Relaxed) == i64::MIN {
-            let n = std::env::var("PS5SLOP_GPU_DUMP_SKIP")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0);
-            SKIP.store(n, Relaxed);
-        }
-        if SKIP.load(Relaxed) > 0 {
-            SKIP.fetch_sub(1, Relaxed);
-            return;
-        }
-        if LEFT.fetch_sub(1, Relaxed) <= 0 {
-            return;
-        }
-        let c = &self.context;
-        let sh = &self.sh;
-        let u = &self.uconfig;
-        eprintln!("DRAW op={op:#x} payload={:x?}", p);
-        for (name, lo) in [
-            ("PS", 0x08usize),
-            ("VS", 0x48),
-            ("GS", 0x88),
-            ("ES", 0xC8),
-            ("HS", 0x108),
-            ("LS", 0x148),
-        ] {
-            if sh[lo] != 0 || sh[lo + 1] != 0 {
-                eprintln!(
-                    "  {name} pgm={:#x} rsrc1={:#x} rsrc2={:#x} user={:x?}",
-                    (sh[lo] as u64 | (sh[lo + 1] as u64) << 32) << 8,
-                    sh[lo + 2],
-                    sh[lo + 3],
-                    &sh[lo + 4..lo + 20]
-                );
-            }
-        }
-        eprintln!(
-            "  stages={:#x} prim={:#x} idx={:#x} cb0 base={:#x} ext={:#x} view={:#x} info={:#x} attrib={:#x} attrib2={:#x} attrib3={:#x} target_mask={:#x} color_ctl={:#x} blend0={:#x}",
-            c[0x2D5],
-            u[0x242],
-            u[0x243],
-            c[0x318],
-            c[0x390],
-            c[0x31B],
-            c[0x31C],
-            c[0x31D],
-            c[0x3B0],
-            c[0x3B8],
-            c[0x8E],
-            c[0x202],
-            c[0x1E0]
-        );
-        eprintln!(
-            "  vport scale/off={:?} scissor={:#x}/{:#x} vte={:#x} spi_ps_in={:#x}/{:#x} col_fmt={:#x} z_info={:#x} depth_ctl={:#x} ps_input_cntl0={:#x} vs_out={:#x} pos_fmt={:#x}",
-            c[0x10F..0x115]
-                .iter()
-                .map(|&v| f32::from_bits(v))
-                .collect::<Vec<_>>(),
-            c[0x90],
-            c[0x91],
-            c[0x206],
-            c[0x1B3],
-            c[0x1B4],
-            c[0x1C5],
-            c[0x10],
-            c[0x200],
-            c[0x191],
-            c[0x1B1],
-            c[0x1C3]
-        );
     }
 
     /// SET_*_REG: a register offset (relative to the bank), then values.
@@ -1583,8 +1483,8 @@ impl Processor {
             if deadline.passed() {
                 self.stats.timeouts += 1;
                 if self.stats.timeouts <= 16 {
-                    eprintln!(
-                        "ps5slop: GPU: wait timed out on {}: {address:#x} & {mask:#x} = {value:#x}, function {}, reference {reference:#x}",
+                    tracing::warn!(
+                        "wait timed out on {}: {address:#x} & {mask:#x} = {value:#x}, function {}, reference {reference:#x}",
                         std::thread::current().name().unwrap_or("?"),
                         control & 7
                     );

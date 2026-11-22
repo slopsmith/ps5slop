@@ -146,7 +146,7 @@ fn msg_open(env: &mut Env) -> Result<Outcome, CallError> {
             .unwrap_or_default(),
         _ => String::new(),
     };
-    eprintln!("ps5slop: message dialog (mode {mode}): {text:?}");
+    tracing::info!("message dialog (mode {mode}): {text:?}");
     set(&MSG, FINISHED)
 }
 
@@ -163,13 +163,13 @@ fn msg_result(env: &mut Env) -> Result<Outcome, CallError> {
 /// `sceSaveDataDialogOpen(param)`: its result is left as the caller
 /// initialised it, since we know no layout for it.
 fn save_open(_: &mut Env) -> Result<Outcome, CallError> {
-    eprintln!("ps5slop: save data dialog opened; finished at once");
+    tracing::info!("save data dialog opened; finished at once");
     set(&SAVE, FINISHED)
 }
 
 /// `sceSigninDialogOpen(param)`.
 fn signin_open(_: &mut Env) -> Result<Outcome, CallError> {
-    eprintln!("ps5slop: sign-in dialog opened; answering \"cancelled\"");
+    tracing::info!("sign-in dialog opened; answering \"cancelled\"");
     set(&SIGNIN, FINISHED)
 }
 

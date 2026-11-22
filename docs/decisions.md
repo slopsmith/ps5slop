@@ -661,3 +661,7 @@ GTA V's compute programs that work on data beginning with "PSR_BVHL" (0x4203300,
 ## 2026-11-22: Audio and video decoding through FFmpeg, later
 
 When GTA V gets real audio, its MP3 Ajm jobs will decode through FFmpeg (an LGPL build, compatible with GPL-2.0-or-later), so the same dependency can serve video playback later. Reason: vic's choice. Not started; Ajm MP3 jobs return silence until then.
+
+## 2026-11-22: Logging through `tracing`
+
+Diagnostics go through the `tracing` crate with `tracing-subscriber`'s `EnvFilter`, set up by the new `diag` crate, instead of `eprintln!` with hand-typed prefixes. Errors and warnings show by default, the rest by `RUST_LOG` ([debugging.md](debugging.md#logging)). Switches that only turned on a trace became log targets (`PS5SLOP_GPU_STATS`, `GPU_OPCODES`, `GPU_TRACE_SYNC`, `COMPILE_LOG`, `MSL_DUMP`, `MSL_ERRORS`, `TRACE_TARGETS`, `TRACE_DMA`, `TRACE_FILES`, `TRACE_APR`, `TRACE_ALIAS`, `TRACE_SHOT`, `PAD_TRACE`, `NGS2_TRACE`, `JIT_STATS`, `LIST_UNIMPLEMENTED`), and `PS5SLOP_GPU_DUMP` was removed: `gputrace` with `PS5SLOP_TRACE_REGS` shows the same registers. Reason: vic found the ad hoc output hard to read and to filter; `tracing` is the common choice for Rust programs with threads and gives per-subsystem filtering without our own code. Output asked for by a switch or a control-socket command (`gputrace`, probes, watches) is on by default, since asking for it is the filter.

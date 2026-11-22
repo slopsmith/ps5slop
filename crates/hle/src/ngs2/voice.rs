@@ -9,7 +9,7 @@ use super::waveform::{self, BLOCK_SIZE};
 use super::{
     ERROR_INVALID_CONTROL_ADDRESS, ERROR_INVALID_CONTROL_ID, ERROR_INVALID_CONTROL_SIZE,
     ERROR_INVALID_VOICE_HANDLE, ERROR_INVALID_WAVEFORM_FORMAT, RACK_CUSTOM_SAMPLER, RACK_SAMPLER,
-    ret, tracing,
+    ret,
 };
 use crate::pthread::lock;
 use crate::{CallError, Env, Outcome};
@@ -210,12 +210,10 @@ impl Voice {
             let skip = u32_at(&d, 20);
             let samples = u32_at(&d, 24);
             let available = length / frame as u64;
-            if tracing() {
-                eprintln!(
-                    "ngs2: block +{offset:#x} len {length:#x} repeats {} skip {skip} samples {samples} flags {flags:#x}",
-                    u32_at(&d, 16)
-                );
-            }
+            tracing::debug!(
+                "block +{offset:#x} len {length:#x} repeats {} skip {skip} samples {samples} flags {flags:#x}",
+                u32_at(&d, 16)
+            );
             if available < skip as u64 {
                 return Ok(ERROR_INVALID_WAVEFORM_FORMAT);
             }
@@ -442,15 +440,10 @@ pub(super) fn control(env: &mut Env) -> Result<Outcome, CallError> {
         }
         let len = size.min(d.len());
         env.mem.read(at, &mut d[..len])?;
-        if tracing() {
-            eprintln!(
-                "ngs2: voice {handle:#x} control {id:#x} {:02x?}",
-                &d[8..len]
-            );
-        }
+        tracing::debug!("voice {handle:#x} control {id:#x} {:02x?}", &d[8..len]);
         let r = voice.apply(env, id, &d[..len])?;
-        if tracing() && r != 0 {
-            eprintln!("ngs2: voice {handle:#x} control {id:#x} failed with {r:#x}");
+        if r != 0 {
+            tracing::debug!("voice {handle:#x} control {id:#x} failed with {r:#x}");
         }
         if r != 0 || next == 0 {
             return ret(r);
@@ -473,9 +466,7 @@ pub(super) fn run_commands(env: &mut Env) -> Result<Outcome, CallError> {
     for i in 0..count {
         let mut r = [0u8; 16];
         env.mem.read(at + 16 * i, &mut r)?;
-        if tracing() {
-            eprintln!("ngs2: voice {handle:#x} command {r:02x?}");
-        }
+        tracing::debug!("voice {handle:#x} command {r:02x?}");
         let result = voice.command(env, &r)?;
         if result != 0 {
             return ret(result);

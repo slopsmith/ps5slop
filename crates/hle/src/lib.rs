@@ -257,11 +257,11 @@ struct Stub {
     nid: String,
     library: String,
     func: Option<&'static Function>,
-    /// Calls so far, when `func` is a placeholder (see [`placeholders`]).
-    stub_calls: Option<std::sync::atomic::AtomicU32>,
+    /// Limits the reports of calls when `func` is a placeholder (see [`placeholders`]).
+    stub_calls: Option<diag::FirstN>,
 }
 
-/// Calls of one placeholder reported on stderr before it goes quiet.
+/// Calls of one placeholder reported before it goes quiet.
 const STUB_REPORTS: u32 = 5;
 
 pub struct Hle {
@@ -359,7 +359,7 @@ impl Hle {
                     nid: key.0.clone(),
                     library: key.1.clone(),
                     func,
-                    stub_calls: placeholder.then(Default::default),
+                    stub_calls: placeholder.then(|| diag::FirstN::new(STUB_REPORTS)),
                 });
                 self.stub_index.insert(key, i);
                 i
@@ -498,8 +498,19 @@ impl Hle {
     fn return_zero_unimplemented(&self, stub: &Stub, env: &mut Env) -> Result<Outcome, CallError> {
         let sp = env.cpu.regs[RSP];
         let ret = env.mem.read_u64(sp)?;
-        eprintln!(
-            "UNIMPLEMENTED (returning 0) {} {} {}({:#x}, {:#x}, {:#x}, {:#x}) from {ret:#x}",
+        let mut args = String::new();
+        if std::env::var("PS5SLOP_UNIMPLEMENTED_ZERO").as_deref() == Ok("dump") {
+            for n in 0..6 {
+                let mut b = [0u8; 32];
+                if env.mem.read(env.arg(n), &mut b).is_ok() {
+                    let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
+                    args += &format!("\n  arg {n} -> {}", hex.join(" "));
+                }
+            }
+        }
+        tracing::warn!(
+            target: "hle::stub",
+            "UNIMPLEMENTED (returning 0) {} {} {}({:#x}, {:#x}, {:#x}, {:#x}) from {ret:#x}{args}",
             stub.library,
             stub.nid,
             self.name_of(&stub.nid).unwrap_or("?"),
@@ -508,15 +519,6 @@ impl Hle {
             env.arg(2),
             env.arg(3),
         );
-        if std::env::var("PS5SLOP_UNIMPLEMENTED_ZERO").as_deref() == Ok("dump") {
-            for n in 0..6 {
-                let mut b = [0u8; 32];
-                if env.mem.read(env.arg(n), &mut b).is_ok() {
-                    let hex: Vec<String> = b.iter().map(|x| format!("{x:02x}")).collect();
-                    eprintln!("  arg {n} -> {}", hex.join(" "));
-                }
-            }
-        }
         env.cpu.rip = ret;
         env.cpu.regs[RSP] = sp + 8;
         env.cpu.regs[RAX] = 0;
@@ -531,30 +533,30 @@ fn unimplemented_return_zero() -> bool {
     *ON.get_or_init(|| std::env::var_os("PS5SLOP_UNIMPLEMENTED_ZERO").is_some())
 }
 
-/// Prints `STUB! library: name(args) -> result` for a placeholder's first
-/// calls; the arguments are the first four argument registers.
+/// Logs `library: name(args) -> result` for a placeholder's first calls;
+/// the arguments are the first four argument registers.
 fn report_stub(
     f: &Function,
-    calls: &std::sync::atomic::AtomicU32,
+    calls: &diag::FirstN,
     args: [u64; 4],
     out: &Result<Outcome, CallError>,
 ) {
-    let n = calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if n >= STUB_REPORTS {
+    let Some(last) = calls.next() else {
         return;
-    }
+    };
     let result = match out {
         Ok(Outcome::Return(v)) => format!("Ok({v:#x})"),
         Ok(o) => format!("{o:?}"),
         Err(e) => format!("Err({e})"),
     };
-    let quiet = if n + 1 == STUB_REPORTS {
+    let quiet = if last {
         " (further calls not shown)"
     } else {
         ""
     };
-    eprintln!(
-        "STUB! {}: {}({:#x}, {:#x}, {:#x}, {:#x}, ...) -> {result}{quiet}",
+    tracing::warn!(
+        target: "hle::stub",
+        "{}: {}({:#x}, {:#x}, {:#x}, {:#x}, ...) -> {result}{quiet}",
         f.library, f.name, args[0], args[1], args[2], args[3]
     );
 }
@@ -645,18 +647,18 @@ fn names() -> HashMap<String, String> {
                     names.entry(nid(name)).or_insert_with(|| name.to_owned());
                 }
             }
-            Err(e) => eprintln!("ps5slop: cannot read {}: {e}", path.to_string_lossy()),
+            Err(e) => tracing::warn!("cannot read {}: {e}", path.to_string_lossy()),
         }
     }
     names
 }
 
-/// Host calls by function, counted in statistics mode (`PS5SLOP_JIT_STATS`).
+/// Host calls by function, counted in statistics mode (the `jit::stats` log target).
 fn calls() -> Option<&'static std::sync::Mutex<HashMap<&'static str, u64>>> {
     static CALLS: std::sync::OnceLock<Option<std::sync::Mutex<HashMap<&'static str, u64>>>> =
         std::sync::OnceLock::new();
     CALLS
-        .get_or_init(|| std::env::var_os("PS5SLOP_JIT_STATS").map(|_| Default::default()))
+        .get_or_init(|| jit::stats_enabled().then(Default::default))
         .as_ref()
 }
 
@@ -669,7 +671,7 @@ fn count_call(f: &Function) {
     }
 }
 
-/// Prints the host calls statistics mode counted, most frequent first.
+/// Logs the host calls statistics mode counted, most frequent first.
 pub fn report_calls() {
     let Some(c) = calls() else { return };
     let c = c.lock().unwrap_or_else(|e| e.into_inner());
@@ -679,10 +681,11 @@ pub fn report_calls() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(20);
-    eprintln!("  host calls:");
+    let mut report = String::from("host calls:");
     for (name, n) in v.iter().take(top) {
-        eprintln!("    {n:>12}  {name}");
+        report += &format!("\n    {n:>12}  {name}");
     }
+    tracing::info!(target: "jit::stats", "{report}");
 }
 
 impl Resolver for Hle {

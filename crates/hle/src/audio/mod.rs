@@ -202,7 +202,7 @@ impl Audio {
         match coreaudio::start(self.mixer.clone()) {
             Ok(()) => *d = Device::Running,
             Err(status) => {
-                eprintln!("ps5slop: no audio output (AudioQueue error {status})");
+                tracing::warn!("no audio output (AudioQueue error {status})");
                 *d = Device::Off;
             }
         }
@@ -229,7 +229,7 @@ impl Audio {
         match wav::Wav::create(&p, 2, RATE) {
             Ok(w) => Some(w),
             Err(e) => {
-                eprintln!("ps5slop: cannot write {}: {e}", p.display());
+                tracing::warn!("cannot write {}: {e}", p.display());
                 None
             }
         }
@@ -286,7 +286,7 @@ fn open(env: &mut Env) -> Result<Outcome, CallError> {
         .and_then(|p| match wav::Wav::create(&p, 2, freq) {
             Ok(w) => Some(w),
             Err(e) => {
-                eprintln!("ps5slop: cannot write {}: {e}", p.display());
+                tracing::warn!("cannot write {}: {e}", p.display());
                 None
             }
         });
@@ -323,7 +323,7 @@ fn submit(env: &Env, handle: u64, at: u64) -> Result<Result<Instant, u64>, CallE
     if let Some(w) = &mut p.wav
         && let Err(e) = w.append(&stereo)
     {
-        eprintln!("ps5slop: audio dump stopped: {e}");
+        tracing::warn!("audio dump stopped: {e}");
         p.wav = None;
     }
     drop(ports);

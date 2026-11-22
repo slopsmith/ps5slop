@@ -170,6 +170,11 @@ pub fn unwatch() -> Result<(), Error> {
     Ok(())
 }
 
+/// Whether statistics mode is on: the `jit::stats` log target is enabled at info.
+pub fn stats_enabled() -> bool {
+    tracing::enabled!(target: "jit::stats", tracing::Level::INFO)
+}
+
 /// Guest addresses from `PS5SLOP_PROBE_RIP` (hex, comma-separated). They are
 /// never translated, so every arrival there is interpreted and logged.
 pub fn probes() -> &'static [u64] {
@@ -911,9 +916,7 @@ impl Machine {
         if !self.fits(place, block.code.len() * 4) {
             if self.verify || self.trace {
                 self.cache_full = true;
-                eprintln!(
-                    "ps5slop: the JIT's code cache is full; interpreting new code from now on"
-                );
+                tracing::warn!("the JIT's code cache is full; interpreting new code from now on");
                 return None;
             }
             if !self.next_segment() {

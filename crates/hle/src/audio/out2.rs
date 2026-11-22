@@ -438,7 +438,7 @@ fn play_grain(env: &Env, handle: u64) -> Result<Option<(Instant, u64)>, CallErro
     if let Some(w) = &mut c.wav
         && let Err(e) = w.append(&stereo)
     {
-        eprintln!("ps5slop: audio dump stopped: {e}");
+        tracing::warn!("audio dump stopped: {e}");
         c.wav = None;
     }
     let queue = c.queue;

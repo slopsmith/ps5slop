@@ -352,10 +352,10 @@ fn submit(env: &mut Env) -> Result<Outcome, CallError> {
                 Ok(n) => done += n,
             }
         }
-        if trace_reads() {
+        if tracing::enabled!(tracing::Level::DEBUG) {
             let path = lock(&env.kernel.apr.paths)[id as usize].clone();
-            eprintln!(
-                "ps5slop: apr: read {} at {offset:#x} len {len:#x} ({done:#x} read) to {dest:#x}",
+            tracing::debug!(
+                "read {} at {offset:#x} len {len:#x} ({done:#x} read) to {dest:#x}",
                 String::from_utf8_lossy(&path)
             );
         }
@@ -370,12 +370,6 @@ fn submit(env: &mut Env) -> Result<Outcome, CallError> {
         env.mem.write(id, &n.to_le_bytes())?;
     }
     ret(0)
-}
-
-/// `PS5SLOP_TRACE_APR=1` prints every read on stderr.
-fn trace_reads() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("PS5SLOP_TRACE_APR").is_some())
 }
 
 /// `sceKernelAprWaitCommandBuffer(...)`: submissions finish before they
