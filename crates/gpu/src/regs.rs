@@ -35,8 +35,10 @@ pub mod context {
     pub const PA_SC_VPORT_SCISSOR_0_TL: usize = 0x094;
     pub const PA_SC_VPORT_SCISSOR_0_BR: usize = 0x095;
     pub const PA_SC_MODE_CNTL_0: usize = 0x292;
+    pub const VGT_MULTI_PRIM_IB_RESET_EN: usize = 0x2A5;
     pub const PA_SC_VPORT_ZMIN_0: usize = 0x0B4;
     pub const PA_SC_VPORT_ZMAX_0: usize = 0x0B5;
+    pub const VGT_MULTI_PRIM_IB_RESET_INDX: usize = 0x103;
     pub const CB_BLEND_RED: usize = 0x105;
     pub const PA_CL_VPORT_XSCALE: usize = 0x10F;
     pub const SPI_PS_INPUT_CNTL_0: usize = 0x191;

@@ -16,6 +16,50 @@ pub(super) type OpenPass = (
     Option<(Retained<Texture>, usize)>,
 );
 
+/// Converts a 16-bit or 32-bit indexed triangle fan into a 32-bit triangle list,
+/// honoring primitive restart when `restart` is `Some`.
+fn expand_indexed_triangle_fan(bytes: &[u8], wide: bool, restart: Option<u32>) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut first: Option<u32> = None;
+    let mut prev: Option<u32> = None;
+    let mut push = |idx: u32| {
+        if restart == Some(idx) {
+            first = None;
+            prev = None;
+            return;
+        }
+        match (first, prev) {
+            (None, _) => first = Some(idx),
+            (Some(_), None) => prev = Some(idx),
+            (Some(a), Some(b)) => {
+                out.push(a);
+                out.push(b);
+                out.push(idx);
+                prev = Some(idx);
+            }
+        }
+    };
+    if wide {
+        for chunk in bytes.as_chunks::<4>().0 {
+            push(u32::from_le_bytes(*chunk));
+        }
+    } else {
+        for chunk in bytes.as_chunks::<2>().0 {
+            push(u16::from_le_bytes(*chunk) as u32);
+        }
+    }
+    out
+}
+
+/// Derives fallback target dimensions from the scissor and viewport registers.
+fn viewport_target_size(c: &[u32]) -> (u32, u32) {
+    let (_, _, x1, y1) = regs::scissor(c);
+    let vp = Viewport::read(c);
+    let w = x1.min((vp.x_offset + vp.x_scale.abs()).ceil().max(1.0) as u32);
+    let h = y1.min((vp.y_offset + vp.y_scale.abs()).ceil().max(1.0) as u32);
+    (w.clamp(1, 16384), h.clamp(1, 16384))
+}
+
 impl Metal {
     /// The render encoder for color targets `targets`, reusing the open pass when it matches.
     pub(super) fn pass(
@@ -305,7 +349,15 @@ impl Metal {
             && (wants_depth || c[context::DB_RENDER_CONTROL] & 3 != 0)
         {
             self.note(|| format!("depth {d:x?} test {wants_depth}"));
-            let (dw, dh) = size.unwrap_or((d.width, d.height));
+            let (dw, dh) = size.unwrap_or_else(|| {
+                if d.width != 0 && d.height != 0 {
+                    (d.width, d.height)
+                } else if let Some(existing) = self.depths.get(&d.address) {
+                    (existing.width() as u32, existing.height() as u32)
+                } else {
+                    viewport_target_size(c)
+                }
+            });
             if let Some((tex, format, fresh)) = self.depth(&d, dw, dh) {
                 if d.stencil && d.stencil_address != 0 {
                     self.stencils.insert(d.stencil_address, d.address);
@@ -334,6 +386,48 @@ impl Metal {
             }
         }
         if targets.is_empty() && depth.is_none() {
+            // DB_RENDER_CONTROL bits 2..=4 are depth/stencil copy and HTILE resummarize
+            // metadata passes (AMD GFX10); Metal keeps depth uncompressed, so only any
+            // pending HTILE fast clear needs to land.
+            if c[context::DB_RENDER_CONTROL] & 0x1C != 0 {
+                if let Some(d) = DepthTarget::read(c) {
+                    let (dw, dh) = if d.width != 0 && d.height != 0 {
+                        (d.width, d.height)
+                    } else if let Some(existing) = self.depths.get(&d.address) {
+                        (existing.width() as u32, existing.height() as u32)
+                    } else {
+                        viewport_target_size(c)
+                    };
+                    if let Some((tex, _, _)) = self.depth(&d, dw, dh) {
+                        let (zs, zo) = regs::depth_range(c, gl_clip);
+                        let values = (
+                            (f32::from_bits(c[context::DB_DEPTH_CLEAR]) * zs + zo).clamp(0.0, 1.0),
+                            c[context::DB_STENCIL_CLEAR] & 0xFF,
+                        );
+                        match self.htile(host, c, &d) {
+                            Htile::Cleared => {
+                                let _ = self.pass(
+                                    &[],
+                                    Some((d.address, tex, d.stencil, d.slice)),
+                                    Some(values),
+                                );
+                            }
+                            Htile::OnGpu(at) => {
+                                let _ = self.htile_on_gpu(
+                                    host,
+                                    at,
+                                    &[],
+                                    &(d.address, tex, d.stencil, d.slice),
+                                    None,
+                                    values,
+                                );
+                            }
+                            Htile::Kept => {}
+                        }
+                    }
+                }
+                return Err("metadata pass");
+            }
             let stores = pixel.translated.writes_memory
                 || pixel.translated.resources.iter().any(
                     |r| matches!(r, Resource::Texture { access, .. } if *access != Access::Sample),
@@ -341,11 +435,8 @@ impl Metal {
             if !stores {
                 return Err("no color target");
             }
-            let (_, _, x1, y1) = regs::scissor(c);
-            let vp = Viewport::read(c);
-            let w = x1.min((vp.x_offset + vp.x_scale.abs()).ceil().max(1.0) as u32);
-            let h = y1.min((vp.y_offset + vp.y_scale.abs()).ceil().max(1.0) as u32);
-            let tex = self.blank_target(w.clamp(1, 16384), h.clamp(1, 16384))?;
+            let (w, h) = viewport_target_size(c);
+            let tex = self.blank_target(w, h)?;
             key.formats[0] = tex.pixelFormat().0;
             key.blends[0] = (Blend::read(c, 0), 0);
             size = Some((tex.width() as u32, tex.height() as u32));
@@ -431,7 +522,40 @@ impl Metal {
         if self.snap.is_some() && diag::config().gpu.snap_inputs {
             self.snap_inputs(ps_addr, &ps_bound);
         }
+        let fan = u[uconfig::VGT_PRIMITIVE_TYPE] == 5;
         let index = match draw {
+            Draw::Indexed { count, address, .. } if !rect && fan => {
+                if count < 3 {
+                    return Ok(());
+                }
+                let wide = u[uconfig::VGT_INDEX_TYPE] & 3 == 1;
+                let elem = if wide { 4u64 } else { 2u64 };
+                let len = count as u64 * elem;
+                self.settle_for(address, len, "indices");
+                let mut raw = vec![0u8; len as usize];
+                if !host.read(address, &mut raw) {
+                    return Err("index buffer");
+                }
+                let restart = (c[context::VGT_MULTI_PRIM_IB_RESET_EN] & 1 != 0).then(|| {
+                    let r = c[context::VGT_MULTI_PRIM_IB_RESET_INDX];
+                    if wide { r } else { r & 0xFFFF }
+                });
+                let expanded = expand_indexed_triangle_fan(&raw, wide, restart);
+                if expanded.is_empty() {
+                    return Ok(());
+                }
+                let out_bytes = expanded.len() * 4;
+                let (buf, offset) = self.scratch(out_bytes).ok_or("fan index buffer")?;
+                // SAFETY: `scratch` returns fresh shared memory of at least `out_bytes` bytes.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        expanded.as_ptr().cast::<u8>(),
+                        buf.contents().as_ptr().cast::<u8>().add(offset),
+                        out_bytes,
+                    );
+                }
+                Some(((buf, offset), true, expanded.len()))
+            }
             Draw::Indexed { count, address, .. } if !rect => {
                 let wide = u[uconfig::VGT_INDEX_TYPE] & 3 == 1;
                 let size = if wide { 4 } else { 2 };
@@ -456,7 +580,7 @@ impl Metal {
                     };
                     (buf, offset)
                 };
-                Some((bound, wide))
+                Some((bound, wide, count as usize))
             }
             _ => None,
         };
@@ -523,7 +647,6 @@ impl Metal {
             let (ptr, w, h) = (Retained::as_ptr(t) as usize, t.width(), t.height());
             self.note(|| format!("bound t{slot} {ptr:#x} {w}x{h}"));
         }
-        let fan = u[uconfig::VGT_PRIMITIVE_TYPE] == 5;
         let primitive = match u[uconfig::VGT_PRIMITIVE_TYPE] {
             1 => MTLPrimitiveType::Point,
             2 => MTLPrimitiveType::Line,
@@ -564,7 +687,6 @@ impl Metal {
                 );
             },
             Draw::Indexed { .. } if rect => return Err("indexed rectangle list"),
-            Draw::Indexed { .. } if fan => return Err("indexed triangle fan"),
             Draw::Auto { count, instances } if fan => {
                 if count < 3 {
                     return Ok(());
@@ -591,14 +713,12 @@ impl Metal {
                     instances.max(1) as usize,
                 );
             },
-            Draw::Indexed {
-                count, instances, ..
-            } => {
-                let ((buf, offset), wide) = index.ok_or("index buffer")?;
+            Draw::Indexed { instances, .. } => {
+                let ((buf, offset), wide, index_count) = index.ok_or("index buffer")?;
                 unsafe {
                     enc.drawIndexedPrimitives_indexCount_indexType_indexBuffer_indexBufferOffset_instanceCount_baseVertex_baseInstance(
                         primitive,
-                        count as usize,
+                        index_count,
                         if wide { MTLIndexType::UInt32 } else { MTLIndexType::UInt16 },
                         &buf,
                         offset,
@@ -617,5 +737,34 @@ impl Metal {
         self.note_writes(host, &pixel.translated, ps_data);
         self.pending_writes |= vertex.translated.writes_memory || pixel.translated.writes_memory;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod fan_tests {
+    use super::expand_indexed_triangle_fan;
+
+    #[test]
+    fn expands_16bit_and_32bit_indexed_triangle_fans_with_restart() {
+        let idx16: Vec<u8> = [10u16, 11, 12, 13, 0xFFFF, 20, 21, 0xFFFF, 30, 31, 32]
+            .into_iter()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        assert_eq!(
+            expand_indexed_triangle_fan(&idx16, false, Some(0xFFFF)),
+            vec![10, 11, 12, 10, 12, 13, 30, 31, 32]
+        );
+
+        let idx32: Vec<u8> = [0u32, 1, 2, 3, 4]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        assert_eq!(
+            expand_indexed_triangle_fan(&idx32, true, None),
+            vec![0, 1, 2, 0, 2, 3, 0, 3, 4]
+        );
+
+        let short: Vec<u8> = [0u16, 1].into_iter().flat_map(u16::to_le_bytes).collect();
+        assert!(expand_indexed_triangle_fan(&short, false, None).is_empty());
     }
 }

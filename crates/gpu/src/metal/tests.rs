@@ -1176,3 +1176,232 @@ fn detiling_a_render_target_on_the_gpu_matches_the_cpu_layout() {
         }
     }
 }
+
+#[test]
+fn indexed_triangle_fan_renders_and_pixel_addtid_spills_round_trip() {
+    let Some(mut metal) = Metal::new() else {
+        return;
+    };
+    metal.set_wait_for_compiles(true);
+    let mem = Mem::new(1 << 20);
+    let (vs_addr, ps_addr, vb_addr, ib_addr, target_addr) = (
+        0x1_0000u64,
+        0x1_4000u64,
+        0x2_0000u64,
+        0x2_4000u64,
+        0x4_0000u64,
+    );
+    let (w, h) = (16u32, 16u32);
+
+    // Legacy VS: loads float4 clip pos from V# in s[0:3] using vertex_id in v0.
+    let vs: [u32; 6] = [
+        0xE038_2000,
+        0x8000_0100, // buffer_load_dwordx4 v[1:4], v0, s[0:3], 0 idxen
+        0xBF8C_3F70, // s_waitcnt vmcnt(0)
+        0xF800_08CF,
+        0x0403_0201, // exp pos0 v1, v2, v3, v4 done
+        0xBF81_0000, // s_endpgm
+    ];
+    // PS: spills s0 (R) and s1 (G) through ds_write_addtid_b32 / ds_read_addtid_b32, exports RGBA.
+    let ps: [u32; 14] = [
+        0xBEFC_0380, // s_mov_b32 m0, 0
+        0x7E00_0200, // v_mov_b32 v0, s0
+        0x7E02_0201, // v_mov_b32 v1, s1
+        0xDAC0_0000,
+        0x0000_0000, // ds_write_addtid_b32 v0
+        0xDAC0_0100,
+        0x0000_0100, // ds_write_addtid_b32 v1 offset:256
+        0xDAC4_0000,
+        0x0200_0000, // ds_read_addtid_b32 v2
+        0xDAC4_0100,
+        0x0300_0000, // ds_read_addtid_b32 v3 offset:256
+        0xF800_180F,
+        0x0302_0302, // exp mrt0 v2, v3, v2, v3 done vm
+        0xBF81_0000, // s_endpgm
+    ];
+    for (i, w) in vs.iter().enumerate() {
+        mem.write(vs_addr + 4 * i as u64, &w.to_le_bytes());
+    }
+    for (i, w) in ps.iter().enumerate() {
+        mem.write(ps_addr + 4 * i as u64, &w.to_le_bytes());
+    }
+    // 4 quad corners covering [-1, 1]^2, indexed as a 16-bit triangle fan (0, 1, 2, 3).
+    let verts: [[f32; 4]; 4] = [
+        [-1.0, -1.0, 0.5, 1.0],
+        [1.0, -1.0, 0.5, 1.0],
+        [1.0, 1.0, 0.5, 1.0],
+        [-1.0, 1.0, 0.5, 1.0],
+    ];
+    let vb_bytes: Vec<u8> = verts
+        .iter()
+        .flat_map(|v| v.iter().flat_map(|f| f.to_le_bytes()))
+        .collect();
+    mem.write(vb_addr, &vb_bytes);
+    let ib_bytes: Vec<u8> = [0u16, 1, 2, 3, 0xFFFF, 0, 1, 2]
+        .into_iter()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    mem.write(ib_addr, &ib_bytes);
+
+    let (mut c, mut sh, mut u) = (vec![0u32; 0x400], vec![0u32; 0x400], vec![0u32; 0x400]);
+    c[context::CB_COLOR0_BASE] = (target_addr >> 8) as u32;
+    c[context::CB_COLOR0_INFO] = 10 << 2; // RGBA8 Unorm
+    c[context::CB_COLOR0_ATTRIB2] = (w - 1) | ((h - 1) << 14);
+    c[context::CB_TARGET_MASK] = 0xF;
+    c[context::SPI_SHADER_COL_FORMAT] = 9;
+    c[context::VGT_MULTI_PRIM_IB_RESET_EN] = 1;
+    c[context::VGT_MULTI_PRIM_IB_RESET_INDX] = 0xFFFF;
+    c[context::PA_CL_VPORT_XSCALE] = (w as f32 * 0.5).to_bits();
+    c[context::PA_CL_VPORT_XSCALE + 1] = (w as f32 * 0.5).to_bits();
+    c[context::PA_CL_VPORT_XSCALE + 2] = (h as f32 * 0.5).to_bits();
+    c[context::PA_CL_VPORT_XSCALE + 3] = (h as f32 * 0.5).to_bits();
+    c[context::PA_CL_VPORT_XSCALE + 4] = 1.0f32.to_bits();
+    c[context::PA_CL_VPORT_XSCALE + 5] = 0.0f32.to_bits();
+    sh[sh::SPI_SHADER_PGM_LO_VS] = (vs_addr >> 8) as u32;
+    sh[sh::SPI_SHADER_PGM_RSRC2_VS] = 4 << 1;
+    sh[sh::SPI_SHADER_USER_DATA_VS_0..sh::SPI_SHADER_USER_DATA_VS_0 + 4].copy_from_slice(&[
+        vb_addr as u32,
+        16 << 16,
+        4,
+        0,
+    ]);
+    sh[sh::SPI_SHADER_PGM_LO_PS] = (ps_addr >> 8) as u32;
+    sh[sh::SPI_SHADER_PGM_RSRC2_PS] = 2 << 1;
+    sh[sh::SPI_SHADER_USER_DATA_PS_0] = 0.0f32.to_bits();
+    sh[sh::SPI_SHADER_USER_DATA_PS_0 + 1] = 1.0f32.to_bits();
+    u[uconfig::VGT_PRIMITIVE_TYPE] = 5; // TriangleFan
+
+    let state = State {
+        context: &c,
+        sh: &sh,
+        uconfig: &u,
+        color_control_written: false,
+    };
+    metal.draw(
+        &mem,
+        &state,
+        crate::Draw::Indexed {
+            count: 8,
+            address: ib_addr,
+            instances: 1,
+        },
+    );
+    assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
+    metal.flush_and_wait();
+    let tex = metal
+        .targets
+        .get(&target_addr)
+        .expect("target")
+        .texture
+        .clone();
+    let (rw, rh, rgba) = read_rgba(&SharedTexture(tex)).expect("read_rgba");
+    assert_eq!((rw, rh), (w, h));
+    // Both halves of the quad (top-left and bottom-right) must be painted (0, 255, 0, 255).
+    assert_eq!(&rgba[..4], &[0, 255, 0, 255]);
+    assert_eq!(&rgba[rgba.len() - 4..], &[0, 255, 0, 255]);
+}
+
+#[test]
+fn depth_only_draw_without_db_size_writes_depth_and_metadata_pass_is_classified() {
+    let Some(mut metal) = Metal::new() else {
+        return;
+    };
+    metal.set_wait_for_compiles(true);
+    let mem = Mem::new(1 << 20);
+    let (vs_addr, ps_addr, vb_addr, depth_addr) =
+        (0x1_0000u64, 0x1_4000u64, 0x2_0000u64, 0x5_0000u64);
+    let (w, h) = (16u32, 16u32);
+
+    let vs: [u32; 6] = [
+        0xE038_2000,
+        0x8000_0100, // buffer_load_dwordx4 v[1:4], v0, s[0:3], 0 idxen
+        0xBF8C_3F70, // s_waitcnt vmcnt(0)
+        0xF800_08CF,
+        0x0403_0201, // exp pos0 v1, v2, v3, v4 done
+        0xBF81_0000, // s_endpgm
+    ];
+    let ps: [u32; 3] = [
+        0xF800_1800,
+        0x0000_0000, // exp mrt0 off, off, off, off done vm
+        0xBF81_0000, // s_endpgm
+    ];
+    for (i, w) in vs.iter().enumerate() {
+        mem.write(vs_addr + 4 * i as u64, &w.to_le_bytes());
+    }
+    for (i, w) in ps.iter().enumerate() {
+        mem.write(ps_addr + 4 * i as u64, &w.to_le_bytes());
+    }
+    let verts: [[f32; 4]; 3] = [
+        [-1.0, -1.0, 0.25, 1.0],
+        [3.0, -1.0, 0.25, 1.0],
+        [-1.0, 3.0, 0.25, 1.0],
+    ];
+    let vb_bytes: Vec<u8> = verts
+        .iter()
+        .flat_map(|v| v.iter().flat_map(|f| f.to_le_bytes()))
+        .collect();
+    mem.write(vb_addr, &vb_bytes);
+
+    let (mut c, mut sh, mut u) = (vec![0u32; 0x400], vec![0u32; 0x400], vec![0u32; 0x400]);
+    c[context::DB_Z_INFO] = 3; // Depth32Float
+    c[context::DB_Z_WRITE_BASE] = (depth_addr >> 8) as u32;
+    // DB_DEPTH_SIZE_XY deliberately left 0: size must fall back to viewport/scissor.
+    c[context::DB_DEPTH_CONTROL] = 2 | 4 | (7 << 4); // Z_ENABLE | Z_WRITE_ENABLE | Always
+    c[context::PA_CL_VPORT_XSCALE] = (w as f32 * 0.5).to_bits();
+    c[context::PA_CL_VPORT_XSCALE + 1] = (w as f32 * 0.5).to_bits();
+    c[context::PA_CL_VPORT_XSCALE + 2] = (h as f32 * 0.5).to_bits();
+    c[context::PA_CL_VPORT_XSCALE + 3] = (h as f32 * 0.5).to_bits();
+    c[context::PA_CL_VPORT_XSCALE + 4] = 1.0f32.to_bits();
+    c[context::PA_CL_VPORT_XSCALE + 5] = 0.0f32.to_bits();
+    sh[sh::SPI_SHADER_PGM_LO_VS] = (vs_addr >> 8) as u32;
+    sh[sh::SPI_SHADER_PGM_RSRC2_VS] = 4 << 1;
+    sh[sh::SPI_SHADER_USER_DATA_VS_0..sh::SPI_SHADER_USER_DATA_VS_0 + 4].copy_from_slice(&[
+        vb_addr as u32,
+        16 << 16,
+        3,
+        0,
+    ]);
+    sh[sh::SPI_SHADER_PGM_LO_PS] = (ps_addr >> 8) as u32;
+    u[uconfig::VGT_PRIMITIVE_TYPE] = 4;
+
+    let state = State {
+        context: &c,
+        sh: &sh,
+        uconfig: &u,
+        color_control_written: false,
+    };
+    metal.draw(
+        &mem,
+        &state,
+        crate::Draw::Auto {
+            count: 3,
+            instances: 1,
+        },
+    );
+    assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
+    assert!(metal.depths.contains_key(&depth_addr));
+
+    // A depth resummarize metadata pass with depth test off is classified as metadata pass, not "no color target".
+    c[context::DB_DEPTH_CONTROL] = 0;
+    c[context::DB_RENDER_CONTROL] = 0x10; // RESUMMARIZE_ENABLE
+    let meta_state = State {
+        context: &c,
+        sh: &sh,
+        uconfig: &u,
+        color_control_written: false,
+    };
+    metal.draw(
+        &mem,
+        &meta_state,
+        crate::Draw::Auto {
+            count: 3,
+            instances: 1,
+        },
+    );
+    assert_eq!(
+        metal.reasons.get("no color target").copied().unwrap_or(0),
+        0
+    );
+    assert_eq!(metal.reasons.get("metadata pass").copied().unwrap_or(0), 1);
+    metal.flush_and_wait();
+}

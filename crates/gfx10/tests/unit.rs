@@ -1060,6 +1060,31 @@ fn wave32_saveexec_xad_class_addtid_and_image_atomics() {
 }
 
 #[test]
+fn pixel_shader_addtid_spills_use_per_thread_local_slots() {
+    let code = [
+        0xBEFC_0380, // s_mov_b32 m0, 0
+        0x7E00_0200, // v_mov_b32 v0, s0
+        0xDAC0_0100,
+        0x0000_0000, // ds_write_addtid_b32 v0 offset:256
+        0xDAC4_0100,
+        0x0100_0000, // ds_read_addtid_b32 v1 offset:256
+        0xF800_180F,
+        0x0101_0101, // exp mrt0 v1, v1, v1, v1 done vm
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = pixel(&code, 1);
+    assert_eq!(t.lds_bytes, 0);
+    assert!(t.msl.contains("#define ADDTID_SHIFT 7u"));
+    assert!(t.msl.contains("uint addtid_lds[ADDTID_SLOTS] = {};"));
+    assert!(t.msl.contains("addtid_lds[a] = v0;"));
+    assert!(
+        t.msl
+            .contains("v1 = a < ADDTID_SLOTS ? addtid_lds[a] : 0u;")
+    );
+    compile(&t.msl);
+}
+
+#[test]
 fn row_dpp_permlanes_readlane_and_bpermute_use_simd_shuffles() {
     let code = [
         0x3814_14FA,

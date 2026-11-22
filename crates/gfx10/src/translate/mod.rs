@@ -384,6 +384,10 @@ struct Tx<'a> {
     stores: Option<Vec<(Source, bool)>>,
     lds: bool,
     gds: bool,
+    /// Non-compute per-lane `ds_write_addtid_b32`/`ds_read_addtid_b32` spill slots.
+    addtid_local: bool,
+    addtid_max_off: u32,
+    addtid_aligned128: bool,
     /// The entry point declares `qlane`, the thread's lane in its quad.
     quad_lane: bool,
     /// Texture slots image atomics use, from the first pass.
@@ -483,6 +487,9 @@ impl<'a> Tx<'a> {
             stores: Some(Vec::new()),
             lds: false,
             gds: false,
+            addtid_local: false,
+            addtid_max_off: 0,
+            addtid_aligned128: true,
             quad_lane: false,
             atomic_textures: 0,
             simd_lane: false,

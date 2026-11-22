@@ -95,6 +95,13 @@ impl<'a> Tx<'a> {
                 self.lds_bytes()
             ));
         }
+        if self.addtid_local {
+            let shift = if self.addtid_aligned128 { 7u32 } else { 2u32 };
+            let slots = ((self.addtid_max_off >> shift) + 1).clamp(16, 512);
+            out.push_str(&format!(
+                "#define ADDTID_SHIFT {shift}u\n#define ADDTID_SLOTS {slots}u\n"
+            ));
+        }
         if self.guarded {
             out.push_str(&format!(
                 "#define GUARD_LIMIT {MAX_COMPUTE_BACK_BRANCHES}u\n#define GUARD_BUDGET {GUARD_BUDGET}u\n#define GUARD_UNIT {GUARD_UNIT}u\n{GUARD_PRELUDE}"
@@ -180,6 +187,9 @@ impl<'a> Tx<'a> {
             if r < SGPR_COUNT && self.regs.contains(&format!("s{r}")) {
                 init.push_str(&format!("    s{r} = user[{i}];\n"));
             }
+        }
+        if self.addtid_local {
+            init.push_str("    uint addtid_lds[ADDTID_SLOTS] = {};\n");
         }
         if self.lockstep {
             init.push_str("    uint wl = uint(sgi) * 32u + uint(slane);\n    uint wk = 0u;\n");

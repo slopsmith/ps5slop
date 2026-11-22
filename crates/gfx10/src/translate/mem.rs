@@ -442,6 +442,32 @@ impl<'a> Tx<'a> {
             self.line("}");
             return Ok(());
         }
+        if !gds
+            && self.req.stage != Stage::Compute
+            && matches!(name, "ds_write_addtid_b32" | "ds_read_addtid_b32")
+        {
+            // Fragment/vertex stages have no threadgroup memory in Metal; addtid
+            // accesses a lane's own per-wave spill slot, so map it to a local array.
+            let [_, data0, _, vdst] = regs;
+            let m0 = self.s(124);
+            let off = offset0 as u32 | (offset1 as u32) << 8;
+            self.addtid_local = true;
+            self.addtid_max_off = self.addtid_max_off.max(off);
+            self.addtid_aligned128 &= off & 127 == 0;
+            let stmt = if name == "ds_write_addtid_b32" {
+                let d = self.v(data0);
+                format!(
+                    "{{ uint a = (({m0} & 0xffffu) + {off}u) >> ADDTID_SHIFT; if (a < ADDTID_SLOTS) addtid_lds[a] = {d}; }}"
+                )
+            } else {
+                let d = self.v(vdst);
+                format!(
+                    "{{ uint a = (({m0} & 0xffffu) + {off}u) >> ADDTID_SHIFT; {d} = a < ADDTID_SLOTS ? addtid_lds[a] : 0u; }}"
+                )
+            };
+            self.guard(&stmt);
+            return Ok(());
+        }
         if gds || self.req.stage != Stage::Compute {
             return Err(err(pc, format!("unsupported LDS access {name}")));
         }
