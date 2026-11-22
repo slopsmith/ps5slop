@@ -15,8 +15,12 @@ gfx10 = { path = "../gfx10" }
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSError", "NSRange", "NSDictionary", "NSArray"] }
-objc2-metal = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "MTLDevice", "MTLResource", "MTLBuffer", "MTLTexture", "MTLSampler", "MTLCommandQueue", "MTLCommandBuffer", "MTLCommandEncoder", "MTLRenderCommandEncoder", "MTLComputeCommandEncoder", "MTLBlitCommandEncoder", "MTLComputePipeline", "MTLRenderPass", "MTLRenderPipeline", "MTLLibrary", "MTLTypes", "MTLPixelFormat", "MTLAllocation", "MTLArgument", "MTLDepthStencil", "MTLResidencySet", "MTLFence"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSError", "NSRange", "NSDictionary", "NSArray", "NSURL"] }
+objc2-metal = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "MTLDevice", "MTLResource", "MTLBuffer", "MTLTexture", "MTLSampler", "MTLCommandQueue", "MTLCommandBuffer", "MTLCommandEncoder", "MTLRenderCommandEncoder", "MTLComputeCommandEncoder", "MTLBlitCommandEncoder", "MTLComputePipeline", "MTLRenderPass", "MTLRenderPipeline", "MTLLibrary", "MTLTypes", "MTLPixelFormat", "MTLAllocation", "MTLArgument", "MTLDepthStencil", "MTLResidencySet", "MTLFence", "MTLCaptureManager", "MTLCaptureScope"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 libc = "0.2"
+
+[[bin]]
+name = "ps5slop-replay"
+path = "src/bin/ps5slop-replay.rs"

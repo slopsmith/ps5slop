@@ -55,6 +55,9 @@ pub(super) struct Snap {
 /// pipelines at the end of the frame, so `PS5SLOP_MSL_OVERRIDE` files are read again.
 pub static RELOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Where the next frame's Metal `.gputrace` is written (`metalcapture` command).
+pub static METAL_CAPTURE: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
+
 /// Programs whose draws and dispatches are skipped, for finding the pass
 /// that causes a rendering bug (the control socket's `gpuskip`).
 pub static SKIP: Mutex<Vec<u64>> = Mutex::new(Vec::new());
@@ -290,8 +293,74 @@ impl Metal {
         }
     }
 
-    /// Starts what `gpusnap` asked for the next frame.
+    /// Starts a Metal GPU trace capture of this queue to `path` (a `.gputrace`
+    /// bundle). Requires `METAL_CAPTURE_ENABLED=1` in the process environment.
+    pub fn begin_metal_capture(&mut self, path: &std::path::Path) -> Result<(), String> {
+        use objc2_foundation::NSURL;
+        use objc2_metal::{MTLCaptureDescriptor, MTLCaptureDestination, MTLCaptureManager};
+
+        self.flush_and_wait();
+        let manager = unsafe { MTLCaptureManager::sharedCaptureManager() };
+        if !manager.supportsDestination(MTLCaptureDestination::GPUTraceDocument) {
+            return Err(
+                "Metal GPU capture is disabled (start the process with METAL_CAPTURE_ENABLED=1)"
+                    .into(),
+            );
+        }
+        if path.exists() {
+            let _ = std::fs::remove_dir_all(path).or_else(|_| std::fs::remove_file(path));
+        }
+        let abs = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|d| d.join(path))
+                .unwrap_or_else(|_| path.to_path_buf())
+        };
+        if let Some(parent) = abs.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let desc = MTLCaptureDescriptor::new();
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&abs.to_string_lossy()));
+        desc.setDestination(MTLCaptureDestination::GPUTraceDocument);
+        desc.setOutputURL(Some(&url));
+        unsafe {
+            desc.setCaptureObject(Some(self.queue.as_ref()));
+            manager
+                .startCaptureWithDescriptor_error(&desc)
+                .map_err(|e| format!("MTLCaptureManager failed: {}", e.localizedDescription()))?;
+        }
+        self.metal_capturing = true;
+        tracing::info!(
+            target: "gpu::snap",
+            "started Metal capture to {}",
+            abs.display()
+        );
+        Ok(())
+    }
+
+    /// Stops an active Metal GPU trace capture started by [`Metal::begin_metal_capture`].
+    pub fn end_metal_capture(&mut self) {
+        if !self.metal_capturing {
+            return;
+        }
+        self.flush_and_wait();
+        let manager = unsafe { objc2_metal::MTLCaptureManager::sharedCaptureManager() };
+        manager.stopCapture();
+        self.metal_capturing = false;
+        tracing::info!(target: "gpu::snap", "finished Metal capture");
+    }
+
+    /// Starts what `gpusnap` and `metalcapture` asked for the next frame.
     pub(super) fn frame_tools(&mut self) {
+        if self.metal_capturing {
+            self.end_metal_capture();
+        }
+        if let Some(path) = METAL_CAPTURE.lock().ok().and_then(|mut s| s.take())
+            && let Err(e) = self.begin_metal_capture(&path)
+        {
+            tracing::error!("{e}");
+        }
         if RELOAD.swap(false, std::sync::atomic::Ordering::Relaxed) {
             self.programs.clear();
             self.variants.clear();

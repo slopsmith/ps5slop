@@ -39,7 +39,7 @@ Status: commercial 2D and 3D PS5 titles boot and render through the HVF JIT, HLE
 
 ## Crates
 
-- `diag`: `tracing` logging setup, rate-limited reporting (`FirstN`, `Distinct`) and the typed `Config` read once from `PS5SLOP_*` switches. See [debugging.md](debugging.md).
+- `diag`: `tracing` logging setup, rate-limited reporting (`FirstN`, `Distinct`), the per-run problem report (`problems`) and the typed `Config` read once from `PS5SLOP_*` switches. See [debugging.md](debugging.md).
 - `pkg`: reads fake-signed PS4 and PS5 packages (including block-by-block Kraken decompression) and extracts them into `app0` folders, plus the `ps5slop-pkg` tool. See [packages.md](packages.md).
 - `loader`: reads ELF and fake-signed SELF files, the dynamic section and NID imports, and lays out an image with relocations applied, plus the `ps5slop-elf` tool. See [loader.md](loader.md).
 - `memory`: the guest address space, with protected regions, trap regions and write watchpoints. See [memory.md](memory.md).
@@ -48,7 +48,7 @@ Status: commercial 2D and 3D PS5 titles boot and render through the HVF JIT, HLE
 - `hvf`: Apple Silicon Hypervisor.framework wrapper (VM, stage-2 page tables, vCPUs with hardware TSO). See [jit.md](jit.md).
 - `jit`: x86-64 to ARM64 translator, segmented code cache with sampling eviction and the VM execution engine. See [jit.md](jit.md).
 - `gfx10`: GFX10 shader decoder, AGS parser, shader capture format and direct-to-MSL translator (`translate/`: `flow`, `scalar`, `valu`, `half`, `mem`, `sources`, `image`, `emit`, `prelude`). See [shaders.md](shaders.md).
-- `gpu`: GPU register decoders, tiling/detiling, background shader compile pool, PM4 packet processor (`pm4/`: `sync`, `copy`, `work`) and Metal renderer (`metal/`: `commands`, `memory`, `targets`, `images`, `detile`, `htile`, `programs`, `bind`, `draw`, `compute`, `formats`, `readback`, `inspect`, `saved`). See [gpu.md](gpu.md).
+- `gpu`: GPU register decoders, tiling/detiling, background shader compile pool, PM4 packet processor (`pm4/`: `sync`, `copy`, `work`), Metal renderer (`metal/`: `commands`, `memory`, `targets`, `images`, `detile`, `htile`, `programs`, `bind`, `draw`, `compute`, `formats`, `readback`, `inspect`, `saved`), frame capture (`capture`) and deterministic offline replay (`replay`, `ps5slop-replay`). See [gpu.md](gpu.md) and [debugging.md](debugging.md).
 - `hle`: host implementations of Orbis/Prospero libraries behind trap stubs (libkernel, VideoOut, AudioOut/AudioOut2, NGS2, Pad, Agc, Ampr, Font, SaveData, AvPlayer, ...). See [hle-kernel.md](hle-kernel.md).
 - `savestate`: the save state file format (a small binary encoding in zstd sections) and the guest's wall clock. See [savestates.md](savestates.md).
 - `ps5slop`: the `ps5slop run` command, window, input polling and control socket.

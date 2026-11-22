@@ -425,6 +425,11 @@ impl Kernel {
         }
     }
 
+    /// Schedules a one-frame GPU capture to `path` starting at the next flip.
+    pub fn request_frame_capture(&self, path: std::path::PathBuf) {
+        self.agc.request_frame_capture(path);
+    }
+
     /// Guest instructions run so far: (interpreted, translated).
     pub fn instructions(&self) -> (u64, u64) {
         jit::instructions()

@@ -57,12 +57,12 @@ use draw::*;
 use formats::*;
 use htile::*;
 use images::*;
-pub use inspect::{DUMP_TARGETS, RELOAD, SKIP, SNAP, TRACE_NEXT, all_frames, frame};
+pub use inspect::{DUMP_TARGETS, METAL_CAPTURE, RELOAD, SKIP, SNAP, TRACE_NEXT, all_frames, frame};
 use inspect::{Snap, frames, record, skipped};
 use memory::*;
 use programs::*;
 use readback::{read_depth, read_raw};
-pub use readback::{read_frame, read_rgba};
+pub use readback::{read_depth_rgba, read_frame, read_rgba};
 use saved::*;
 use targets::*;
 
@@ -236,6 +236,12 @@ pub struct Metal {
     /// each traced draw passes, and the next free slot.
     pixels: Option<(Retained<Buffer>, usize)>,
     fan: Option<Retained<Buffer>>,
+    /// Deterministic replay waits for every pipeline instead of skipping draws.
+    wait_for_compiles: bool,
+    /// Active Metal GPU trace capture (`MTLCaptureManager`).
+    metal_capturing: bool,
+    /// Accumulated GPU busy time (seconds) since the last `take_gpu_time_secs`.
+    gpu_time_accum: f64,
 }
 
 // SAFETY: a `Metal` is used by one thread at a time; Metal objects may move
@@ -336,7 +342,54 @@ impl Metal {
             trace: None,
             pixels: None,
             fan: None,
+            wait_for_compiles: false,
+            metal_capturing: false,
+            gpu_time_accum: 0.0,
         })
+    }
+
+    /// Forces draws to wait for pipelines to compile instead of skipping.
+    pub fn set_wait_for_compiles(&mut self, wait: bool) {
+        self.wait_for_compiles = wait;
+    }
+
+    /// Returns and resets GPU busy time accumulated from finished command buffers.
+    pub fn take_gpu_time_secs(&mut self) -> f64 {
+        std::mem::take(&mut self.gpu_time_accum)
+    }
+
+    /// All live colour render targets, sorted by guest address.
+    pub fn targets_snapshot(&self) -> Vec<(u64, SharedTexture)> {
+        let mut out: Vec<_> = self
+            .targets
+            .iter()
+            .map(|(&a, t)| (a, SharedTexture(t.texture.clone())))
+            .collect();
+        out.sort_by_key(|(a, _)| *a);
+        out
+    }
+
+    /// All live depth targets, sorted by guest address.
+    pub fn depths_snapshot(&self) -> Vec<(u64, SharedTexture)> {
+        let mut out: Vec<_> = self
+            .depths
+            .iter()
+            .map(|(&a, t)| (a, SharedTexture(t.clone())))
+            .collect();
+        out.sort_by_key(|(a, _)| *a);
+        out
+    }
+
+    /// The live colour target at `address`, if any.
+    pub fn target_texture(&self, address: u64) -> Option<SharedTexture> {
+        self.targets
+            .get(&address)
+            .map(|t| SharedTexture(t.texture.clone()))
+    }
+
+    /// The live depth target at `address`, if any.
+    pub fn depth_texture_at(&self, address: u64) -> Option<SharedTexture> {
+        self.depths.get(&address).map(|t| SharedTexture(t.clone()))
     }
 
     /// Counts a wait for a pipeline that began at `since`, by a draw (0) or a dispatch (1).

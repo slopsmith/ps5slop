@@ -10,6 +10,7 @@
 /firmware
 /keys
 /dumps
+/captures
 *.sprx
 *.prx
 *.sdll
@@ -18,5 +19,7 @@
 *.sself
 *.pkg
 *.pfs
+*.ps5frame
+*.gputrace
 eboot.bin
 experiments/*/vmmap.txt

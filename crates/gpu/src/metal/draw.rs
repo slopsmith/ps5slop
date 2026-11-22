@@ -359,6 +359,7 @@ impl Metal {
         let pipeline = self.pipeline(&key, vertex_function.clone(), &pixel);
         let mut redrawn = !vertex.translated.writes_memory
             && !pixel.translated.writes_memory
+            && !self.wait_for_compiles
             && !diag::config().gpu.compile_wait;
         let surfaces: Vec<_> = targets
             .iter()

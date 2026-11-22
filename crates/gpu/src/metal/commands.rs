@@ -152,7 +152,8 @@ impl Metal {
             }
         }
         if cb.GPUStartTime() > 0.0 && cb.kernelStartTime() > 0.0 {
-            let busy = cb.GPUEndTime() - cb.GPUStartTime();
+            let busy = (cb.GPUEndTime() - cb.GPUStartTime()).max(0.0);
+            self.gpu_time_accum += busy;
             let scheduled = cb.GPUStartTime() - cb.kernelStartTime();
             crate::timing::add_raw(
                 crate::timing::Part::Scheduling,

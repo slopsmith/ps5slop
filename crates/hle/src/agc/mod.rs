@@ -228,6 +228,11 @@ fn build(d: &CompactDefaults, base: u64) -> Vec<u8> {
 }
 
 impl Agc {
+    /// Schedules a one-frame GPU capture to `path` starting at the next flip.
+    pub(crate) fn request_frame_capture(&self, path: std::path::PathBuf) {
+        self.gpu.request_capture(path);
+    }
+
     pub(crate) fn save(&self, e: &mut savestate::Encoder) -> Result<(), String> {
         e.put(&*lock(&self.defaults)).put(&*lock(&self.shaders));
         lock(&self.registry).save(e);

@@ -77,6 +77,11 @@ pub(super) fn read_raw(t: &Texture) -> Option<Vec<u8>> {
     )
 }
 
+/// A depth texture's pixels as stretched grayscale RGBA8.
+pub fn read_depth_rgba(texture: &SharedTexture) -> Option<(u32, u32, Vec<u8>)> {
+    read_depth(&texture.0)
+}
+
 /// A flipped frame's pixels as RGBA8, like [`read_rgba`], encoded as sRGB
 /// first when the frame holds linear light.
 pub fn read_frame(texture: &SharedTexture, linear: bool) -> Option<(u32, u32, Vec<u8>)> {

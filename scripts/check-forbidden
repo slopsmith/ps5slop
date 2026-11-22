@@ -18,11 +18,11 @@ flag() {
 while IFS= read -r path; do
 	lower="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
 	case "$lower" in
-	*.sprx | *.prx | *.sdll | *.sexe | *.self | *.sself | *.pkg | *.pfs | */eboot.bin | eboot.bin)
-		flag "$path" "file name of a console executable, module or package"
+	*.sprx | *.prx | *.sdll | *.sexe | *.self | *.sself | *.pkg | *.pfs | *.ps5frame | *.gputrace | *.gputrace/* | */eboot.bin | eboot.bin)
+		flag "$path" "file name of a console executable, module, package or GPU capture"
 		continue
 		;;
-	references/* | games/* | firmware/* | keys/* | dumps/*)
+	references/* | games/* | firmware/* | keys/* | dumps/* | captures/*)
 		flag "$path" "inside a directory reserved for user-supplied material"
 		continue
 		;;
