@@ -613,7 +613,6 @@ pub static STUBS: &[Function] = &[
         name: "_ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E",
         func: ok,
     },
-    out_id::<3>("libSceAjm", "sceAjmInstanceCreate"),
     Function {
         library: "libSceNpManager",
         name: "sceNpGetState",
