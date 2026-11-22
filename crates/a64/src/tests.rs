@@ -7,6 +7,21 @@ type Case = (&'static str, fn(&mut Asm));
 const CASES: &[Case] = &[
     ("add x0, x1, x2", |a| a.add(X, r(0), r(1), r(2))),
     ("tbl v0.16b, {v1.16b}, v2.16b", |a| a.tbl(V(0), V(1), V(2))),
+    ("tbl v0.16b, {v1.16b, v2.16b}, v3.16b", |a| {
+        a.tbl2(V(0), V(1), V(3))
+    }),
+    ("cmge v0.16b, v1.16b, v2.16b", |a| {
+        a.vec3(true, false, 0, 0b00111, V(0), V(1), V(2))
+    }),
+    ("cmhs v0.8h, v1.8h, v2.8h", |a| {
+        a.vec3(true, true, 1, 0b00111, V(0), V(1), V(2))
+    }),
+    ("cmtst v0.16b, v1.16b, v2.16b", |a| {
+        a.vec3(true, false, 0, 0b10001, V(0), V(1), V(2))
+    }),
+    ("addp v0.16b, v1.16b, v2.16b", |a| {
+        a.vec3(true, false, 0, 0b10111, V(0), V(1), V(2))
+    }),
     ("movi v3.16b, #143", |a| a.movi_b(V(3), 0x8f)),
     ("movi v4.16b, #0", |a| a.movi_b(V(4), 0)),
     ("dup v0.4s, v1.s[0]", |a| a.dup_elem(2, V(0), V(1))),

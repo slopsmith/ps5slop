@@ -193,6 +193,13 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x150 => matches!(p, Pfx::None | Pfx::P66) && i.mem.is_none(),
         0x152 | 0x153 => matches!(p, Pfx::None | Pfx::F3),
         0x1d1..=0x1d3 | 0x1e1 | 0x1e2 | 0x1f1..=0x1f3 => p == Pfx::P66,
+        0x213 | 0x31d => i.vex.is_some() && p == Pfx::P66 && !i.rex_w(),
+        0x216 | 0x236 => wide && p == Pfx::P66 && !i.rex_w(),
+        0x360..=0x363 => p == Pfx::P66 && !wide,
+        0x178 => {
+            i.vex.is_none() && i.mem.is_none() && ((p == Pfx::P66 && i.ext() == 0) || p == Pfx::F2)
+        }
+        0x179 => i.vex.is_none() && i.mem.is_none() && matches!(p, Pfx::P66 | Pfx::F2),
         _ => false,
     };
     if !ok || (i.vex.is_none() && wide) {
@@ -202,17 +209,22 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x12e | 0x12f => (false, writes),
         0x2f2 | 0x217 | 0x20e | 0x20f | 0x2f3 => (false, writes),
         0x2f7 | 0x2f5 if p == Pfx::None => (false, writes),
+        0x360..=0x363 => (false, writes),
         _ => (false, none),
     })
 }
 
 const FCVTL: u32 = 0x0e61_7800;
+/// FCVTL Vd.4S, Vn.4H (| Q for FCVTL2 Vd.4S, Vn.8H).
+const FCVTL_4S: u32 = 0x0e21_7800;
 /// SSHLL Vd.2D, Vn.2S, #0.
 const SSHLL_2D: u32 = 0x0f20_a400;
 /// SSHLL and USHLL by 0 of the lower half, without the element size bit.
 const SSHLL: u32 = 0x0f00_a400;
 const USHLL: u32 = 0x2f00_a400;
 const FCVTN: u32 = 0x0e61_6800;
+/// FCVTN Vd.4H, Vn.4S (| Q for FCVTN2 Vd.8H, Vn.4S).
+const FCVTN_4H: u32 = 0x0e21_6800;
 /// The Q bit: FCVTL2, FCVTN2, SSHLL2 and XTN2 work on the upper half.
 const Q: u32 = 1 << 30;
 /// XTN Vd.2S, Vn.2D.
@@ -282,6 +294,20 @@ impl Translator {
             0x2f2 | 0x2f6 | 0x2f7 | 0x3f0 => return self.bmi(i, op, p, flags),
             0x2f5 => return self.bmi2_bits(i, p, flags),
             0x2f3 => return self.bmi1_lowest(i, flags),
+            0x213 => {
+                self.convert_source(i, wide, XB);
+                self.a.emit(FCVTL_4S | vregs(XR, XB));
+                self.a.str_q(XR, CTX, ymm(i.reg, 0));
+                if wide {
+                    self.a.emit(FCVTL_4S | Q | vregs(XR, XB));
+                    self.a.str_q(XR, CTX, ymm(i.reg, 1));
+                    return;
+                }
+            }
+            0x31d => return self.vcvtps2ph(i, wide),
+            0x216 | 0x236 => return self.vperm_d(i, src1),
+            0x360..=0x363 => return self.string_compare(i, op, vex, flags),
+            0x178 | 0x179 => return self.extrq_insertq(i, op, p),
             0x151 if scalar => {
                 let double = p == Pfx::F2;
                 self.a.ldr_q(XA, CTX, ymm(src1, 0));
@@ -1571,5 +1597,340 @@ impl Translator {
             a.mov_imm(Size::X, super::AF_AUX, 1);
         }
         a.mov(s, r(i.reg), T);
+    }
+
+    /// VCVTPS2PH: four or eight singles in `ymm[i.reg]` to IEEE half floats in
+    /// `xmm[i.rm]` or memory, temporarily switching FPCR.RMode unless imm[2] is set.
+    fn vcvtps2ph(&mut self, i: &Insn, wide: bool) {
+        let imm = i.imm as u32;
+        let override_rc = imm & 4 == 0;
+        let a = &mut self.a;
+        a.ldr_q(XA, CTX, ymm(i.reg, 0));
+        if wide {
+            a.ldr_q(XB, CTX, ymm(i.reg, 1));
+        }
+        if override_rc {
+            let rc = imm & 3;
+            let arm_rc = ((rc & 1) << 1) | (rc >> 1);
+            a.mrs(A, a64::sysreg::FPCR);
+            a.mov(Size::X, B, A);
+            a.mov_imm(Size::X, T, arm_rc as u64);
+            a.bfi(Size::X, B, T, 22, 2);
+            a.msr(a64::sysreg::FPCR, B);
+        }
+        a.emit(FCVTN_4H | vregs(XR, XA));
+        if wide {
+            a.emit(FCVTN_4H | Q | vregs(XR, XB));
+        }
+        if override_rc {
+            a.msr(a64::sysreg::FPCR, A);
+        }
+        match i.mem {
+            Some(_) if wide => a.str_q(XR, ADDR, 0),
+            Some(_) => a.str_d(XR, ADDR, 0),
+            None => {
+                a.str_q(XR, CTX, ymm(i.rm, 0));
+                self.zero_upper(i.rm);
+            }
+        }
+    }
+
+    /// VPERMPS and VPERMD: 8 x 32-bit cross-lane permute via 2-register TBL.
+    fn vperm_d(&mut self, i: &Insn, src1: u8) {
+        self.rm_half(i, 0, XA);
+        self.rm_half(i, 1, XB);
+        let a = &mut self.a;
+        let mask7 = V(6);
+        a.mov_imm(Size::W, T, 7);
+        a.dup_gen(2, mask7, T);
+        a.mov_imm(Size::W, T, 0x0404_0404);
+        a.dup_gen(2, XS, T);
+        a.mov_imm(Size::W, T, 0x0302_0100);
+        a.dup_gen(2, XU, T);
+        for (h, out) in [(0, XR), (1, XT)] {
+            a.ldr_q(XT, CTX, ymm(src1, h));
+            a.vec3(true, false, 0, 0b00011, XT, XT, mask7);
+            a.vec3(true, false, 2, 0b10011, XT, XT, XS);
+            a.vec3(true, false, 2, 0b10000, XT, XT, XU);
+            a.tbl2(out, XA, XT);
+        }
+        a.str_q(XR, CTX, ymm(i.reg, 0));
+        a.str_q(XT, CTX, ymm(i.reg, 1));
+    }
+
+    /// SSE4a EXTRQ and INSERTQ on the low 64 bits of an XMM register.
+    fn extrq_insertq(&mut self, i: &Insn, op: u16, p: Pfx) {
+        let d = if op == 0x178 && p == Pfx::P66 {
+            i.rm
+        } else {
+            i.reg
+        };
+        let a = &mut self.a;
+        a.ldr(Width::X, A, CTX, ymm(d, 0));
+        if op == 0x178 {
+            let len = i.imm as u32 & 63;
+            let idx = i.imm2 as u32 & 63;
+            let m = if len == 0 {
+                u64::MAX
+            } else {
+                (1u64 << len) - 1
+            };
+            if p == Pfx::P66 {
+                if idx > 0 {
+                    a.lsr_imm(Size::X, A, A, idx);
+                }
+                if len != 0 {
+                    a.mov_imm(Size::X, T, m);
+                    a.and(Size::X, A, A, T);
+                }
+            } else {
+                a.ldr(Width::X, B, CTX, ymm(i.rm, 0));
+                let field = m << idx;
+                a.mov_imm(Size::X, T, field);
+                a.bic(Size::X, A, A, T);
+                if idx > 0 {
+                    a.lsl_imm(Size::X, B, B, idx);
+                }
+                a.and(Size::X, B, B, T);
+                a.orr(Size::X, A, A, B);
+            }
+        } else {
+            let (u, mreg) = (super::U, super::OLD_NZCV);
+            if p == Pfx::P66 {
+                a.ldr(Width::X, B, CTX, ymm(i.rm, 0));
+                a.ubfx(Size::X, T, B, 0, 6);
+                a.ubfx(Size::X, u, B, 8, 6);
+                // u64::MAX >> ((64 - len) & 63) gives u64::MAX for len == 0.
+                a.mov_imm(Size::X, mreg, u64::MAX);
+                a.neg(Size::X, T, T);
+                a.lsrv(Size::X, mreg, mreg, T);
+                a.lsrv(Size::X, A, A, u);
+                a.and(Size::X, A, A, mreg);
+            } else {
+                a.ldr(Width::X, B, CTX, ymm(i.rm, 0));
+                a.ldr(Width::X, super::OLD_AF, CTX, ymm(i.rm, 0) + 8);
+                a.ubfx(Size::X, T, super::OLD_AF, 0, 6);
+                a.ubfx(Size::X, u, super::OLD_AF, 8, 6);
+                a.mov_imm(Size::X, mreg, u64::MAX);
+                a.neg(Size::X, T, T);
+                a.lsrv(Size::X, mreg, mreg, T);
+                a.lslv(Size::X, T, mreg, u);
+                a.bic(Size::X, A, A, T);
+                a.lslv(Size::X, B, B, u);
+                a.and(Size::X, B, B, T);
+                a.orr(Size::X, A, A, B);
+            }
+        }
+        a.str(Width::X, A, CTX, ymm(d, 0));
+    }
+
+    /// PCMPESTRM, PCMPESTRI, PCMPISTRM and PCMPISTRI (and VEX 128-bit forms).
+    fn string_compare(&mut self, i: &Insn, op: u16, vex: bool, flags: bool) {
+        let imm = i.imm as u8;
+        let words = imm & 1 != 0;
+        let signed = imm & 2 != 0;
+        let agg = (imm >> 2) & 3;
+        let pol = (imm >> 4) & 3;
+        let ctrl = imm & 0x40 != 0;
+        let explicit = op <= 0x361;
+        let index_out = op & 1 == 1;
+        let n: u64 = if words { 8 } else { 16 };
+        let all: u64 = (1u64 << n) - 1;
+        let sz: u32 = if words { 1 } else { 0 };
+        let elem_bytes: u32 = if words { 2 } else { 1 };
+        let cmeq_zero: u32 = 0x4e20_9800 | (sz << 22);
+
+        self.a.ldr_q(XA, CTX, ymm(i.reg, 0));
+        self.rm_half(i, 0, XB);
+
+        let (u, old_nzcv, old_af) = (super::U, super::OLD_NZCV, super::OLD_AF);
+        let a = &mut self.a;
+        // XU holds per-lane bit weights (1, 2, 4, ..., 128) for bitmask extraction/expansion.
+        if words {
+            a.mov_imm(Size::X, T, 0x0008_0004_0002_0001);
+            a.fmov_dx(XU, T);
+            a.mov_imm(Size::X, T, 0x0080_0040_0020_0010);
+            a.fmov_dx(XT, T);
+            a.ins_d1(XU, XT);
+        } else {
+            a.mov_imm(Size::X, T, 0x8040_2010_0804_0201);
+            a.dup_gen(3, XU, T);
+        }
+
+        let bitmask = |a: &mut a64::Asm, dst: Reg, src: V| {
+            a.vec3(true, false, 0, 0b00011, XT, src, XU);
+            for _ in 0..3 {
+                a.vec3(true, false, sz, 0b10111, XT, XT, XT);
+            }
+            a.umov_h(dst, XT, 0);
+        };
+
+        // Compute lengths la -> A and lb -> B, each in 0..=n.
+        if explicit {
+            for (dst, src) in [(A, r(0)), (B, r(2))] {
+                if i.rex_w() {
+                    a.mov(Size::X, dst, src);
+                } else {
+                    a.sxtw(dst, src);
+                }
+                a.asr_imm(Size::X, T, dst, 63);
+                a.eor(Size::X, dst, dst, T);
+                a.sub(Size::X, dst, dst, T);
+                a.mov_imm(Size::X, T, n);
+                a.cmp(Size::X, dst, T);
+                a.csel(Size::X, dst, T, dst, a64::Cond::Hs);
+            }
+        } else {
+            a.mov_imm(Size::X, old_af, 1 << n);
+            for (dst, v) in [(A, XA), (B, XB)] {
+                a.emit(cmeq_zero | vregs(XR, v));
+                bitmask(a, T, XR);
+                a.orr(Size::X, T, T, old_af);
+                a.rbit(Size::X, T, T);
+                a.clz(Size::X, dst, T);
+            }
+        }
+
+        // ADDR = mask_b = (1 << lb) - 1.
+        a.mov_imm(Size::X, ADDR, 1);
+        a.lslv(Size::X, ADDR, ADDR, B);
+        a.sub_imm(Size::X, ADDR, ADDR, 1);
+
+        // Compute n-bit result mask -> U according to aggregation mode.
+        match agg {
+            0 => {
+                let (top, done) = (a.label(), a.label());
+                a.vec3(true, true, 0, 0b00011, XR, XR, XR);
+                a.mov(Size::X, old_af, A);
+                a.cbz(Size::X, old_af, done);
+                a.bind(top);
+                a.dup_elem(sz, XT, XA);
+                a.vec3(true, true, sz, 0b10001, XT, XB, XT);
+                a.vec3(true, false, 2, 0b00011, XR, XR, XT);
+                a.ext(XA, XA, XA, elem_bytes);
+                a.sub_imm(Size::X, old_af, old_af, 1);
+                a.cbnz(Size::X, old_af, top);
+                a.bind(done);
+                bitmask(a, u, XR);
+                a.and(Size::X, u, u, ADDR);
+            }
+            1 => {
+                let (top, done) = (a.label(), a.label());
+                a.vec3(true, true, 0, 0b00011, XR, XR, XR);
+                a.lsr_imm(Size::X, old_af, A, 1);
+                a.cbz(Size::X, old_af, done);
+                a.bind(top);
+                a.dup_elem(sz, XT, XA);
+                a.ext(XA, XA, XA, elem_bytes);
+                a.dup_elem(sz, XS, XA);
+                a.ext(XA, XA, XA, elem_bytes);
+                a.vec3(true, !signed, sz, 0b00111, XT, XB, XT);
+                a.vec3(true, !signed, sz, 0b00111, XS, XS, XB);
+                a.vec3(true, false, 0, 0b00011, XT, XT, XS);
+                a.vec3(true, false, 2, 0b00011, XR, XR, XT);
+                a.sub_imm(Size::X, old_af, old_af, 1);
+                a.cbnz(Size::X, old_af, top);
+                a.bind(done);
+                bitmask(a, u, XR);
+                a.and(Size::X, u, u, ADDR);
+            }
+            2 => {
+                a.vec3(true, true, sz, 0b10001, XR, XA, XB);
+                bitmask(a, u, XR);
+                a.mov_imm(Size::X, old_af, 1);
+                a.lslv(Size::X, old_af, old_af, A);
+                a.sub_imm(Size::X, old_af, old_af, 1);
+                a.and(Size::X, T, old_af, ADDR);
+                a.and(Size::X, u, u, T);
+                a.orr(Size::X, T, old_af, ADDR);
+                a.mov_imm(Size::X, old_nzcv, all);
+                a.bic(Size::X, T, old_nzcv, T);
+                a.orr(Size::X, u, u, T);
+            }
+            _ => {
+                let (top, done) = (a.label(), a.label());
+                a.mov_imm(Size::X, u, all);
+                a.cbz(Size::X, A, done);
+                a.mov_imm(Size::X, old_af, 0);
+                a.mov_imm(Size::X, old_nzcv, !all);
+                a.bind(top);
+                a.dup_elem(sz, XT, XA);
+                a.vec3(true, true, sz, 0b10001, XR, XB, XT);
+                bitmask(a, T, XR);
+                a.and(Size::X, T, T, ADDR);
+                a.orr(Size::X, T, T, old_nzcv);
+                a.lsrv(Size::X, T, T, old_af);
+                a.and(Size::X, u, u, T);
+                a.ext(XA, XA, XA, elem_bytes);
+                a.add_imm(Size::X, old_af, old_af, 1);
+                a.cmp(Size::X, old_af, A);
+                a.b_cond(a64::Cond::Lo, top);
+                a.bind(done);
+            }
+        }
+
+        // Polarity adjustment.
+        match pol {
+            1 => {
+                a.mov_imm(Size::X, T, all);
+                a.eor(Size::X, u, u, T);
+            }
+            3 => a.eor(Size::X, u, u, ADDR),
+            _ => {}
+        }
+
+        // Write destination: RCX for *I, XMM0 (zeroing upper if VEX) for *M.
+        if index_out {
+            let (zero, out_done) = (a.label(), a.label());
+            a.cbz(Size::X, u, zero);
+            if ctrl {
+                a.clz(Size::W, T, u);
+                a.mov_imm(Size::X, old_af, 31);
+                a.sub(Size::X, r(1), old_af, T);
+            } else {
+                a.rbit(Size::W, T, u);
+                a.clz(Size::W, r(1), T);
+            }
+            a.b(out_done);
+            a.bind(zero);
+            a.mov_imm(Size::X, r(1), n);
+            a.bind(out_done);
+        } else {
+            if !ctrl {
+                a.stp(Size::X, u, a64::ZR, CTX, ymm(0, 0));
+            } else if !words {
+                a.dup_gen(0, XT, u);
+                a.lsr_imm(Size::X, T, u, 8);
+                a.dup_gen(0, XS, T);
+                a.ins(3, XT, 1, XS, 0);
+                a.vec3(true, false, 0, 0b10001, XT, XT, XU);
+                a.str_q(XT, CTX, ymm(0, 0));
+            } else {
+                a.dup_gen(1, XT, u);
+                a.vec3(true, false, 1, 0b10001, XT, XT, XU);
+                a.str_q(XT, CTX, ymm(0, 0));
+            }
+            if vex {
+                self.zero_upper(0);
+            }
+        }
+
+        if flags {
+            let a = &mut self.a;
+            a.mov_imm(Size::X, old_nzcv, 0);
+            a.cmp_imm(Size::X, A, n as u32);
+            a.cset(Size::X, T, a64::Cond::Lo);
+            a.bfi(Size::X, old_nzcv, T, 31, 1);
+            a.cmp_imm(Size::X, B, n as u32);
+            a.cset(Size::X, T, a64::Cond::Lo);
+            a.bfi(Size::X, old_nzcv, T, 30, 1);
+            a.cmp_imm(Size::X, u, 0);
+            a.cset(Size::X, T, a64::Cond::Eq);
+            a.bfi(Size::X, old_nzcv, T, 29, 1);
+            a.bfi(Size::X, old_nzcv, u, 28, 1);
+            a.msr(a64::sysreg::NZCV, old_nzcv);
+            a.mov_imm(Size::X, super::PF_RESULT, 1);
+            a.mov_imm(Size::X, super::AF_AUX, 1);
+        }
     }
 }

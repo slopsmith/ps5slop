@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use memory::{FaultKind, Memory};
 use x86::Cpu as X86;
 use x86::cpu::flags;
+use x86::name::OpcodeKey;
 
 use crate::translate::{
     AF_AUX, FS_BASE, HVC_HOST, HVC_INTERP, HVC_MISS, HVC_TIERUP, ICOUNT, PF_RESULT, RIP,
@@ -86,7 +87,7 @@ pub(crate) enum Count {
 /// opcode and address, and why the VM is left.
 #[derive(Default)]
 struct Stats {
-    opcodes: HashMap<(u8, u8, u8), u64>,
+    opcodes: HashMap<OpcodeKey, u64>,
     rips: HashMap<u64, u64>,
     exits: [u64; 10],
     causes: HashMap<(Cause, u64), u64>,
@@ -164,7 +165,7 @@ pub fn exit_causes(top: usize) -> Causes {
     out
 }
 
-type FallbackMap = Arc<Mutex<HashMap<(u8, u8, u8), u64>>>;
+type FallbackMap = Arc<Mutex<HashMap<OpcodeKey, u64>>>;
 
 static ALL_STATS: Mutex<Vec<Arc<Mutex<Stats>>>> = Mutex::new(Vec::new());
 static ALL_FALLBACKS: Mutex<Vec<FallbackMap>> = Mutex::new(Vec::new());
@@ -190,8 +191,7 @@ fn record_fallback(rip: u64, mem: &Memory) {
     }) else {
         return;
     };
-    let ext = i.modrm.map_or(0xff, |_| i.ext());
-    let key = (i.map as u8, i.op, ext);
+    let key = OpcodeKey::from_insn(&i);
     MY_FALLBACKS.with(|f| {
         *f.lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -202,7 +202,7 @@ fn record_fallback(rip: u64, mem: &Memory) {
 
 /// JIT interpreter fallbacks across all threads, grouped by opcode, for the problem report.
 pub fn fallback_rows() -> Vec<diag::problems::Row> {
-    let mut totals: HashMap<(u8, u8, u8), u64> = HashMap::new();
+    let mut totals: HashMap<OpcodeKey, u64> = HashMap::new();
     for map in ALL_FALLBACKS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -214,19 +214,12 @@ pub fn fallback_rows() -> Vec<diag::problems::Row> {
     }
     totals
         .into_iter()
-        .map(|((map, op, ext), count)| {
-            let suffix = if ext == 0xff {
-                String::new()
-            } else {
-                format!(" /{ext}")
-            };
-            diag::problems::Row {
-                kind: diag::problems::Kind::JitFallback,
-                reason: "interpreter fallback".into(),
-                subject: format!("map {map} {op:02x}{suffix}"),
-                count,
-                detail: None,
-            }
+        .map(|(key, count)| diag::problems::Row {
+            kind: diag::problems::Kind::JitFallback,
+            reason: "interpreter fallback".into(),
+            subject: key.describe(),
+            count,
+            detail: None,
         })
         .collect()
 }
@@ -273,10 +266,10 @@ pub(crate) fn reset_stats() {
     }
 }
 
-pub type Interpreted = (Vec<((u8, u8, u8), u64)>, Vec<(u64, u64)>, [u64; 10]);
+pub type Interpreted = (Vec<(OpcodeKey, u64)>, Vec<(u64, u64)>, [u64; 10]);
 
-/// The opcodes ((map, opcode, /ext or 0xff), count) and addresses the
-/// interpreter ran most while statistics or profiling were on.
+/// The opcodes (key, count) and addresses the interpreter ran most while
+/// statistics or profiling were on.
 pub fn interpreted(top: usize) -> Interpreted {
     let Some(s) = stats() else {
         return (Vec::new(), Vec::new(), [0; 10]);
@@ -306,8 +299,7 @@ fn count_insn(x: &X86, mem: &Memory) {
     });
     with_stats(|s| {
         if let Ok(i) = insn {
-            let ext = i.modrm.map_or(0xff, |_| i.ext());
-            *s.opcodes.entry((i.map as u8, i.op, ext)).or_default() += 1;
+            *s.opcodes.entry(OpcodeKey::from_insn(&i)).or_default() += 1;
         }
         *s.rips.entry(x.rip).or_default() += 1;
     });
@@ -342,14 +334,9 @@ pub fn report(mem: &Memory) {
     out += &format!("\n  exits: {}", exits.join(", "));
     let mut ops: Vec<_> = s.opcodes.iter().collect();
     ops.sort_by(|a, b| b.1.cmp(a.1));
-    out += "\n  interpreted opcodes (map, opcode, /ext):";
-    for ((map, op, ext), n) in ops.iter().take(top.max(30)) {
-        let ext = if *ext == 0xff {
-            String::new()
-        } else {
-            format!(" /{ext}")
-        };
-        out += &format!("\n    {n:>12}  map {map} {op:02x}{ext}");
+    out += "\n  interpreted opcodes:";
+    for (key, n) in ops.iter().take(top.max(30)) {
+        out += &format!("\n    {n:>12}  {}", key.describe());
     }
     let mut rips: Vec<_> = s.rips.iter().collect();
     rips.sort_by(|a, b| b.1.cmp(a.1));

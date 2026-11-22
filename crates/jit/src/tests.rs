@@ -1297,3 +1297,362 @@ fn a_thread_stopped_by_a_kick_leaves_with_registers_that_match_memory() {
         );
     });
 }
+
+/// Checks that every instruction in `code` is accepted by the JIT translator
+/// (skipping `pushf` 0x9c when a test snapshots raw RFLAGS between ops).
+fn assert_all_translated(code: &[u8]) {
+    let mem = Memory::new(1 << 40).unwrap();
+    mem.map(CODE, PAGE_SIZE, Prot::new(true, true, true), "code")
+        .unwrap();
+    mem.write_host(CODE, code).unwrap();
+    let mut off = 0usize;
+    while off < code.len() {
+        let i = x86::decode::decode(|k| code.get(off + k).copied().ok_or(())).expect("decodes");
+        if !(i.map == x86::decode::Map::Primary && i.op == 0x9c) {
+            assert!(
+                translate::starts_block(&mem, CODE + off as u64),
+                "unexpected interpreter fallback at +{off:#x}: {}",
+                x86::name::OpcodeKey::from_insn(&i).describe()
+            );
+        }
+        off += i.len as usize;
+    }
+}
+
+#[test]
+fn f16c_and_vperm_match_the_interpreter() {
+    let mut code = Vec::new();
+    // mov ebx, CODE + 0x400
+    code.extend_from_slice(&[0xbb, 0x00, 0x04, 0x40, 0x00]);
+    // vmovdqu xmm0, [rbx + 0x00] (8 half-floats)
+    code.extend_from_slice(&[0xc5, 0xfa, 0x6f, 0x03]);
+    // vcvtph2ps xmm1, xmm0
+    code.extend_from_slice(&[0xc4, 0xe2, 0x79, 0x13, 0xc8]);
+    // vcvtph2ps xmm2, qword [rbx + 0x08]
+    code.extend_from_slice(&[0xc4, 0xe2, 0x79, 0x13, 0x53, 0x08]);
+    // vcvtph2ps ymm3, xmm0
+    code.extend_from_slice(&[0xc4, 0xe2, 0x7d, 0x13, 0xd8]);
+    // vcvtph2ps ymm4, xmmword [rbx + 0x10]
+    code.extend_from_slice(&[0xc4, 0xe2, 0x7d, 0x13, 0x63, 0x10]);
+    // Store results to [rbx + 0x200..]
+    code.extend_from_slice(&[0xc5, 0xfe, 0x7f, 0x8b, 0x00, 0x02, 0x00, 0x00]); // ymm1
+    code.extend_from_slice(&[0xc5, 0xfe, 0x7f, 0x93, 0x20, 0x02, 0x00, 0x00]); // ymm2
+    code.extend_from_slice(&[0xc5, 0xfe, 0x7f, 0x9b, 0x40, 0x02, 0x00, 0x00]); // ymm3
+    code.extend_from_slice(&[0xc5, 0xfe, 0x7f, 0xa3, 0x60, 0x02, 0x00, 0x00]); // ymm4
+
+    // vmovdqu ymm4, [rbx + 0x20] (8 f32 values covering ties, overflow, underflow, NaNs)
+    code.extend_from_slice(&[0xc5, 0xfe, 0x6f, 0x63, 0x20]);
+    // vcvtps2ph across all 4 rounding modes + MXCSR bit 2 (reg & mem, 128 & 256)
+    for (idx, imm) in [0u8, 1, 2, 3, 4].iter().enumerate() {
+        let out = 0x280u32 + (idx as u32) * 0x20;
+        // vcvtps2ph xmm5, xmm4, imm (128-bit reg -> zeroes upper 192 bits)
+        code.extend_from_slice(&[0xc4, 0xe3, 0x79, 0x1d, 0xe5, *imm]);
+        // vmovdqu [rbx + out], ymm5
+        code.extend_from_slice(&[0xc5, 0xfe, 0x7f, 0xab]);
+        code.extend_from_slice(&out.to_le_bytes());
+        // vcvtps2ph xmmword [rbx + out + 0x10], ymm4, imm (256-bit mem)
+        code.extend_from_slice(&[0xc4, 0xe3, 0x7d, 0x1d, 0xa3]);
+        code.extend_from_slice(&(out + 0x10).to_le_bytes());
+        code.push(*imm);
+    }
+    // 128-bit memory store and 256-bit register destination
+    code.extend_from_slice(&[0xc4, 0xe3, 0x79, 0x1d, 0xa3]);
+    code.extend_from_slice(&0x320u32.to_le_bytes());
+    code.push(0x00);
+    code.extend_from_slice(&[0xc4, 0xe3, 0x7d, 0x1d, 0xe6, 0x03]); // vcvtps2ph xmm6, ymm4, 3
+
+    // VPERMPS and VPERMD (reg, mem, and self-aliasing ymm5, ymm5, ymm5)
+    code.extend_from_slice(&[0xc5, 0xfe, 0x6f, 0x6b, 0x40]); // vmovdqu ymm5, [rbx + 0x40] (indices)
+    code.extend_from_slice(&[0xc4, 0xe2, 0x55, 0x16, 0xfc]); // vpermps ymm7, ymm5, ymm4
+    code.extend_from_slice(&[0xc4, 0x62, 0x55, 0x36, 0x83]); // vpermd ymm8, ymm5, [rbx + 0x60]
+    code.extend_from_slice(&0x60u32.to_le_bytes());
+    code.extend_from_slice(&[0xc4, 0xe2, 0x55, 0x36, 0xed]); // vpermd ymm5, ymm5, ymm5
+    code.extend_from_slice(&[0xff, 0xd5]); // call rbp
+
+    assert_all_translated(&code);
+
+    let mut data = vec![0u8; 0x100];
+    let halfs_a: [u16; 8] = [
+        0x0000, // +0
+        0x8000, // -0
+        0x0001, // min subnormal
+        0x83ff, // max negative subnormal
+        0x3c00, // 1.0
+        0x7bff, // max finite f16
+        0x7c00, // +inf
+        0x7e01, // qNaN
+    ];
+    let halfs_b: [u16; 8] = [
+        0xfc00, // -inf
+        0x7c01, // sNaN
+        0xfd55, // neg sNaN
+        0xbc00, // -1.0
+        0x0400, // min normal
+        0x4580, // 5.5
+        0xc200, // -3.0
+        0xfe55, // neg qNaN
+    ];
+    for (k, h) in halfs_a.iter().enumerate() {
+        data[2 * k..2 * k + 2].copy_from_slice(&h.to_le_bytes());
+    }
+    for (k, h) in halfs_b.iter().enumerate() {
+        data[0x10 + 2 * k..0x10 + 2 * k + 2].copy_from_slice(&h.to_le_bytes());
+    }
+    let floats: [u32; 8] = [
+        1.5004883f32.to_bits(), // tie between 1.5 and 1.5009766
+        (-1.5004883f32).to_bits(),
+        100_000.0f32.to_bits(), // overflow
+        (-100_000.0f32).to_bits(),
+        1.0e-7f32.to_bits(), // subnormal / underflow
+        (-0.0f32).to_bits(),
+        0x7fc0_2000, // qNaN with payload
+        0x7f80_2000, // sNaN with payload
+    ];
+    for (k, f) in floats.iter().enumerate() {
+        data[0x20 + 4 * k..0x20 + 4 * k + 4].copy_from_slice(&f.to_le_bytes());
+    }
+    let indices: [u32; 8] = [7, 0, 13, 2, 0xff, 4, 1, 9];
+    for (k, ix) in indices.iter().enumerate() {
+        data[0x40 + 4 * k..0x40 + 4 * k + 4].copy_from_slice(&ix.to_le_bytes());
+        data[0x60 + 4 * k..0x60 + 4 * k + 4]
+            .copy_from_slice(&(0x1100_0000u32 + k as u32).to_le_bytes());
+    }
+    same_as_interpreter(&code, &data);
+}
+
+#[test]
+fn narrow_adc_sbb_and_div_match_the_interpreter() {
+    let mut code = Vec::new();
+    // mov ebx, CODE + 0x400; lea r14, [rbx + 0x100]
+    code.extend_from_slice(&[0xbb, 0x00, 0x04, 0x40, 0x00]);
+    code.extend_from_slice(&[0x4c, 0x8d, 0xb3, 0x00, 0x01, 0x00, 0x00]);
+    // jmp start (past 18-byte helper)
+    code.extend_from_slice(&[0xeb, 0x12]);
+    // helper (at offset 14): pushf; pop r15; mov [r14], r15; mov [r14+8], rax; add r14, 16; ret
+    let helper_off = code.len() as isize;
+    code.extend_from_slice(&[
+        0x9c, // pushf
+        0x41, 0x5f, // pop r15
+        0x4d, 0x89, 0x3e, // mov [r14], r15
+        0x49, 0x89, 0x46, 0x08, // mov [r14 + 8], rax
+        0x49, 0x83, 0xc6, 0x10, // add r14, 16
+        0xc3, // ret
+    ]);
+    // Patch jmp rel8 to current end
+    code[13] = (code.len() as isize - helper_off) as u8;
+
+    let call_save = |code: &mut Vec<u8>, op: &[u8]| {
+        code.extend_from_slice(op);
+        let rel = (helper_off - (code.len() as isize + 5)) as i32;
+        code.push(0xe8);
+        code.extend_from_slice(&rel.to_le_bytes());
+    };
+
+    // Preload upper bytes of RAX so narrow ops also prove upper bits stay intact
+    code.extend_from_slice(&[0x48, 0xb8, 0x00, 0x00, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12]);
+
+    // 8-bit ADC/SBB boundary matrix (CF=0 and CF=1)
+    for &(a, b) in &[
+        (0x00u8, 0x00u8),
+        (0x00, 0xff),
+        (0xff, 0x00),
+        (0xff, 0xff),
+        (0x7f, 0x00),
+        (0x7f, 0x01),
+        (0x80, 0x7f),
+        (0x80, 0x80),
+        (0x0f, 0x00),
+        (0x10, 0x01),
+    ] {
+        for cf in [false, true] {
+            code.extend_from_slice(&[0xb0, a, if cf { 0xf9 } else { 0xf8 }]);
+            call_save(&mut code, &[0x80, 0xd0, b]); // adc al, b
+            code.extend_from_slice(&[0xb0, a, if cf { 0xf9 } else { 0xf8 }]);
+            call_save(&mut code, &[0x80, 0xd8, b]); // sbb al, b
+        }
+    }
+
+    // 8-bit AH / mem / reg-reg ADC & SBB
+    code.extend_from_slice(&[0xb0, 0x11, 0xb4, 0x7f]); // al=0x11, ah=0x7f
+    code.extend_from_slice(&[0xb9, 0x80, 0x01, 0x00, 0x00]); // cl=0x80
+    code.push(0xf9);
+    call_save(&mut code, &[0x10, 0xcc]); // adc ah, cl
+    code.push(0xf9);
+    call_save(&mut code, &[0x1a, 0x23]); // sbb ah, [rbx]
+    code.push(0xf9);
+    call_save(&mut code, &[0x10, 0x03]); // adc [rbx], al
+
+    // 16-bit ADC/SBB boundary cases (66 81, 66 83)
+    for &(a, b) in &[
+        (0x0000u16, 0xffffu16),
+        (0xffff, 0xffff),
+        (0x7fff, 0x0000),
+        (0x8000, 0x7fff),
+        (0x8000, 0x8000),
+    ] {
+        let a_le = a.to_le_bytes();
+        let b_le = b.to_le_bytes();
+        for cf in [false, true] {
+            code.extend_from_slice(&[0x66, 0xb8, a_le[0], a_le[1], if cf { 0xf9 } else { 0xf8 }]);
+            call_save(&mut code, &[0x66, 0x81, 0xd0, b_le[0], b_le[1]]); // adc ax, b
+            code.extend_from_slice(&[0x66, 0xb8, a_le[0], a_le[1], if cf { 0xf9 } else { 0xf8 }]);
+            call_save(&mut code, &[0x66, 0x81, 0xd8, b_le[0], b_le[1]]); // sbb ax, b
+        }
+    }
+    code.push(0xf9);
+    call_save(&mut code, &[0x66, 0x83, 0xd8, 0xff]); // sbb ax, -1
+
+    // 8-bit DIV and IDIV (reg & mem), preserving upper RAX bits and flags
+    code.extend_from_slice(&[0x66, 0xb8, 0xe8, 0x03, 0xb1, 0x07, 0xf9]); // AX=1000, cl=7, stc
+    call_save(&mut code, &[0xf6, 0xf1]); // div cl -> AL=142, AH=6
+    code.extend_from_slice(&[0x66, 0xb8, 0x18, 0xfc, 0xb1, 0xf7]); // AX=-1000, cl=-9
+    call_save(&mut code, &[0xf6, 0xf9]); // idiv cl -> AL=111, AH=-1
+    code.extend_from_slice(&[0x66, 0xb8, 0x81, 0xfe]); // AX=-383
+    call_save(&mut code, &[0xf6, 0x7b, 0x04]); // idiv byte [rbx+4] (= 3)
+
+    // 16-bit DIV and IDIV (reg & mem, non-zero DX), preserving upper RAX/RDX bits
+    code.extend_from_slice(&[0x48, 0xb8, 0x40, 0x42, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+    code.extend_from_slice(&[0x48, 0xba, 0x0f, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66]);
+    code.extend_from_slice(&[0x66, 0xb9, 0x10, 0x27]); // cx = 10000
+    call_save(&mut code, &[0x66, 0xf7, 0xf1]); // div cx
+    code.extend_from_slice(&[0x49, 0x89, 0x16, 0x49, 0x83, 0xc6, 0x08]); // mov [r14], rdx; add r14, 8
+
+    code.extend_from_slice(&[0x66, 0xb8, 0x00, 0x00, 0x66, 0xba, 0xf0, 0xff]); // DX:AX = -1048576
+    call_save(&mut code, &[0x66, 0xf7, 0x7b, 0x06]); // idiv word [rbx+6] (= -33)
+    code.extend_from_slice(&[0x49, 0x89, 0x16]); // mov [r14], rdx
+    code.extend_from_slice(&[0xff, 0xd5]); // call rbp
+
+    assert!(code.len() <= 0x400, "code size {}", code.len());
+    assert_all_translated(&code);
+
+    let mut data = vec![0u8; 0x40];
+    data[0] = 0x7f;
+    data[4] = 3;
+    data[6..8].copy_from_slice(&(-33i16).to_le_bytes());
+    same_as_interpreter(&code, &data);
+}
+
+#[test]
+fn string_compare_and_sse4a_match_the_interpreter() {
+    let mut code = Vec::new();
+    // mov ebx, CODE + 0x400; lea r14, [rbx + 0x200]
+    code.extend_from_slice(&[0xbb, 0x00, 0x04, 0x40, 0x00]);
+    code.extend_from_slice(&[0x4c, 0x8d, 0xb3, 0x00, 0x02, 0x00, 0x00]);
+    // jmp past helper
+    code.extend_from_slice(&[0xeb, 0x00]);
+    let helper_off = code.len() as isize;
+    // Save RCX, RFLAGS, and YMM0 to [r14..+48], advance r14 by 48, ret
+    code.extend_from_slice(&[
+        0x9c, // pushf
+        0x41, 0x5f, // pop r15
+        0x49, 0x89, 0x0e, // mov [r14], rcx
+        0x4d, 0x89, 0x7e, 0x08, // mov [r14 + 8], r15
+        0xc4, 0xc1, 0x7e, 0x7f, 0x46, 0x10, // vmovdqu [r14 + 0x10], ymm0
+        0x49, 0x83, 0xc6, 0x30, // add r14, 48
+        0xc3, // ret
+    ]);
+    code[13] = (code.len() as isize - helper_off) as u8;
+
+    // Load strings into xmm2..xmm7
+    for (r, off) in [
+        (2u8, 0x00u8),
+        (3, 0x10),
+        (4, 0x20),
+        (5, 0x30),
+        (6, 0x40),
+        (7, 0x50),
+    ] {
+        code.extend_from_slice(&[0xf3, 0x0f, 0x6f, (r << 3) | 0x43, off]);
+    }
+    // Preload upper half of ymm0 so we check VEX vs legacy upper-zeroing
+    code.extend_from_slice(&[0xc5, 0xfe, 0x6f, 0x43, 0x60]); // vmovdqu ymm0, [rbx + 0x60]
+
+    let emit_pcmp = |code: &mut Vec<u8>, bytes: &[u8]| {
+        code.extend_from_slice(bytes);
+        let rel = (helper_off - (code.len() as isize + 5)) as i32;
+        code.push(0xe8);
+        code.extend_from_slice(&rel.to_le_bytes());
+    };
+
+    // PCMPISTRI / PCMPISTRM across all 4 agg modes, polarities, LSB/MSB, bitmask/bytemask
+    for &imm in &[0x00u8, 0x40, 0x10, 0x30, 0x08, 0x18, 0x38] {
+        emit_pcmp(&mut code, &[0x66, 0x0f, 0x3a, 0x63, 0xd3, imm]);
+        emit_pcmp(&mut code, &[0x66, 0x0f, 0x3a, 0x62, 0xd3, imm]);
+    }
+    // Ranges (agg=1): unsigned byte ranges (xmm4 vs xmm3), signed & unsigned word ranges (xmm6 vs xmm7)
+    for &imm in &[0x04u8, 0x44, 0x14, 0x34] {
+        emit_pcmp(&mut code, &[0x66, 0x0f, 0x3a, 0x63, 0xe3, imm]);
+        emit_pcmp(&mut code, &[0x66, 0x0f, 0x3a, 0x62, 0xe3, imm]);
+    }
+    for &imm in &[0x05u8, 0x07, 0x47, 0x37] {
+        emit_pcmp(&mut code, &[0x66, 0x0f, 0x3a, 0x63, 0xf7, imm]);
+        emit_pcmp(&mut code, &[0x66, 0x0f, 0x3a, 0x62, 0xf7, imm]);
+    }
+    // Equal-ordered (agg=3): substring search xmm5 ("lo") in xmm3 ("hello world!")
+    for &imm in &[0x0cu8, 0x4c, 0x1c, 0x3c] {
+        emit_pcmp(&mut code, &[0x66, 0x0f, 0x3a, 0x63, 0xeb, imm]);
+        emit_pcmp(&mut code, &[0x66, 0x0f, 0x3a, 0x62, 0xeb, imm]);
+    }
+    // VEX 128-bit memory form (partial tail match + must zero upper 128 bits of ymm0)
+    emit_pcmp(&mut code, &[0xc4, 0xe3, 0x79, 0x62, 0x6b, 0x70, 0x4c]);
+    emit_pcmp(&mut code, &[0xc4, 0xe3, 0x79, 0x63, 0xeb, 0x0c]);
+
+    // PCMPESTRI / PCMPESTRM with explicit lengths (negative EAX, large EDX, REX.W, zero length)
+    code.extend_from_slice(&[0xb8, 0xfe, 0xff, 0xff, 0xff]); // eax = -2 (abs = 2)
+    code.extend_from_slice(&[0xba, 0x20, 0x00, 0x00, 0x00]); // edx = 32 (clamped to 16)
+    emit_pcmp(&mut code, &[0x66, 0x0f, 0x3a, 0x61, 0xeb, 0x0c]);
+    emit_pcmp(&mut code, &[0x66, 0x0f, 0x3a, 0x60, 0xeb, 0x4c]);
+    code.extend_from_slice(&[0x48, 0xc7, 0xc0, 0xfd, 0xff, 0xff, 0xff]); // rax = -3
+    code.extend_from_slice(&[0x31, 0xd2]); // edx = 0
+    emit_pcmp(&mut code, &[0x66, 0x48, 0x0f, 0x3a, 0x61, 0xd3, 0x08]);
+
+    // SSE4a EXTRQ and INSERTQ (imm & reg forms, len=0, preserving upper 64 bits and flags)
+    code.extend_from_slice(&[0xf3, 0x0f, 0x6f, 0x63, 0x60]); // movdqu xmm4, [rbx+0x60]
+    code.extend_from_slice(&[0xf3, 0x0f, 0x6f, 0x6b, 0x70]); // movdqu xmm5, [rbx+0x70]
+    code.push(0xf9); // stc (must survive extrq/insertq)
+    code.extend_from_slice(&[0x66, 0x0f, 0x78, 0xc4, 0x0c, 0x08]); // extrq xmm4, 12, 8
+    code.extend_from_slice(&[0xf3, 0x0f, 0x6f, 0x73, 0x60]); // movdqu xmm6, [rbx+0x60]
+    code.extend_from_slice(&[0x66, 0x0f, 0x78, 0xc6, 0x00, 0x04]); // extrq xmm6, 0 (len=64), 4
+    code.extend_from_slice(&[0xf3, 0x0f, 0x6f, 0x7b, 0x60]); // movdqu xmm7, [rbx+0x60]
+    code.extend_from_slice(&[0x66, 0x0f, 0x79, 0xfd]); // extrq xmm7, xmm5
+    code.extend_from_slice(&[0xf2, 0x0f, 0x78, 0xe5, 0x0a, 0x10]); // insertq xmm4, xmm5, 10, 16
+    code.extend_from_slice(&[0xf2, 0x0f, 0x79, 0xf5]); // insertq xmm6, xmm5
+    code.extend_from_slice(&[0xff, 0xd5]); // call rbp
+
+    assert!(code.len() <= 0x400, "code size {}", code.len());
+    assert_all_translated(&code);
+
+    let mut data = vec![0u8; 0x100];
+    data[0x00..0x10].copy_from_slice(b"aeiou\0xxxxxxxxxx");
+    data[0x10..0x20].copy_from_slice(b"hello world!\0xxx");
+    data[0x20..0x30].copy_from_slice(b"azAZ09\0xxxxxxxxx");
+    data[0x30..0x40].copy_from_slice(b"lo\0xxxxxxxxxxxxx");
+    for (k, w) in [-10i16, 10, 100, 200, 0, 0, 0, 0].iter().enumerate() {
+        data[0x40 + 2 * k..0x40 + 2 * k + 2].copy_from_slice(&w.to_le_bytes());
+    }
+    for (k, w) in [-20i16, -10, 0, 5, 150, 300, -1, 10].iter().enumerate() {
+        data[0x50 + 2 * k..0x50 + 2 * k + 2].copy_from_slice(&w.to_le_bytes());
+    }
+    data[0x60..0x70].copy_from_slice(&[
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x01,
+    ]);
+    // [0x70..0x80]: tail "l" at byte 15 (no NUL) for ordered partial match; also used as extrq/insertq control
+    data[0x70..0x80].copy_from_slice(b"\x0c\x08xxxxxxxxxxx\x0c\x08l");
+    same_as_interpreter(&code, &data);
+}
+
+#[test]
+fn fallback_rows_report_readable_opcode_names() {
+    let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
+    // rcr al, 1 (D0 /3, intentionally left to the interpreter) then call rbp
+    let code = &[0xb0, 0x55, 0xd0, 0xd8, 0xff, 0xd5];
+    let (mem, mut cpu) = program(code);
+    assert_eq!(run(&mut cpu, &mem, &|| false), x86::Exit::Trap(TRAP));
+    let rows = fallback_rows();
+    assert!(
+        rows.iter()
+            .any(|r| r.subject == "rcr (D0 /3)" && r.count >= 1),
+        "expected readable fallback name in {rows:?}"
+    );
+}

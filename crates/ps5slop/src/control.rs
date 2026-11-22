@@ -691,14 +691,9 @@ fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> Stri
             out.push(format!("      {k:>10}  {at}"));
         }
     }
-    out.push("interpreted opcodes (map, opcode, /ext):".into());
-    for ((map, op, ext), n) in ops {
-        let ext = if ext == 0xff {
-            String::new()
-        } else {
-            format!(" /{ext}")
-        };
-        out.push(format!("  {n:>10}  map {map} {op:02x}{ext}"));
+    out.push("interpreted opcodes:".into());
+    for (key, n) in ops {
+        out.push(format!("  {n:>10}  {}", key.describe()));
     }
     out.push("interpreted addresses:".into());
     for (rip, n) in rips {

@@ -94,6 +94,14 @@ Measured headless, release builds, back to back, with another delegate's Superli
 
 So the movie now plays in about 10 s instead of about 150. Left in the interpreter during the intro (10 s window): `pcmpistri` in `libc` on the main thread (0.57 M, 0.25 s; Sony's code, counted only), `vcvtps2ph` in the game (17 K), 8-bit `div` and `adc r8, imm`.
 
+## GTA V gameplay fallbacks and readable opcode names (2026-11-22)
+
+GTA V's per-run problem report recorded 98.8 M JIT interpreter fallbacks (~10,727 per frame), led by `vcvtph2ps` (46.3 M), 8- and 16-bit `adc`/`sbb` (19.2 M), `vcvtps2ph` (13.6 M), `vpermps`/`vpermd` (9.0 M), `pcmpistri` (7.3 M), 8- and 16-bit `div`/`idiv` (1.8 M) and `extrq` (0.47 M).
+
+- Fallback reports (`problems`, `jit::stats` and `profile`) now group by `x86::name::OpcodeKey` (recording ModRM `/ext` only for actual group opcodes) and print `"mnemonic (encoding)"` instead of raw `"map 2 13 /2"`.
+- Now translated: `vcvtph2ps` (128- and 256-bit via NEON `FCVTL`/`FCVTL2`), `vcvtps2ph` (128- and 256-bit via `FCVTN`/`FCVTN2`, temporarily switching `FPCR.RMode` when `imm[2]` is clear), `vpermps`/`vpermd` (2-register NEON `TBL`), `pcmpistri`/`pcmpistrm`/`pcmpestri`/`pcmpestrm` (all four aggregation modes, 8- and 16-bit, signed and unsigned, all polarities, legacy and VEX 128-bit), 8- and 16-bit `adc`/`sbb` (exact narrow carry and overflow in `W`), 8- and 16-bit `div`/`idiv` (with bail-to-interpreter on divide-by-zero or overflow), and SSE4a `extrq`/`insertq`.
+- Checked against the interpreter (both tier 1 and tier 2, with `assert_all_translated`) in `f16c_and_vperm_match_the_interpreter`, `narrow_adc_sbb_and_div_match_the_interpreter`, `string_compare_and_sse4a_match_the_interpreter` and `fallback_rows_report_readable_opcode_names`. Live GTA V fallback counts after this pass have not been re-measured yet.
+
 ## Stopping a kicked thread (2026-11-22, late night)
 
 When a thread was kicked out of the VM (`hv_vcpus_exit`) while its stop condition held (a save state asks threads to park, an exception is pending, the process exits), `Engine::run` returned at once without storing the vCPU's registers. The thread kept the x86 state of its last VM entry while memory already held everything the code had done since, so it ran that code again from stale registers when it went on. In GTA V's Performance mode a save stopped the world several times (the graphics queue was waiting on the CPU, see [savestates.md](savestates.md)), the audio mixer thread came back with a stack pointer that no longer matched its stack, and the game faulted on its stack canary right after the save and right after every load of that state.

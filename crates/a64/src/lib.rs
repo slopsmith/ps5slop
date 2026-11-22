@@ -1446,6 +1446,11 @@ impl Asm {
         self.emit(0x4e00_0000 | (rm.0 as u32) << 16 | (rn.0 as u32) << 5 | rd.0 as u32)
     }
 
+    /// TBL with two contiguous table registers `{rn, rn+1}`: indexes 0..32.
+    pub fn tbl2(&mut self, rd: V, rn: V, rm: V) {
+        self.emit(0x4e00_2000 | (rm.0 as u32) << 16 | (rn.0 as u32) << 5 | rd.0 as u32)
+    }
+
     /// DUP (element): every element of `rd` = element 0 of `rn`, elements of
     /// 1 << `size` bytes.
     pub fn dup_elem(&mut self, size: u32, rd: V, rn: V) {

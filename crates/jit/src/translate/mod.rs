@@ -171,19 +171,15 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         (Map::Primary, 0x00..=0x3f) if i.op & 7 <= 5 && alu_of(i.op >> 3).is_some() => {
             if !carries(i.op >> 3) {
                 (false, writes)
-            } else if i.op & 1 == 1 && i.osize() >= 4 {
-                (false, both)
             } else {
-                return None;
+                (false, both)
             }
         }
         (Map::Primary, 0x80 | 0x81 | 0x83) if alu_of(i.ext()).is_some() => {
             if !carries(i.ext()) {
                 (false, writes)
-            } else if i.op != 0x80 && i.osize() >= 4 {
-                (false, both)
             } else {
-                return None;
+                (false, both)
             }
         }
         (Map::Primary, 0x86 | 0x87 | 0x91..=0x97) => (false, none),
@@ -195,7 +191,7 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         }
         (Map::Primary, 0xf6 | 0xf7) if i.ext() == 0 => (false, writes),
         (Map::Primary, 0xf7) if matches!(i.ext(), 4 | 5) && i.osize() >= 4 => (false, writes),
-        (Map::Primary, 0xf7) if matches!(i.ext(), 6 | 7) && i.osize() >= 4 => (false, none),
+        (Map::Primary, 0xf6 | 0xf7) if matches!(i.ext(), 6 | 7) => (false, none),
         (Map::Primary, 0xfe | 0xff) if i.ext() <= 1 => (false, both),
         (Map::M0F, 0xb0 | 0xb1) if i.mem.is_some() => (false, writes),
         (Map::M0F, 0xc0 | 0xc1) => (false, writes),
@@ -530,9 +526,51 @@ impl Translator {
     }
 
     /// `T` = `A op B` at `size`, setting the flags when `flags`. Narrow
-    /// operands are shifted to the top of a W register so NZCV fits them.
+    /// operands are shifted to the top of a W register so NZCV fits them;
+    /// narrow ADC/SBB compute carry and overflow directly in W to keep CF exact.
     fn alu(&mut self, op: Alu, size: u8, flags: bool) {
         let a = &mut self.a;
+        if size < 4 && matches!(op, Alu::Adc | Alu::Sbb) {
+            let bits = size as u32 * 8;
+            let shift = 32 - bits;
+            let m = mask(size);
+            // Incoming CF is inverted in NZCV.C (Lo = C clear = CF set).
+            a.cset(Size::W, U, Cond::Lo);
+            if op == Alu::Adc {
+                a.add(Size::W, T, A, B);
+                a.add(Size::W, T, T, U);
+                if flags {
+                    a.ubfx(Size::X, OLD_AF, T, bits, 1);
+                    a.eor(Size::W, U, A, T);
+                    a.eor(Size::W, OLD_NZCV, B, T);
+                    a.and(Size::W, U, U, OLD_NZCV);
+                    a.ubfx(Size::X, U, U, bits - 1, 1);
+                }
+            } else {
+                a.add(Size::W, U, B, U);
+                a.sub(Size::W, T, A, U);
+                if flags {
+                    a.ubfx(Size::X, OLD_AF, T, bits, 1);
+                    a.eor(Size::W, U, A, B);
+                    a.eor(Size::W, OLD_NZCV, A, T);
+                    a.and(Size::W, U, U, OLD_NZCV);
+                    a.ubfx(Size::X, U, U, bits - 1, 1);
+                }
+            }
+            assert!(a.logic_imm(Logic::And, Size::W, T, T, m));
+            if flags {
+                a.lsl_imm(Size::W, OLD_NZCV, T, shift);
+                a.tst(Size::W, OLD_NZCV, OLD_NZCV);
+                a.mrs(OLD_NZCV, a64::sysreg::NZCV);
+                assert!(a.logic_imm(Logic::Eor, Size::X, OLD_AF, OLD_AF, 1));
+                a.bfi(Size::X, OLD_NZCV, OLD_AF, 29, 1);
+                a.bfi(Size::X, OLD_NZCV, U, 28, 1);
+                a.msr(a64::sysreg::NZCV, OLD_NZCV);
+                a.mov(Size::X, PF_RESULT, T);
+                a.eor(Size::X, AF_AUX, A, B);
+            }
+            return;
+        }
         let s = sz(size);
         let shift = if size < 4 { 32 - 8 * size as u32 } else { 0 };
         let (x, y) = if shift > 0 {
@@ -673,7 +711,7 @@ impl Translator {
                 self.alu(Alu::And, size, flags);
             }
             (Map::Primary, 0xf7) if matches!(i.ext(), 4 | 5) => self.mul_wide(i, next, flags),
-            (Map::Primary, 0xf7) => self.div(i, next),
+            (Map::Primary, 0xf6 | 0xf7) if matches!(i.ext(), 6 | 7) => self.div(i, next),
             (Map::Primary, 0xd2 | 0xd3) if i.ext() >= 4 => self.shift_cl(i, next, flags),
             (Map::Primary, 0xc0 | 0xd0) => self.narrow_shift(i, next, flags),
             (Map::Primary, 0xc1 | 0xd1) if i.osize() == 2 => self.narrow_shift(i, next, flags),
@@ -1296,14 +1334,54 @@ impl Translator {
         self.a.mov(s, r(2), hi);
     }
 
-    /// DIV and IDIV of RDX:RAX by r/m. Division by zero, a quotient that does
-    /// not fit and 64-bit dividends wider than RAX go to the interpreter.
+    /// DIV and IDIV of AX (8-bit) or RDX:RAX (16/32/64-bit) by r/m. Division
+    /// by zero, a quotient that does not fit and signed 64-bit dividends wider
+    /// than RAX go to the interpreter.
     fn div(&mut self, i: &Insn, next: u64) {
-        let size = i.osize();
+        let size = if i.op == 0xf6 { 1 } else { i.osize() };
         let signed = i.ext() == 7;
         let bail = self.bail();
         self.get_rm(i, size, next);
         let (x, a) = (OLD_NZCV, &mut self.a);
+        if size == 1 {
+            a.cbz(Size::W, A, bail);
+            if signed {
+                a.sxth(Size::W, U, r(0));
+                a.sxtb(Size::W, A, A);
+                a.sdiv(Size::W, T, U, A);
+                a.sxtb(Size::W, x, T);
+            } else {
+                a.uxth(U, r(0));
+                a.udiv(Size::W, T, U, A);
+                a.uxtb(x, T);
+            }
+            a.eor(Size::W, x, x, T);
+            a.cbnz(Size::W, x, bail);
+            a.msub(Size::W, B, T, A, U);
+            a.bfi(Size::X, r(0), T, 0, 8);
+            a.bfi(Size::X, r(0), B, 8, 8);
+            return;
+        }
+        if size == 2 {
+            a.cbz(Size::W, A, bail);
+            a.uxth(U, r(0));
+            a.bfi(Size::X, U, r(2), 16, 16);
+            if signed {
+                a.sxtw(U, U);
+                a.sxth(Size::X, A, A);
+                a.sdiv(Size::X, T, U, A);
+                a.sxth(Size::X, x, T);
+            } else {
+                a.udiv(Size::X, T, U, A);
+                a.uxth(x, T);
+            }
+            a.eor(Size::X, x, x, T);
+            a.cbnz(Size::X, x, bail);
+            a.msub(Size::X, B, T, A, U);
+            a.bfi(Size::X, r(0), T, 0, 16);
+            a.bfi(Size::X, r(2), B, 0, 16);
+            return;
+        }
         if size == 8 {
             a.cbz(Size::X, A, bail);
             if signed {
