@@ -120,7 +120,7 @@ impl Metal {
         host: &dyn Host,
         state: &State,
         grid: Grid,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), DispatchError> {
         let (groups, grid_bounds) = match grid {
             Grid::Direct(d) => (d.groups, false),
             Grid::Indirect { threads, .. } => ([0; 3], threads),
@@ -129,10 +129,10 @@ impl Metal {
         let address =
             ((s[sh::COMPUTE_PGM_LO] as u64) | (s[sh::COMPUTE_PGM_LO + 1] as u64) << 32) << 8;
         if address == 0 {
-            return Err("no compute program");
+            return Err(DispatchError::Skipped("no compute program"));
         }
         if skipped(address) {
-            return Err("skipped by gpuskip");
+            return Err(DispatchError::Skipped("skipped by gpuskip"));
         }
         let users = (s[sh::COMPUTE_PGM_RSRC2] >> 1) & 0x1F;
         let user =
@@ -158,12 +158,15 @@ impl Metal {
                 },
             )
             .ok_or(if grid_bounds {
-                INDIRECT_ON_CPU
+                DispatchError::FallbackCpu
             } else {
-                "compute program"
+                DispatchError::Skipped("compute program")
             })?;
         self.trace_user_memory(host, &user[..users as usize], false);
-        let task = program.compute.as_ref().ok_or("compute pipeline")?;
+        let task = program
+            .compute
+            .as_ref()
+            .ok_or(DispatchError::Skipped("compute pipeline"))?;
         if let Grid::Direct(d) = grid
             && (groups.contains(&0) || d.threads.unwrap_or(groups).contains(&0))
         {
@@ -178,22 +181,24 @@ impl Metal {
                 p
             }
         }
-        .ok_or("compute pipeline")?;
+        .ok_or(DispatchError::Skipped("compute pipeline"))?;
         let threads = [0, 1, 2].map(|i| (s[sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1) as usize);
         if threads.iter().product::<usize>() > pipeline.maxTotalThreadsPerThreadgroup() {
-            return Err("threadgroup too large");
+            return Err(DispatchError::Skipped("threadgroup too large"));
         }
         let bound = self.resolve(host, &program, user);
         let sizes = match grid {
             Grid::Indirect { at, threads: t } if bound.is_some() => Some(
                 self.indirect_sizes(host, at, threads, t)
-                    .ok_or(INDIRECT_ON_CPU)?,
+                    .ok_or(DispatchError::FallbackCpu)?,
             ),
             _ => None,
         };
         self.end_pass();
         let command = self.command();
-        let enc = command.computeCommandEncoder().ok_or("compute encoder")?;
+        let enc = command
+            .computeCommandEncoder()
+            .ok_or(DispatchError::Skipped("compute encoder"))?;
         if crate::timing::labels() {
             enc.setLabel(Some(&NSString::from_str(&format!(
                 "dispatch {:#x} {groups:?}",
@@ -212,7 +217,7 @@ impl Metal {
         };
         if program.translated.loop_guard && guard.is_none() {
             enc.endEncoding();
-            return Err("loop guard buffer");
+            return Err(DispatchError::Skipped("loop guard buffer"));
         }
         if let Some(b) = &bound {
             Self::apply(Slot::Compute(&enc), b, user);
@@ -280,7 +285,7 @@ impl Metal {
         if bound.is_some() {
             Ok(())
         } else {
-            Err("resources")
+            Err(DispatchError::Skipped("resources"))
         }
     }
 }
@@ -296,9 +301,13 @@ pub(super) enum Grid {
     },
 }
 
-/// Why an indirect dispatch goes back to the command processor, which reads
-/// its dimensions on the CPU.
-pub(super) const INDIRECT_ON_CPU: &str = "indirect dimensions read on the CPU";
+/// Why a compute dispatch did not encode on the GPU.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum DispatchError {
+    /// Indirect dimensions must be read on the CPU by the command processor.
+    FallbackCpu,
+    Skipped(&'static str),
+}
 
 /// Turns an indirect dispatch's dimensions into Metal's threadgroup counts,
 /// then the grid size in threads: none past the command processor's limit.

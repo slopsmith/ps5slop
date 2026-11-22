@@ -36,7 +36,7 @@ impl Metal {
         {
             let base = image.base_array as usize;
             if d.textureType() != MTLTextureType::Type2DArray || d.arrayLength() < base + 6 {
-                // GTA V's point-light shadow cubes draw only the faces in view.
+                // Grow partial shadow cubes to 6 slices so cube views are valid.
                 let last = (base + 5) as u32;
                 let target = DepthTarget {
                     address: image.address,

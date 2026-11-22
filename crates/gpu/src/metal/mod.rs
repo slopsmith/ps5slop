@@ -446,7 +446,11 @@ impl Backend for Metal {
     fn dispatch(&mut self, host: &dyn Host, state: &State, dispatch: crate::Dispatch) {
         self.trace = self.tracing().then(Vec::new);
         let groups = dispatch.groups;
-        let result = self.try_dispatch(host, state, Grid::Direct(dispatch));
+        let result = match self.try_dispatch(host, state, Grid::Direct(dispatch)) {
+            Ok(()) => Ok(()),
+            Err(DispatchError::Skipped(why)) => Err(why),
+            Err(DispatchError::FallbackCpu) => Err("compute program"),
+        };
         self.end_trace(|| format!("dispatch {groups:?}"), result);
         match result {
             Ok(()) => self.dispatches += 1,
@@ -465,11 +469,14 @@ impl Backend for Metal {
         threads: bool,
     ) -> bool {
         self.trace = self.tracing().then(Vec::new);
-        let result = self.try_dispatch(host, state, Grid::Indirect { at, threads });
-        if result == Err(INDIRECT_ON_CPU) {
-            self.trace = None;
-            return false;
-        }
+        let result = match self.try_dispatch(host, state, Grid::Indirect { at, threads }) {
+            Ok(()) => Ok(()),
+            Err(DispatchError::FallbackCpu) => {
+                self.trace = None;
+                return false;
+            }
+            Err(DispatchError::Skipped(why)) => Err(why),
+        };
         self.end_trace(|| format!("dispatch with dimensions at {at:#x}"), result);
         match result {
             Ok(()) => self.dispatches += 1,

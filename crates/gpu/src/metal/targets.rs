@@ -149,9 +149,8 @@ impl Metal {
         blit.endEncoding();
     }
 
-    /// The depth texture at `d`'s address, holding what a program last
-    /// stored to that address as an image (Minecraft copies its scene depth
-    /// that way before drawing water); new ones start cleared.
+    /// The depth texture at `d`'s address, adopting any recent image store
+    /// there; new ones start cleared.
     pub(super) fn depth(
         &mut self,
         d: &DepthTarget,

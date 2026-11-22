@@ -196,8 +196,7 @@ impl<'a> Tx<'a> {
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
         if name.starts_with("scratch_load") && !self.scratch_stores && !f.lds {
-            // Nothing this program runs writes scratch, so a read finds nothing
-            // defined; GTA V's ray-tracing stacks read it only past their LDS part.
+            // Unwritten scratch reads zero rather than rejecting the program.
             let mut s = String::new();
             for i in 0..n {
                 write!(s, "{} = 0u; ", self.v(f.vdst as u16 + i)).unwrap();
@@ -597,10 +596,8 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
-    // `ds_append`/`ds_consume`: a counter at M0's base plus `offset` (for the GDS,
-    // the base is M0's high half: Astro Bot's packets clear its counters there). Lanes
-    // are threads here (`v_mbcnt` gives 0), so each thread counts itself and
-    // gets its own previous value; a wave on hardware adds its active lanes at once.
+    // Atomic counter at M0's base (high half for GDS) plus `offset`; each
+    // thread updates it individually because lanes run as separate threads.
     fn ds_counter(
         &mut self,
         pc: usize,

@@ -3,14 +3,8 @@
 use super::*;
 
 impl Metal {
-    /// Whether `d`'s slice was fast-cleared through its HTILE since we last
-    /// looked: titles clear depth by filling HTILE with a compute program,
-    /// and a tile whose ZMask (bits 0 to 3) is 0 holds the clear value
-    /// (Mesa's radv writes HTILE this way). Only the slice's first HTILE
-    /// dword is checked, and it is then marked expanded (ZMask 0xF), as
-    /// drawing would leave it. HTILE slices are taken to be 4 bytes per
-    /// 8x8 tile rounded up to 64 KiB (seen for 1024x1024 cube faces). When
-    /// encoded work may write the word, the GPU checks it ([`Htile::OnGpu`]).
+    /// Checks `d`'s first HTILE dword for a ZMask-0 fast clear (radv layout)
+    /// and marks it expanded (0xF), or defers to [`Htile::OnGpu`] when pending GPU work may write it.
     pub(super) fn htile(&mut self, host: &dyn Host, c: &[u32], d: &DepthTarget) -> Htile {
         const TILE_SURFACE_ENABLE: u32 = 1 << 29;
         if c[context::DB_Z_INFO] & TILE_SURFACE_ENABLE == 0 {

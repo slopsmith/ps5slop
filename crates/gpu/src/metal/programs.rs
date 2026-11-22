@@ -476,7 +476,6 @@ impl Metal {
     }
 }
 
-// Each rectangle draws guest vertices 0, 1, 2, 1, 3, 2; corner 3 is v1 + v2 - v0.
 /// Compiles `msl` and returns its function `entry`; any thread.
 pub(super) fn compile(device: &Device, msl: &str, entry: &str) -> Option<Retained<Function>> {
     let t = crate::timing::start();
@@ -487,8 +486,7 @@ pub(super) fn compile(device: &Device, msl: &str, entry: &str) -> Option<Retaine
     } else {
         msl
     };
-    // Fast math assumes no NaN or infinity and then makes some: Superliminal
-    // got NaN pixels that bloom spread into white squares.
+    // Safe math keeps IEEE NaN/infinity semantics matching GFX10.
     let options = objc2_metal::MTLCompileOptions::new();
     options.setMathMode(objc2_metal::MTLMathMode::Safe);
     let lib = device.newLibraryWithSource_options_error(&NSString::from_str(msl), Some(&options));

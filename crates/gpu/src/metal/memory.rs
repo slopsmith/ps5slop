@@ -246,9 +246,8 @@ impl Metal {
         self.note_ranges(ranges);
     }
 
-    /// Forgets 2D textures whose memory a buffer of the encoded stores in
-    /// `ranges` spans, starting at the texture and about its size, so their
-    /// next use reads guest memory (Astro Bot resets a list-head image so).
+    /// Forgets 2D textures whose memory an encoded buffer store spans, so
+    /// their next use reads guest memory.
     fn drop_overwritten(&mut self, ranges: &[(u64, u64)]) {
         self.targets.retain(|&address, t| {
             let tex = &t.texture;
@@ -324,8 +323,7 @@ impl Metal {
                 }
             }
         }
-        // GTA V's vertex programs find their vertex buffers through a V#
-        // table, in pools mapped at fixed addresses above the GPU area.
+        // Follow V# tables in user data to discover buffer pools outside the GPU area.
         for (ptr, hi) in tables {
             let mut words = [0u8; 4 * TABLE_DWORDS];
             let n = ((hi - ptr) as usize).min(words.len()) & !15;

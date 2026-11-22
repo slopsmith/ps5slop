@@ -325,14 +325,8 @@ impl Viewport {
     }
 }
 
-/// How the depths a draw can produce land in Metal's `[0, 1]`, as
-/// `depth * scale + offset`. With z clipping, depth stays in the viewport's
-/// z range (`[offset - scale, offset + scale]` for GL clip space), clamped
-/// to `PA_SC_VPORT_ZMIN_0..ZMAX_0`. A float depth buffer keeps values outside
-/// `[0, 1]` (Isaac draws at -1..1 with a +-10000 clamp range) where Metal
-/// clamps them, so a range reaching outside `[0, 1]` is mapped onto it.
-/// Draws whose ranges differ map differently; no title seen so far mixes
-/// such ranges in one depth buffer.
+/// Maps a draw's depth range into Metal's `[0, 1]` as `depth * scale + offset`.
+/// Ranges reaching outside `[0, 1]` are linearly remapped so Metal does not clamp them.
 pub fn depth_range(c: &[u32], gl_clip: bool) -> (f32, f32) {
     let vp = Viewport::read(c);
     let near = if gl_clip {
@@ -356,12 +350,8 @@ pub fn depth_range(c: &[u32], gl_clip: bool) -> (f32, f32) {
     (1.0 / (hi - lo), -lo / (hi - lo))
 }
 
-/// The scissor rectangle a draw is clipped to: the intersection of the
-/// screen, window, generic and viewport-0 scissors, as `(x0, y0, x1, y1)`.
-/// The viewport scissor counts only with `PA_SC_MODE_CNTL_0.VPORT_SCISSOR_ENABLE`.
-/// An empty one counts as unset: our register banks start at zero, while
-/// the hardware's reset values are full-screen, and titles that rely on
-/// those (Isaac) never write them.
+/// Intersected scissor rectangle `(x0, y0, x1, y1)`. Empty registers count as
+/// unset because our register banks start zeroed instead of full-screen.
 pub fn scissor(c: &[u32]) -> (u32, u32, u32, u32) {
     use context::*;
     let tl = |v: u32| (v & 0x7FFF, (v >> 16) & 0x7FFF);

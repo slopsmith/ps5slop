@@ -285,8 +285,7 @@ fn gpu_thread(
                     tracing::error!("{e}");
                 }
             }
-            // Unverified: the driver signals each submission's completion; Minecraft
-            // waits for it when its label poll loses the race.
+            // Unverified: the driver signals each submission's completion.
             processor.end_submission(&host, job.ends_frame);
         });
         host.progress.update(|c| c.finished += 1);
