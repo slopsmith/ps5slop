@@ -54,6 +54,17 @@ enum Command {
         #[arg(long, value_name = "HEX", value_parser = parse_hex)]
         target: Option<u64>,
     },
+    /// Prints the minimum, maximum and mean of every channel of a float or unorm target.
+    Stats {
+        /// Path to the `.ps5frame` capture file.
+        capture: PathBuf,
+        /// Guest hex address of the color target.
+        #[arg(long, value_name = "HEX", value_parser = parse_hex)]
+        target: u64,
+        /// Stop right after this 0-based draw index.
+        #[arg(long, value_name = "N")]
+        draw: Option<usize>,
+    },
     /// Lists every draw and compute dispatch recorded in a capture.
     List {
         /// Path to the `.ps5frame` capture file.
@@ -230,6 +241,45 @@ fn run(cmd: Command) -> Result<(), String> {
                 out_path.display(),
                 res.draws.len()
             );
+        }
+        Command::Stats {
+            capture,
+            target,
+            draw,
+        } => {
+            let cap = FrameCapture::load(&capture)?;
+            let res = replay(
+                &cap,
+                ReplayOptions {
+                    stop_after_draw: draw,
+                    ..ReplayOptions::default()
+                },
+            )?;
+            let (_, tex) = res
+                .targets
+                .iter()
+                .find(|(a, _)| *a == target)
+                .ok_or_else(|| format!("target {target:#x} not found"))?;
+            let (w, h, channels, values) = gpu::metal::read_values(tex)
+                .ok_or_else(|| format!("cannot read the values of target {target:#x}"))?;
+            println!("target {target:#x} {w}x{h}, {channels} channel(s)");
+            for c in 0..channels {
+                let (mut min, mut max, mut sum, mut bad) = (f32::MAX, f32::MIN, 0f64, 0u64);
+                for v in values.iter().skip(c).step_by(channels) {
+                    if v.is_finite() {
+                        min = min.min(*v);
+                        max = max.max(*v);
+                        sum += f64::from(*v);
+                    } else {
+                        bad += 1;
+                    }
+                }
+                let finite = (w as u64 * h as u64).saturating_sub(bad).max(1);
+                println!(
+                    "  channel {c}: min {min} max {max} mean {} non-finite {bad}",
+                    sum / finite as f64
+                );
+            }
         }
         Command::List { capture } => {
             let cap = FrameCapture::load(&capture)?;

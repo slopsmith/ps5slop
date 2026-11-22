@@ -77,6 +77,49 @@ pub(super) fn read_raw(t: &Texture) -> Option<Vec<u8>> {
     )
 }
 
+/// The values of a 2D float or unorm texture as stored, `(width, height,
+/// channels, values)` with the channels of each texel together; `None` for
+/// other formats. Unlike [`read_rgba`] nothing is clamped. 32-bit integer
+/// texels are read as the float bits they usually hold (storage images).
+pub fn read_values(texture: &SharedTexture) -> Option<(u32, u32, usize, Vec<f32>)> {
+    use MTLPixelFormat as P;
+    let t = &texture.0;
+    let (channels, width) = match t.pixelFormat() {
+        P::R32Float | P::R32Uint | P::R32Sint => (1, 4),
+        P::RG32Float => (2, 4),
+        P::RGBA32Float => (4, 4),
+        P::R16Float => (1, 2),
+        P::RG16Float => (2, 2),
+        P::RGBA16Float => (4, 2),
+        P::R8Unorm => (1, 1),
+        P::RG8Unorm => (2, 1),
+        P::RGBA8Unorm => (4, 1),
+        _ => return None,
+    };
+    let bytes = read_raw(t)?;
+    let values = bytes
+        .chunks_exact(width)
+        .map(|c| match width {
+            4 => f32::from_le_bytes([c[0], c[1], c[2], c[3]]),
+            2 => f16_to_f32(u16::from_le_bytes([c[0], c[1]])),
+            _ => c[0] as f32 / 255.0,
+        })
+        .collect();
+    Some((t.width() as u32, t.height() as u32, channels, values))
+}
+
+fn f16_to_f32(h: u16) -> f32 {
+    let sign = if h >> 15 != 0 { -1.0 } else { 1.0 };
+    let exp = i32::from((h >> 10) & 0x1f);
+    let frac = f32::from(h & 0x3ff);
+    match exp {
+        0 => sign * frac * 2f32.powi(-24),
+        31 if frac == 0.0 => sign * f32::INFINITY,
+        31 => f32::NAN,
+        _ => sign * (1.0 + frac / 1024.0) * 2f32.powi(exp - 15),
+    }
+}
+
 /// A depth texture's pixels as stretched grayscale RGBA8.
 pub fn read_depth_rgba(texture: &SharedTexture) -> Option<(u32, u32, Vec<u8>)> {
     read_depth(&texture.0)
