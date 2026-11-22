@@ -669,3 +669,7 @@ Diagnostics go through the `tracing` crate with `tracing-subscriber`'s `EnvFilte
 ## 2026-11-22: Debug switches read once into one configuration
 
 Every `PS5SLOP_*` switch is read once, by `diag::config()`, into a typed `Config` (`crates/diag/src/config.rs`), and listed in one table in [debugging.md](debugging.md#debug-switches). Reason: about 70 switches were read ad hoc where they were used, each with its own parsing and caching, and several were undocumented. A translation option that depended on a switch (`PS5SLOP_PROBE_FLAT`) became a field of the translation request, so the translator no longer reads the environment. `PS5SLOP_GPU_WATCH` with a value that does not parse no longer makes dispatches wait.
+
+## 2026-11-22: Split oversized GPU and shader files into modules
+
+`crates/gpu/src/metal.rs` (~7.7k lines), `crates/gpu/src/pm4.rs` (~2.1k lines) and `crates/gfx10/src/translate.rs` (~5.1k lines) were split into submodule directories (`metal/`, `pm4/`, `translate/`) along their functional boundaries while keeping public paths unchanged via re-exports. `Request::bounded` was split into `grid_bounds` and `drop_depth_export`, and `try_dispatch` replaced its `INDIRECT_ON_CPU` sentinel string with `DispatchError`. Reason: single multi-thousand-line files and overloaded fields made changes hard to navigate and review; pure moves keep behaviour and generated MSL identical.
