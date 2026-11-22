@@ -1269,3 +1269,31 @@ fn min_max_of_special_values_match_the_interpreter() {
     let data: Vec<u8> = lanes.iter().flat_map(|v| v.to_le_bytes()).collect();
     same_as_interpreter(MINMAX_SPECIAL, &data);
 }
+
+/// `inc rax; mov [CODE + 0x400], rax` 2^27 times, then `call rbp`.
+const COUNT: &[u8] = &[
+    0x48, 0xff, 0xc0, 0x48, 0x89, 0x05, 0xf6, 0x03, 0x00, 0x00, 0xa9, 0xff, 0xff, 0xff, 0x07, 0x75,
+    0xef, 0xff, 0xd5,
+];
+
+#[test]
+fn a_thread_stopped_by_a_kick_leaves_with_registers_that_match_memory() {
+    let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
+    let (mem, mut cpu) = program(COUNT);
+    let done = std::sync::atomic::AtomicBool::new(false);
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                kick_all();
+                std::thread::sleep(std::time::Duration::from_micros(200));
+            }
+        });
+        let exit = run(&mut cpu, &mem, &|| true);
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(
+            cpu.regs[RAX],
+            mem.read_u64(CODE + 0x400).unwrap(),
+            "{exit:?}"
+        );
+    });
+}

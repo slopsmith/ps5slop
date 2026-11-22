@@ -696,6 +696,7 @@ impl Engine {
         stop: &dyn Fn() -> bool,
     ) -> Result<x86::Exit, crate::Error> {
         let mut entry = Entry::Dispatch(self.load(x)?);
+        let mut stop_since: Option<std::time::Instant> = None;
         loop {
             let exit = self.enter(mem, entry)?;
             let previous = entry;
@@ -784,7 +785,15 @@ impl Engine {
                 Exit::Canceled { pc, cpsr } => {
                     count_exit(Count::Cancel);
                     note_exit(Cause::Canceled, 0);
-                    if stop() {
+                    // A kicked vCPU's registers match no x86 instruction boundary, so a
+                    // stop waits for the next exit that stores them, up to STOP_GRACE.
+                    if !stop() {
+                        stop_since = None;
+                    } else if stop_since
+                        .get_or_insert_with(std::time::Instant::now)
+                        .elapsed()
+                        > STOP_GRACE
+                    {
                         SHARED.slots[self.cpu.slot]
                             .old_pc
                             .store(0, Ordering::SeqCst);
@@ -974,6 +983,10 @@ impl Engine {
 
 /// Where to go on after a cancel at `pc`. A cancel inside the resume stub
 /// keeps the stub's own target, which ELR no longer holds.
+/// How long a stopped thread may keep running translated code before it
+/// leaves at a kick, with registers from its last VM entry.
+const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
 fn resume_after_cancel(previous: Entry, pc: u64, cpsr: u64) -> Entry {
     let stub = crate::layout::va(RESUME_FLUSH)..crate::layout::va(crate::DISPATCH);
     match previous {
