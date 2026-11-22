@@ -191,4 +191,6 @@ A route that worked headless on 2026-11-21 with a fresh `--data` folder, times f
 
 `press lup 2000` and `press rright 600` move and turn the player (watch the minimap arrow). The times are loose: wait for each screen with `shot` rather than trusting them.
 
+From "Go to the guard." (the gta-perf state, 2026-11-22): `press lup 3000` reaches the guard and starts a cutscene of about 40 s; then `hold l2` for 5 s and `release` (aim at the hostages), `press up 300` (phone), `press cross 300` (contacts, "Detonate" is selected), `press cross 300` (call). The blast cutscene follows; then `press lup 3000` through the double doors, `press lup 1200`, `press lleft+rleft 900` and `press lup 2200` lead down the red corridor to where the blast should have opened the wall ([gpu.md](gpu.md#gta-vs-graphics-modes-2026-11-22-late-night)). Wait for each step with `shot`; presses sent while a cutscene ends can be lost.
+
 Once there, `save PATH` keeps the moment: `--load-state PATH` starts at "Go to the guard." about 5 s after launch instead of 3 to 5 minutes ([savestates.md](savestates.md)). On 2026-11-22 gameplay with the objective text came at about 320 s, and the location card stayed up from about 150 s to 175 s.
