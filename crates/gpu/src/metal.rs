@@ -110,6 +110,10 @@ pub static RELOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 pub static SKIP: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
 /// `PS5SLOP_TRACE_TARGETS`: logs each new render target and each image first read from guest memory.
+const PIXEL_SLOTS: usize = 1 << 14;
+/// How much of a table the user data points to is searched for V#s.
+const TABLE_DWORDS: usize = 64;
+
 fn trace_targets() -> bool {
     static ENV: OnceLock<bool> = OnceLock::new();
     *ENV.get_or_init(|| std::env::var_os("PS5SLOP_TRACE_TARGETS").is_some())
@@ -530,6 +534,9 @@ pub struct Metal {
     /// `PS5SLOP_TRACE_REGS`.
     traced_regs: Vec<u32>,
     trace: Option<Vec<String>>,
+    /// `PS5SLOP_TRACE_PIXELS`: a visibility buffer counting the samples
+    /// each traced draw passes, and the next free slot.
+    pixels: Option<(Retained<Buffer>, usize)>,
 }
 
 /// What a detile kernel writes.
@@ -752,6 +759,7 @@ impl Metal {
                 }
             }),
             trace: None,
+            pixels: None,
         })
     }
 
@@ -2572,6 +2580,18 @@ impl Metal {
                 }
             }
         }
+        if self.tracing()
+            && std::env::var_os("PS5SLOP_TRACE_PIXELS").is_some()
+            && self.pixels.is_none()
+        {
+            self.pixels = self
+                .device
+                .newBufferWithLength_options(8 * PIXEL_SLOTS, MTLResourceOptions::StorageModeShared)
+                .map(|b| (b, 0));
+        }
+        if let Some((b, _)) = &self.pixels {
+            pass.setVisibilityResultBuffer(Some(b));
+        }
         let enc = command.renderCommandEncoderWithDescriptor(&pass)?;
         if let Some(f) = self.wait_memory() {
             enc.waitForFence_beforeStages(f, MTLRenderStages::Vertex);
@@ -3699,6 +3719,8 @@ impl Metal {
                 ));
                 return None;
             };
+            let win = m.win;
+            self.note(|| format!("program {:#x} windows {win:x?}", program.address));
             bound.memory = Some(m);
         }
         for r in &program.translated.resources {
@@ -3824,30 +3846,62 @@ impl Metal {
 
     /// Windows over the largest region a program's user data points into and
     /// over the GPU area (or the other way round), as programs read both, and
-    /// over the largest other region the user data points into.
+    /// over the largest other region the user data points into. Buffer
+    /// descriptors in tables the user data points to count after aligned
+    /// pointers and before unaligned ones.
     fn guest_window(&mut self, host: &dyn Host, user: &[u32], code: u64) -> Option<Memory> {
         let max = self.device.maxBufferLength() as u64 & !(PAGE - 1);
         let area = host.gpu_area();
         let in_area = |a: u64| area.is_some_and(|(s, e)| s <= a && a < e);
         let mut best = host.extent(code);
-        let mut outside = best.filter(|&(lo, _)| !in_area(lo));
-        let mut pointed: Vec<(u64, u64, bool)> = Vec::new();
+        // (start, end, above 4 GiB, rank): 2 for aligned pointers in the user
+        // data, 1 for V# bases in tables it points to, 0 for unaligned ones.
+        let mut pointed: Vec<(u64, u64, bool, u8)> = Vec::new();
+        if let Some((lo, hi)) = best {
+            pointed.push((lo, hi, lo >> 32 != 0, 2));
+        }
+        let mut tables = Vec::new();
         for pair in user.windows(2) {
             for ptr in [
                 pair[0] as u64 | (pair[1] as u64) << 32,
                 pair[0] as u64 | ((pair[1] & 0xFFFF) as u64) << 32,
             ] {
                 if let Some((lo, hi)) = host.extent(ptr) {
-                    pointed.push((lo, hi, ptr >> 32 != 0));
+                    pointed.push((lo, hi, ptr >> 32 != 0, if ptr % 4 == 0 { 2 } else { 0 }));
                     if best.is_none_or(|(l, h)| hi - lo > h - l) {
                         best = Some((lo, hi));
                     }
-                    if !in_area(lo) && outside.is_none_or(|(l, h)| hi - lo > h - l) {
-                        outside = Some((lo, hi));
+                    if pair[1] >> 16 == 0 && ptr >> 32 != 0 && ptr % 16 == 0 {
+                        tables.push((ptr, hi));
                     }
                 }
             }
         }
+        // GTA V's vertex programs find their vertex buffers through a V#
+        // table, in pools mapped at fixed addresses above the GPU area.
+        for (ptr, hi) in tables {
+            let mut words = [0u8; 4 * TABLE_DWORDS];
+            let n = ((hi - ptr) as usize).min(words.len()) & !15;
+            if !host.read(ptr, &mut words[..n]) {
+                continue;
+            }
+            for q in words[..n].as_chunks::<16>().0 {
+                let d =
+                    |i: usize| u32::from_le_bytes(q[4 * i..4 * i + 4].try_into().unwrap_or([0; 4]));
+                let base = d(0) as u64 | ((d(1) & 0xFFFF) as u64) << 32;
+                if base >> 32 == 0 || in_area(base) || d(2) == 0 {
+                    continue;
+                }
+                if let Some((lo, hi)) = host.extent(base) {
+                    pointed.push((lo, hi, true, 1));
+                }
+            }
+        }
+        let outside = pointed
+            .iter()
+            .filter(|&&(l, _, _, _)| !in_area(l))
+            .max_by_key(|&&(l, h, _, rank)| (rank, h - l))
+            .map(|&(l, h, _, _)| (l, h));
         let (lo, hi) = best?;
         let region = |this: &mut Self, (lo, hi): (u64, u64)| -> Option<(Retained<Buffer>, u64)> {
             let (buf, offset) = this.window(host, lo, (hi - lo).min(max))?;
@@ -3871,9 +3925,9 @@ impl Metal {
         // A word followed by 0 often only looks like a pointer: prefer ones above 4 GiB.
         let third = pointed
             .into_iter()
-            .filter(|&(l, _, _)| !in_area(l) && Some(l) != outside.map(|o| o.0) && l != lo)
-            .max_by_key(|&(l, h, wide)| (wide, h - l))
-            .and_then(|(l, h, _)| region(self, (l, h)));
+            .filter(|&(l, _, _, _)| !in_area(l) && Some(l) != outside.map(|o| o.0) && l != lo)
+            .max_by_key(|&(l, h, wide, rank)| (rank, wide, h - l))
+            .and_then(|(l, h, _, _)| region(self, (l, h)));
         let (buffer, base) = first?;
         let (ro, ro_end) = outside.and_then(|(lo, _)| host.image(lo)).unwrap_or((0, 0));
         let mut win = [
@@ -4066,15 +4120,6 @@ impl Metal {
             return Err("threadgroup too large");
         }
         let bound = self.resolve(host, &program, user);
-        if let Some(m) = bound.as_ref().and_then(|b| b.memory.as_ref()) {
-            let (a, b) = (
-                Retained::as_ptr(&m.buffer) as usize,
-                m.second.as_ref().map(|b| Retained::as_ptr(b) as usize),
-            );
-            let win = m.win;
-            let c = m.third.as_ref().map(|b| Retained::as_ptr(b) as usize);
-            self.note(|| format!("      windows {a:#x} {b:x?} {c:x?} {win:x?}"));
-        }
         self.end_pass();
         let command = self.command();
         let enc = command.computeCommandEncoder().ok_or("compute encoder")?;
@@ -4524,6 +4569,17 @@ impl Metal {
             _ => return Err("primitive type"),
         };
         let start = u[uconfig::GE_INDX_OFFSET];
+        let counted = match &mut self.pixels {
+            Some((_, next)) if self.trace.is_some() && *next < PIXEL_SLOTS => {
+                enc.setVisibilityResultMode_offset(MTLVisibilityResultMode::Counting, 8 * *next);
+                *next += 1;
+                Some(*next - 1)
+            }
+            _ => None,
+        };
+        if let Some(slot) = counted {
+            self.note(|| format!("pixels slot {slot}"));
+        }
         match draw {
             // gen5_vs_rect takes the index offset as its base instance.
             Draw::Auto { count, instances } if rect => unsafe {
@@ -4561,6 +4617,9 @@ impl Metal {
                     );
                 }
             }
+        }
+        if counted.is_some() {
+            enc.setVisibilityResultMode_offset(MTLVisibilityResultMode::Disabled, 0);
         }
         self.pass_memory |= vertex.translated.writes_memory || pixel.translated.writes_memory;
         self.note_writes(host, &vertex.translated, vs_data);
@@ -5369,6 +5428,13 @@ impl Backend for Metal {
         }
         self.frame_tools();
         if self.tracing() {
+            if let Some((b, n)) = self.pixels.take() {
+                let counts =
+                    unsafe { std::slice::from_raw_parts(b.contents().as_ptr() as *const u64, n) };
+                for (slot, c) in counts.iter().enumerate() {
+                    eprintln!("ps5slop: trace: pixels slot {slot}: {c}");
+                }
+            }
             eprintln!(
                 "ps5slop: trace: frame {} done, showing {shown:x?}",
                 self.epoch

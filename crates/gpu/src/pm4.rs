@@ -511,6 +511,8 @@ impl Processor {
         self.stats.packets += 1;
         let key = if op == IT_NOP && code != 0 {
             0x100 | code
+        } else if op == 0x46 && !p.is_empty() {
+            0x4600 | (p[0] & 0x3F) | ((p.len() as u32 > 1) as u32) << 7
         } else {
             op
         };
