@@ -38,7 +38,7 @@ pub(crate) struct Segments {
     wait: Vec<Vec<(usize, u64)>>,
     current: usize,
     seq: u64,
-    /// Segments in use; fewer than all with `PS5SLOP_JIT_SEGMENTS`, to test
+    /// Segments in use; fewer than all when configured so, to test
     /// eviction.
     limit: usize,
 }
@@ -54,10 +54,10 @@ impl Segments {
             wait: vec![Vec::new(); SEGMENTS],
             current: 0,
             seq: 0,
-            limit: std::env::var("PS5SLOP_JIT_SEGMENTS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .map_or(SEGMENTS, |n: usize| n.clamp(2, SEGMENTS)),
+            limit: diag::config()
+                .jit
+                .segments
+                .map_or(SEGMENTS, |n| n.clamp(2, SEGMENTS)),
         }
     }
 }

@@ -56,6 +56,9 @@ pub struct Request<'a> {
     /// dwords at [`binding::BOUNDS`]) start with EXEC clear. Pixel stage: no
     /// depth target is bound, so a depth export is dropped.
     pub bounded: bool,
+    /// Pixel stage, for debugging: the first flat input's raw value goes to
+    /// colour output 1 in place of what the program computes.
+    pub probe_flat: bool,
 }
 
 /// Where a descriptor's dwords come from.
@@ -4264,8 +4267,7 @@ impl<'a> Tx<'a> {
                 let mut body = self.body.clone();
                 let mut tail =
                     String::from("    if (!exported) discard_fragment();\n    return o;\n");
-                // Debugging aid: the first flat input's raw value in colour output 1.
-                if std::env::var_os("PS5SLOP_PROBE_FLAT").is_some()
+                if self.req.probe_flat
                     && self.mrts & 2 != 0
                     && self.req.col_format >> 4 & 0xF != 7
                     && self.req.col_format >> 4 & 0xF != 8

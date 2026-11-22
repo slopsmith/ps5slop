@@ -233,12 +233,12 @@ impl Pool {
     }
 }
 
-/// Compile threads: `PS5SLOP_COMPILE_THREADS`, or one per performance core
-/// (Metal's compiler scales about linearly with them).
+/// Compile threads: as configured, or one per performance core (Metal's
+/// compiler scales about linearly with them).
 fn threads() -> usize {
-    std::env::var("PS5SLOP_COMPILE_THREADS")
-        .ok()
-        .and_then(|v| v.parse().ok())
+    diag::config()
+        .gpu
+        .compile_threads
         .unwrap_or_else(performance_cores)
         .max(1)
 }

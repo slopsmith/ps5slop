@@ -499,7 +499,7 @@ impl Hle {
         let sp = env.cpu.regs[RSP];
         let ret = env.mem.read_u64(sp)?;
         let mut args = String::new();
-        if std::env::var("PS5SLOP_UNIMPLEMENTED_ZERO").as_deref() == Ok("dump") {
+        if diag::config().hle.unimplemented == diag::config::Unimplemented::ReturnZeroDump {
             for n in 0..6 {
                 let mut b = [0u8; 32];
                 if env.mem.read(env.arg(n), &mut b).is_ok() {
@@ -526,11 +526,9 @@ impl Hle {
     }
 }
 
-/// Whether `PS5SLOP_UNIMPLEMENTED_ZERO` is set: calls of unimplemented
-/// imports then return 0 instead of stopping the process.
+/// Whether calls of unimplemented imports return 0 instead of stopping the process.
 fn unimplemented_return_zero() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("PS5SLOP_UNIMPLEMENTED_ZERO").is_some())
+    diag::config().hle.unimplemented != diag::config::Unimplemented::Stop
 }
 
 /// Logs `library: name(args) -> result` for a placeholder's first calls;
@@ -640,14 +638,14 @@ fn names() -> HashMap<String, String> {
     for name in ours.filter(|n| !n.starts_with('#')) {
         names.insert(nid(name), name.to_owned());
     }
-    if let Some(path) = std::env::var_os("PS5SLOP_NAMES") {
-        match std::fs::read_to_string(&path) {
+    if let Some(path) = &diag::config().hle.names {
+        match std::fs::read_to_string(path) {
             Ok(list) => {
                 for name in list.lines().map(str::trim).filter(|n| !n.is_empty()) {
                     names.entry(nid(name)).or_insert_with(|| name.to_owned());
                 }
             }
-            Err(e) => tracing::warn!("cannot read {}: {e}", path.to_string_lossy()),
+            Err(e) => tracing::warn!("cannot read {}: {e}", path.display()),
         }
     }
     names
@@ -677,10 +675,7 @@ pub fn report_calls() {
     let c = c.lock().unwrap_or_else(|e| e.into_inner());
     let mut v: Vec<_> = c.iter().collect();
     v.sort_by(|a, b| b.1.cmp(a.1));
-    let top = std::env::var("PS5SLOP_JIT_STATS_TOP")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(20);
+    let top = diag::config().jit.stats_top;
     let mut report = String::from("host calls:");
     for (name, n) in v.iter().take(top) {
         report += &format!("\n    {n:>12}  {name}");

@@ -67,50 +67,6 @@ const MARKER_FLIP: u32 = 0x777;
 const MARKER_FLIP_WITH_LABEL: u32 = 0x778;
 const MARKER_FLIP_WITH_INTERRUPT: u32 = 0x781;
 
-/// Whether releases and memory writes wait for the GPU instead of being
-/// queued (`PS5SLOP_GPU_SYNC_RELEASES`).
-fn synchronous_releases() -> bool {
-    static SYNCHRONOUS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *SYNCHRONOUS.get_or_init(|| std::env::var_os("PS5SLOP_GPU_SYNC_RELEASES").is_some())
-}
-
-/// Whether each submission waits for its GPU work before its releases take
-/// effect, as before 2026-11-21 (`PS5SLOP_GPU_WAIT_SUBMISSIONS`).
-fn wait_submissions() -> bool {
-    static WAIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *WAIT.get_or_init(|| std::env::var_os("PS5SLOP_GPU_WAIT_SUBMISSIONS").is_some())
-}
-
-/// Whether every dispatch is waited for (`PS5SLOP_GPU_SYNC_DISPATCHES`), so a
-/// program that never ends is the last one traced.
-fn sync_dispatches() -> bool {
-    static SYNC: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *SYNC.get_or_init(|| std::env::var_os("PS5SLOP_GPU_SYNC_DISPATCHES").is_some())
-}
-
-/// Whether indirect dispatches read their dimensions on the CPU, after
-/// waiting for the GPU (`PS5SLOP_GPU_CPU_INDIRECT`), as before 2026-11-22.
-fn cpu_indirect() -> bool {
-    static CPU: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CPU.get_or_init(|| std::env::var_os("PS5SLOP_GPU_CPU_INDIRECT").is_some())
-}
-
-fn gpu_watching() -> bool {
-    static WATCH: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *WATCH.get_or_init(|| std::env::var_os("PS5SLOP_GPU_WATCH").is_some())
-}
-
-/// `PS5SLOP_GPU_PROBE=ADDR`: dispatches of the compute program at ADDR are
-/// printed with their groups and user data.
-fn probed(program: u64) -> bool {
-    static PROBE: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
-    *PROBE.get_or_init(|| {
-        std::env::var("PS5SLOP_GPU_PROBE")
-            .ok()
-            .and_then(|v| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok())
-    }) == Some(program)
-}
-
 /// Reports a packet form the processor drops, once per form and register.
 fn unhandled(what: std::fmt::Arguments) {
     static SEEN: diag::Distinct = diag::Distinct::new(usize::MAX);
@@ -828,7 +784,7 @@ impl Processor {
             && bytes.is_multiple_of(4)
             && bytes <= DEFERRED_FILL
             && self.backend.is_some()
-            && !synchronous_releases()
+            && !diag::config().gpu.sync_releases
         {
             tracing::debug!(
                 target: "gpu::dma",
@@ -907,7 +863,7 @@ impl Processor {
             | (self.sh[crate::regs::sh::COMPUTE_PGM_LO + 1] as u64) << 32)
             << 8;
         trace(format_args!("dispatch {groups:?} program {program:#x}"));
-        if probed(program) {
+        if diag::config().gpu.probe == Some(program) {
             let user = &self.sh
                 [crate::regs::sh::COMPUTE_USER_DATA_0..crate::regs::sh::COMPUTE_USER_DATA_0 + 16];
             tracing::info!(
@@ -936,7 +892,7 @@ impl Processor {
             b.dispatch(host, &state, dispatch);
             crate::timing::add(crate::timing::Part::Dispatch, t);
         }
-        if sync_dispatches() {
+        if diag::config().gpu.sync_dispatches {
             self.sync();
             trace(format_args!("dispatch done"));
         }
@@ -949,9 +905,11 @@ impl Processor {
         let program = (self.sh[crate::regs::sh::COMPUTE_PGM_LO] as u64
             | (self.sh[crate::regs::sh::COMPUTE_PGM_LO + 1] as u64) << 32)
             << 8;
-        let debugging = sync_dispatches() || probed(program) || gpu_watching();
+        let config = &diag::config().gpu;
+        let debugging =
+            config.sync_dispatches || config.probe == Some(program) || config.watch.is_some();
         if !debugging
-            && !cpu_indirect()
+            && !diag::config().gpu.cpu_indirect
             && let Some(b) = self.backend.as_mut()
         {
             let state = State {
@@ -993,17 +951,13 @@ impl Processor {
         }
     }
 
-    /// `PS5SLOP_GPU_WATCH=ADDR`: waits for each draw and dispatch and reports
-    /// those that change the 64-bit word at ADDR.
+    /// With a watched word, waits for each draw and dispatch and reports
+    /// those that change it.
     fn gpu_watch(&mut self, host: &dyn Host, what: impl FnOnce() -> String) {
         static AT: std::sync::OnceLock<Option<(u64, Instant)>> = std::sync::OnceLock::new();
         let Some((at, from)) = *AT.get_or_init(|| {
-            let v = std::env::var("PS5SLOP_GPU_WATCH").ok()?;
-            let (addr, secs) = v.split_once('@').unwrap_or((&v, "0"));
-            Some((
-                u64::from_str_radix(addr.trim_start_matches("0x"), 16).ok()?,
-                Instant::now() + Duration::from_secs(secs.parse().ok()?),
-            ))
+            let (at, delay) = diag::config().gpu.watch?;
+            Some((at, Instant::now() + delay))
         }) else {
             return;
         };
@@ -1191,7 +1145,7 @@ impl Processor {
             &values[..values.len().min(4)]
         ));
         if let Some(b) = self.backend.as_mut()
-            && !synchronous_releases()
+            && !diag::config().gpu.sync_releases
         {
             let write = crate::MemoryWrite {
                 dest,
@@ -1242,7 +1196,7 @@ impl Processor {
         trace(format_args!(
             "release data {data} interrupt {interrupt} {dest:#x} = {value:#x}"
         ));
-        if self.backend.is_some() && !synchronous_releases() {
+        if self.backend.is_some() && !diag::config().gpu.sync_releases {
             self.pending.push(Pending::Release {
                 data,
                 interrupt,
@@ -1304,8 +1258,8 @@ impl Processor {
         let queued = !self.pending.is_empty() || !self.retiring.is_empty();
         if !ends_frame
             && queued
-            && !synchronous_releases()
-            && !wait_submissions()
+            && !diag::config().gpu.sync_releases
+            && !diag::config().gpu.wait_submissions
             && let Some(b) = self.backend.as_mut()
         {
             let point = b.commit_point();

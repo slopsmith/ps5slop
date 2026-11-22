@@ -68,9 +68,7 @@ pub static TRACE_NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 pub static DUMP_TARGETS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn dump_targets() -> bool {
-    static ENV: OnceLock<bool> = OnceLock::new();
-    DUMP_TARGETS.load(std::sync::atomic::Ordering::Relaxed)
-        || *ENV.get_or_init(|| std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some())
+    DUMP_TARGETS.load(std::sync::atomic::Ordering::Relaxed) || diag::config().gpu.dump_targets
 }
 
 /// Keeps `texture` under `key` for `targets`, replacing what is there when `replace`.
@@ -716,9 +714,10 @@ impl Metal {
     pub fn new() -> Option<Self> {
         let device = MTLCreateSystemDefaultDevice()?;
         let queue = device.newCommandQueue()?;
-        let fence = std::env::var_os("PS5SLOP_GPU_FENCE").and_then(|_| device.newFence());
-        let resident = std::env::var_os("PS5SLOP_GPU_RESIDENCY_SET")
-            .is_some()
+        let config = &diag::config().gpu;
+        let fence = config.fence.then(|| device.newFence()).flatten();
+        let resident = config
+            .residency_set
             .then(|| {
                 device
                     .newResidencySetWithDescriptor_error(&MTLResidencySetDescriptor::new())
@@ -801,12 +800,7 @@ impl Metal {
             reasons: HashMap::new(),
             pass_ends: HashMap::new(),
             traced_regs: Vec::new(),
-            trace_frames: std::env::var("PS5SLOP_GPU_TRACE").ok().and_then(|v| {
-                match v.split_once('-') {
-                    Some((a, b)) => Some((a.parse().ok()?, b.parse().ok()?)),
-                    None => v.parse().ok().map(|n| (n, n)),
-                }
-            }),
+            trace_frames: diag::config().gpu.trace_frames,
             trace: None,
             pixels: None,
             fan: None,
@@ -850,8 +844,7 @@ impl Metal {
 
     /// A command buffer; with `PS5SLOP_GPU_ENCODER_STATUS`, one whose errors say which encoder failed.
     fn new_command_buffer(&self) -> Option<Retained<CommandBuffer>> {
-        static STATUS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if !*STATUS.get_or_init(|| std::env::var_os("PS5SLOP_GPU_ENCODER_STATUS").is_some()) {
+        if !diag::config().gpu.encoder_status {
             return self.queue.commandBuffer();
         }
         let d = objc2_metal::MTLCommandBufferDescriptor::new();
@@ -861,10 +854,7 @@ impl Metal {
 
     /// The command buffer for a texture upload the next draw needs.
     fn upload_command(&mut self) -> Retained<CommandBuffer> {
-        static INLINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if self.pending_writes
-            || *INLINE.get_or_init(|| std::env::var_os("PS5SLOP_GPU_INLINE_UPLOADS").is_some())
-        {
+        if self.pending_writes || diag::config().gpu.inline_uploads {
             self.end_pass();
             return self.command();
         }
@@ -1073,7 +1063,7 @@ impl Metal {
                     .flat_map(|p| [p[0], p[1], p[2]]),
             );
             let _ = std::fs::write(snap.dir.join(format!("{name}.ppm")), ppm);
-            if std::env::var_os("PS5SLOP_SNAP_RAW").is_some()
+            if diag::config().gpu.snap_raw
                 && let Some(raw) = read_raw(&shared.0)
             {
                 let _ = std::fs::write(
@@ -2500,10 +2490,10 @@ impl Metal {
                 uint_textures: variant.uint_textures,
                 sint_textures: variant.sint_textures,
                 bounded: variant.bounded,
+                probe_flat: diag::config().gpu.probe_flat,
             };
-            if let Some(dir) = std::env::var_os("PS5SLOP_SHADER_DUMP") {
-                let path = std::path::Path::new(&dir)
-                    .join(format!("{stage:?}-{address:x}-{key:016x}.bin"));
+            if let Some(dir) = &diag::config().gpu.shader_dump {
+                let path = dir.join(format!("{stage:?}-{address:x}-{key:016x}.bin"));
                 let _ = std::fs::write(path, gfx10::capture::Capture::new(&request).to_bytes());
             }
             let translate_start = std::time::Instant::now();
@@ -2519,14 +2509,14 @@ impl Metal {
                             crate::compile::queued()
                         );
                     }
-                    if let Some(dir) = std::env::var_os("PS5SLOP_MSL_OVERRIDE")
+                    if let Some(dir) = &diag::config().gpu.msl_override
                         && let Ok(msl) = std::fs::read_to_string(
-                            std::path::Path::new(&dir).join(format!("{stage:?}-{address:x}.metal")),
+                            dir.join(format!("{stage:?}-{address:x}.metal")),
                         )
                     {
                         tracing::warn!(
                             "{stage:?} program at {address:#x} replaced from {}",
-                            dir.to_string_lossy()
+                            dir.display()
                         );
                         translated.msl = msl;
                     }
@@ -2800,10 +2790,7 @@ impl Metal {
                 }
             }
         }
-        if self.tracing()
-            && std::env::var_os("PS5SLOP_TRACE_PIXELS").is_some()
-            && self.pixels.is_none()
-        {
+        if self.tracing() && diag::config().gpu.trace_pixels && self.pixels.is_none() {
             self.pixels = self
                 .device
                 .newBufferWithLength_options(8 * PIXEL_SLOTS, MTLResourceOptions::StorageModeShared)
@@ -2940,7 +2927,7 @@ impl Metal {
         if self.gpu_htiles.contains(&at) {
             return Htile::Kept;
         }
-        if self.written.covers(at, 4) && !htile_on_cpu() {
+        if self.written.covers(at, 4) && !diag::config().gpu.htile_cpu {
             return Htile::OnGpu(at);
         }
         self.settle_for(at, 4, "HTILE");
@@ -4470,7 +4457,7 @@ impl Metal {
 
     /// `PS5SLOP_TRACE_USER_MEMORY`: what pointer-like user data pairs point at (256 bytes; V# bases too unless `strict`).
     fn trace_user_memory(&mut self, host: &dyn Host, user: &[u32], strict: bool) {
-        if self.trace.is_none() || std::env::var_os("PS5SLOP_TRACE_USER_MEMORY").is_none() {
+        if self.trace.is_none() || !diag::config().gpu.trace_user_memory {
             return;
         }
         for pair in user.windows(2) {
@@ -4644,13 +4631,7 @@ impl Metal {
                 self.dispatches, program.address
             ))));
         }
-        static EVERY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-        let every = *EVERY.get_or_init(|| {
-            std::env::var("PS5SLOP_GPU_COMMIT_EVERY")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0)
-        });
+        let every = diag::config().gpu.commit_every;
         if every > 0 && (self.dispatches + 1).is_multiple_of(every) {
             self.commit();
         }
@@ -4893,8 +4874,9 @@ impl Metal {
             clear = None;
         }
         let pipeline = self.pipeline(&key, vertex_function.clone(), &pixel);
-        let mut redrawn =
-            !vertex.translated.writes_memory && !pixel.translated.writes_memory && !compile_wait();
+        let mut redrawn = !vertex.translated.writes_memory
+            && !pixel.translated.writes_memory
+            && !diag::config().gpu.compile_wait;
         let surfaces: Vec<_> = targets
             .iter()
             .map(|t| (t.0, &t.1))
@@ -4962,7 +4944,7 @@ impl Metal {
         };
         let vs_bound = self.resolve(host, &vertex, vs_data).ok_or("resources")?;
         let ps_bound = self.resolve(host, &pixel, ps_data).ok_or("resources")?;
-        if self.snap.is_some() && std::env::var_os("PS5SLOP_SNAP_INPUTS").is_some() {
+        if self.snap.is_some() && diag::config().gpu.snap_inputs {
             self.snap_inputs(ps_addr, &ps_bound);
         }
         let index = match draw {
@@ -5321,13 +5303,6 @@ enum Htile {
     OnGpu(u64),
 }
 
-/// Whether HTILE words that programs may write are read on the CPU after
-/// waiting for them, as before 2026-11-21 (`PS5SLOP_GPU_HTILE_CPU`).
-fn htile_on_cpu() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("PS5SLOP_GPU_HTILE_CPU").is_some())
-}
-
 /// The programs and depth states of the GPU-side HTILE check.
 #[derive(Clone)]
 struct HtileHelpers {
@@ -5485,13 +5460,6 @@ const GDS_BYTES: usize = 64 << 10;
 /// Dispatches that can hold a slot of loop guard words at once; a slot is
 /// zeroed when handed out again.
 const GUARD_SLOTS: usize = 1 << 16;
-
-/// `WRITE_DATA` of compute queues lands in GPU order unless
-/// `PS5SLOP_GPU_QUEUED_WRITES=1` keeps it queued until the queue drains.
-fn gpu_ordered_writes() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("PS5SLOP_GPU_QUEUED_WRITES").is_none())
-}
 
 /// A texture as a save state keeps it: which cache it sits in and at what
 /// guest address, how it was made, and its texels slice by slice and level
@@ -5766,7 +5734,7 @@ impl Backend for Metal {
 
     fn draw(&mut self, host: &dyn Host, state: &State, draw: Draw) {
         self.trace = self.tracing().then(Vec::new);
-        if self.trace.is_some() && std::env::var_os("PS5SLOP_TRACE_REGS").is_some() {
+        if self.trace.is_some() && diag::config().gpu.trace_regs {
             self.note_changed_registers(state);
         }
         let result = self.try_draw(host, state, draw);
@@ -5826,7 +5794,7 @@ impl Backend for Metal {
             (false, _) => write.values.to_vec(),
         };
         let len = 4 * words.len();
-        if !dest.is_multiple_of(4) || !gpu_ordered_writes() {
+        if !dest.is_multiple_of(4) || diag::config().gpu.queued_writes {
             return false;
         }
         // Only the GPU area has one buffer object that programs share, and
@@ -6040,7 +6008,7 @@ impl Backend for Metal {
 fn compile(device: &Device, msl: &str, entry: &str) -> Option<Retained<Function>> {
     let t = crate::timing::start();
     let unique;
-    let msl = if std::env::var_os("PS5SLOP_MSL_UNIQUE").is_some() {
+    let msl = if diag::config().gpu.msl_unique {
         unique = format!("{msl}\n// {:?}\n", std::time::SystemTime::now());
         unique.as_str()
     } else {
@@ -6104,12 +6072,6 @@ fn late_report(what: String) {
     if LIMIT.allow() {
         tracing::error!("{what}");
     }
-}
-
-/// Whether draws wait for their pipeline instead of skipping (`PS5SLOP_COMPILE_WAIT`).
-fn compile_wait() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("PS5SLOP_COMPILE_WAIT").is_some())
 }
 
 fn rect_source(msl: &str) -> Option<String> {

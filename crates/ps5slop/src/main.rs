@@ -142,8 +142,9 @@ fn main() -> ExitCode {
     if let Some(d) = download {
         vfs.mount("/download0", d, true);
     }
-    if let Some(d) = std::env::var_os("PS5SLOP_DEVLOG") {
-        vfs.mount("/devlog", std::path::PathBuf::from(d), true);
+    let config = diag::config();
+    if let Some(d) = &config.run.devlog {
+        vfs.mount("/devlog", d.clone(), true);
     }
     if let Some(s) = saves {
         vfs.set_saves(s);
@@ -168,19 +169,17 @@ fn main() -> ExitCode {
             if let Some(out) = dump_frame {
                 dump_after(booted.kernel.clone(), out, after);
             }
-            if let Ok(script) = std::env::var("PS5SLOP_INPUT") {
-                play_input(booted.kernel.clone(), script);
+            if let Some(script) = &config.run.input {
+                play_input(booted.kernel.clone(), script.clone());
             }
-            if let Ok(ms) = std::env::var("PS5SLOP_CHECK_CODE") {
-                check_code(booted.kernel.memory(), ms.parse().unwrap_or(100));
+            if let Some(every) = config.run.check_code {
+                check_code(booted.kernel.memory(), every);
             }
             ps5slop::control::serve(booted.kernel.clone(), control.clone());
-            if let Some(spec) = std::env::var_os("PS5SLOP_CALLS") {
-                let spec = spec.to_string_lossy().into_owned();
-                let (path, filter) = spec.split_once(':').unwrap_or((&spec, ""));
-                if let Ok(f) = std::fs::File::create(path) {
-                    hle::trace_calls(Some(f), filter.to_owned());
-                }
+            if let Some((path, filter)) = &config.run.calls
+                && let Ok(f) = std::fs::File::create(path)
+            {
+                hle::trace_calls(Some(f), filter.clone());
             }
             run(booted, headless, label)
         });
@@ -209,10 +208,9 @@ fn run(booted: ps5slop::Booted, _headless: bool, _label: String) -> Result<i32, 
     booted.run()
 }
 
-/// `PS5SLOP_CHECK_CODE=MS`: compares every non-writable region (code and
-/// read-only data) with its contents at start every MS milliseconds, and
-/// reports changes.
-fn check_code(mem: memory::Memory, ms: u64) {
+/// Compares every non-writable region (code and read-only data) with its
+/// contents at start, `every` so often, and reports changes.
+fn check_code(mem: memory::Memory, every: std::time::Duration) {
     let start = std::time::Instant::now();
     let mut code: Vec<(u64, Vec<u8>)> = mem
         .region_spans()
@@ -227,14 +225,15 @@ fn check_code(mem: memory::Memory, ms: u64) {
         .collect();
     let total: usize = code.iter().map(|(_, b)| b.len()).sum();
     tracing::info!(
-        "checking {} code regions ({} MiB) every {ms} ms",
+        "checking {} code regions ({} MiB) every {} ms",
         code.len(),
-        total >> 20
+        total >> 20,
+        every.as_millis()
     );
     std::thread::spawn(move || {
         let mut now = vec![0u8; 1 << 14];
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(ms));
+            std::thread::sleep(every);
             for (base, old) in &mut code {
                 for (k, page) in old.chunks_mut(1 << 14).enumerate() {
                     let at = *base + (k << 14) as u64;
@@ -270,7 +269,7 @@ fn dump_after(kernel: std::sync::Arc<hle::Kernel>, out: PathBuf, seconds: f64) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
         #[cfg(target_os = "macos")]
-        if std::env::var_os("PS5SLOP_DUMP_TARGETS").is_some() {
+        if diag::config().gpu.dump_targets {
             for (addr, t) in hle::gpu::metal::all_frames() {
                 if let Some((w, h, px)) = hle::gpu::metal::read_rgba(&t) {
                     let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
@@ -284,17 +283,13 @@ fn dump_after(kernel: std::sync::Arc<hle::Kernel>, out: PathBuf, seconds: f64) {
                 }
             }
         }
-        let series: u32 = std::env::var("PS5SLOP_DUMP_SERIES")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1);
-        let every: u64 = std::env::var("PS5SLOP_DUMP_EVERY_MS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(500);
+        let (series, every) = (
+            diag::config().run.dump_series,
+            diag::config().run.dump_every,
+        );
         for i in 0..series {
             if i > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(every));
+                std::thread::sleep(every);
             }
             let path = if series > 1 {
                 out.with_extension(format!("{i}.ppm"))
@@ -307,8 +302,8 @@ fn dump_after(kernel: std::sync::Arc<hle::Kernel>, out: PathBuf, seconds: f64) {
     });
 }
 
-// `PS5SLOP_INPUT` is `seconds:buttons` steps, comma-separated; buttons are
-// joined by `+`, and an empty list releases everything (see README).
+/// Plays `script`: `seconds:buttons` steps, comma-separated; buttons are
+/// joined by `+`, and an empty list releases everything.
 fn play_input(kernel: std::sync::Arc<hle::Kernel>, script: String) {
     let start = std::time::Instant::now();
     let steps: Vec<(f64, hle::PadInput)> = script

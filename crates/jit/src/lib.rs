@@ -175,17 +175,10 @@ pub fn stats_enabled() -> bool {
     tracing::enabled!(target: "jit::stats", tracing::Level::INFO)
 }
 
-/// Guest addresses from `PS5SLOP_PROBE_RIP` (hex, comma-separated). They are
-/// never translated, so every arrival there is interpreted and logged.
+/// Guest addresses that are never translated, so every arrival there is
+/// interpreted and logged.
 pub fn probes() -> &'static [u64] {
-    static PROBES: OnceLock<Vec<u64>> = OnceLock::new();
-    PROBES.get_or_init(|| {
-        std::env::var("PS5SLOP_PROBE_RIP")
-            .unwrap_or_default()
-            .split(',')
-            .filter_map(|a| u64::from_str_radix(a.trim().trim_start_matches("0x"), 16).ok())
-            .collect()
-    })
+    &diag::config().jit.probes
 }
 
 pub(crate) fn is_probe(rip: u64) -> bool {
@@ -545,14 +538,14 @@ impl Machine {
             vcpus: [None; layout::MAX_VCPUS],
             code_next: cache::code_start(0),
             blocks: HashMap::new(),
-            verify: std::env::var_os("PS5SLOP_JIT_VERIFY").is_some(),
-            trace: std::env::var_os("PS5SLOP_JIT_TRACE").is_some(),
+            verify: diag::config().jit.verify,
+            trace: diag::config().jit.trace,
             by_place: BTreeMap::new(),
             cache_full: false,
             chain_wanted: HashMap::new(),
             natives: Vec::new(),
             pending_chains: Vec::new(),
-            tier2: translate::Tier2::from_env(),
+            tier2: translate::Tier2::from_config(),
             regions: HashMap::new(),
             watched: Vec::new(),
             patched: HashMap::new(),
@@ -802,7 +795,7 @@ impl Machine {
     }
 
     /// Sets when blocks are compiled again as tier-2 regions (for tests;
-    /// otherwise from `PS5SLOP_JIT_TIER2`). Applies to blocks translated after.
+    /// otherwise from the configuration). Applies to blocks translated after.
     pub fn set_tier2(&mut self, t: translate::Tier2) {
         self.tier2 = t;
     }

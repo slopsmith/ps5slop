@@ -263,10 +263,7 @@ pub fn report(mem: &Memory) {
     }
     let Some(s) = stats() else { return };
     let (interp, jit) = instructions();
-    let top = std::env::var("PS5SLOP_JIT_STATS_TOP")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(20);
+    let top = diag::config().jit.stats_top;
     let mut out = format!("{jit} instructions translated, {interp} interpreted");
     let names = [
         "lookup misses",

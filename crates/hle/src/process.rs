@@ -389,7 +389,7 @@ impl Kernel {
             return;
         }
         jit::start_sampler();
-        if std::env::var_os("PS5SLOP_JIT_LAZY_SYNC").is_none() {
+        if !diag::config().jit.lazy_sync {
             jit::sync_eagerly();
         }
         let natives = [
@@ -397,7 +397,7 @@ impl Kernel {
             ("memcpy", jit::Native::Memmove),
             ("memmove", jit::Native::Memmove),
         ];
-        let natives = if std::env::var_os("PS5SLOP_JIT_NO_NATIVES").is_some() {
+        let natives = if diag::config().jit.no_natives {
             &natives[..0]
         } else {
             &natives[..]
@@ -643,7 +643,7 @@ impl Kernel {
                         tracing::error!("return addresses by frame pointer: {}", frames.join(" "));
                     }
                     let recent = jit::recent_blocks();
-                    if std::env::var_os("PS5SLOP_JIT_TRACE").is_some() && !recent.is_empty() {
+                    if diag::config().jit.trace && !recent.is_empty() {
                         let list: Vec<String> = recent.iter().map(|r| format!("{r:#x}")).collect();
                         note = Some(format!(
                             "{}; blocks before: {}",
@@ -651,7 +651,7 @@ impl Kernel {
                             list.join(" ")
                         ));
                     }
-                    if std::env::var_os("PS5SLOP_HOLD_ON_FAULT").is_some() {
+                    if diag::config().run.hold_on_fault {
                         tracing::error!(
                             "fault {kind:?} at {:#x} held (PS5SLOP_HOLD_ON_FAULT); `quit` ends it\n{}",
                             cpu.rip,

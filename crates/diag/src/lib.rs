@@ -1,7 +1,9 @@
-//! Logging set-up and rate-limited reports, shared by every crate.
+//! Logging set-up, rate-limited reports and the debug switches, shared by every crate.
 
+pub mod config;
 mod limit;
 
+pub use config::{Config, config};
 pub use limit::{Distinct, FirstN};
 
 use std::io::IsTerminal;

@@ -86,10 +86,9 @@ impl Progress {
     }
 
     /// Waits until submission `n` has finished, the GPU thread waits on
-    /// memory, or the limit passes. `PS5SLOP_GPU_NO_THROTTLE` turns this off.
+    /// memory, or the limit passes, unless the throttle is off.
     fn wait_for(&self, n: u64, exiting: impl Fn() -> bool) {
-        static OFF: OnceLock<bool> = OnceLock::new();
-        if *OFF.get_or_init(|| std::env::var_os("PS5SLOP_GPU_NO_THROTTLE").is_some()) {
+        if diag::config().gpu.no_throttle {
             return;
         }
         let start = Instant::now();
@@ -235,7 +234,7 @@ impl gpu::Host for Host {
 
 fn new_backend() -> Option<gpu::SharedBackend> {
     #[cfg(target_os = "macos")]
-    if std::env::var_os("PS5SLOP_GPU_RENDER").is_none_or(|v| v != "0") {
+    if diag::config().gpu.render {
         let metal = gpu::metal::Metal::new()?;
         return Some(gpu::SharedBackend(Arc::new(Mutex::new(Box::new(metal)))));
     }

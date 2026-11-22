@@ -164,8 +164,8 @@ pub struct Audio {
 
 impl Default for Audio {
     fn default() -> Self {
-        let device = match std::env::var("PS5SLOP_AUDIO").as_deref() {
-            Ok("1") => Device::Wanted,
+        let device = match diag::config().hle.audio {
+            Some(true) => Device::Wanted,
             _ => Device::Off,
         };
         Self {
@@ -173,7 +173,7 @@ impl Default for Audio {
             ports: Default::default(),
             mixer: Default::default(),
             device: Mutex::new(device),
-            wav: std::env::var_os("PS5SLOP_AUDIO_WAV").map(PathBuf::from),
+            wav: diag::config().hle.audio_wav.clone(),
             out2: Default::default(),
         }
     }
@@ -184,7 +184,7 @@ impl Audio {
     /// `PS5SLOP_AUDIO=0` keeps it closed and `PS5SLOP_AUDIO=1` opens it
     /// either way.
     pub fn use_device(&self) {
-        if std::env::var("PS5SLOP_AUDIO").as_deref() == Ok("0") {
+        if diag::config().hle.audio == Some(false) {
             return;
         }
         let mut d = lock(&self.device);

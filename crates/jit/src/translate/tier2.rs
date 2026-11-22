@@ -629,13 +629,8 @@ pub enum Tier2 {
 }
 
 impl Tier2 {
-    /// From `PS5SLOP_JIT_TIER2`: unset or `off`, `eager`, or a count.
-    pub fn from_env() -> Tier2 {
-        match std::env::var("PS5SLOP_JIT_TIER2").as_deref() {
-            Ok("eager") => Tier2::Hot(1),
-            Ok("off") | Err(_) => Tier2::Off,
-            Ok(n) => Tier2::Hot(n.parse().unwrap_or(1000)),
-        }
+    pub fn from_config() -> Tier2 {
+        diag::config().jit.tier2.map_or(Tier2::Off, Tier2::Hot)
     }
 
     pub fn count(self) -> Option<u32> {

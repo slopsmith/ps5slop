@@ -204,6 +204,7 @@ impl Ags<'_> {
             uint_textures: 0,
             sint_textures: 0,
             bounded: false,
+            probe_flat: false,
         }
     }
 }

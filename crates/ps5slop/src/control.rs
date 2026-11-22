@@ -297,7 +297,7 @@ fn run(kernel: &Arc<Kernel>, line: &str) -> String {
             Some(_)
                 if !hle::gpu::metal::DUMP_TARGETS
                     .swap(true, std::sync::atomic::Ordering::Relaxed)
-                    && std::env::var_os("PS5SLOP_DUMP_TARGETS").is_none() =>
+                    && !diag::config().gpu.dump_targets =>
             {
                 "recording targets from now on; run again after a frame".into()
             }

@@ -82,10 +82,9 @@ pub fn totals() -> [u64; 13] {
     NS.each_ref().map(|n| n.load(Ordering::Relaxed))
 }
 
-/// Whether to label Metal encoders for GPU traces (`PS5SLOP_GPU_LABELS`).
+/// Whether to label Metal encoders for GPU traces.
 pub fn labels() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("PS5SLOP_GPU_LABELS").is_some())
+    diag::config().gpu.labels
 }
 
 /// Host time in seconds, on the clock Metal's command buffer times use.
