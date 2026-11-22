@@ -12,6 +12,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[derive(Parser)]
 #[command(name = "ps5slop-replay")]
 struct Cli {
+    /// Skips every draw and dispatch that uses this program (vertex, pixel or compute address).
+    #[arg(long, global = true, value_name = "HEX", value_parser = parse_hex)]
+    skip: Vec<u64>,
     #[command(subcommand)]
     command: Command,
 }
@@ -118,6 +121,12 @@ fn main() -> ExitCode {
         let _ = cli;
         tracing::error!("ps5slop-replay requires macOS Metal");
         return ExitCode::FAILURE;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(mut skip) = gpu::metal::SKIP.lock() {
+            skip.extend(&cli.skip);
+        }
     }
     #[cfg(target_os = "macos")]
     match run(cli.command) {
