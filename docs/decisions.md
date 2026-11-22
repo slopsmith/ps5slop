@@ -617,3 +617,12 @@ An image sampled at a depth target's `DB_STENCIL_WRITE_BASE` with an 8-bit integ
 ## 2026-11-22: Outside lockstep programs, scalar writes of EXEC keep one bit
 
 When a scalar instruction writes EXEC in a program that is not lockstep, the result keeps bit 0 and `exec_hi` becomes 0. Reason: `s_wqm_b64` (and `s_mov_b64 exec, -1`) set bits for lanes that, in the one-lane-per-thread model, are other threads; GTA V's glass programs then spun in a waterfall loop until its cap and discarded every fragment. Risk: code that compares EXEC with a full mask (`s_cmp_eq_u64 exec, -1`) now sees a partial wave; none found in the captured programs.
+
+## 2026-11-22: Images read from guest memory are kept while their bytes do not change
+
+A texture read from guest memory is detiled again in a later frame only when a 64-bit digest of its guest bytes changed or encoded, unwaited GPU work may have written them; otherwise the texture is reused. Reason: re-detiling every image every frame ended GTA V's G-buffer render pass about 130 times a frame (an upload after programs wrote memory must go in the main command buffer), and its prologue went from about 4 to 6.4 flips a second with this (held programs skipped). A digest instead of a shadow copy saves the copy's memory (82 MiB of images in GTA V); collisions are negligible at 64 bits. Not chosen: catching CPU writes with page protection, which the memory layer does not offer for GPU use.
+
+## 2026-11-22: The control socket can hold input and set stick axes part way
+
+`hold`, `release` and `tap` keep input pressed across commands and mash buttons, and `lx=N`-style names set one axis or trigger part way. Reason: playing GTA V's prologue headless needs aiming (L2) while moving and shooting, sprinting by tapping, and gentle turns, which full-edge presses of one command at a time could not do.
+

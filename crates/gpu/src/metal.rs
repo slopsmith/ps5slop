@@ -502,6 +502,10 @@ pub struct Metal {
     /// Stand-in colour targets, by size, for draws that only store to memory.
     blank_targets: HashMap<(u32, u32), Retained<Texture>>,
     images: HashMap<(Image, TextureKind), (u64, Retained<Texture>)>,
+    /// A digest of each image's guest bytes as last detiled, while no encoded work could write them then.
+    image_digests: HashMap<(Image, TextureKind), u64>,
+    /// Images found unchanged in a later frame, found changed, and detiled without a digest.
+    image_checks: [u64; 3],
     /// 2D-array and 3D images programs write, by guest address.
     volumes: HashMap<u64, Retained<Texture>>,
     volume_sources: HashMap<u64, VolumeSource>,
@@ -535,6 +539,7 @@ pub struct Metal {
     pub dispatches: u64,
     pub skipped: u64,
     reasons: HashMap<&'static str, u64>,
+    pass_ends: HashMap<u32, u64>,
     /// The frames `PS5SLOP_GPU_TRACE` names (`n` or `first-last`), and the
     /// trace lines of the current draw.
     trace_frames: Option<(u64, u64)>,
@@ -578,6 +583,27 @@ fn guest_bytes(host: &dyn Host, base: u64, len: u64) -> Option<&[u8]> {
     let p = host.host_pointer(base)?;
     // SAFETY: the range is mapped guest memory; the guest may write it concurrently.
     Some(unsafe { std::slice::from_raw_parts(p, len as usize) })
+}
+
+/// A 64-bit digest of `bytes`, to tell whether guest memory changed.
+fn digest(bytes: &[u8]) -> u64 {
+    const K: u64 = 0x9E37_79B9_7F4A_7C15;
+    let (chunks, rest) = bytes.as_chunks::<32>();
+    let mut lanes = [1u64, 2, 3, 4];
+    for c in chunks {
+        for (i, lane) in lanes.iter_mut().enumerate() {
+            let w = u64::from_le_bytes(c[i * 8..i * 8 + 8].try_into().unwrap());
+            *lane = (lane.rotate_left(23) ^ w).wrapping_mul(K);
+        }
+    }
+    let mut h = bytes.len() as u64;
+    for (i, b) in rest.iter().enumerate() {
+        h ^= u64::from(*b) << (8 * (i % 8));
+        h = h.rotate_left(7).wrapping_mul(K);
+    }
+    lanes
+        .iter()
+        .fold(h, |h, l| (h.rotate_left(29) ^ l).wrapping_mul(K))
 }
 
 /// The `user(locnN)` locations a pixel program reads flat (declared `uint4`).
@@ -752,6 +778,8 @@ impl Metal {
             targets: HashMap::new(),
             blank_targets: HashMap::new(),
             images: HashMap::new(),
+            image_digests: HashMap::new(),
+            image_checks: [0; 3],
             volumes: HashMap::new(),
             volume_sources: HashMap::new(),
             volume_older: Default::default(),
@@ -773,6 +801,7 @@ impl Metal {
             dispatches: 0,
             skipped: 0,
             reasons: HashMap::new(),
+            pass_ends: HashMap::new(),
             traced_regs: Vec::new(),
             trace_frames: std::env::var("PS5SLOP_GPU_TRACE").ok().and_then(|v| {
                 match v.split_once('-') {
@@ -849,8 +878,13 @@ impl Metal {
         self.fence.as_deref().filter(|_| self.fence_updated)
     }
 
+    #[track_caller]
     fn end_pass(&mut self) {
         if let Some((enc, addresses, colors, depth)) = self.pass.take() {
+            *self
+                .pass_ends
+                .entry(std::panic::Location::caller().line())
+                .or_default() += 1;
             if let Some(f) = self.fence.as_deref()
                 && std::mem::take(&mut self.pass_memory)
             {
@@ -1880,7 +1914,6 @@ impl Metal {
             record(image.address | 1, tex, false);
             return Some(tex.clone());
         }
-        self.note(|| format!("      {:#x} detiled from guest memory", image.address));
         let compressed = is_compressed(format);
         let (ew, eh) = if compressed {
             (image.width.div_ceil(4), image.height.div_ceil(4))
@@ -1888,13 +1921,38 @@ impl Metal {
             (image.width, image.height)
         };
         let layout = Layout::new(image.tile?, bpe, ew, eh)?;
+        let chain = image.last_level + 1;
+        // A 2D image bound where a cube is read shows its one slice on every face.
+        let stride = if kind == TextureKind::Cube && image.kind != 11 {
+            0
+        } else {
+            layout
+                .chain_size(chain)
+                .next_multiple_of(layout.block_bytes())
+        };
+        let extent = (slices as u64 - 1) * stride + layout.chain_size(chain);
+        let digest = if self.written.covers(image.address, extent) {
+            None
+        } else {
+            guest_bytes(host, image.address, extent).map(digest)
+        };
+        if let Some((epoch, tex)) = self.images.get_mut(&(image, kind)) {
+            let old = self.image_digests.get(&(image, kind));
+            if digest.is_some() && old == digest.as_ref() {
+                *epoch = self.epoch;
+                self.image_checks[0] += 1;
+                record(image.address | 1, tex, false);
+                return Some(tex.clone());
+            }
+            self.image_checks[if old.is_some() { 1 } else { 2 }] += 1;
+        }
+        self.note(|| format!("      {:#x} detiled from guest memory", image.address));
         if trace_targets() && !self.images.contains_key(&(image, kind)) {
             eprintln!(
                 "ps5slop: targets: frame {} image {:#x} {}x{} from guest memory",
                 self.epoch, image.address, image.width, image.height
             );
         }
-        let chain = image.last_level + 1;
         let levels = sampled_levels(image, layout);
         let tex = match self.images.get(&(image, kind)) {
             Some((_, t)) => t.clone(),
@@ -1907,14 +1965,6 @@ impl Metal {
             (image.width, image.height),
             if compressed { 4 } else { 1 },
         );
-        // A 2D image bound where a cube is read shows its one slice on every face.
-        let stride = if kind == TextureKind::Cube && image.kind != 11 {
-            0
-        } else {
-            layout
-                .chain_size(chain)
-                .next_multiple_of(layout.block_bytes())
-        };
         for slice in 0..slices {
             let at = image.address + slice as u64 * stride;
             for (level, mip) in mips.iter().enumerate().take(levels as usize) {
@@ -1929,6 +1979,10 @@ impl Metal {
             }
         }
         self.images.insert((image, kind), (self.epoch, tex.clone()));
+        match digest {
+            Some(d) => self.image_digests.insert((image, kind), d),
+            None => self.image_digests.remove(&(image, kind)),
+        };
         record(image.address | 1, &tex, false);
         Some(tex)
     }
@@ -5642,6 +5696,12 @@ impl Backend for Metal {
         } else {
             format!(", images not supported {misses:x?}")
         };
+        let mut ends: Vec<_> = self.pass_ends.iter().collect();
+        ends.sort_by(|a, b| b.1.cmp(a.1));
+        let misses = format!(
+            "{misses}, render passes ended at lines {ends:?}, images kept {} changed {} without digest {}",
+            self.image_checks[0], self.image_checks[1], self.image_checks[2]
+        );
         format!(
             "{} drawn, {} dispatched, {} skipped {reasons:?}{misses}, {} writes in GPU order, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms); waits to read memory programs wrote {:?}, {} HTILE checks on the GPU",
             self.draws,
@@ -6939,6 +6999,74 @@ mod tests {
         assert_eq!(parent(&rewritten), Some(volume));
         let read = metal.image(&mem, flat, TextureKind::Tex2d).unwrap();
         assert_eq!(parent(&read), Some(volume));
+    }
+
+    fn first_texel(metal: &mut Metal, tex: &Texture) -> [u8; 4] {
+        let d = unsafe {
+            MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+                tex.pixelFormat(),
+                tex.width(),
+                tex.height(),
+                false,
+            )
+        };
+        d.setStorageMode(MTLStorageMode::Shared);
+        let shared = metal.device.newTextureWithDescriptor(&d).unwrap();
+        let cb = metal.command();
+        let blit = cb.blitCommandEncoder().unwrap();
+        unsafe { blit.copyFromTexture_toTexture(tex, &shared) };
+        blit.endEncoding();
+        metal.flush_and_wait();
+        let mut out = [0u8; 4];
+        unsafe {
+            shared.getBytes_bytesPerRow_fromRegion_mipmapLevel(
+                NonNull::new_unchecked(out.as_mut_ptr().cast()),
+                4 * tex.width(),
+                MTLRegion {
+                    origin: MTLOrigin { x: 0, y: 0, z: 0 },
+                    size: MTLSize {
+                        width: 1,
+                        height: 1,
+                        depth: 1,
+                    },
+                },
+                0,
+            );
+        }
+        out
+    }
+
+    #[test]
+    fn an_image_follows_guest_memory_from_frame_to_frame() {
+        let Some(mut metal) = Metal::new() else {
+            return;
+        };
+        let mem = Mem::new(4 << 20);
+        let image = Image {
+            address: 0x10000,
+            format: 56,
+            width: 64,
+            height: 32,
+            swizzle: [4, 5, 6, 7],
+            tile: Some(TileMode::RenderTarget),
+            raw_tile: 0x1b,
+            kind: 9,
+            base_level: 0,
+            last_level: 0,
+            depth: 1,
+            base_array: 0,
+        };
+        let mut seen = Vec::new();
+        for texel in [[1, 2, 3, 4], [1, 2, 3, 4], [9, 8, 7, 6], [9, 8, 7, 6]] {
+            mem.write(image.address, &texel);
+            let tex = metal.image(&mem, image, TextureKind::Tex2d).unwrap();
+            seen.push(first_texel(&mut metal, &tex));
+            metal.frame_done(None);
+        }
+        assert_eq!(
+            seen,
+            [[1, 2, 3, 4], [1, 2, 3, 4], [9, 8, 7, 6], [9, 8, 7, 6]]
+        );
     }
 
     #[test]
