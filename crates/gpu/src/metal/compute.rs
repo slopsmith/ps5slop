@@ -105,6 +105,15 @@ impl Metal {
             };
             if gave_up != 0 {
                 self.guard_trips += 1;
+                diag::problems::record_with_detail(
+                    diag::problems::Kind::LoopGuard,
+                    "compute loop guard",
+                    format!("cs {program:#x}"),
+                    format!(
+                        "{gave_up} threads, {units}/{} branch units",
+                        gfx10::translate::GUARD_BUDGET
+                    ),
+                );
                 if self.guard_trips <= 16 {
                     tracing::warn!(
                         "compute program {program:#x}: {gave_up} threads gave up their loops ({units} of {} branch units), user data {user:x?}",

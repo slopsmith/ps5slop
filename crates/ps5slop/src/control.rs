@@ -31,6 +31,7 @@ frames DIR N                write the next N flipped frames as DIR/FLIP.ppm (N d
 save PATH                   write a save state (load it with `run --load-state PATH`)
 profile on|off              start a fresh profile window, or stop profiling
 profile [N]                 report the window so far (top N rows, default 20)
+problems [PATH]             list skipped draws, failed shaders/pipelines, timeouts, stubs and JIT fallbacks (or write to PATH)
 gputrace N                  trace every draw of the next N frames on stderr (decimal)
 gpusnap DIR [FIRST]         write every render pass attachment of the next frame (from pass FIRST, decimal) as PPM
 gpureload                   translate every program again (and read PS5SLOP_MSL_OVERRIDE files again)
@@ -385,6 +386,17 @@ fn run(kernel: &Arc<Kernel>, line: &str) -> String {
                 None => "profiling is off (profile on)".into(),
             },
         },
+        "problems" => {
+            let report = crate::problem_report(kernel);
+            match it.next() {
+                Some(path) => match std::fs::write(path, &report) {
+                    Ok(()) => format!("wrote {} bytes to {path}", report.len()),
+                    Err(e) => format!("problems: {e}"),
+                },
+                None if report.is_empty() => "no problems recorded".into(),
+                None => report.trim_end().to_owned(),
+            }
+        }
         "rates" => {
             let now = (std::time::Instant::now(), kernel.instructions());
             let mut last = RATES.lock().unwrap_or_else(|e| e.into_inner());

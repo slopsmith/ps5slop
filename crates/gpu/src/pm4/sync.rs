@@ -144,6 +144,14 @@ impl Processor {
             polling.get_or_insert_with(|| Polling::start(host));
             if deadline.passed() {
                 self.stats.timeouts += 1;
+                diag::problems::record(
+                    diag::problems::Kind::WaitTimeout,
+                    "ATOMIC_MEM",
+                    format!(
+                        "{} {address:#x}",
+                        std::thread::current().name().unwrap_or("?")
+                    ),
+                );
                 return;
             }
             std::thread::sleep(Duration::from_micros(200));
@@ -175,6 +183,14 @@ impl Processor {
                     }
                     if deadline.passed() {
                         self.stats.timeouts += 1;
+                        diag::problems::record(
+                            diag::problems::Kind::WaitTimeout,
+                            "MEM_SEMAPHORE",
+                            format!(
+                                "{} {address:#x}",
+                                std::thread::current().name().unwrap_or("?")
+                            ),
+                        );
                         tracing::warn!("semaphore wait at {address:#x} timed out");
                         return;
                     }
@@ -204,6 +220,15 @@ impl Processor {
         while !valid(host) && !host.exiting() {
             if !warned && start.elapsed() > WAIT_LIMIT {
                 warned = true;
+                diag::problems::record(
+                    diag::problems::Kind::WaitTimeout,
+                    "REWIND",
+                    format!(
+                        "{} {:#x}",
+                        std::thread::current().name().unwrap_or("?"),
+                        body - 4
+                    ),
+                );
                 tracing::warn!(
                     "REWIND at {:#x} still not valid after {} s",
                     body - 4,
@@ -496,10 +521,19 @@ impl Processor {
             }
             if deadline.passed() {
                 self.stats.timeouts += 1;
+                let queue = std::thread::current().name().unwrap_or("?").to_owned();
+                diag::problems::record_with_detail(
+                    diag::problems::Kind::WaitTimeout,
+                    "WAIT_REG_MEM",
+                    format!("{queue} {address:#x}"),
+                    format!(
+                        "val {value:#x} & {mask:#x}, fn {}, ref {reference:#x}",
+                        control & 7
+                    ),
+                );
                 if self.stats.timeouts <= 16 {
                     tracing::warn!(
-                        "wait timed out on {}: {address:#x} & {mask:#x} = {value:#x}, function {}, reference {reference:#x}",
-                        std::thread::current().name().unwrap_or("?"),
+                        "wait timed out on {queue}: {address:#x} & {mask:#x} = {value:#x}, function {}, reference {reference:#x}",
                         control & 7
                     );
                 }

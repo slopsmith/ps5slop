@@ -22,6 +22,7 @@ Diagnostics go through the `tracing` crate to stderr as `LEVEL target: message`.
 | `hle::ngs2` | debug | NGS2 voice controls, commands and waveform blocks |
 | `hle::videoout` | debug | Which texture a `shot` or frame dump reads |
 | `ps5slop` | debug | The imports a title uses that are not implemented, by name |
+| `ps5slop::report` | info | Per-run problem report printed at exit when any problems were recorded; on by default |
 
 Reports that would repeat every frame are rate-limited (`diag::FirstN`, `diag::Distinct`): each kind of problem is logged the first few times.
 
@@ -39,6 +40,7 @@ Reports that would repeat every frame are rate-limited (`diag::FirstN`, `diag::D
 | `PS5SLOP_DUMP_SERIES=N`, `PS5SLOP_DUMP_EVERY_MS=MS` | `--dump-frame` writes N frames (`OUT.0.ppm`, ...) MS milliseconds apart (default 1 frame, 500 ms) |
 | `PS5SLOP_DUMP_TARGETS` | Records render targets and textures for `targets` from the start; with `--dump-frame`, also writes every frame texture as `OUT.ADDR.ppm` |
 | `PS5SLOP_HOLD_ON_FAULT` | A thread that faults waits instead of ending the process, so the control socket can still read memory |
+| `PS5SLOP_REPORT=PATH` | Also writes the per-run problem report to `PATH` on exit |
 | **HLE** | |
 | `PS5SLOP_NAMES=FILE` | Names (one per line) hashed to label NIDs in reports |
 | `PS5SLOP_UNIMPLEMENTED_ZERO[=dump]` | Unimplemented imports return 0 and log instead of stopping; `dump` adds the bytes behind each argument |
@@ -111,6 +113,7 @@ The protocol is the one 86slopper uses: one command per line, and each answer en
 | `tap BUTTONS [COUNT [MS]]` | Presses and lets go COUNT times (default 1), MS milliseconds each way (default 600), for mashing a button (GTA V's sprint is tapped `cross`) |
 | `hold BUTTONS` / `release [BUTTONS]` | Keeps buttons, sticks and triggers pressed until released (all, or only those named), so a held stick or aim can be combined with `press` and `tap`, which add to what is held. Each answers with what is held now |
 | `profile on` / `profile off` / `profile [N]` | Starts a fresh profile window, stops profiling, or reports the window so far (top N rows): per guest thread the time in translated code, the interpreter, translating and host functions, the time in none of these (exits, locks, the engine), the CPU time used and the guest instructions per second of translated-code time; memory map changes; the hottest guest code by sample (module and offset); host functions by time and calls; the instructions and addresses the interpreter ran most; VM exits by cause (host call, interpreter, new block, lookup table collision, fault, kick), each with its hottest guest RIPs or host functions; translations and evicted cache segments. Samples at a VM entry point are counted as "kicked before entering": the sampler's kick was pending while the thread was outside the VM |
+| `problems [PATH]` | Prints the per-run problem report (or writes it to `PATH`): skipped draws and dispatches (including compiling skips), untranslated programs with the failing instruction, failed Metal compilations/pipelines with Metal's reason, unsupported formats/primitives/tile modes, memory window failures, loop-guard trips, PM4 wait timeouts, unimplemented and placeholder HLE calls, and JIT interpreter fallbacks by opcode, grouped by reason and sorted by impact (count and per-frame rate) |
 | `gpusnap DIR [FIRST]` | During the next frame, copies every attachment of each render pass when the pass ends (from pass FIRST on, decimal), and writes them as `NNN-Dd-PROGRAMS-mrtN-ADDR-sS.ppm` and `...-depthS-ADDR.ppm`: the frame's composition pass by pass. Depth is stretched from its nearest to its farthest value below 1; colours are clamped to [0, 1]. At most 1 GiB of copies |
 | `gpuskip [ADDR...]` | Skips every draw and dispatch that uses one of these program addresses (vertex, pixel or compute); with none, skips nothing. Comparing screenshots with and without a pass shows which pass causes a bug. Careful with compute programs: a skipped program's output may hold the arguments of a later indirect dispatch or draw, which then reads garbage (see GTA V, [gpu.md](gpu.md#gta-vs-prologue-played-on-2026-11-22)) |
 | `gpureload` | Translates every program again at the end of the frame, reading `PS5SLOP_MSL_OVERRIDE` files again |

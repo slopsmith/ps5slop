@@ -164,7 +164,10 @@ pub fn exit_causes(top: usize) -> Causes {
     out
 }
 
+type FallbackMap = Arc<Mutex<HashMap<(u8, u8, u8), u64>>>;
+
 static ALL_STATS: Mutex<Vec<Arc<Mutex<Stats>>>> = Mutex::new(Vec::new());
+static ALL_FALLBACKS: Mutex<Vec<FallbackMap>> = Mutex::new(Vec::new());
 
 thread_local! {
     static MY_STATS: Arc<Mutex<Stats>> = {
@@ -172,6 +175,60 @@ thread_local! {
         ALL_STATS.lock().unwrap_or_else(|e| e.into_inner()).push(s.clone());
         s
     };
+    static MY_FALLBACKS: FallbackMap = {
+        let f = Arc::new(Mutex::new(HashMap::new()));
+        ALL_FALLBACKS.lock().unwrap_or_else(|e| e.into_inner()).push(f.clone());
+        f
+    };
+}
+
+/// Counts one JIT-to-interpreter fallback at `rip` by its decoded x86 opcode.
+fn record_fallback(rip: u64, mem: &Memory) {
+    let Ok(i) = x86::decode::decode(|k| {
+        let mut b = [0u8];
+        mem.fetch(rip.wrapping_add(k as u64), &mut b).map(|_| b[0])
+    }) else {
+        return;
+    };
+    let ext = i.modrm.map_or(0xff, |_| i.ext());
+    let key = (i.map as u8, i.op, ext);
+    MY_FALLBACKS.with(|f| {
+        *f.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(key)
+            .or_default() += 1
+    });
+}
+
+/// JIT interpreter fallbacks across all threads, grouped by opcode, for the problem report.
+pub fn fallback_rows() -> Vec<diag::problems::Row> {
+    let mut totals: HashMap<(u8, u8, u8), u64> = HashMap::new();
+    for map in ALL_FALLBACKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+    {
+        for (&k, &n) in map.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+            *totals.entry(k).or_default() += n;
+        }
+    }
+    totals
+        .into_iter()
+        .map(|((map, op, ext), count)| {
+            let suffix = if ext == 0xff {
+                String::new()
+            } else {
+                format!(" /{ext}")
+            };
+            diag::problems::Row {
+                kind: diag::problems::Kind::JitFallback,
+                reason: "interpreter fallback".into(),
+                subject: format!("map {map} {op:02x}{suffix}"),
+                count,
+                detail: None,
+            }
+        })
+        .collect()
 }
 
 fn stats_on() -> bool {
@@ -758,6 +815,7 @@ impl Engine {
                         }
                         continue;
                     }
+                    record_fallback(rip, mem);
                     rip
                 }
                 Exit::Hvc(HVC_TIERUP) => {
@@ -778,6 +836,7 @@ impl Engine {
                     count_exit(Count::Interp);
                     let rip = self.cpu.reg(RIP.0)?;
                     note_exit(Cause::Interpreter, rip);
+                    record_fallback(rip, mem);
                     rip
                 }
                 Exit::Fault { elr: pc, .. } | Exit::Stage2 { pc } if crate::in_native(pc) => {

@@ -181,7 +181,24 @@ fn main() -> ExitCode {
             {
                 hle::trace_calls(Some(f), filter.clone());
             }
-            run(booted, headless, label)
+            let kernel_for_report = booted.kernel.clone();
+            let result = run(booted, headless, label);
+            let report = ps5slop::problem_report(&kernel_for_report);
+            if !report.is_empty() {
+                if let Some(path) = &config.run.report {
+                    match std::fs::write(path, &report) {
+                        Ok(()) => tracing::info!("wrote problem report to {}", path.display()),
+                        Err(e) => {
+                            tracing::warn!(
+                                "cannot write problem report to {}: {e}",
+                                path.display()
+                            );
+                        }
+                    }
+                }
+                tracing::info!(target: "ps5slop::report", "\n{}", report.trim_end());
+            }
+            result
         });
     let _ = std::fs::remove_file(&control);
     match status {

@@ -469,9 +469,54 @@ pub fn pad_input(keys: &str) -> hle::PadInput {
         })
 }
 
+/// Builds the per-run problem report from GPU/PM4 events, HLE placeholder and
+/// unimplemented calls, and JIT interpreter fallbacks. Empty when none occurred.
+pub fn problem_report(kernel: &Kernel) -> String {
+    let mut extra = kernel.hle.problem_calls();
+    extra.extend(jit::fallback_rows());
+    diag::problems::global().format_with(&extra)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn problem_report_includes_hle_unimplemented_and_placeholder_calls() {
+        let mut hle = Hle::new();
+        let mem = Memory::new(ADDRESS_SPACE).unwrap();
+        let tls = hle::TlsTemplate::default();
+        let missing_addr = hle.stub_by_name("libSceFake", "sceFakeMissing");
+        let stub_addr = hle.stub_by_name("libScePad", "scePadSetMotionSensorState");
+        hle.map(&mem).unwrap();
+        mem.map(0x10_0000, PAGE_SIZE, Prot::RW, "stack").unwrap();
+        let kernel = Kernel::new(
+            hle,
+            mem.clone(),
+            tls,
+            Box::new(std::io::sink()),
+            Box::new(std::io::sink()),
+            hle::Vfs::new(None, None),
+        );
+        let mut cpu = Cpu::default();
+        cpu.regs[RSP] = 0x10_0f00;
+        mem.write_u64(0x10_0f00, 0x1234).unwrap();
+        let thread = hle::Thread { tcb: 0 };
+        let mut env = hle::Env {
+            cpu: &mut cpu,
+            mem: &mem,
+            kernel: &kernel,
+            thread,
+        };
+        assert!(kernel.hle.call(missing_addr, &mut env).is_err());
+        let _ = kernel.hle.call(stub_addr, &mut env);
+        let rows = kernel.hle.problem_calls();
+        let p = diag::problems::Problems::new();
+        let report = p.format_with(&rows);
+        assert!(report.contains("unimplemented and placeholder HLE calls"));
+        assert!(report.contains("libSceFake"));
+        assert!(report.contains("scePadSetMotionSensorState"));
+    }
 
     #[test]
     fn axis_values_set_one_stick_axis_or_a_trigger_part_way() {

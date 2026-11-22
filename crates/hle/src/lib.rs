@@ -259,6 +259,8 @@ struct Stub {
     func: Option<&'static Function>,
     /// Limits the reports of calls when `func` is a placeholder (see [`placeholders`]).
     stub_calls: Option<diag::FirstN>,
+    /// Call count for unimplemented imports and placeholders, for the problem report.
+    problem_calls: std::sync::atomic::AtomicU64,
 }
 
 /// Calls of one placeholder reported before it goes quiet.
@@ -360,6 +362,7 @@ impl Hle {
                     library: key.1.clone(),
                     func,
                     stub_calls: placeholder.then(|| diag::FirstN::new(STUB_REPORTS)),
+                    problem_calls: std::sync::atomic::AtomicU64::new(0),
                 });
                 self.stub_index.insert(key, i);
                 i
@@ -409,6 +412,35 @@ impl Hle {
     /// library), or one from the `PS5SLOP_NAMES` list.
     pub fn name_of(&self, nid: &str) -> Option<&str> {
         self.names.get(nid).map(String::as_str)
+    }
+
+    /// Unimplemented imports and placeholder stubs called at least once, for the problem report.
+    pub fn problem_calls(&self) -> Vec<diag::problems::Row> {
+        let mut rows = Vec::new();
+        for s in &self.stubs {
+            let count = s.problem_calls.load(std::sync::atomic::Ordering::Relaxed);
+            if count == 0 {
+                continue;
+            }
+            let (reason, subject) = match s.func {
+                None => (
+                    "unimplemented",
+                    match self.name_of(&s.nid) {
+                        Some(name) => format!("{}::{name} ({})", s.library, s.nid),
+                        None => format!("{} #{}", s.library, s.nid),
+                    },
+                ),
+                Some(f) => ("placeholder", format!("{}::{}", f.library, f.name)),
+            };
+            rows.push(diag::problems::Row {
+                kind: diag::problems::Kind::UnimplementedHle,
+                reason: reason.into(),
+                subject,
+                count,
+                detail: None,
+            });
+        }
+        rows
     }
 
     /// `(library, NID, name if known)` of every stub with no host function
@@ -470,6 +502,8 @@ impl Hle {
             .and_then(|i| self.stubs.get(i))
             .ok_or(CallError::NotAStub(addr))?;
         let Some(f) = stub.func else {
+            stub.problem_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if unimplemented_return_zero() {
                 return self.return_zero_unimplemented(stub, env);
             }
@@ -483,6 +517,8 @@ impl Hle {
         let args: [u64; 4] = std::array::from_fn(|n| env.arg(n));
         let out = (f.func)(env);
         if let Some(calls) = &stub.stub_calls {
+            stub.problem_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             report_stub(f, calls, args, &out);
         }
         let out = out?;

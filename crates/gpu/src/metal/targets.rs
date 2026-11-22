@@ -38,7 +38,14 @@ impl Metal {
         host: &dyn Host,
         t: &ColorTarget,
     ) -> Option<(Retained<Texture>, MTLPixelFormat)> {
-        let format = color_format(t.format)?;
+        let Some(format) = color_format(t.format) else {
+            diag::problems::record(
+                diag::problems::Kind::UnsupportedFormat,
+                format!("color format {:?}", t.format),
+                format!("target {:#x}", t.address),
+            );
+            return None;
+        };
         self.color_newer.insert(t.address);
         if t.fast_clear.is_some() || t.dcc.is_some() {
             self.color_meta.insert(t.address, *t);
@@ -402,6 +409,11 @@ impl Metal {
             (width, height)
         };
         if d.slice >= MAX_DEPTH_SLICES as u32 {
+            diag::problems::record(
+                diag::problems::Kind::UnsupportedFormat,
+                format!("depth slice {}", d.slice),
+                format!("depth {:#x}", d.address),
+            );
             self.report(
                 tracing::Level::ERROR,
                 format!(

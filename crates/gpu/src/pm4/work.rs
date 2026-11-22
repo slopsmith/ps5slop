@@ -30,6 +30,12 @@ impl Processor {
         }
         if total > MAX_GROUPS {
             self.stats.huge_dispatches += 1;
+            diag::problems::record_with_detail(
+                diag::problems::Kind::DispatchSkipped,
+                "too many groups",
+                format!("cs {program:#x}"),
+                format!("{groups:?}"),
+            );
             if self.stats.huge_dispatches <= 16 {
                 tracing::error!(
                     "dispatch of {groups:?} groups of the program at {program:#x} skipped"

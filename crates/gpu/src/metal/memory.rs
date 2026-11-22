@@ -135,7 +135,7 @@ impl Metal {
         let ptr = NonNull::new(host.host_pointer(start)?)?;
         // SAFETY: the range is host memory that stays mapped while the address
         // space lives; windows are dropped when its mappings change.
-        let buffer = unsafe {
+        let Some(buffer) = (unsafe {
             self.device
                 .newBufferWithBytesNoCopy_length_options_deallocator(
                     ptr.cast(),
@@ -143,7 +143,14 @@ impl Metal {
                     MTLResourceOptions::StorageModeShared,
                     None,
                 )
-        }?;
+        }) else {
+            diag::problems::record(
+                diag::problems::Kind::MemoryWindow,
+                "Metal refused guest window",
+                format!("{start:#x}..{stop:#x}"),
+            );
+            return None;
+        };
         let (inside, kept) = std::mem::take(&mut self.windows)
             .into_iter()
             .partition::<Vec<_>, _>(|w| start <= w.start && w.end <= stop);
@@ -445,12 +452,24 @@ impl Metal {
             .min(end)
             .min(start + max);
         if need > stop {
-            self.report(tracing::Level::ERROR, format!(
-                "GPU area window: {need:#x} is past what a window may reach ({stop:#x}; area {start:#x}..{end:#x}, Metal's limit {max:#x})"
-            ));
+            let msg = format!(
+                "{need:#x} past {stop:#x} (area {start:#x}..{end:#x}, Metal limit {max:#x})"
+            );
+            diag::problems::record_with_detail(
+                diag::problems::Kind::MemoryWindow,
+                "GPU area window past Metal limit",
+                format!("{start:#x}..{end:#x}"),
+                &msg,
+            );
+            self.report(tracing::Level::ERROR, format!("GPU area window: {msg}"));
             return None;
         }
         if !host.back(start, stop) {
+            diag::problems::record(
+                diag::problems::Kind::MemoryWindow,
+                "GPU area window backing failed",
+                format!("{start:#x}..{stop:#x}"),
+            );
             self.report(tracing::Level::ERROR, format!(
                 "GPU area window: guest memory {start:#x}..{stop:#x} could not be given host pages"
             ));
@@ -471,6 +490,16 @@ impl Metal {
                 )
         };
         let Some(buffer) = buffer else {
+            diag::problems::record_with_detail(
+                diag::problems::Kind::MemoryWindow,
+                "Metal refused GPU area buffer",
+                format!("{start:#x}..{stop:#x}"),
+                format!(
+                    "{} MiB ({} MiB allocated)",
+                    (stop - start) >> 20,
+                    self.device.currentAllocatedSize() >> 20
+                ),
+            );
             self.report(tracing::Level::ERROR, format!(
                 "GPU area window: Metal refused a {} MiB buffer over guest memory ({} MiB allocated)",
                 (stop - start) >> 20,

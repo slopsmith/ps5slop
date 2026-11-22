@@ -18,8 +18,8 @@ use hvf::{GuestMemory, Vcpu, VcpuKicker, Vm, reg, sysreg};
 use memory::Memory;
 
 pub use engine::{
-    Cause, Causes, blocking, exit_causes, instructions, interpret, interpreted, kick_all,
-    recent_blocks, report, run, vcpu_sharing,
+    Cause, Causes, blocking, exit_causes, fallback_rows, instructions, interpret, interpreted,
+    kick_all, recent_blocks, report, run, vcpu_sharing,
 };
 pub use hvf::Error;
 

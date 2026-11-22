@@ -35,6 +35,8 @@ pub struct Run {
     pub dump_every: Duration,
     /// A faulting thread waits instead of ending the process.
     pub hold_on_fault: bool,
+    /// Where to write the per-run problem report on exit (in addition to stderr).
+    pub report: Option<PathBuf>,
 }
 
 impl Default for Run {
@@ -47,6 +49,7 @@ impl Default for Run {
             dump_series: 1,
             dump_every: Duration::from_millis(500),
             hold_on_fault: false,
+            report: None,
         }
     }
 }
@@ -169,6 +172,7 @@ impl Config {
                 dump_series: v.number("PS5SLOP_DUMP_SERIES").unwrap_or(1),
                 dump_every: Duration::from_millis(v.number("PS5SLOP_DUMP_EVERY_MS").unwrap_or(500)),
                 hold_on_fault: flag("PS5SLOP_HOLD_ON_FAULT"),
+                report: path("PS5SLOP_REPORT"),
             },
             hle: Hle {
                 names: path("PS5SLOP_NAMES"),

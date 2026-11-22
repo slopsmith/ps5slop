@@ -2,6 +2,7 @@
 
 pub mod config;
 mod limit;
+pub mod problems;
 
 pub use config::{Config, config};
 pub use limit::{Distinct, FirstN};

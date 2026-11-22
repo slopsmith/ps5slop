@@ -95,7 +95,7 @@ fn uint_output(msl: &str, loc: u32) -> String {
 
 impl Metal {
     pub(super) fn compile(&mut self, msl: &str, entry: &str) -> Option<Retained<Function>> {
-        compile(&self.device, msl, entry)
+        compile(&self.device, msl, entry, entry)
     }
 
     /// Compiles `msl` on the compile threads.
@@ -109,7 +109,7 @@ impl Metal {
         let queued = std::time::Instant::now();
         Task::spawn(move || {
             let start = std::time::Instant::now();
-            let f = compile(&device, &msl, &entry);
+            let f = compile(&device, &msl, &entry, &label);
             log_compile("library", &label, msl.len(), queued, start, None);
             f
         })
@@ -280,10 +280,14 @@ impl Metal {
                             crate::timing::add(crate::timing::Part::Compile, t);
                             log_compile("compute pipeline", &label, 0, queued, start, Some(made));
                             p.map_err(|e| {
-                                late_report(format!(
-                                    "compute pipeline failed: {}",
-                                    e.localizedDescription()
-                                ))
+                                let msg = e.localizedDescription().to_string();
+                                diag::problems::record_with_detail(
+                                    diag::problems::Kind::PipelineFailed,
+                                    "compute pipeline",
+                                    &label,
+                                    &msg,
+                                );
+                                late_report(format!("compute pipeline failed: {msg}"))
                             })
                             .ok()
                         })
@@ -304,6 +308,12 @@ impl Metal {
                     }))
                 }
                 Err(e) => {
+                    diag::problems::record_with_detail(
+                        diag::problems::Kind::ShaderTranslate,
+                        e.message.clone(),
+                        format!("{stage:?} {address:#x}"),
+                        e.to_string(),
+                    );
                     self.report(
                         tracing::Level::ERROR,
                         format!("{stage:?} program at {address:#x} not translated: {e}"),
@@ -395,9 +405,9 @@ impl Metal {
                 msl = gl_clip_space(&msl);
             }
             let f = if rect {
-                rect_source(&msl).and_then(|m| compile(&device, &m, "gen5_vs_rect"))
+                rect_source(&msl).and_then(|m| compile(&device, &m, "gen5_vs_rect", &label))
             } else {
-                compile(&device, &msl, &entry)
+                compile(&device, &msl, &entry, &label)
             };
             log_compile("library", &label, msl.len(), queued, start, None);
             f
@@ -464,10 +474,14 @@ impl Metal {
                 Some(ready),
             );
             made.map_err(|e| {
-                late_report(format!(
-                    "render pipeline failed: {}",
-                    e.localizedDescription()
-                ))
+                let msg = e.localizedDescription().to_string();
+                diag::problems::record_with_detail(
+                    diag::problems::Kind::PipelineFailed,
+                    "render pipeline",
+                    format!("vs {:#x} ps {:#x}", key.vertex, key.pixel),
+                    &msg,
+                );
+                late_report(format!("render pipeline failed: {msg}"))
             })
             .ok()
         });
@@ -477,7 +491,12 @@ impl Metal {
 }
 
 /// Compiles `msl` and returns its function `entry`; any thread.
-pub(super) fn compile(device: &Device, msl: &str, entry: &str) -> Option<Retained<Function>> {
+pub(super) fn compile(
+    device: &Device,
+    msl: &str,
+    entry: &str,
+    label: &str,
+) -> Option<Retained<Function>> {
     let t = crate::timing::start();
     let unique;
     let msl = if diag::config().gpu.msl_unique {
@@ -494,7 +513,14 @@ pub(super) fn compile(device: &Device, msl: &str, entry: &str) -> Option<Retaine
     match lib {
         Ok(lib) => lib.newFunctionWithName(&NSString::from_str(entry)),
         Err(e) => {
-            late_report(format!("MSL did not compile: {}", e.localizedDescription()));
+            let msg = e.localizedDescription().to_string();
+            diag::problems::record_with_detail(
+                diag::problems::Kind::PipelineFailed,
+                "MSL compile",
+                label,
+                &msg,
+            );
+            late_report(format!("MSL did not compile: {msg}"));
             tracing::debug!(target: "gpu::msl", "{msl}");
             None
         }

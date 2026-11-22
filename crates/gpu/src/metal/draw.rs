@@ -531,6 +531,11 @@ impl Metal {
             6 => MTLPrimitiveType::TriangleStrip,
             p => {
                 self.note(|| format!("primitive type {p:#x}"));
+                diag::problems::record(
+                    diag::problems::Kind::UnsupportedFormat,
+                    format!("primitive type {p:#x}"),
+                    format!("vs {vs_addr:#x} ps {ps_addr:#x}"),
+                );
                 return Err("primitive type");
             }
         };

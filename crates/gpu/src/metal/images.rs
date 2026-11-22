@@ -161,6 +161,11 @@ impl Metal {
                 _ => return None,
             };
             if have != format && !view_compatible(have, format) {
+                diag::problems::record(
+                    diag::problems::Kind::UnsupportedFormat,
+                    format!("incompatible view {have:?} as {format:?}"),
+                    format!("target {:#x}", image.address),
+                );
                 self.report(
                     tracing::Level::ERROR,
                     format!(

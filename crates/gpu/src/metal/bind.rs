@@ -152,6 +152,11 @@ impl Metal {
         }
         if program.translated.guest_memory {
             let Some(m) = self.guest_window(host, user, program.address) else {
+                diag::problems::record(
+                    diag::problems::Kind::MemoryWindow,
+                    "no guest memory window",
+                    format!("{:#x}", program.address),
+                );
                 self.report(
                     tracing::Level::ERROR,
                     format!(
@@ -182,6 +187,11 @@ impl Metal {
                         )
                     });
                     if kind == TextureKind::Cube && access != Access::Sample {
+                        diag::problems::record(
+                            diag::problems::Kind::UnsupportedFormat,
+                            format!("{kind:?} {access:?} access"),
+                            format!("{:#x}", program.address),
+                        );
                         self.report(
                             tracing::Level::ERROR,
                             format!("{kind:?} textures with {access:?} access not supported"),
@@ -232,6 +242,24 @@ impl Metal {
                             .image_misses
                             .entry((kind, how, image.kind, image.raw_tile, image.format))
                             .or_default() += 1;
+                        let reason = if image_format(image.format).is_none() {
+                            format!("image format {:#x} ({how} {kind:?})", image.format)
+                        } else if image.tile.is_none() {
+                            format!(
+                                "tile mode {:#x} ({how} {kind:?} format {:#x})",
+                                image.raw_tile, image.format
+                            )
+                        } else {
+                            format!(
+                                "image layout ({how} {kind:?} kind {:#x} tile {:#x} format {:#x})",
+                                image.kind, image.raw_tile, image.format
+                            )
+                        };
+                        diag::problems::record(
+                            diag::problems::Kind::UnsupportedFormat,
+                            reason,
+                            format!("{:#x}", program.address),
+                        );
                         self.report(
                             tracing::Level::ERROR,
                             format!(

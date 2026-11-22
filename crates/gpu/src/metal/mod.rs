@@ -439,6 +439,25 @@ impl Backend for Metal {
             Err(why) => {
                 self.skipped += 1;
                 *self.reasons.entry(why).or_default() += 1;
+                if why != "skipped by gpuskip" && why != "metadata pass" {
+                    let ngg = state.context[context::VGT_SHADER_STAGES_EN] & (1 << 13) != 0;
+                    let vs_lo = if ngg {
+                        sh::SPI_SHADER_PGM_LO_ES
+                    } else {
+                        sh::SPI_SHADER_PGM_LO_VS
+                    };
+                    let addr =
+                        |lo: usize| ((state.sh[lo] as u64) | (state.sh[lo + 1] as u64) << 32) << 8;
+                    diag::problems::record(
+                        diag::problems::Kind::DrawSkipped,
+                        why,
+                        format!(
+                            "vs {:#x} ps {:#x}",
+                            addr(vs_lo),
+                            addr(sh::SPI_SHADER_PGM_LO_PS)
+                        ),
+                    );
+                }
             }
         }
     }
@@ -457,6 +476,16 @@ impl Backend for Metal {
             Err(why) => {
                 self.skipped += 1;
                 *self.reasons.entry(why).or_default() += 1;
+                if why != "skipped by gpuskip" {
+                    let cs = ((state.sh[sh::COMPUTE_PGM_LO] as u64)
+                        | (state.sh[sh::COMPUTE_PGM_LO + 1] as u64) << 32)
+                        << 8;
+                    diag::problems::record(
+                        diag::problems::Kind::DispatchSkipped,
+                        why,
+                        format!("cs {cs:#x}"),
+                    );
+                }
             }
         }
     }
@@ -483,6 +512,16 @@ impl Backend for Metal {
             Err(why) => {
                 self.skipped += 1;
                 *self.reasons.entry(why).or_default() += 1;
+                if why != "skipped by gpuskip" {
+                    let cs = ((state.sh[sh::COMPUTE_PGM_LO] as u64)
+                        | (state.sh[sh::COMPUTE_PGM_LO + 1] as u64) << 32)
+                        << 8;
+                    diag::problems::record(
+                        diag::problems::Kind::DispatchSkipped,
+                        why,
+                        format!("cs {cs:#x}"),
+                    );
+                }
             }
         }
         true
@@ -693,6 +732,7 @@ impl Backend for Metal {
             );
         }
         self.epoch += 1;
+        diag::problems::note_frame();
         self.compile_budget = COMPILE_BUDGET;
         self.swizzles.clear();
         let epoch = self.epoch;
