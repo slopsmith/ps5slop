@@ -654,3 +654,10 @@ When an image a program stores to has channel selects that swap red and blue, th
 
 `PS5SLOP_PROBE_RIP` keeps listed guest addresses out of translated code and logs registers at each arrival. Reason: following GTA V's script natives needed "was this called, with what", which write watches cannot show; making only those addresses interpreted leaves the rest of the game at full speed, unlike `PS5SLOP_JIT_TRACE`.
 
+## 2026-11-22: GTA V's PSR_BVHL programs stay off limits
+
+GTA V's compute programs that work on data beginning with "PSR_BVHL" (0x4203300, the 0x424xxxx family, 0x41f4900, 0x41b3b00) and its bindless ray-tracing programs at 0x115b26xxxx are treated as Sony library code linked into the executable and are not read: no disassembly, no reading of their translated source, no description of their instructions, and no `gpuskip` of them in game runs. Reason: vic's ruling; the format name suggests a Sony ray-tracing library, and the game imports no module for it. Work on GTA V uses its Performance graphics mode, where these programs do not run.
+
+## 2026-11-22: Audio and video decoding through FFmpeg, later
+
+When GTA V gets real audio, its MP3 Ajm jobs will decode through FFmpeg (an LGPL build, compatible with GPL-2.0-or-later), so the same dependency can serve video playback later. Reason: vic's choice. Not started; Ajm MP3 jobs return silence until then.
