@@ -1098,3 +1098,16 @@ fn compute_loops_give_up_alone_or_together_at_a_barrier() {
     let t = compute(&straight, 1, 0);
     assert!(!t.loop_guard && !t.msl.contains("guard"));
 }
+
+#[test]
+fn a_sample_mask_export_writes_no_depth() {
+    let code = [
+        0xF800_0884, // exp mrtz off, off, v9, off done
+        0x0009_0000,
+        0xBF81_0000, // s_endpgm
+    ];
+    assert_eq!(text(&code[..2]), "exp mrtz off, off, v9, off done");
+    let t = pixel(&code, 0);
+    assert!(!t.writes_depth);
+    compile(&t.msl);
+}

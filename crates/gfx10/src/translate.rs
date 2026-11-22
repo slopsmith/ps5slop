@@ -320,6 +320,16 @@ fn crosses_lanes(inst: &Inst, insts: &[(usize, Inst)]) -> bool {
     }
 }
 
+/// A scalar instruction that writes the lane mask.
+fn writes_exec(inst: &Inst) -> bool {
+    let exec = |d: u16| d == src::EXEC_LO || d == src::EXEC_HI;
+    match inst.kind {
+        Kind::Sop1 { sdst, .. } => exec(sdst as u16) || inst.op.name.contains("exec"),
+        Kind::Sop2 { sdst, .. } | Kind::Sopk { sdst, .. } => exec(sdst as u16),
+        _ => false,
+    }
+}
+
 fn branch_target(pc: usize, inst: &Inst) -> Option<usize> {
     let name = inst.op.name;
     match inst.kind {
@@ -417,6 +427,7 @@ struct Tx<'a> {
     params: BTreeSet<u8>,
     mrts: u8,
     depth: bool,
+    sample_mask: bool,
     mem: bool,
     mem_write: bool,
     /// See [`Translated::store_buffers`].
@@ -517,6 +528,7 @@ impl<'a> Tx<'a> {
             params: BTreeSet::new(),
             mrts: 0,
             depth: false,
+            sample_mask: false,
             mem: false,
             mem_write: false,
             stores: Some(Vec::new()),
@@ -752,6 +764,11 @@ impl<'a> Tx<'a> {
                 self.line(LOCKSTEP_BARRIER);
             }
             self.inst(*pc, inst)?;
+            if !self.lockstep && writes_exec(inst) {
+                // Other lanes are other threads: keep only this lane's bit.
+                let (lo, hi) = (self.s(src::EXEC_LO), self.s(src::EXEC_HI));
+                self.line(&format!("{lo} &= 1u; {hi} = 0u;"));
+            }
             if step {
                 self.line(LOCKSTEP_BARRIER);
             }
@@ -2441,8 +2458,17 @@ impl<'a> Tx<'a> {
                 format!("o.c{target} = {value};")
             }
             (Stage::Pixel, 8) => {
-                self.depth = true;
-                format!("o.depth = F({});", comps[0].1)
+                // MRTZ: depth in R, stencil in G, the sample mask in B.
+                let mut stmt = String::new();
+                if en & 1 != 0 {
+                    self.depth = true;
+                    stmt += &format!("o.depth = F({});", comps[0].1);
+                }
+                if en & 4 != 0 {
+                    self.sample_mask = true;
+                    stmt += &format!(" o.mask = {};", comps[2].1);
+                }
+                stmt
             }
             _ => return Err(err(pc, format!("unsupported export target {target}"))),
         };
@@ -3896,6 +3922,9 @@ impl<'a> Tx<'a> {
                 }
                 if self.depth {
                     out.push_str("    float depth [[depth(any)]];\n");
+                }
+                if self.sample_mask {
+                    out.push_str("    uint mask [[sample_mask]];\n");
                 }
                 out.push_str("};\n\n");
                 init.push_str(&self.ps_vgprs());
