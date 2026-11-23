@@ -10,6 +10,9 @@ final class GameSession {
     private(set) var game: GameEntry?
     private(set) var log = LogBuffer(capacity: 5000)
     private(set) var lastError: String?
+    private(set) var startedAt: Date?
+    /// The game whose output `log` holds, kept after it exits.
+    private(set) var logGameID: GameEntry.ID?
     var isRunning: Bool { process != nil }
 
     private var process: Process?
@@ -62,6 +65,8 @@ final class GameSession {
             return
         }
         self.game = game
+        logGameID = game.id
+        startedAt = .now
         process = child
         controlPath = control
         lastError = nil
@@ -119,5 +124,6 @@ final class GameSession {
         process = nil
         controlPath = nil
         game = nil
+        startedAt = nil
     }
 }

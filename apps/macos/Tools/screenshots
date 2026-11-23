@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Saves preview screenshots of the launcher with the test fixture library into
+# DIR (default: target/launcher-screenshots). The screen must be unlocked, or
+# the captures fall back to drawing without Liquid Glass.
+# Usage: apps/macos/Tools/screenshots [DIR]
+set -euo pipefail
+
+pkg=$(cd "$(dirname "$0")/.." && pwd)
+out=$(mkdir -p "${1:-$pkg/../../target/launcher-screenshots}" && cd "${1:-$pkg/../../target/launcher-screenshots}" && pwd)
+fixture=$pkg/Tests/LauncherCoreTests/Fixtures/library.json
+
+env -u SDKROOT -u DEVELOPER_DIR /usr/bin/xcrun swift build --package-path "$pkg"
+bin=$(env -u SDKROOT -u DEVELOPER_DIR /usr/bin/xcrun swift build --package-path "$pkg" --show-bin-path)/ps5slop-launcher
+
+app=$(mktemp -d)/Launcher.app
+mkdir -p "$app/Contents/MacOS"
+cp "$bin" "$app/Contents/MacOS/ps5slop-launcher"
+cat >"$app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+	<key>CFBundleExecutable</key><string>ps5slop-launcher</string>
+	<key>CFBundleIdentifier</key><string>dev.ps5slop.launcher.screenshots</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>
+PLIST
+codesign -s - -f "$app" 2>/dev/null
+echo '[]' >"$out/empty.json"
+
+shot() {
+	local name=$1
+	shift
+	echo "== $name"
+	open -n -W "$app" --args --window 1280x800 --snapshot "$out/$name.png" "$@"
+}
+shot grid-light --fixture "$fixture" --appearance light -showInspector NO
+shot grid-dark --fixture "$fixture" --appearance dark -showInspector NO
+shot inspector-light --fixture "$fixture" --appearance light --select PPSA90002 -showInspector YES
+shot inspector-dark --fixture "$fixture" --appearance dark --select PPSA90002 -showInspector YES
+shot empty-light --fixture "$out/empty.json" --appearance light -showInspector NO
+rm -rf "$(dirname "$app")" "$out/empty.json"
+echo "screenshots in $out"

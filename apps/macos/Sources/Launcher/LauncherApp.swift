@@ -71,24 +71,9 @@ enum AddFolderPanel {
     }
 }
 
-/// `--snapshot PATH` writes the main window to a PNG once it is drawn, then quits.
-@MainActor
-enum Snapshot {
-    static func takeIfAsked() async {
-        guard let path = LauncherApp.argument("--snapshot") else { return }
-        try? await Task.sleep(for: .seconds(1.5))
-        guard let view = NSApp.windows.first(where: \.isVisible)?.contentView?.superview,
-            let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
-        else { return }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
-        NSApp.terminate(nil)
-    }
-}
-
 enum Defaults {
     static let dataFolder = "dataFolder"
     static let fontsFolder = "fontsFolder"
     static let viewMode = "viewMode"
-    static let showLog = "showLog"
+    static let showInspector = "showInspector"
 }

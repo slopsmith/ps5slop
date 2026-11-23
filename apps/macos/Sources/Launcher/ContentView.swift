@@ -16,27 +16,27 @@ struct ContentView: View {
     @AppStorage(Defaults.dataFolder) private var dataFolder = ""
     @AppStorage(Defaults.fontsFolder) private var fontsFolder = ""
     @AppStorage(Defaults.viewMode) private var viewMode = ViewMode.grid
-    @AppStorage(Defaults.showLog) private var showLog = false
+    @AppStorage(Defaults.showInspector) private var showInspector = true
     @State private var sidebar: SidebarItem? = .all
     @State private var selection: GameEntry.ID?
     @State private var search = ""
     @State private var dropTargeted = false
+    @Namespace private var glass
 
     var body: some View {
         NavigationSplitView {
             Sidebar(selection: $sidebar)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 210)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 220)
         } detail: {
-            VSplitView {
-                libraryView
-                    .frame(maxWidth: .infinity, minHeight: 200, maxHeight: .infinity)
-                if showLog {
-                    LogPane()
-                        .frame(maxWidth: .infinity, minHeight: 90, idealHeight: 160, maxHeight: 400)
+            libraryView
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .bottom) { nowPlaying }
+                .navigationTitle(title)
+                .navigationSubtitle(subtitle)
+                .inspector(isPresented: $showInspector) {
+                    inspector
+                        .inspectorColumnWidth(min: 280, ideal: 320, max: 420)
                 }
-            }
-            .navigationTitle(title)
-            .navigationSubtitle(subtitle)
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Name or title ID")
         .toolbar { toolbar }
@@ -45,14 +45,9 @@ struct ContentView: View {
             library.add(usable)
             return !usable.isEmpty
         } isTargeted: { dropTargeted = $0 }
-        .overlay {
-            if dropTargeted {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.accentColor, lineWidth: 3)
-                    .padding(4)
-                    .allowsHitTesting(false)
-            }
-        }
+        .overlay { dropHighlight }
+        .animation(.spring(duration: 0.3), value: dropTargeted)
+        .animation(.spring(duration: 0.45, bounce: 0.2), value: session.game?.id)
         .alert(
             "Cannot start the game",
             isPresented: Binding(get: { session.lastError != nil }, set: { _ in }),
@@ -60,17 +55,24 @@ struct ContentView: View {
         ) { _ in
             Button("OK") {}
         } message: { Text($0) }
+        .onAppear {
+            if let id = LauncherApp.argument("--select") {
+                selection = library.games.first { $0.titleId == id }?.id
+            }
+        }
     }
 
     @ViewBuilder private var libraryView: some View {
         let games = visibleGames
         if library.folders.isEmpty {
             ContentUnavailableView {
-                Label("No Games", systemImage: "gamecontroller")
+                Label("Your Library Is Empty", systemImage: "square.stack.3d.up")
             } description: {
-                Text("Add a folder with your games, or drop one here.")
+                Text("Add a folder with your games, or drop folders and .pkg files here.")
             } actions: {
-                Button("Add Games Folder…") { AddFolderPanel.run(library) }
+                Button("Add Folder…", systemImage: "folder.badge.plus") { AddFolderPanel.run(library) }
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.large)
             }
         } else if games.isEmpty {
             if library.isScanning {
@@ -78,9 +80,14 @@ struct ContentView: View {
             } else if !search.isEmpty {
                 ContentUnavailableView.search(text: search)
             } else {
-                ContentUnavailableView(
-                    "No Games Found", systemImage: "questionmark.folder",
-                    description: Text(library.scanError ?? "No .pkg files or app folders in these folders."))
+                ContentUnavailableView {
+                    Label("No Games Found", systemImage: "questionmark.folder")
+                } description: {
+                    Text(library.scanError ?? "No .pkg files or app folders in these folders.")
+                } actions: {
+                    Button("Scan Again", systemImage: "arrow.clockwise") { library.refresh() }
+                        .buttonStyle(.glass)
+                }
             }
         } else {
             VStack(spacing: 0) {
@@ -88,15 +95,76 @@ struct ContentView: View {
                     ErrorBanner(text: error)
                 }
                 switch viewMode {
-                case .grid: GameGrid(games: games, selection: $selection, play: play)
-                case .list: GameTable(games: games, selection: $selection, play: play)
+                case .grid:
+                    GameGrid(games: games, selection: $selection, runningID: session.game?.id, play: play)
+                case .list:
+                    GameTable(games: games, selection: $selection, play: play)
                 }
             }
         }
     }
 
+    @ViewBuilder private var inspector: some View {
+        if let game = selectedGame {
+            GameInspector(game: game, play: play)
+                .id(game.id)
+        } else {
+            ContentUnavailableView(
+                "No Game Selected", systemImage: "gamecontroller",
+                description: Text("Select a game to see its details."))
+        }
+    }
+
+    @ViewBuilder private var nowPlaying: some View {
+        if let game = session.game {
+            NowPlayingBar(
+                game: game, startedAt: session.startedAt,
+                stop: { session.stop() },
+                show: {
+                    selection = game.id
+                    showInspector = true
+                }
+            )
+            .glassEffectID("nowPlaying", in: glass)
+            .padding(.bottom, 16)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    @ViewBuilder private var dropHighlight: some View {
+        if dropTargeted {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 3, dash: [10, 6]))
+                .background(Color.accentColor.opacity(0.08), in: .rect(cornerRadius: 16, style: .continuous))
+                .overlay {
+                    Label("Add to Library", systemImage: "plus.circle.fill")
+                        .font(.title3.weight(.semibold))
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .glassEffect(.regular.tint(.accentColor.opacity(0.4)), in: .capsule)
+                }
+                .padding(8)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+        }
+    }
+
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
+        ToolbarItem(placement: .navigation) {
+            Picker("View", selection: $viewMode) {
+                Label("Icons", systemImage: "square.grid.2x2").tag(ViewMode.grid)
+                Label("List", systemImage: "list.bullet").tag(ViewMode.list)
+            }
+            .pickerStyle(.segmented)
+            .help("Show games as icons or as a list")
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button("Refresh", systemImage: "arrow.clockwise") { library.refresh() }
+                .disabled(library.isScanning)
+                .help("Scan the game folders again")
+        }
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItem(placement: .primaryAction) {
             if session.isRunning {
                 Button("Stop", systemImage: "stop.fill") { session.stop() }
                     .help("Quit the running game")
@@ -104,20 +172,14 @@ struct ContentView: View {
                 Button("Play", systemImage: "play.fill") {
                     if let game = selectedGame { play(game) }
                 }
-                .disabled(selectedGame == nil)
+                .buttonStyle(.glassProminent)
+                .disabled(selectedGame == nil || selectedGame?.error != nil)
                 .help("Start the selected game")
             }
-            Picker("View", selection: $viewMode) {
-                Label("Icons", systemImage: "square.grid.2x2").tag(ViewMode.grid)
-                Label("List", systemImage: "list.bullet").tag(ViewMode.list)
-            }
-            .pickerStyle(.segmented)
-            .help("Show games as icons or as a list")
-            Button("Refresh", systemImage: "arrow.clockwise") { library.refresh() }
-                .disabled(library.isScanning)
-                .help("Scan the game folders again")
-            Toggle("Log", systemImage: "text.alignleft", isOn: $showLog)
-                .help("Show the running game's output")
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button("Inspector", systemImage: "sidebar.trailing") { showInspector.toggle() }
+                .help(showInspector ? "Hide the game details" : "Show the game details")
         }
     }
 
@@ -140,7 +202,6 @@ struct ContentView: View {
     }
 
     private var subtitle: String {
-        if let game = session.game { return "Running \(game.displayName)" }
         if library.isScanning { return "Scanning…" }
         let n = visibleGames.count
         return n == 1 ? "1 game" : "\(n) games"
@@ -148,8 +209,8 @@ struct ContentView: View {
 
     private func play(_ game: GameEntry) {
         guard !session.isRunning, game.error == nil else { return }
+        selection = game.id
         session.launch(game, dataFolder: dataFolder, fontsFolder: fontsFolder)
-        showLog = true
     }
 
     private static func isUsable(_ url: URL) -> Bool {
@@ -165,15 +226,22 @@ struct Sidebar: View {
 
     var body: some View {
         List(selection: $selection) {
-            Label("All Games", systemImage: "square.grid.2x2").tag(SidebarItem.all)
+            Section("Library") {
+                Label("All Games", systemImage: "square.grid.2x2")
+                    .badge(library.games.count)
+                    .tag(SidebarItem.all)
+            }
             Section("Folders") {
                 ForEach(library.folders, id: \.self) { folder in
                     Label(folder.lastPathComponent, systemImage: folder.pathExtension == "pkg" ? "shippingbox" : "folder")
+                        .badge(library.games.filter { $0.isInside(folder) }.count)
                         .help(folder.path)
                         .tag(SidebarItem.folder(folder))
                         .contextMenu {
-                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
-                            Button("Remove from Library", role: .destructive) {
+                            Button("Show in Finder", systemImage: "folder") {
+                                NSWorkspace.shared.activateFileViewerSelecting([folder])
+                            }
+                            Button("Remove from Library", systemImage: "minus.circle", role: .destructive) {
                                 if selection == .folder(folder) { selection = .all }
                                 library.remove(folder)
                             }
@@ -183,14 +251,15 @@ struct Sidebar: View {
         }
         .safeAreaInset(edge: .bottom) {
             HStack {
-                Button("Add Games Folder…", systemImage: "plus") { AddFolderPanel.run(library) }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
+                Button("Add Folder…", systemImage: "plus") { AddFolderPanel.run(library) }
+                    .buttonStyle(.glass)
                     .help("Add a folder with games")
-                if library.isScanning { ProgressView().controlSize(.small) }
+                if library.isScanning {
+                    ProgressView().controlSize(.small)
+                }
                 Spacer()
             }
-            .padding(8)
+            .padding(10)
         }
     }
 }
@@ -203,7 +272,9 @@ struct ErrorBanner: View {
             .font(.callout)
             .lineLimit(2)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
-            .background(.yellow.opacity(0.15))
+            .padding(10)
+            .glassEffect(.regular.tint(.yellow.opacity(0.3)), in: .rect(cornerRadius: 12))
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
     }
 }
