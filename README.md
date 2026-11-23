@@ -36,6 +36,7 @@ PS5SLOP_JIT_VERIFY=1 RUST_LOG=jit::stats=info cargo run ...   # check the JIT ag
 For users, in [docs/user/](docs/user/):
 
 - [Running games](docs/user/running.md)
+- [Launcher app](docs/user/app.md): a Mac app with your game library
 - [Environment variables](docs/user/environment.md)
 - [Compatibility](COMPATIBILITY.md): what each title does so far
 

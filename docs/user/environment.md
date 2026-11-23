@@ -88,6 +88,14 @@ These change when work reaches Metal. Most bring back an older way of doing some
 | `PS5SLOP_FRAME_CAPTURES=DIR` | Folder of local `*.ps5frame` + `*.golden.png`/`.ppm` pairs checked by `cargo test -p gpu --test frame_replay` (default `captures/`) |
 | `PS5SLOP_TEST_PKG=PKG`, `PS5SLOP_TEST_DIR=DIR` | The ignored test `package_files_match_their_extraction` (`crates/ps5slop`) reads every file of `PKG` through the guest file system and compares it with the extraction in `DIR` |
 
+## Launcher app
+
+Read by the Swift launcher ([app.md](app.md)), not by `ps5slop`.
+
+| Variable | What it does |
+| --- | --- |
+| `PS5SLOP_BIN=PATH` | The `ps5slop` binary to run when the launcher is not inside `ps5slop.app` (default: `target/release/ps5slop` in the current folder or a parent) |
+
 ## Adding a variable
 
 New switches go into `diag::Config`, not into a `std::env::var` call at the use site, and get a row here.
