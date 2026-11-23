@@ -110,6 +110,8 @@ pub struct Metal {
     inflight: Vec<(Retained<CommandBuffer>, f64, u64)>,
     /// Commits so far, for [`Backend::commit_point`].
     commits: u64,
+    /// Draws encoded since the last commit.
+    uncommitted_draws: u64,
     /// Texture uploads for the work in `command`, committed just before it
     /// so they do not split its render passes.
     upload: Option<Retained<CommandBuffer>>,
@@ -275,6 +277,7 @@ impl Metal {
             command: None,
             inflight: Vec::new(),
             commits: 0,
+            uncommitted_draws: 0,
             upload: None,
             replaced_mark: 0,
             pass: None,
@@ -491,7 +494,10 @@ impl Backend for Metal {
         let result = self.try_draw(host, state, draw);
         self.end_trace(|| format!("draw {draw:?}"), result);
         match result {
-            Ok(()) => self.draws += 1,
+            Ok(()) => {
+                self.draws += 1;
+                self.uncommitted_draws += 1;
+            }
             Err(why) => {
                 self.skipped += 1;
                 *self.reasons.entry(why).or_default() += 1;

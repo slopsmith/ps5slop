@@ -67,6 +67,7 @@ impl Metal {
         self.stale = 0;
         let now = crate::timing::host_seconds();
         self.commits += 1;
+        self.uncommitted_draws = 0;
         if let Some(cb) = self.upload.take() {
             cb.commit();
             self.inflight.push((cb, now, self.commits));

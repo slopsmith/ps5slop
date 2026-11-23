@@ -136,6 +136,9 @@ pub struct Gpu {
     pub inline_uploads: bool,
     /// Commits the command buffer every this many dispatches (0: never early).
     pub commit_every: u64,
+    /// Commits the command buffer when a render pass ends after this many
+    /// draws, so the GPU starts while encoding goes on (0: only at sync points).
+    pub commit_draws: u64,
     pub compile_wait: bool,
     pub compile_threads: Option<usize>,
     pub htile_cpu: bool,
@@ -236,6 +239,7 @@ impl Config {
                 residency_set: flag("PS5SLOP_GPU_RESIDENCY_SET"),
                 inline_uploads: flag("PS5SLOP_GPU_INLINE_UPLOADS"),
                 commit_every: v.number("PS5SLOP_GPU_COMMIT_EVERY").unwrap_or(0),
+                commit_draws: v.number("PS5SLOP_GPU_COMMIT_DRAWS").unwrap_or(0),
                 compile_wait: flag("PS5SLOP_COMPILE_WAIT"),
                 compile_threads: v.number("PS5SLOP_COMPILE_THREADS"),
                 htile_cpu: flag("PS5SLOP_GPU_HTILE_CPU"),

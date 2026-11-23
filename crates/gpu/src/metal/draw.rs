@@ -77,6 +77,10 @@ impl Metal {
             return Some(enc.clone());
         }
         self.end_pass();
+        let every = diag::config().gpu.commit_draws;
+        if every > 0 && self.uncommitted_draws >= every {
+            self.commit();
+        }
         let command = self.command();
         let pass = MTLRenderPassDescriptor::new();
         for (i, (_, tex, slice)) in targets.iter().enumerate() {
