@@ -449,7 +449,7 @@ fn wait_vblank(env: &mut Env) -> Result<Outcome, CallError> {
             break;
         }
         jit::blocking();
-        std::thread::sleep(left.min(POLL));
+        std::thread::sleep(crate::timing::step(left).min(POLL));
     }
     ret(0)
 }

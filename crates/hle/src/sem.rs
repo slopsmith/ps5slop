@@ -115,7 +115,7 @@ fn take(env: &mut Env, deadline: Option<Instant>) -> Result<Outcome, CallError> 
         }
         let wait = match deadline {
             Some(d) => match d.checked_duration_since(Instant::now()) {
-                Some(left) => left.min(POLL),
+                Some(left) => crate::timing::step(left).min(POLL),
                 None => {
                     drop(count);
                     return env.fail(ETIMEDOUT);
@@ -261,7 +261,7 @@ fn sce_wait(env: &mut Env) -> Result<Outcome, CallError> {
         }
         let wait = match deadline {
             Some(d) => match d.checked_duration_since(Instant::now()) {
-                Some(left) => left.min(POLL),
+                Some(left) => crate::timing::step(left).min(POLL),
                 None => break Err(ETIMEDOUT),
             },
             None => POLL,

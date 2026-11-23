@@ -353,10 +353,8 @@ fn submit(env: &Env, handle: u64, at: u64) -> Result<Result<Instant, u64>, CallE
 fn wait(env: &Env, handle: u64, wake: Instant) {
     let audio = &env.kernel.audio;
     if !audio.device_running() {
-        if let Some(left) = wake.checked_duration_since(Instant::now()) {
-            jit::blocking();
-            std::thread::sleep(left);
-        }
+        jit::blocking();
+        crate::timing::sleep_until(wake);
         return;
     }
     let deadline = Instant::now() + DEVICE_STALL;
@@ -378,7 +376,7 @@ fn wait(env: &Env, handle: u64, wake: Instant) {
         queues = audio
             .mixer
             .drained
-            .wait_timeout(queues, deadline - now)
+            .wait_timeout(queues, crate::timing::step(deadline - now))
             .unwrap_or_else(|e| e.into_inner())
             .0;
     }

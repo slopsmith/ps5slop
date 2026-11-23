@@ -431,7 +431,7 @@ fn wait(env: &mut Env, deadline: Option<Instant>) -> Result<Outcome, CallError> 
     while *generation == start && !env.kernel.has_exited() && !crate::exception::interrupted(env) {
         let wait = match deadline {
             Some(d) => match d.checked_duration_since(Instant::now()) {
-                Some(left) => left.min(POLL),
+                Some(left) => crate::timing::step(left).min(POLL),
                 None => {
                     timed_out = true;
                     break;
@@ -573,7 +573,7 @@ fn rwlock_take_until(
         let now = Instant::now();
         let poll = match deadline {
             Some(d) if d <= now => return ret(ETIMEDOUT),
-            Some(d) => POLL.min(d - now),
+            Some(d) => POLL.min(crate::timing::step(d - now)),
             None => POLL,
         };
         jit::blocking();

@@ -709,3 +709,7 @@ Docs for people running games live in `docs/user/` (`running.md`, `environment.m
 
 `sceAjmBatchJobDecode` on an MP3 instance decodes each frame with libavcodec through the `ffmpeg-next` crate, linked to the dev shell's `ffmpeg-headless`. Reason: vic chose FFmpeg; GTA V plays all its game audio as MP3 through Ajm. Sizes still come from the frame headers, so a frame FFmpeg cannot decode is silence of the right length and the results the game reads do not depend on the decoder. Verified by unit tests on our own 1 kHz sine (pitch, level, S16 and float output); not listened to in game.
 
+## 2026-11-23: Timed waits step toward their deadline
+
+Guest waits with a deadline (condition variables, mutexes, semaphores, event flags, event queues, sleeps, vblank and audio pacing) block for two thirds of the time left and loop until the deadline, instead of blocking for all of it. Reason: macOS timer coalescing let a 5 ms wait take 7.5 ms, which made Bink's sound thread in GTA V's logo movie fall behind and crackle ([audio.md](audio.md)). Considered: real-time thread policies (exact, but a spinning guest thread could starve the Mac) and `NSActivityLatencyCritical` (no effect for this process).
+

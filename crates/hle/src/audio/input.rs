@@ -52,7 +52,9 @@ fn input(env: &mut Env) -> Result<Outcome, CallError> {
     let Some((grain, rate)) = port else {
         return Ok(Outcome::Return(ERROR_INVALID_HANDLE));
     };
-    std::thread::sleep(Duration::from_micros(grain * 1_000_000 / rate));
+    crate::timing::sleep_until(
+        std::time::Instant::now() + Duration::from_micros(grain * 1_000_000 / rate),
+    );
     env.mem.write(env.arg(1), &vec![0u8; grain as usize * 2])?;
     Ok(Outcome::Return(grain))
 }

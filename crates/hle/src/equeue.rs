@@ -168,7 +168,7 @@ fn wait(env: &mut Env) -> Result<Outcome, CallError> {
         }
         let wait = match deadline {
             Some(d) => match d.checked_duration_since(Instant::now()) {
-                Some(left) => left.min(POLL),
+                Some(left) => crate::timing::step(left).min(POLL),
                 None => break events,
             },
             None => POLL,

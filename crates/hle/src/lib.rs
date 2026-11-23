@@ -48,6 +48,7 @@ mod snapshot;
 mod stubs;
 mod sysmodule;
 mod thread;
+mod timing;
 mod vfs;
 mod videoout;
 

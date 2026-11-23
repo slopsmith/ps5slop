@@ -220,7 +220,7 @@ fn sleep(env: &Env, time: Duration) {
             break;
         }
         jit::blocking();
-        std::thread::sleep(left.min(POLL));
+        std::thread::sleep(crate::timing::step(left).min(POLL));
     }
 }
 
