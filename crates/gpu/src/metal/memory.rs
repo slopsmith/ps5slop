@@ -256,19 +256,22 @@ impl Metal {
     /// Forgets 2D textures whose memory an encoded buffer store spans, so
     /// their next use reads guest memory.
     fn drop_overwritten(&mut self, ranges: &[(u64, u64)]) {
-        self.targets.retain(|&address, t| {
+        for &(s, e) in ranges {
+            let Some(t) = self.targets.get(&s) else {
+                continue;
+            };
             let tex = &t.texture;
             if tex.textureType() != MTLTextureType::Type2D || tex.mipmapLevelCount() > 1 {
-                return true;
+                continue;
             }
             let Some(bpe) = texel_bytes(t.pixel_format) else {
-                return true;
+                continue;
             };
             let len = (tex.width() * tex.height() * bpe) as u64;
-            !ranges
-                .iter()
-                .any(|&(s, e)| s == address && len <= e - s && e - s <= 2 * len + 16)
-        });
+            if len <= e - s && e - s <= 2 * len + 16 {
+                self.targets.remove(&s);
+            }
+        }
     }
 
     /// Adds `ranges` (`None`: anywhere) to what encoded work may write.
