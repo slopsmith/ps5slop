@@ -449,7 +449,7 @@ Measured on Superliminal with the control socket's `profile` (GPU thread line) a
 - **The end of every submission.** A submission that did not end a frame still drained its releases, which meant committing and waiting for its Metal work (about 900 submissions a second, about 4 releases each). Now its work is committed and its releases, writes and the queue's interrupt are kept in order with the commit point (`Processor::retire`); the GPU thread checks them every 100 us while idle and before each job, and they take effect once Metal reports the command buffers done. Anything that reads what they write (a wait the queued values do not satisfy, a flip, `COND_EXEC`, `COPY_DATA`, ...) drains them first, as before. Frames still end with a wait, which the submission throttle relies on. `PS5SLOP_GPU_WAIT_SUBMISSIONS=1` restores waiting per submission.
 - **`DMA_DATA` fills.** AGC's barrier zeroes a label with a 4-byte `DMA_DATA` fill, releases 1 into it and waits for 1 (about 1,750 a second in Superliminal). `DMA_DATA` ran on the CPU after waiting for the GPU; fills of up to 64 bytes now join the queue of releases and `WRITE_DATA` writes, so the wait is met by the queued release. A `WAIT_REG_MEM` whose label nothing queued writes reads memory before draining, since the command processor polls without waiting for earlier work either.
 - **Reads of memory programs wrote.** Before reading an HTILE, CMASK or DCC word or copying unaligned indices on the CPU, the renderer waited for all encoded work if any program since the last wait wrote memory. The translator now reports the V#s every buffer store and atomic uses (`Translated::store_buffers`: user data or memory those point to), so the renderer knows which ranges encoded work may write (`Written`), and waits only when the read overlaps one, or when some program's stores are not known. That alone took Superliminal's menu to the 60 Hz cap on an otherwise quiet run, but the HTILE words Unity clears with a compute fill really are in those ranges (about 13 waits a frame on the menu).
-- **HTILE checks on the GPU.** When encoded work may write the HTILE word, a one-thread compute program reads it, marks it expanded and sets the vertex count of an indirect draw (3 or 0), and the depth pass opens with a full-screen draw that writes the clear depth and stencil where that count says so. Later draws find the word in `gpu_htiles` until work that may write it is encoded again or the CPU waits. The check uses the same Metal buffer as the programs (the GPU-area window), so Metal orders the two. `PS5SLOP_GPU_HTILE_CPU=1` waits and reads on the CPU as before. A first version kept a checked word in `gpu_htiles` when a later clear program was noted while `written` was already "anything"; the missed clears made frames flicker to black (found by comparing 90 consecutive frames with `frames` against the CPU path).
+- **HTILE checks on the GPU.** When encoded work may write the HTILE word, a one-thread compute program reads it, marks it expanded and sets the vertex count of an indirect draw (3 or 0), and the depth pass opens with a full-screen draw that writes the clear depth and stencil where that count says so. Later draws find the word in `gpu_checked` (shared with the colour fast-clear check since 2026-11-23) until work that may write it is encoded again or the CPU waits. The check uses the same Metal buffer as the programs (the GPU-area window), so Metal orders the two. `PS5SLOP_GPU_HTILE_CPU=1` waits and reads on the CPU as before. A first version kept a checked word in `gpu_htiles` when a later clear program was noted while `written` was already "anything"; the missed clears made frames flicker to black (found by comparing 90 consecutive frames with `frames` against the CPU path).
 
 Measured on Superliminal, headless, flips per second over 20 s windows (menu 40 to 60 s, then New Game and the start of level 1, the intro with the eyelids, 105 to 125 s), with Metal's warm cache, while a Superliminal and a GTA V delegate ran their own emulators on the Mac:
 
@@ -527,6 +527,41 @@ The logo's "T" turned grey a few seconds after landing, with a dark slab behind 
 The fly-in letters were black until they settled. Screenshots every 0.7 s from 50 s into a run, against the PS5 captures: with the light-list change alone, the flying letters already show white faces and reflective sides, as on the console; the parts of the logo right of x 1024 still went dark as they settled, and with the depth clear fixed they stay lit. So the lighting programs that gave up their loops ([Astro Bot's light lists](#astro-bots-light-lists-2026-11-22)) were what left them black; the environment cube bound as one cube and the `s_ff1_i32_b64` programs (which translate now) were not needed. The reflections show our pink backdrop where the console's show blue.
 
 Compared with the PS5 capture at 120 s into a run: the T is white and level with "BO", the dark slab and the dark streaks to its upper right are gone. Still different: the nebula is pink and violet here and blue in the captures, which may be a different part of the title's animation; not checked.
+
+## Encoding cost on the GPU thread (2026-11-23)
+
+vic's in-game profile of GTA V's Performance mode (25.9 s) had the GPU thread spending 20.6 s in draw encoding while the guest's threads sat waiting and the GPU was busy about half the time. Measured offline on three captures of the prologue (1,052, 2,344 and 2,293 draws) with `ps5slop-replay bench` ([debugging.md](debugging.md#gpu-frame-capture-and-replay)), median of 5 warm runs, on an otherwise quiet Mac.
+
+The first finding: most of "draw encoding" was not encoding. A new `profile` part, `waiting for command buffers (anywhere)`, showed about 70% of it was the GPU thread waiting for the GPU inside draws, before reading CMASK and DCC words that encoded clear programs write (about 10 waits a frame, all real clears; one CMASK is cleared 6 times a frame). Each wait drains all encoded work, so the CPU and the GPU took turns instead of overlapping. Time Profiler does not see that time, as it samples only threads on a CPU.
+
+CPU encoding time without waits, ms a frame (us a draw), each step on top of the one before:
+
+| Step | 150313 | 150742 | 151027 |
+| --- | --- | --- | --- |
+| Baseline | 19.2 (18.2) | 33.2 (14.2) | 39.8 (17.3) |
+| Image digests in 16 lanes | 18.6 | 30.5 | 34.1 |
+| Fast-clear fills from one 1 MiB strip | 13.9 | 25.9 | 29.0 |
+| Overwritten targets looked up by address | 9.0 | 17.6 | 22.9 |
+| Colour fast clears checked on the GPU (final) | 7.8 (7.4) | 16.3 (7.0) | 22.0 (9.6) |
+| With `PS5SLOP_GPU_COMMIT_DRAWS=100` (off by default) | 7.9 | 16.8 | 22.4 |
+
+- **Digests.** Each image used in a frame is hashed to see whether guest memory changed ([Images kept across frames](#renderer-performance-2026-11-20)). Four dependent multiply chains ran at about a third of memory speed; sixteen run near it (measured on 256 MiB: 2.4 times faster).
+- **Fast-clear fills** wrote a whole frame of the clear value into scratch memory on the CPU (66 MB for a 4K 64-bit target) and blitted it; now one strip of up to 1 MiB is written and copied down the target. A unit test fills a target whose height is not a multiple of the strip.
+- **Overwritten targets.** After every dispatch that stores to memory, every render target (about 880) was asked four Objective-C questions to find those the stores cover exactly; only a target at a range's start can match, so it is now a lookup by address.
+- **Colour fast clears on the GPU**, like the HTILE check: see [decisions.md](decisions.md). A unit test runs the check for CMASK and each DCC code against what the CPU path does.
+- **Early commits (off).** With the waits gone, the GPU only starts at the end of a submission. Committing when a render pass ends after 100 draws lowered the replay's whole-frame wall time from 53.7, 68.9 and 94.3 ms to 49.6, 58.5 and 79.0 ms (50 to 400 draws measured the same; before all these changes it was about 68, 92 and 113 ms). It also changes the picture of 150742 (91 pixels by up to 2) and 151027 (744 pixels by up to 7), the same way every run, so `PS5SLOP_GPU_COMMIT_DRAWS` defaults to 0. Cause: queued releases and command-stream writes take effect once Metal reports their command buffer done, and encoding reads guest memory (descriptors, tables) on the CPU, so committing earlier lets some draws see writes they did not see before. With `PS5SLOP_GPU_SYNC_RELEASES=1` early commits change nothing, but that picture differs from both. Ruled out: upload order (`PS5SLOP_GPU_INLINE_UPLOADS=1` gives the old picture) and ordering across memory windows (`PS5SLOP_GPU_FENCE=1` changes nothing). Which picture is right is unknown without a PS5 reference. The replay is bound by the GPU now (about 70 ms busy a frame on 151027).
+
+Rendered images: 150313 and 150742 render byte-identical PNGs before and after. 151027 renders one of two images (50 pixels differ by up to 3) from run to run with the old binary as well (4 of 5 runs gave one); every render with the new binary, with and without `PS5SLOP_GPU_FAST_CLEAR_CPU`, gave one of those two.
+
+**In the game**, headless from the gta-perf state with no input (Performance mode, standing at "Go to the guard."), a 30 s `profile` window after 45 s; draws counted from `sceAgcDcbDrawIndex` calls, which stand in for frames since the view does not change:
+
+| Run | Draws in 30 s | Draw encoding | Waiting for Metal | Waiting for command buffers, anywhere |
+| --- | --- | --- | --- | --- |
+| Before | 438,258 | 24.5 s | 3.3 s | 19.9 s |
+| After (default) | 550,175 (+26%) | 6.0 s | 23.1 s | 23.3 s |
+| After, `PS5SLOP_GPU_COMMIT_DRAWS=100` | 656,774 (+50%) | 7.3 s | 21.6 s | 22.0 s |
+
+The GPU thread now spends most of its time waiting for the GPU at the ends of submissions and frames, so the GPU's own work is the next limit. On the CPU side the largest items left (Time Profiler, 151027) are the image digests (about 5.5 ms a frame), `Host::extent` from the guess of a program's memory windows (about 2 ms, dozens of calls a draw) and what remains of fast-clear fills (about 2 ms).
 
 ## Open questions
 

@@ -71,6 +71,7 @@ Reports that would repeat every frame are rate-limited (`diag::FirstN`, `diag::D
 | `PS5SLOP_GPU_LABELS` | Labels Metal encoders and command buffers for GPU traces and reports |
 | `PS5SLOP_GPU_ENCODER_STATUS` | Failed command buffers report which encoders faulted |
 | `PS5SLOP_GPU_COMMIT_EVERY=N` | Commits the command buffer every N dispatches |
+| `PS5SLOP_GPU_COMMIT_DRAWS=N` | Commits the command buffer when a render pass ends after N draws (default 0: only at sync points; see gpu.md) |
 | `PS5SLOP_GPU_SYNC_DISPATCHES` | Waits for Metal after every dispatch |
 | `PS5SLOP_COMPILE_WAIT` | Draws wait for their pipelines instead of being skipped |
 | `PS5SLOP_COMPILE_THREADS=N` | Compile threads (default one per performance core) |
@@ -81,6 +82,7 @@ Reports that would repeat every frame are rate-limited (`diag::FirstN`, `diag::D
 | `PS5SLOP_GPU_QUEUED_WRITES` | `WRITE_DATA` of compute queues stays queued until the queue drains instead of landing in GPU order |
 | `PS5SLOP_GPU_WAIT_SUBMISSIONS` | Each submission waits for its Metal work before its releases take effect |
 | `PS5SLOP_GPU_HTILE_CPU` | HTILE words programs may write are read on the CPU after a wait |
+| `PS5SLOP_GPU_FAST_CLEAR_CPU` | CMASK and DCC fast-clear words programs may write are read on the CPU after a wait |
 | `PS5SLOP_GPU_CPU_INDIRECT` | Indirect dispatches read their sizes on the CPU after a wait |
 | `PS5SLOP_GPU_NO_THROTTLE` | Submitters may run ahead of the GPU thread |
 | `PS5SLOP_CAPTURE_DIR=DIR` | Folder where hotkey and unnamed `gpucapture`/`metalcapture` files are written (default `~/Library/Application Support/ps5slop/captures`) |
@@ -192,7 +194,12 @@ cargo run --release -p gpu --bin ps5slop-replay -- time CAPTURE.ps5frame --warmu
 
 # 7. Compare against a golden PNG (or write/update the golden with --update)
 cargo run --release -p gpu --bin ps5slop-replay -- check CAPTURE.ps5frame golden.png
+
+# 8. CPU cost of processing and encoding the frame, warm, as the GPU thread spends it
+cargo run --release -p gpu --bin ps5slop-replay -- bench CAPTURE.ps5frame --runs 5 --warmup 2
 ```
+
+`bench` runs the frame several times in one renderer, putting guest memory and the queues' registers back as captured before each run, so its caches are as warm as in a running game (a fresh renderer per run costs about 10 times as much, mostly texture uploads). Per run it prints the wall time of running the command buffers, the `profile` parts (draw and dispatch encoding, syncs, waits for command buffers anywhere, compile waits), the encoding time without the waits (`encode`), per draw, and the GPU's busy time; then the median. Loading the capture and resetting memory are not counted. The replay also records each draw for `list`, which costs about 1 us a draw that the game does not spend. Profile it with Time Profiler (`xcrun xctrace record --template 'Time Profiler' --launch -- ps5slop-replay bench ... --runs 80`); Time Profiler counts on-CPU samples only, so time blocked on the GPU does not show there, which is what the `waiting for command buffers` part is for.
 
 `cargo test -p gpu --test frame_replay` runs a synthetic capture-and-replay regression test always, and replays any local `*.ps5frame` + `*.golden.png` (or `.golden.ppm`) pairs in `PS5SLOP_FRAME_CAPTURES` (default `captures/` at repo root, skipped when absent).
 
