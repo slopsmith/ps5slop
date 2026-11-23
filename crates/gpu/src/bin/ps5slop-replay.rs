@@ -97,6 +97,22 @@ enum Command {
         #[arg(long)]
         warmup: bool,
     },
+    /// Measures the CPU time of processing and encoding the frame, as the GPU thread spends it.
+    ///
+    /// Runs the frame `--warmup` times untimed, then `--runs` times, in one
+    /// renderer so its caches stay warm as in a game, and prints each run and
+    /// the median. Loading the capture and resetting guest memory between runs
+    /// are not counted; waits for command buffers and compiles are left out of encoding.
+    Bench {
+        /// Path to the `.ps5frame` capture file.
+        capture: PathBuf,
+        /// Timed runs.
+        #[arg(long, value_name = "N", default_value_t = 5)]
+        runs: usize,
+        /// Untimed runs first, to warm the renderer's caches.
+        #[arg(long, value_name = "N", default_value_t = 1)]
+        warmup: usize,
+    },
     /// Compares a replayed target against a golden PNG or PPM image.
     Check {
         /// Path to the `.ps5frame` capture file.
@@ -375,6 +391,53 @@ fn run(cmd: Command) -> Result<(), String> {
                 out_dir.display(),
                 res.draws.len()
             );
+        }
+        Command::Bench {
+            capture,
+            runs,
+            warmup,
+        } => {
+            use gpu::timing::{self, Part};
+            let cap = FrameCapture::load(&capture)?;
+            let runs = runs.max(1);
+            timing::set(true);
+            let res = replay(
+                &cap,
+                ReplayOptions {
+                    frames: warmup + runs,
+                    ..ReplayOptions::default()
+                },
+            )?;
+            timing::set(false);
+            let draws = res.draws.len();
+            let ms = |ns: u64| ns as f64 / 1e6;
+            println!(
+                "run  processing  draws(ms)  dispatch(ms)  sync(ms)  GPU wait(ms)  compile wait(ms)  encode(ms)  us/draw  GPU busy(ms)"
+            );
+            let mut encode = Vec::new();
+            for (run, f) in res.frames.iter().enumerate().skip(warmup) {
+                let processing = f.processing.as_secs_f64() * 1e3;
+                let sync = ms(f.parts[Part::Sync as usize]);
+                let gpu_wait = ms(f.parts[Part::CommandWait as usize]);
+                let wait = ms(f.parts[Part::CompileWait as usize]);
+                let enc = processing - gpu_wait - wait;
+                println!(
+                    "{run:>3}  {processing:>10.2}  {:>9.2}  {:>12.2}  {sync:>8.2}  {gpu_wait:>12.2}  {wait:>16.2}  {enc:>10.2}  {:>7.2}  {:>12.2}",
+                    ms(f.parts[Part::Draw as usize]),
+                    ms(f.parts[Part::Dispatch as usize]),
+                    enc * 1e3 / draws.max(1) as f64,
+                    ms(f.parts[Part::GpuBusy as usize]),
+                );
+                encode.push(enc);
+            }
+            encode.sort_by(f64::total_cmp);
+            let enc = encode[encode.len() / 2];
+            println!(
+                "median encode {enc:.2} ms/frame, {:.2} us/draw ({draws} draws, {} dispatches)",
+                enc * 1e3 / draws.max(1) as f64,
+                res.dispatches.len()
+            );
+            println!("Metal, all runs: {}", res.summary);
         }
         Command::Time { capture, warmup } => {
             let cap = FrameCapture::load(&capture)?;

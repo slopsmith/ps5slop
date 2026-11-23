@@ -170,6 +170,12 @@ impl Metal {
 /// Waits for `cb`; one still running after 10 s is reported with its label
 /// (`PS5SLOP_GPU_LABELS` names the dispatches in it), then waited for.
 fn wait_reporting_hangs(cb: &CommandBuffer) {
+    let t = crate::timing::start();
+    wait_for(cb);
+    crate::timing::add(crate::timing::Part::CommandWait, t);
+}
+
+fn wait_for(cb: &CommandBuffer) {
     let start = std::time::Instant::now();
     while !matches!(
         cb.status(),

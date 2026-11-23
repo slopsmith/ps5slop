@@ -30,9 +30,14 @@ pub enum Part {
     Compile,
     /// Encoding waiting for a program or pipeline still compiling.
     CompileWait,
+    /// Waiting for a command buffer to finish, wherever it happens (also
+    /// inside draw and dispatch encoding, and inside [`Part::Sync`]).
+    CommandWait,
 }
 
-pub const NAMES: [&str; 13] = [
+pub const PARTS: usize = 14;
+
+pub const NAMES: [&str; PARTS] = [
     "draw encoding",
     "dispatch encoding",
     "waiting for Metal",
@@ -46,10 +51,11 @@ pub const NAMES: [&str; 13] = [
     "done to woken",
     "compiling (compile threads)",
     "waiting for compiles (in encoding)",
+    "waiting for command buffers (anywhere)",
 ];
 
 static ON: AtomicBool = AtomicBool::new(false);
-static NS: [AtomicU64; 13] = [const { AtomicU64::new(0) }; 13];
+static NS: [AtomicU64; PARTS] = [const { AtomicU64::new(0) }; PARTS];
 
 /// Starts counting from zero, or stops.
 pub fn set(on: bool) {
@@ -78,7 +84,7 @@ pub fn add_raw(part: Part, n: u64) {
 }
 
 /// Nanoseconds per [`Part`] since counting started.
-pub fn totals() -> [u64; 13] {
+pub fn totals() -> [u64; PARTS] {
     NS.each_ref().map(|n| n.load(Ordering::Relaxed))
 }
 

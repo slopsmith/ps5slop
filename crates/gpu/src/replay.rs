@@ -56,6 +56,19 @@ pub struct ReplayOptions {
     pub time_passes: bool,
     /// Record the replay into a Metal `.gputrace` bundle (needs `METAL_CAPTURE_ENABLED=1`).
     pub metal_capture: Option<PathBuf>,
+    /// Run the frame this many times in one renderer (at least once), resetting
+    /// guest memory and registers before each, so caches stay warm as in a game.
+    pub frames: usize,
+}
+
+/// CPU cost of one replayed frame.
+#[derive(Clone, Debug)]
+pub struct FrameTime {
+    /// Wall time of running the command buffers, without loading the capture
+    /// or the final wait for the GPU.
+    pub processing: std::time::Duration,
+    /// [`crate::timing`] nanoseconds spent in this frame, when counting.
+    pub parts: [u64; crate::timing::PARTS],
 }
 
 /// Output of replaying a [`FrameCapture`].
@@ -67,6 +80,8 @@ pub struct ReplayResult {
     pub targets: Vec<(u64, SharedTexture)>,
     pub depths: Vec<(u64, SharedTexture)>,
     pub summary: String,
+    /// One entry per frame run; `draws` and `dispatches` hold the last frame's.
+    pub frames: Vec<FrameTime>,
 }
 
 struct Segment {
@@ -201,6 +216,20 @@ impl ReplayHost {
             host.write(addr, bytes);
         }
         Ok(host)
+    }
+
+    /// Puts guest memory back as the capture saw it before the frame.
+    fn reset(&self, cap: &FrameCapture) {
+        for seg in &self.segments {
+            // SAFETY: `base` is a live mapping of `end - start` bytes we own.
+            unsafe { std::ptr::write_bytes(seg.base, 0, (seg.end - seg.start) as usize) };
+        }
+        for (&addr, bytes) in &cap.pages {
+            self.write(addr, bytes);
+        }
+        if let Ok(mut flips) = self.flips.lock() {
+            flips.clear();
+        }
     }
 
     fn find(&self, addr: u64) -> Option<&Segment> {
@@ -581,39 +610,24 @@ pub fn replay(capture: &FrameCapture, options: ReplayOptions) -> Result<ReplayRe
             shown: None,
         })));
 
-        let mut processors: HashMap<u64, Processor> = HashMap::new();
-        let mut gds_restored = false;
-        for (&queue, saved) in &capture.queues {
-            let mut p = Processor::default();
-            p.backend = Some(Box::new(shared.clone()));
-            p.restore(saved.clone(), !gds_restored);
-            gds_restored = true;
-            processors.insert(queue, p);
-        }
-
-        for sub in &capture.submissions {
-            if shared.lock().stopped {
-                break;
+        let mut frames = Vec::new();
+        for frame in 0..options.frames.max(1) {
+            if frame > 0 {
+                let mut s = shared.lock();
+                s.metal.sync();
+                s.draws.clear();
+                s.dispatches.clear();
+                drop(s);
+                host.reset(capture);
             }
-            shared.lock().current_queue = sub.queue;
-            let p = processors.entry(sub.queue).or_insert_with(|| {
-                let mut p = Processor::default();
-                p.backend = Some(Box::new(shared.clone()));
-                p
+            let before = crate::timing::totals();
+            let started = std::time::Instant::now();
+            run_frame(capture, &host, &shared)?;
+            let after = crate::timing::totals();
+            frames.push(FrameTime {
+                processing: started.elapsed(),
+                parts: std::array::from_fn(|i| after[i].saturating_sub(before[i])),
             });
-            for cb in &sub.buffers {
-                // Write the submission's exact captured command buffer words before running.
-                let bytes: Vec<u8> = cb.dwords.iter().flat_map(|w| w.to_le_bytes()).collect();
-                host.write(cb.address, &bytes);
-                p.run(&host, cb.address, cb.dwords.len() as u32)
-                    .map_err(|e| format!("PM4 error during replay: {e}"))?;
-                if shared.lock().stopped {
-                    break;
-                }
-            }
-            if !shared.lock().stopped {
-                p.end_submission(&host, sub.ends_frame);
-            }
         }
 
         let mut s = shared.lock();
@@ -636,8 +650,51 @@ pub fn replay(capture: &FrameCapture, options: ReplayOptions) -> Result<ReplayRe
             targets,
             depths,
             summary,
+            frames,
         })
     })
+}
+
+fn run_frame(
+    capture: &FrameCapture,
+    host: &ReplayHost,
+    shared: &ReplayBackend,
+) -> Result<(), String> {
+    let mut processors: HashMap<u64, Processor> = HashMap::new();
+    let mut gds_restored = false;
+    for (&queue, saved) in &capture.queues {
+        let mut p = Processor::default();
+        p.backend = Some(Box::new(shared.clone()));
+        p.restore(saved.clone(), !gds_restored);
+        gds_restored = true;
+        processors.insert(queue, p);
+    }
+
+    for sub in &capture.submissions {
+        if shared.lock().stopped {
+            break;
+        }
+        shared.lock().current_queue = sub.queue;
+        let p = processors.entry(sub.queue).or_insert_with(|| {
+            let mut p = Processor::default();
+            p.backend = Some(Box::new(shared.clone()));
+            p
+        });
+        for cb in &sub.buffers {
+            // Write the submission's exact captured command buffer words before running.
+            let bytes: Vec<u8> = cb.dwords.iter().flat_map(|w| w.to_le_bytes()).collect();
+            host.write(cb.address, &bytes);
+            p.run(host, cb.address, cb.dwords.len() as u32)
+                .map_err(|e| format!("PM4 error during replay: {e}"))?;
+            if shared.lock().stopped {
+                break;
+            }
+        }
+        if !shared.lock().stopped {
+            p.end_submission(host, sub.ends_frame);
+        }
+    }
+    Ok(())
 }
 
 /// Human-readable name for a `VGT_PRIMITIVE_TYPE` value.
