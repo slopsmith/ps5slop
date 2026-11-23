@@ -9,7 +9,7 @@ scripts/bundle-app
 open target/ps5slop.app
 ```
 
-The app needs macOS 26 or later (it uses Liquid Glass). The script needs Xcode (Swift 6.2 or later) and Nix. It builds `ps5slop` in release mode inside `nix develop`, builds the launcher with Xcode's Swift, and puts both in `target/ps5slop.app`. FFmpeg's libraries (and the libraries they need) are copied from the Nix store into `Contents/Frameworks`, so the app runs without Nix; the script stops if anything still links into `/nix/store`. Everything is signed ad hoc, `ps5slop` with the hypervisor entitlement. The app is not notarised: on another Mac, right-click it and choose Open the first time.
+The app needs macOS 26 or later (it uses Liquid Glass). The script needs Xcode (Swift 6.2 or later) and Nix. It builds `ps5slop` in release mode inside `nix develop`, builds the launcher with Xcode's Swift, and puts both in `target/ps5slop.app`. FFmpeg's three libraries (libavcodec, libavformat, libavutil, from the slim build in `flake.nix`) are copied from the Nix store into `Contents/Frameworks`, so the app runs without Nix (about 28 MB in all); the script stops if anything still links into `/nix/store`. Everything is signed ad hoc, `ps5slop` with the hypervisor entitlement. The app is not notarised: on another Mac, right-click it and choose Open the first time.
 
 For work on the app itself, `cd apps/macos && xcrun swift run` starts it without a bundle. It then finds `ps5slop` through `PS5SLOP_BIN` or `target/release/ps5slop`. A plain `cargo build` does not sign that binary with the hypervisor entitlement; `cargo run` once (or `scripts/hv-run.sh target/release/ps5slop --help`) does. `xcrun swift test` runs the launcher's tests.
 

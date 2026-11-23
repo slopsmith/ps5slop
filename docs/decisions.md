@@ -707,7 +707,7 @@ Docs for people running games live in `docs/user/` (`running.md`, `environment.m
 
 ## 2026-11-23: Ajm MP3 through FFmpeg
 
-`sceAjmBatchJobDecode` on an MP3 instance decodes each frame with libavcodec through the `ffmpeg-next` crate, linked to the dev shell's `ffmpeg-headless`. Reason: vic chose FFmpeg; GTA V plays all its game audio as MP3 through Ajm. Sizes still come from the frame headers, so a frame FFmpeg cannot decode is silence of the right length and the results the game reads do not depend on the decoder. Verified by unit tests on our own 1 kHz sine (pitch, level, S16 and float output); not listened to in game.
+`sceAjmBatchJobDecode` on an MP3 instance decodes each frame with libavcodec through the `ffmpeg-next` crate, linked to a slim FFmpeg the flake builds (libavcodec, libavformat and libavutil only, no external codecs, LGPL-2.1-or-later; the app bundles those three dylibs). Reason: vic chose FFmpeg; GTA V plays all its game audio as MP3 through Ajm. Sizes still come from the frame headers, so a frame FFmpeg cannot decode is silence of the right length and the results the game reads do not depend on the decoder. Verified by unit tests on our own 1 kHz sine (pitch, level, S16 and float output); not listened to in game.
 
 ## 2026-11-23: Timed waits step toward their deadline
 

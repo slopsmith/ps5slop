@@ -8,6 +8,21 @@
     let
       system = "aarch64-darwin";
       pkgs = nixpkgs.legacyPackages.${system};
+      # Only the libraries ffmpeg-next links, no external codecs, LGPL (docs/audio.md).
+      # Its own tests need the libraries left out.
+      ffmpeg = (pkgs.ffmpeg-headless.override {
+        withHeadlessDeps = false;
+        withSmallDeps = false;
+        withFullDeps = false;
+        withGPL = false;
+        withVersion3 = false;
+        buildAvcodec = true;
+        buildAvformat = true;
+        buildAvutil = true;
+        buildFfmpeg = false;
+        buildFfprobe = false;
+        withDocumentation = false;
+      }).overrideAttrs { doCheck = false; };
     in
     {
       devShells.${system}.default = pkgs.mkShellNoCC {
@@ -22,7 +37,7 @@
           pkgs.llvm
           pkgs.pkg-config
         ];
-        buildInputs = [ pkgs.ffmpeg-headless ];
+        buildInputs = [ ffmpeg ];
         LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
       };
     };
