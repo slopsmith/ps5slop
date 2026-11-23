@@ -834,6 +834,44 @@ fn first_texel(metal: &mut Metal, tex: &Texture) -> [u8; 4] {
 }
 
 #[test]
+fn a_raw_fill_reaches_every_texel_of_a_tall_target() {
+    let Some(mut metal) = Metal::new() else {
+        return;
+    };
+    let (w, h) = (1000, 300);
+    let d = unsafe {
+        MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+            MTLPixelFormat::RGBA16Uint,
+            w,
+            h,
+            false,
+        )
+    };
+    d.setStorageMode(MTLStorageMode::Shared);
+    let tex = metal.device.newTextureWithDescriptor(&d).unwrap();
+    metal.fill_raw(&tex, 0, [0x0201_0403, 0x0807_0605]);
+    metal.flush_and_wait();
+    let mut out = vec![0u8; w * h * 8];
+    unsafe {
+        tex.getBytes_bytesPerRow_fromRegion_mipmapLevel(
+            NonNull::new_unchecked(out.as_mut_ptr().cast()),
+            w * 8,
+            MTLRegion {
+                origin: MTLOrigin { x: 0, y: 0, z: 0 },
+                size: MTLSize {
+                    width: w,
+                    height: h,
+                    depth: 1,
+                },
+            },
+            0,
+        );
+    }
+    let texel = [3, 4, 1, 2, 5, 6, 7, 8];
+    assert!(out.as_chunks::<8>().0.iter().all(|t| *t == texel));
+}
+
+#[test]
 fn an_image_follows_guest_memory_from_frame_to_frame() {
     let Some(mut metal) = Metal::new() else {
         return;

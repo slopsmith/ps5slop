@@ -220,7 +220,7 @@ impl Metal {
             self.settle_for(cmask, 4, "CMASK");
             if host.read(cmask, &mut word) && u32::from_le_bytes(word) & 0xF == 0 {
                 host.write(cmask, &(u32::from_le_bytes(word) | 0xF).to_le_bytes());
-                self.fill_raw(t, tex, words);
+                self.fill_raw(tex, Self::target_slice(t, tex), words);
                 self.note(|| {
                     format!(
                         "      color {:#x} fast-cleared through CMASK at {cmask:#x} to {words:x?}",
@@ -259,10 +259,10 @@ impl Metal {
                     u32::from_le_bytes(single[..4].try_into().unwrap()),
                     u32::from_le_bytes(single[4..].try_into().unwrap()),
                 ];
-                self.fill_raw(t, tex, words);
+                self.fill_raw(tex, Self::target_slice(t, tex), words);
             } else if colour[0].is_nan() {
                 let words = t.fast_clear.map_or([0; 2], |f| f.1);
-                self.fill_raw(t, tex, words);
+                self.fill_raw(tex, Self::target_slice(t, tex), words);
             } else {
                 self.fill_colour(t, tex, colour);
             }
@@ -283,8 +283,8 @@ impl Metal {
         }
     }
 
-    /// Fills `tex` with the raw bits of `words` per texel (up to 8 bytes).
-    fn fill_raw(&mut self, t: &ColorTarget, tex: &Texture, words: [u32; 2]) {
+    /// Fills `slice` of `tex` with the raw bits of `words` per texel (up to 8 bytes).
+    pub(super) fn fill_raw(&mut self, tex: &Texture, slice: usize, words: [u32; 2]) {
         let Some(bpp) = texel_bytes(tex.pixelFormat()).filter(|&b| b <= 8) else {
             return;
         };
@@ -294,14 +294,17 @@ impl Metal {
             .flat_map(|x| x.to_le_bytes())
             .take(bpp)
             .collect();
-        let Some((buf, offset)) = self.scratch(w * h * bpp) else {
+        // One strip of up to 1 MiB, copied down the whole texture.
+        let row = w * bpp;
+        let rows = (1usize << 20).div_ceil(row).clamp(1, h);
+        let Some((buf, offset)) = self.scratch(row * rows) else {
             return;
         };
-        // SAFETY: the scratch range is fresh shared memory of w * h * bpp bytes.
+        // SAFETY: the scratch range is fresh shared memory of row * rows bytes.
         let dst = unsafe {
             std::slice::from_raw_parts_mut(
                 buf.contents().as_ptr().cast::<u8>().add(offset),
-                w * h * bpp,
+                row * rows,
             )
         };
         for p in dst.chunks_exact_mut(bpp) {
@@ -312,10 +315,13 @@ impl Metal {
         let Some(blit) = command.blitCommandEncoder() else {
             return;
         };
-        unsafe {
-            blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
-                &buf, offset, w * bpp, w * h * bpp, MTLSize { width: w, height: h, depth: 1 }, tex, Self::target_slice(t, tex), 0, MTLOrigin { x: 0, y: 0, z: 0 },
-            );
+        for y in (0..h).step_by(rows) {
+            let n = rows.min(h - y);
+            unsafe {
+                blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
+                    &buf, offset, row, row * n, MTLSize { width: w, height: n, depth: 1 }, tex, slice, 0, MTLOrigin { x: 0, y, z: 0 },
+                );
+            }
         }
         blit.endEncoding();
     }
