@@ -125,6 +125,36 @@ static inline uint ld32(device const uchar* mem, Win w, ulong addr) {
     return o == OOB_OFF ? 0u : *(device const uint*)(mem + o);
 }
 
+// Like goff, for `len` bytes at `a` that all lie in one window.
+static inline long goff_span(Win w, ulong a, ulong len) {
+    if (a >= w.base && a + len <= w.end) return long(a - w.base);
+    if (a >= w.base2 && a + len <= w.end2) return long(a - w.base2) + w.delta;
+    if (a >= w.base3 && a + len <= w.end3) return long(a - w.base3) + w.delta3;
+    return OOB_OFF;
+}
+
+// Like goff, and in `run` the bytes from `a` that stay in its window, or outside
+// every window, the bytes before the next window begins.
+static inline long goff_run(Win w, ulong a, thread ulong& run) {
+    if (a >= w.base && a < w.end) { run = w.end - a; return long(a - w.base); }
+    if (a >= w.base2 && a < w.end2) { run = w.end2 - a; return long(a - w.base2) + w.delta; }
+    if (a >= w.base3 && a < w.end3) { run = w.end3 - a; return long(a - w.base3) + w.delta3; }
+    run = ~0ul;
+    if (w.base > a) run = min(run, w.base - a);
+    if (w.base2 > a) run = min(run, w.base2 - a);
+    if (w.base3 > a) run = min(run, w.base3 - a);
+    return OOB_OFF;
+}
+
+// The dword `b` bytes into two runs from goff_run. Scalar loads span at most 64
+// bytes, so two runs cover them unless a window or a gap is shorter than that.
+static inline uint ld_runs(device const uchar* mem, long o1, ulong r1, long o2, ulong r2, ulong b) {
+    if (b + 4ul <= r1) return o1 == OOB_OFF ? 0u : *(device const uint*)(mem + o1 + long(b));
+    b -= r1;
+    if (b + 4ul <= r2) return o2 == OOB_OFF ? 0u : *(device const uint*)(mem + o2 + long(b));
+    return 0u;
+}
+
 // image_bvh_intersect_ray as Mesa radv's software emulation states it. Box nodes
 // (types 4, 5) give the children the ray enters, nearest first; triangles (t, det, i, j).
 static inline uint4 bvh_intersect(device const uchar* mem, Win w, uint4 d, ulong node, float tmax, float3 o, float3 dir, float3 inv) {

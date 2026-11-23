@@ -639,6 +639,140 @@ fn a_program_reads_a_table_in_a_third_region() {
     assert_eq!(word(&mem, out), 0x5EED);
 }
 
+const LOAD_X4: [u32; 2] = [0xF408_0200, 0xFA00_0000]; // s_load_dwordx4 s[8:11], s[0:1], 0x0
+
+/// Runs `loads`, which fill s[8:11] from the table s[0:1] points at, and returns s[8:11].
+fn scalar_loads(loads: &[u32], table: u64, regions: Vec<(u64, u64)>) -> Option<[u32; 4]> {
+    let metal = Metal::new()?;
+    let (code, out) = (0x1000, 0x800_0000);
+    let mut mem = Mem::new(0x1000_0000);
+    mem.regions = regions;
+    let store: [u32; 9] = [
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0x7E02_0208, // v_mov_b32 v1, s8
+        0x7E04_0209, // v_mov_b32 v2, s9
+        0x7E06_020A, // v_mov_b32 v3, s10
+        0x7E08_020B, // v_mov_b32 v4, s11
+        0xE078_0000,
+        0x8001_0100, // buffer_store_dwordx4 v[1:4], off, s[4:7], 0
+        0xBF81_0000, // s_endpgm
+        0,
+    ];
+    for (i, w) in loads.iter().chain(&store).enumerate() {
+        mem.write(code + 4 * i as u64, &w.to_le_bytes());
+    }
+    for (i, v) in [0xA1_u32, 0xB2, 0xC3, 0xD4].iter().enumerate() {
+        mem.write(table + 4 * i as u64, &v.to_le_bytes());
+    }
+    let mut p = crate::pm4::Processor::default();
+    let user = [
+        table as u32,
+        (table >> 32) as u32,
+        0,
+        0,
+        out as u32,
+        0,
+        16,
+        0x5204,
+    ];
+    let packets = [compute_setup(code, &user), DISPATCH_ONE.to_vec()].concat();
+    let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+    mem.write(0x2000, &bytes);
+    p.backend = Some(Box::new(metal));
+    p.run(&mem, 0x2000, packets.len() as u32).unwrap();
+    p.finish(&mem);
+    Some([0, 4, 8, 12].map(|o| word(&mem, out + o)))
+}
+
+fn wide_table_regions(table: u64) -> Vec<(u64, u64)> {
+    vec![
+        (0, 0x100_0000),
+        (table, 0x600_0000),
+        (0x800_0000, 0x1000_0000),
+    ]
+}
+
+#[test]
+fn a_scalar_load_of_several_dwords_reads_them_all() {
+    let table = 0x400_0000;
+    if let Some(got) = scalar_loads(&LOAD_X4, table, wide_table_regions(table)) {
+        assert_eq!(got, [0xA1, 0xB2, 0xC3, 0xD4]);
+    }
+}
+
+#[test]
+fn a_scalar_load_from_memory_outside_every_window_reads_zeros() {
+    let table = 0x400_0ff8;
+    let regions = vec![
+        (0, 0x100_0000),
+        (0x400_0000, 0x400_1000),
+        (0x800_0000, 0x1000_0000),
+    ];
+    if let Some(got) = scalar_loads(&LOAD_X4, table, regions) {
+        assert_eq!(got, [0; 4]);
+    }
+}
+
+#[test]
+fn scalar_loads_follow_their_base_registers_when_they_change() {
+    let table = 0x400_0000;
+    let loads = [
+        0xF400_0200,
+        0xFA00_0000, // s_load_dword s8, s[0:1], 0x0
+        0x8000_8400, // s_add_u32 s0, s0, 4
+        0x8201_8001, // s_addc_u32 s1, s1, 0
+        0xF400_0240,
+        0xFA00_0000, // s_load_dword s9, s[0:1], 0x0
+        0x8000_8400, // s_add_u32 s0, s0, 4
+        0x8201_8001, // s_addc_u32 s1, s1, 0
+        0xF404_0280,
+        0xFA00_0000, // s_load_dwordx2 s[10:11], s[0:1], 0x0
+    ];
+    if let Some(got) = scalar_loads(&loads, table, wide_table_regions(table)) {
+        assert_eq!(got, [0xA1, 0xB2, 0xC3, 0xD4]);
+    }
+}
+
+#[test]
+fn a_scalar_load_with_a_negative_offset_reads_below_its_base() {
+    let table = 0x400_0000;
+    let loads = [
+        0x8000_8800, // s_add_u32 s0, s0, 8
+        0x8201_8001, // s_addc_u32 s1, s1, 0
+        0xF408_0200,
+        0xFA1F_FFF8, // s_load_dwordx4 s[8:11], s[0:1], -8
+    ];
+    if let Some(got) = scalar_loads(&loads, table, wide_table_regions(table)) {
+        assert_eq!(got, [0xA1, 0xB2, 0xC3, 0xD4]);
+    }
+}
+
+#[test]
+fn a_scalar_load_past_the_end_of_memory_reads_zeros_for_the_dwords_beyond() {
+    let table = 0x5ff_fff8;
+    let regions = vec![
+        (0, 0x100_0000),
+        (0x100_0000, 0x600_0000),
+        (0x800_0000, 0x1000_0000),
+    ];
+    if let Some(got) = scalar_loads(&LOAD_X4, table, regions) {
+        assert_eq!(got, [0xA1, 0xB2, 0, 0]);
+    }
+}
+
+#[test]
+fn a_scalar_load_that_starts_below_a_window_reads_zeros_then_the_window() {
+    let table = 0x7ff_fff8;
+    let regions = vec![
+        (0, 0x100_0000),
+        (0x100_0000, 0x600_0000),
+        (0x800_0000, 0x1000_0000),
+    ];
+    if let Some(got) = scalar_loads(&LOAD_X4, table, regions) {
+        assert_eq!(got, [0, 0, 0xC3, 0xD4]);
+    }
+}
+
 // The poll is a guarded loop, so a broken translation ends with a guard
 // trip instead of hanging the GPU.
 #[test]

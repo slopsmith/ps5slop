@@ -404,8 +404,28 @@ impl<'a> Tx<'a> {
             self.s(soffset)
         };
         let mut s = format!("{{ ulong a = {base} + ulong({so}) + ulong(long({offset}));");
-        for i in 0..n {
-            write!(s, " uint t{i} = ld32(mem, mem_base, a + {}ul);", 4 * i).unwrap();
+        if n == 1 {
+            s.push_str(" uint t0 = ld32(mem, mem_base, a);");
+        } else {
+            // One window lookup per instruction, not per dword: the lookup's 64-bit
+            // compares cost GTA V's lighting programs most of their time.
+            let temps: Vec<String> = (0..n).map(|i| format!("t{i}")).collect();
+            write!(s, " uint {};", temps.join(", ")).unwrap();
+            write!(s, " long o = goff_span(mem_base, a, {}ul);", 4 * n).unwrap();
+            s.push_str(
+                " if (o != OOB_OFF) { device const uint* p = (device const uint*)(mem + o);",
+            );
+            for i in 0..n {
+                write!(s, " t{i} = p[{i}];").unwrap();
+            }
+            s.push_str(
+                " } else { ulong r1, r2; long o1 = goff_run(mem_base, a, r1);\
+                 long o2 = goff_run(mem_base, a + r1, r2);",
+            );
+            for i in 0..n {
+                write!(s, " t{i} = ld_runs(mem, o1, r1, o2, r2, {}ul);", 4 * i).unwrap();
+            }
+            s.push_str(" }");
         }
         for i in 0..n {
             if let Some(d) = self.sdst(sdata + i as u16) {
