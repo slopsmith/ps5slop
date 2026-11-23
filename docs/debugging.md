@@ -132,12 +132,17 @@ cargo run --release -p gpu --bin ps5slop-replay -- dump CAPTURE.ps5frame /tmp/ta
 # 6. Time every render pass and compute dispatch (sorted by GPU ms)
 cargo run --release -p gpu --bin ps5slop-replay -- time CAPTURE.ps5frame --warmup
 
+# 6b. Time every draw and dispatch on its own; GPU time by program and the slowest draws
+cargo run --release -p gpu --bin ps5slop-replay -- time CAPTURE.ps5frame --warmup --draws --runs 5 --top 40
+
 # 7. Compare against a golden PNG (or write/update the golden with --update)
 cargo run --release -p gpu --bin ps5slop-replay -- check CAPTURE.ps5frame golden.png
 
 # 8. CPU cost of processing and encoding the frame, warm, as the GPU thread spends it
 cargo run --release -p gpu --bin ps5slop-replay -- bench CAPTURE.ps5frame --runs 5 --warmup 2
 ```
+
+`time --draws` commits and waits after every draw and dispatch, so each has its own GPU time (Apple GPUs cannot sample their counters at draw boundaries). Each draw then runs in a render pass of its own and pays for loading and storing its targets, so the times add up to more than the frame's (GTA V in Fidelity mode: 232 ms against 207 ms by passes), and a cheap draw into many 4K targets looks dearer than it is. Small draws look far dearer alone than they are: GTA V's 326 shadow draws in one pass take 1.2 ms together and 24 ms timed one by one, so the per-program table is only trustworthy for draws of a millisecond or more. `--runs N` runs the frame N times in one renderer and reports each pass's or draw's median: the first run costs more (one-time costs a running game has already paid; a GTA V pass took 53 ms in a first frame and 7.6 ms warm) and single runs vary by a few milliseconds a draw, so compare variants with `--runs 5`, and by pass rather than by draw where a pass holds the draws in question. Even then the same pass varied by up to a fifth between runs (GTA V's 20 ms pass from 19 to 25 ms), so a change smaller than that needs several runs, interleaved with the unchanged program. To try a change to one program, put its edited MSL in a folder and set `PS5SLOP_MSL_OVERRIDE` (the `compile_times` example's `--dump` writes the MSL of programs `PS5SLOP_SHADER_DUMP` saved, and the replay honours both); a program that returns at once gives the draw's cost without its program. It answers which programs and draws to look at, not what they would cost in a normal pass ([gpu.md](gpu.md#gta-vs-fidelity-mode-on-the-gpu-2026-11-23)).
 
 `bench` runs the frame several times in one renderer, putting guest memory and the queues' registers back as captured before each run, so its caches are as warm as in a running game (a fresh renderer per run costs about 10 times as much, mostly texture uploads). Per run it prints the wall time of running the command buffers, the `profile` parts (draw and dispatch encoding, syncs, waits for command buffers anywhere, compile waits), the encoding time without the waits (`encode`), per draw, and the GPU's busy time; then the median. Loading the capture and resetting memory are not counted. The replay also records each draw for `list`, which costs about 1 us a draw that the game does not spend. Profile it with Time Profiler (`xcrun xctrace record --template 'Time Profiler' --launch -- ps5slop-replay bench ... --runs 80`); Time Profiler counts on-CPU samples only, so time blocked on the GPU does not show there, which is what the `waiting for command buffers` part is for.
 

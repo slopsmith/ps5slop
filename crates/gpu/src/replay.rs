@@ -24,6 +24,8 @@ pub struct DrawRecord {
     pub depth_target: Option<(u64, u32, u32)>,
     pub viewport: Viewport,
     pub scissor: (u32, u32, u32, u32),
+    /// GPU time of this draw alone, with `time_draws`: the median over the frames run.
+    pub gpu_ms: Option<f64>,
 }
 
 /// Metadata recorded for one compute dispatch during replay.
@@ -34,6 +36,8 @@ pub struct DispatchRecord {
     pub cs: u64,
     pub groups: Option<[u32; 3]>,
     pub indirect_at: Option<u64>,
+    /// GPU time of this dispatch alone, with `time_draws`: the median over the frames run.
+    pub gpu_ms: Option<f64>,
 }
 
 /// Timing for one render pass or compute dispatch during `time_passes` replay.
@@ -52,8 +56,13 @@ pub struct PassTiming {
 pub struct ReplayOptions {
     /// Stop right after this 0-based draw index, keeping targets at that point.
     pub stop_after_draw: Option<usize>,
-    /// Commit and time each render pass and compute dispatch individually.
+    /// Commit and time each render pass and compute dispatch individually;
+    /// over several frames, each pass gets its median.
     pub time_passes: bool,
+    /// Commit and time each draw and dispatch on its own. Each draw then runs
+    /// in a render pass of its own, so its time includes loading and storing
+    /// its targets.
+    pub time_draws: bool,
     /// Record the replay into a Metal `.gputrace` bundle (needs `METAL_CAPTURE_ENABLED=1`).
     pub metal_capture: Option<PathBuf>,
     /// Run the frame this many times in one renderer (at least once), resetting
@@ -347,11 +356,23 @@ struct ReplayState {
     draws: Vec<DrawRecord>,
     dispatches: Vec<DispatchRecord>,
     timings: Vec<PassTiming>,
+    draw_ms: Vec<Vec<f64>>,
+    dispatch_ms: Vec<Vec<f64>>,
     open_pass: Option<(Vec<u64>, usize, f64)>,
     shown: Option<u64>,
 }
 
 impl ReplayState {
+    fn start_timing(&mut self) {
+        self.metal.sync();
+        let _ = self.metal.take_gpu_time_secs();
+    }
+
+    fn finish_timing(&mut self) -> f64 {
+        self.metal.sync();
+        self.metal.take_gpu_time_secs() * 1e3
+    }
+
     fn flush_pass_timing(&mut self) {
         if let Some((targets, draws, cpu_ms)) = self.open_pass.take() {
             self.metal.sync();
@@ -424,6 +445,7 @@ impl Backend for ReplayBackend {
             depth_target,
             viewport: Viewport::read(c),
             scissor: crate::regs::scissor(c),
+            gpu_ms: None,
         });
 
         if s.options.time_passes {
@@ -439,9 +461,16 @@ impl Backend for ReplayBackend {
             }
         }
 
+        if s.options.time_draws {
+            s.start_timing();
+        }
         let t0 = Instant::now();
         s.metal.draw(host, state, draw);
         let cpu_ms = t0.elapsed().as_secs_f64() * 1e3;
+        if s.options.time_draws {
+            let gpu_ms = s.finish_timing();
+            sample(&mut s.draw_ms, draw_index, gpu_ms);
+        }
         if let Some((_, count, cpu)) = s.open_pass.as_mut() {
             *count += 1;
             *cpu += cpu_ms;
@@ -470,15 +499,23 @@ impl Backend for ReplayBackend {
             cs,
             groups: Some(dispatch.groups),
             indirect_at: None,
+            gpu_ms: None,
         });
         if s.options.time_passes {
             s.flush_pass_timing();
             s.metal.sync();
             let _ = s.metal.take_gpu_time_secs();
         }
+        if s.options.time_draws {
+            s.start_timing();
+        }
         let t0 = Instant::now();
         s.metal.dispatch(host, state, dispatch);
         let cpu_ms = t0.elapsed().as_secs_f64() * 1e3;
+        if s.options.time_draws {
+            let gpu_ms = s.finish_timing();
+            sample(&mut s.dispatch_ms, idx, gpu_ms);
+        }
         if s.options.time_passes {
             s.metal.sync();
             let gpu_ms = s.metal.take_gpu_time_secs() * 1e3;
@@ -513,9 +550,13 @@ impl Backend for ReplayBackend {
             s.metal.sync();
             let _ = s.metal.take_gpu_time_secs();
         }
+        if s.options.time_draws {
+            s.start_timing();
+        }
         let t0 = Instant::now();
         let handled = s.metal.dispatch_indirect(host, state, at, threads);
         let cpu_ms = t0.elapsed().as_secs_f64() * 1e3;
+        let gpu_ms = s.options.time_draws.then(|| s.finish_timing());
         if handled {
             let idx = s.dispatches.len();
             let queue = s.current_queue;
@@ -525,7 +566,11 @@ impl Backend for ReplayBackend {
                 cs,
                 groups: None,
                 indirect_at: Some(at),
+                gpu_ms: None,
             });
+            if let Some(ms) = gpu_ms {
+                sample(&mut s.dispatch_ms, idx, ms);
+            }
             if s.options.time_passes {
                 s.metal.sync();
                 let gpu_ms = s.metal.take_gpu_time_secs() * 1e3;
@@ -586,6 +631,40 @@ impl Backend for ReplayBackend {
     }
 }
 
+fn sample(samples: &mut Vec<Vec<f64>>, index: usize, ms: f64) {
+    if samples.len() <= index {
+        samples.resize_with(index + 1, Vec::new);
+    }
+    samples[index].push(ms);
+}
+
+fn median(v: &mut [f64]) -> Option<f64> {
+    if v.is_empty() {
+        return None;
+    }
+    v.sort_by(f64::total_cmp);
+    Some(v[v.len() / 2])
+}
+
+/// The first frame's passes, each with its median times over the frames whose
+/// passes line up with it.
+fn median_passes(runs: Vec<Vec<PassTiming>>) -> Vec<PassTiming> {
+    let mut runs = runs.into_iter();
+    let Some(mut first) = runs.next() else {
+        return Vec::new();
+    };
+    let rest: Vec<_> = runs.filter(|r| r.len() == first.len()).collect();
+    for (i, pass) in first.iter_mut().enumerate() {
+        let mut gpu: Vec<f64> = rest.iter().map(|r| r[i].gpu_ms).collect();
+        let mut cpu: Vec<f64> = rest.iter().map(|r| r[i].cpu_ms).collect();
+        gpu.push(pass.gpu_ms);
+        cpu.push(pass.cpu_ms);
+        pass.gpu_ms = median(&mut gpu).unwrap_or(pass.gpu_ms);
+        pass.cpu_ms = median(&mut cpu).unwrap_or(pass.cpu_ms);
+    }
+    first
+}
+
 /// Replays `capture` deterministically through a fresh Metal renderer.
 pub fn replay(capture: &FrameCapture, options: ReplayOptions) -> Result<ReplayResult, String> {
     crate::with_pool(|| {
@@ -606,11 +685,14 @@ pub fn replay(capture: &FrameCapture, options: ReplayOptions) -> Result<ReplayRe
             draws: Vec::new(),
             dispatches: Vec::new(),
             timings: Vec::new(),
+            draw_ms: Vec::new(),
+            dispatch_ms: Vec::new(),
             open_pass: None,
             shown: None,
         })));
 
         let mut frames = Vec::new();
+        let mut pass_runs = Vec::new();
         for frame in 0..options.frames.max(1) {
             if frame > 0 {
                 let mut s = shared.lock();
@@ -624,6 +706,12 @@ pub fn replay(capture: &FrameCapture, options: ReplayOptions) -> Result<ReplayRe
             let started = std::time::Instant::now();
             run_frame(capture, &host, &shared)?;
             let after = crate::timing::totals();
+            {
+                let mut s = shared.lock();
+                s.flush_pass_timing();
+                let run = std::mem::take(&mut s.timings);
+                pass_runs.push(run);
+            }
             frames.push(FrameTime {
                 processing: started.elapsed(),
                 parts: std::array::from_fn(|i| after[i].saturating_sub(before[i])),
@@ -631,7 +719,6 @@ pub fn replay(capture: &FrameCapture, options: ReplayOptions) -> Result<ReplayRe
         }
 
         let mut s = shared.lock();
-        s.flush_pass_timing();
         s.metal.sync();
         if options.metal_capture.is_some() {
             s.metal.end_metal_capture();
@@ -642,10 +729,23 @@ pub fn replay(capture: &FrameCapture, options: ReplayOptions) -> Result<ReplayRe
             .shown
             .or_else(|| host.last_flip().and_then(|f| host.display_buffer(f.index)));
         let summary = s.metal.summary();
+        let ReplayState {
+            draws,
+            dispatches,
+            draw_ms,
+            dispatch_ms,
+            ..
+        } = &mut *s;
+        for d in draws.iter_mut() {
+            d.gpu_ms = draw_ms.get_mut(d.index).and_then(|v| median(v));
+        }
+        for d in dispatches.iter_mut() {
+            d.gpu_ms = dispatch_ms.get_mut(d.index).and_then(|v| median(v));
+        }
         Ok(ReplayResult {
             draws: std::mem::take(&mut s.draws),
             dispatches: std::mem::take(&mut s.dispatches),
-            timings: std::mem::take(&mut s.timings),
+            timings: median_passes(pass_runs),
             shown,
             targets,
             depths,

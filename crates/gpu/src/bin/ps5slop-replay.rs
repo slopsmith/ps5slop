@@ -96,6 +96,15 @@ enum Command {
         /// Run one untimed replay first to warm Metal's pipeline cache.
         #[arg(long)]
         warmup: bool,
+        /// Time each draw and dispatch alone, by program; each pays its own target loads and stores.
+        #[arg(long)]
+        draws: bool,
+        /// Rows to print per table with `--draws`.
+        #[arg(long, default_value_t = 30)]
+        top: usize,
+        /// Runs the frame this many times in one renderer and reports each pass's or draw's median.
+        #[arg(long, default_value_t = 1)]
+        runs: usize,
     },
     /// Measures the CPU time of processing and encoding the frame, as the GPU thread spends it.
     ///
@@ -439,7 +448,33 @@ fn run(cmd: Command) -> Result<(), String> {
             );
             println!("Metal, all runs: {}", res.summary);
         }
-        Command::Time { capture, warmup } => {
+        Command::Time {
+            capture,
+            warmup,
+            draws: true,
+            top,
+            runs,
+        } => {
+            let cap = FrameCapture::load(&capture)?;
+            if warmup {
+                let _ = replay(&cap, ReplayOptions::default())?;
+            }
+            let res = replay(
+                &cap,
+                ReplayOptions {
+                    time_draws: true,
+                    frames: runs,
+                    ..ReplayOptions::default()
+                },
+            )?;
+            print_draw_times(&res, top);
+        }
+        Command::Time {
+            capture,
+            warmup,
+            runs,
+            ..
+        } => {
             let cap = FrameCapture::load(&capture)?;
             if warmup {
                 let _ = replay(&cap, ReplayOptions::default())?;
@@ -448,6 +483,7 @@ fn run(cmd: Command) -> Result<(), String> {
                 &cap,
                 ReplayOptions {
                     time_passes: true,
+                    frames: runs,
                     ..ReplayOptions::default()
                 },
             )?;
@@ -513,4 +549,79 @@ fn run(cmd: Command) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn print_draw_times(res: &gpu::replay::ReplayResult, top: usize) {
+    struct Row {
+        programs: String,
+        count: usize,
+        total: f64,
+        max: f64,
+    }
+    let mut by_program: std::collections::HashMap<String, Row> = std::collections::HashMap::new();
+    let mut add = |programs: String, ms: f64| {
+        let row = by_program.entry(programs.clone()).or_insert(Row {
+            programs,
+            count: 0,
+            total: 0.0,
+            max: 0.0,
+        });
+        row.count += 1;
+        row.total += ms;
+        row.max = row.max.max(ms);
+    };
+    for d in &res.draws {
+        add(
+            format!("vs={:#x} ps={:#x}", d.vs, d.ps),
+            d.gpu_ms.unwrap_or(0.0),
+        );
+    }
+    for c in &res.dispatches {
+        add(format!("cs={:#x}", c.cs), c.gpu_ms.unwrap_or(0.0));
+    }
+    let total: f64 = by_program.values().map(|r| r.total).sum();
+    println!(
+        "{} draws and {} dispatches timed one by one: GPU {total:.2} ms",
+        res.draws.len(),
+        res.dispatches.len()
+    );
+
+    let mut rows: Vec<Row> = by_program.into_values().collect();
+    rows.sort_by(|a, b| b.total.total_cmp(&a.total));
+    println!("by program ({} distinct):", rows.len());
+    for r in rows.iter().take(top) {
+        println!(
+            "  {:>8.3} ms {:>5.1}%  {:>4}x  max {:>7.3} ms  {}",
+            r.total,
+            r.total * 100.0 / total.max(f64::MIN_POSITIVE),
+            r.count,
+            r.max,
+            r.programs
+        );
+    }
+
+    let mut draws: Vec<&gpu::replay::DrawRecord> = res.draws.iter().collect();
+    draws.sort_by(|a, b| b.gpu_ms.unwrap_or(0.0).total_cmp(&a.gpu_ms.unwrap_or(0.0)));
+    println!("slowest draws:");
+    for d in draws.iter().take(top) {
+        let targets: Vec<String> = d
+            .color_targets
+            .iter()
+            .map(|(a, w, h)| format!("{a:#x}({w}x{h})"))
+            .collect();
+        let depth = d
+            .depth_target
+            .map(|(a, w, h)| format!(" depth={a:#x}({w}x{h})"))
+            .unwrap_or_default();
+        println!(
+            "  draw #{:04} {:>7.3} ms  vs={:#x} ps={:#x} {} {:?} targets=[{}]{depth}",
+            d.index,
+            d.gpu_ms.unwrap_or(0.0),
+            d.vs,
+            d.ps,
+            gpu::replay::primitive_name(d.primitive),
+            d.draw,
+            targets.join(", ")
+        );
+    }
 }

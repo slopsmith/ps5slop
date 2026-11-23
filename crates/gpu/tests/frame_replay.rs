@@ -327,6 +327,44 @@ fn synthetic_frame_capture_and_replay_matches_expected_pixels() {
     let (_, _, rgba0) = read_rgba(tex0).unwrap();
     assert_eq!(&rgba0[..4], &[0, 255, 0, 255], "draw 0 painted solid green");
 
+    // Timing draws one by one times each draw and leaves the picture as it was.
+    let timed = replay(
+        &loaded,
+        ReplayOptions {
+            time_draws: true,
+            ..ReplayOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(timed.draws.len(), 2);
+    assert!(
+        timed
+            .draws
+            .iter()
+            .all(|d| d.gpu_ms.is_some_and(|ms| ms > 0.0))
+    );
+    let (_, timed_tex) = timed
+        .targets
+        .iter()
+        .find(|(a, _)| *a == target_addr)
+        .expect("color target present when timing draws");
+    let (_, _, timed_rgba) = read_rgba(timed_tex).unwrap();
+    assert_eq!(timed_rgba, rgba, "timing draws changes no pixel");
+
+    // Timing passes over several frames reports each pass once, not once a frame.
+    let repeated = replay(
+        &loaded,
+        ReplayOptions {
+            time_passes: true,
+            frames: 3,
+            ..ReplayOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(repeated.frames.len(), 3);
+    assert_eq!(repeated.timings.len(), full.timings.len());
+    assert!(repeated.timings.iter().all(|t| t.gpu_ms > 0.0));
+
     // 3. Verify golden PNG and PPM round-trip and mismatch detection.
     let tmp_ppm = std::env::temp_dir().join(format!(
         "ps5slop-frame-replay-test-{}.ppm",
