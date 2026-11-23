@@ -1,0 +1,73 @@
+[
+  {
+    "path": "/Games/Moonlit Orchard.pkg",
+    "kind": "pkg",
+    "title_id": "PPSA90001",
+    "name": "Moonlit Orchard",
+    "version": "01.002",
+    "icon": null,
+    "compat": { "status": "Playable", "note": "Made-up title for tests: plays start to end." },
+    "error": null
+  },
+  {
+    "path": "/Games/Rustbucket Rally",
+    "kind": "folder",
+    "title_id": "PPSA90002",
+    "name": "Rustbucket Rally",
+    "version": "01.000",
+    "icon": null,
+    "compat": { "status": "Ingame", "note": "Made-up title: races run, menus flicker." },
+    "error": null,
+    "future_field": { "nested": true }
+  },
+  {
+    "path": "/Games/Paper Lantern.pkg",
+    "kind": "pkg",
+    "title_id": "PPSA90003",
+    "name": "Paper Lantern",
+    "version": "01.010",
+    "icon": null,
+    "compat": { "status": "Perfect", "note": "Made-up title." },
+    "error": null
+  },
+  {
+    "path": "/Games/Tidepool Tactics",
+    "kind": "folder",
+    "title_id": "PPSA90004",
+    "name": "Tidepool Tactics",
+    "version": "02.001",
+    "icon": null,
+    "compat": { "status": "Menus", "note": "Made-up title: title screen only." },
+    "error": null
+  },
+  {
+    "path": "/Games/Glass Tower.pkg",
+    "kind": "pkg",
+    "title_id": "PPSA90005",
+    "name": "Glass Tower",
+    "version": "01.000",
+    "icon": null,
+    "compat": { "status": "Boots", "note": "Made-up title: logo, then a hang." },
+    "error": null
+  },
+  {
+    "path": "/Games/Untested Thing",
+    "kind": "folder",
+    "title_id": "PPSA90006",
+    "name": "Untested Thing",
+    "version": "01.000",
+    "icon": null,
+    "compat": null,
+    "error": null
+  },
+  {
+    "path": "/Games/broken.pkg",
+    "kind": "pkg",
+    "title_id": null,
+    "name": null,
+    "version": null,
+    "icon": null,
+    "compat": null,
+    "error": "not a PS4 or PS5 package"
+  }
+]

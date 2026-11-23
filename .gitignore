@@ -1,6 +1,7 @@
 /target
 /result*
 /.claude/worktrees
+/apps/macos/.build
 
 # Reference material: source trees, specs, notes. Never committed.
 /references
