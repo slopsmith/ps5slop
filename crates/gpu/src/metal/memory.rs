@@ -278,9 +278,9 @@ impl Metal {
     fn note_ranges(&mut self, ranges: Option<Vec<(u64, u64)>>) {
         match &ranges {
             Some(r) => self
-                .gpu_htiles
+                .gpu_checked
                 .retain(|&a| !r.iter().any(|&(s, e)| s < a + 4 && a < e)),
-            None => self.gpu_htiles.clear(),
+            None => self.gpu_checked.clear(),
         }
         self.written = match (
             std::mem::replace(&mut self.written, Written::Anything),

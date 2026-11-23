@@ -212,15 +212,36 @@ impl Metal {
         Some((t, format, false))
     }
 
+    /// Whether `check` was taken care of on the GPU: the word was checked there
+    /// already, or encoded work may write it and the check is encoded after it.
+    fn fast_clear_checked(
+        &mut self,
+        host: &dyn Host,
+        tex: &Texture,
+        slice: usize,
+        check: ColourCheck,
+    ) -> bool {
+        let (ColourCheck::Cmask { at, .. } | ColourCheck::Dcc { at, .. }) = check;
+        if self.gpu_checked.contains(&at) {
+            return true;
+        }
+        self.written.covers(at, 4)
+            && !diag::config().gpu.fast_clear_cpu
+            && self.fast_clear_on_gpu(host, tex, slice, check).is_some()
+    }
+
     /// Applies a colour fast clear made through `t`'s CMASK or DCC, judged by
     /// its first dword, which is then marked expanded (see gpu.md).
     pub(super) fn fast_clear(&mut self, host: &dyn Host, t: &ColorTarget, tex: &Texture) {
         let mut word = [0u8; 4];
-        if let Some((cmask, words)) = t.fast_clear {
+        let slice = Self::target_slice(t, tex);
+        if let Some((cmask, words)) = t.fast_clear
+            && !self.fast_clear_checked(host, tex, slice, ColourCheck::Cmask { at: cmask, words })
+        {
             self.settle_for(cmask, 4, "CMASK");
             if host.read(cmask, &mut word) && u32::from_le_bytes(word) & 0xF == 0 {
                 host.write(cmask, &(u32::from_le_bytes(word) | 0xF).to_le_bytes());
-                self.fill_raw(tex, Self::target_slice(t, tex), words);
+                self.fill_raw(tex, slice, words);
                 self.note(|| {
                     format!(
                         "      color {:#x} fast-cleared through CMASK at {cmask:#x} to {words:x?}",
@@ -230,6 +251,14 @@ impl Metal {
             }
         }
         if let Some(dcc) = t.dcc {
+            let check = ColourCheck::Dcc {
+                at: dcc,
+                words: t.fast_clear.map_or([0; 2], |f| f.1),
+                first: t.address,
+            };
+            if self.fast_clear_checked(host, tex, slice, check) {
+                return;
+            }
             self.settle_for(dcc, 4, "DCC");
             if !host.read(dcc, &mut word) {
                 return;
@@ -259,10 +288,10 @@ impl Metal {
                     u32::from_le_bytes(single[..4].try_into().unwrap()),
                     u32::from_le_bytes(single[4..].try_into().unwrap()),
                 ];
-                self.fill_raw(tex, Self::target_slice(t, tex), words);
+                self.fill_raw(tex, slice, words);
             } else if colour[0].is_nan() {
                 let words = t.fast_clear.map_or([0; 2], |f| f.1);
-                self.fill_raw(tex, Self::target_slice(t, tex), words);
+                self.fill_raw(tex, slice, words);
             } else {
                 self.fill_colour(t, tex, colour);
             }

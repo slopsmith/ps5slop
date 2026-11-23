@@ -99,7 +99,7 @@ impl Metal {
     pub(super) fn flush_and_wait(&mut self) {
         self.commit();
         self.written = Written::Nothing;
-        self.gpu_htiles.clear();
+        self.gpu_checked.clear();
         for (cb, committed, _) in std::mem::take(&mut self.inflight) {
             wait_reporting_hangs(&cb);
             self.account(&cb, committed, true);

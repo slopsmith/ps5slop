@@ -34,6 +34,7 @@ use gfx10::translate::{
 };
 
 mod bind;
+mod clears;
 mod commands;
 mod compute;
 mod detile;
@@ -51,6 +52,7 @@ mod targets;
 mod tests;
 
 use bind::*;
+use clears::*;
 use compute::*;
 use detile::*;
 use draw::*;
@@ -148,11 +150,14 @@ pub struct Metal {
     written: Written,
     /// Waits [`Metal::settle_for`] made, by what read the memory.
     settles: std::collections::BTreeMap<&'static str, u64>,
-    /// HTILE words checked on the GPU since work that may write them was
+    /// HTILE, CMASK and DCC words checked on the GPU since work that may write them was
     /// last encoded or waited for: later draws find them expanded.
-    gpu_htiles: std::collections::HashSet<u64>,
+    gpu_checked: std::collections::HashSet<u64>,
     /// HTILE checks made on the GPU.
     htile_checks: u64,
+    colour_checks: u64,
+    clear_helpers: Option<ClearHelpers>,
+    clear_pipelines: HashMap<(usize, bool), Retained<RenderPipeline>>,
     htile_helpers: Option<HtileHelpers>,
     indirect_sizes: Option<Retained<ComputePipeline>>,
     /// By colour formats, depth format and stencil.
@@ -296,8 +301,11 @@ impl Metal {
             reported_stuck: None,
             written: Written::Nothing,
             settles: Default::default(),
-            gpu_htiles: Default::default(),
+            gpu_checked: Default::default(),
             htile_checks: 0,
+            colour_checks: 0,
+            clear_helpers: None,
+            clear_pipelines: HashMap::new(),
             htile_helpers: None,
             indirect_sizes: None,
             htile_pipelines: HashMap::new(),
@@ -704,7 +712,7 @@ impl Backend for Metal {
             self.image_checks[0], self.image_checks[1], self.image_checks[2]
         );
         format!(
-            "{} drawn, {} dispatched, {} skipped {reasons:?}{misses}, {} writes in GPU order, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms); waits to read memory programs wrote {:?}, {} HTILE checks on the GPU",
+            "{} drawn, {} dispatched, {} skipped {reasons:?}{misses}, {} writes in GPU order, {} command buffers failed, {} dispatches gave up loops; caches: {} images ({} MiB), {} targets ({} MiB), {} depths, {} volumes, {} swizzle views, {} windows, {} pipelines, {} compiles queued; compile waits: {} draws ({} ms), {} dispatches ({} ms); waits to read memory programs wrote {:?}, {} HTILE and {} colour fast-clear checks on the GPU",
             self.draws,
             self.dispatches,
             self.skipped,
@@ -726,7 +734,8 @@ impl Backend for Metal {
             self.compile_waits[1].0,
             self.compile_waits[1].1.as_millis(),
             self.settles,
-            self.htile_checks
+            self.htile_checks,
+            self.colour_checks
         )
     }
 

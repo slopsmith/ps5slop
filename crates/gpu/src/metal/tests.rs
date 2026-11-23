@@ -833,6 +833,98 @@ fn first_texel(metal: &mut Metal, tex: &Texture) -> [u8; 4] {
     out
 }
 
+fn texels(tex: &Texture, bpp: usize) -> Vec<u8> {
+    let (w, h) = (tex.width(), tex.height());
+    let mut out = vec![0u8; w * h * bpp];
+    unsafe {
+        tex.getBytes_bytesPerRow_fromRegion_mipmapLevel(
+            NonNull::new_unchecked(out.as_mut_ptr().cast()),
+            w * bpp,
+            MTLRegion {
+                origin: MTLOrigin { x: 0, y: 0, z: 0 },
+                size: MTLSize {
+                    width: w,
+                    height: h,
+                    depth: 1,
+                },
+            },
+            0,
+        );
+    }
+    out
+}
+
+fn shared_target(metal: &Metal, format: MTLPixelFormat) -> Retained<Texture> {
+    let d = unsafe {
+        MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+            format, 64, 32, false,
+        )
+    };
+    d.setStorageMode(MTLStorageMode::Shared);
+    d.setUsage(
+        MTLTextureUsage::RenderTarget
+            | MTLTextureUsage::ShaderRead
+            | MTLTextureUsage::PixelFormatView,
+    );
+    metal.device.newTextureWithDescriptor(&d).unwrap()
+}
+
+#[test]
+fn colour_fast_clears_checked_on_the_gpu_fill_as_the_cpu_would() {
+    let Some(mut metal) = Metal::new() else {
+        return;
+    };
+    let mem = Mem::new(1 << 20);
+    let read = |a: u64| {
+        let mut b = [0u8; 4];
+        mem.read(a, &mut b);
+        u32::from_le_bytes(b)
+    };
+    let mut check = |format, bpp, word: u32, single: [u8; 8], dcc: bool| {
+        mem.write(0x1000, &word.to_le_bytes());
+        mem.write(0x2000, &single);
+        let tex = shared_target(&metal, format);
+        metal.fill_raw(&tex, 0, [0x5555_5555; 2]);
+        let words = [0x0403_0201, 0x0807_0605];
+        let c = if dcc {
+            ColourCheck::Dcc {
+                at: 0x1000,
+                words,
+                first: 0x2000,
+            }
+        } else {
+            ColourCheck::Cmask { at: 0x1000, words }
+        };
+        metal.fast_clear_on_gpu(&mem, &tex, 0, c).expect("encoded");
+        metal.flush_and_wait();
+        let t = texels(&tex, bpp);
+        assert!(t.chunks(bpp).all(|x| x == &t[..bpp]));
+        (t[..bpp].to_vec(), read(0x1000))
+    };
+    let rgba8 = MTLPixelFormat::RGBA8Unorm;
+    assert_eq!(
+        check(rgba8, 4, 0x30, [0; 8], false),
+        (vec![1, 2, 3, 4], 0x3f)
+    );
+    assert_eq!(check(rgba8, 4, 0x35, [0; 8], false), (vec![0x55; 4], 0x35));
+    let half = MTLPixelFormat::RGBA16Float;
+    let ones = [0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c, 0x00, 0x3c].to_vec();
+    assert_eq!(check(half, 8, 0xC0C0_C0C0, [0; 8], true), (ones, u32::MAX));
+    let single = [9, 8, 7, 6, 5, 4, 3, 2];
+    assert_eq!(
+        check(half, 8, 0x1010_1010, single, true),
+        (single.to_vec(), u32::MAX)
+    );
+    assert_eq!(
+        check(half, 8, 0x2020_2020, [0; 8], true),
+        ((1..=8).collect(), u32::MAX)
+    );
+    assert_eq!(
+        check(half, 8, 0x1234_5678, [0; 8], true),
+        (vec![0x55; 8], 0x1234_5678)
+    );
+}
+
 #[test]
 fn a_raw_fill_reaches_every_texel_of_a_tall_target() {
     let Some(mut metal) = Metal::new() else {

@@ -24,7 +24,7 @@ impl Metal {
         let slice_bytes =
             (w.div_ceil(8) as u64 * h.div_ceil(8) as u64 * 4).next_multiple_of(64 << 10);
         let at = base + d.slice as u64 * slice_bytes;
-        if self.gpu_htiles.contains(&at) {
+        if self.gpu_checked.contains(&at) {
             return Htile::Kept;
         }
         if self.written.covers(at, 4) && !diag::config().gpu.htile_cpu {
@@ -153,7 +153,7 @@ impl Metal {
             );
         }
         enc.setDepthStencilState(Some(&helpers.states[2]));
-        self.gpu_htiles.insert(at);
+        self.gpu_checked.insert(at);
         self.htile_checks += 1;
         self.note(|| {
             format!(

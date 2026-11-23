@@ -142,6 +142,8 @@ pub struct Gpu {
     pub compile_wait: bool,
     pub compile_threads: Option<usize>,
     pub htile_cpu: bool,
+    /// Waits for and reads colour fast-clear words (CMASK, DCC) on the CPU.
+    pub fast_clear_cpu: bool,
     pub queued_writes: bool,
     pub sync_releases: bool,
     pub sync_dispatches: bool,
@@ -243,6 +245,7 @@ impl Config {
                 compile_wait: flag("PS5SLOP_COMPILE_WAIT"),
                 compile_threads: v.number("PS5SLOP_COMPILE_THREADS"),
                 htile_cpu: flag("PS5SLOP_GPU_HTILE_CPU"),
+                fast_clear_cpu: flag("PS5SLOP_GPU_FAST_CLEAR_CPU"),
                 queued_writes: flag("PS5SLOP_GPU_QUEUED_WRITES"),
                 sync_releases: flag("PS5SLOP_GPU_SYNC_RELEASES"),
                 sync_dispatches: flag("PS5SLOP_GPU_SYNC_DISPATCHES"),
