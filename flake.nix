@@ -20,7 +20,10 @@
           pkgs.lld
           pkgs.nasm
           pkgs.llvm
+          pkgs.pkg-config
         ];
+        buildInputs = [ pkgs.ffmpeg-headless ];
+        LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
       };
     };
 }

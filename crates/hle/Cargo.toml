@@ -17,3 +17,4 @@ memory = { path = "../memory" }
 x86 = { path = "../x86" }
 libc = "0.2"
 freetype-rs = { version = "0.38", features = ["bundled"] }
+ffmpeg-next = { version = "9.1", default-features = false, features = ["codec", "format"] }

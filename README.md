@@ -8,7 +8,7 @@ You supply your own games, dumped from your own console. Nothing from Sony is pa
 
 ## Setup
 
-`nix develop` gives the toolchain: Rust with a matching clippy, and LLVM's `lld` for building test programs. `cargo run` and `cargo test` sign each binary ad hoc with the hypervisor entitlement (`scripts/hv-run.sh`), which the JIT's VM needs.
+`nix develop` gives the toolchain: Rust with a matching clippy, LLVM's `lld` for building test programs, and FFmpeg's libraries (Ajm's MP3 decoding). `cargo run` and `cargo test` sign each binary ad hoc with the hypervisor entitlement (`scripts/hv-run.sh`), which the JIT's VM needs.
 
 ## Running games
 

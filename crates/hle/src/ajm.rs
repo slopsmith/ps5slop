@@ -1,9 +1,10 @@
 //! libSceAjm batches: jobs are appended to the title's batch buffer as the
 //! library would, and batches finish when they start. MP3 (codec 0) streams
-//! are split into whole frames and each frame yields its samples as silence;
-//! other codecs consume all input and write silence. Layouts and sizes follow
+//! are split into whole frames and decoded by FFmpeg ([`mp3`]); other codecs
+//! consume all input and write silence. Layouts and sizes follow
 //! SharpEmu-mac's `AjmExports.cs` (GPL-2.0-or-later).
 
+mod mp3;
 mod mpeg;
 
 use std::collections::HashMap;
@@ -48,27 +49,26 @@ struct Instance {
     /// Input bytes of a frame not yet complete.
     pending: Vec<u8>,
     decoded: u64,
+    decoder: mp3::Decoder,
 }
 
 impl Instance {
-    /// Bytes per output sample: instance flags bits 7 to 9 pick S16, S32 or
-    /// float (SharpEmu-mac's reading).
-    fn sample_bytes(&self) -> usize {
+    /// Instance flags bits 7 to 9 pick S16, S32 or float (SharpEmu-mac's reading).
+    fn format(&self) -> mp3::Format {
         match (self.flags >> 7) & 7 {
-            1 | 2 => 4,
-            _ => 2,
+            1 => mp3::Format::S32,
+            2 => mp3::Format::F32,
+            _ => mp3::Format::S16,
         }
     }
 }
 
 struct Decoded {
     consumed: usize,
-    written: usize,
+    pcm: Vec<u8>,
     frames: u32,
 }
 
-/// Splits `input` (after what an earlier job left pending) into whole frames
-/// and writes each frame's samples as silence while `out_size` has room.
 /// Input is consumed whole unless the output fills first; an incomplete last
 /// frame waits for the next job.
 fn decode_mp3(inst: &mut Instance, input: &[u8], out_size: usize) -> Decoded {
@@ -76,8 +76,9 @@ fn decode_mp3(inst: &mut Instance, input: &[u8], out_size: usize) -> Decoded {
     let mut data = std::mem::take(&mut inst.pending);
     data.extend_from_slice(input);
     let mut at = 0;
-    let mut written = 0;
+    let mut pcm = Vec::new();
     let mut frames = 0;
+    let format = inst.format();
     let mut full = false;
     while at + 4 <= data.len() {
         let Some(h) = mpeg::parse(&data[at..]) else {
@@ -87,13 +88,14 @@ fn decode_mp3(inst: &mut Instance, input: &[u8], out_size: usize) -> Decoded {
         if at + h.len > data.len() {
             break;
         }
-        let bytes = h.samples * h.channels * inst.sample_bytes();
-        if written + bytes > out_size {
+        if pcm.len() + h.samples * h.channels * format.bytes() > out_size {
             full = true;
             break;
         }
+        let frame = &data[at..at + h.len];
+        inst.decoder
+            .frame(frame, h.samples, h.channels, format, &mut pcm);
         at += h.len;
-        written += bytes;
         frames += 1;
         inst.decoded += h.samples as u64;
     }
@@ -109,12 +111,12 @@ fn decode_mp3(inst: &mut Instance, input: &[u8], out_size: usize) -> Decoded {
     };
     Decoded {
         consumed,
-        written,
+        pcm,
         frames,
     }
 }
 
-/// Placeholders: no audio is decoded.
+/// MP3 is decoded; other codecs are placeholders.
 pub static STUBS: &[Function] = &[
     f("sceAjmInstanceCreate", instance_create),
     f("sceAjmBatchInitialize", batch_initialize),
@@ -263,7 +265,7 @@ fn job_decode(env: &mut Env) -> Result<Outcome, CallError> {
     zero(env, output, out_size)?;
     let mut d = Decoded {
         consumed: in_size.min(i32::MAX as u64) as usize,
-        written: 0,
+        pcm: Vec::new(),
         frames: u32::from(in_size != 0 || out_size != 0),
     };
     let mut decoded = 0;
@@ -275,12 +277,14 @@ fn job_decode(env: &mut Env) -> Result<Outcome, CallError> {
         let inst = instances.entry(instance).or_default();
         d = decode_mp3(inst, &bytes, out_size as usize);
         decoded = inst.decoded;
+        drop(instances);
+        env.mem.write(output, &d.pcm)?;
     }
     if result != 0 {
         let mut b = [0u8; DECODE_RESULT_BYTES];
         b[0..4].copy_from_slice(&status(u64::from(instance)).to_le_bytes());
         b[8..12].copy_from_slice(&(d.consumed as i32).to_le_bytes());
-        b[12..16].copy_from_slice(&(d.written as i32).to_le_bytes());
+        b[12..16].copy_from_slice(&(d.pcm.len() as i32).to_le_bytes());
         b[16..24].copy_from_slice(&decoded.to_le_bytes());
         b[24..28].copy_from_slice(&d.frames.to_le_bytes());
         env.mem.write(result, &b)?;
@@ -348,9 +352,9 @@ mod tests {
         let s = stream(10);
         let mut inst = Instance::default();
         let a = decode_mp3(&mut inst, &s[..700], 0x2400);
-        assert_eq!((a.consumed, a.written, a.frames), (700, 2 * 2304, 2));
+        assert_eq!((a.consumed, a.pcm.len(), a.frames), (700, 2 * 2304, 2));
         let b = decode_mp3(&mut inst, &s[700..1400], 0x2400);
-        assert_eq!((b.consumed, b.written, b.frames), (700, 3 * 2304, 3));
+        assert_eq!((b.consumed, b.pcm.len(), b.frames), (700, 3 * 2304, 3));
         let c = decode_mp3(&mut inst, &s[1400..], 0x2400);
         assert_eq!((c.consumed, c.frames), (760, 4));
         assert_eq!(inst.decoded, 9 * 1152);
@@ -362,7 +366,55 @@ mod tests {
         let s = stream(4);
         let mut inst = Instance::default();
         let a = decode_mp3(&mut inst, &s, 2 * 2304);
-        assert_eq!((a.consumed, a.written, a.frames), (480, 4608, 2));
+        assert_eq!((a.consumed, a.pcm.len(), a.frames), (480, 4608, 2));
         assert!(inst.pending.is_empty());
+    }
+
+    #[test]
+    fn decodes_a_sine_in_jobs() {
+        let mp3 = include_bytes!("ajm/testdata/sine-1khz.mp3");
+        let mut inst = Instance::default();
+        let mut pcm = Vec::new();
+        for job in mp3.chunks(960) {
+            let d = decode_mp3(&mut inst, job, 0x2400);
+            assert_eq!(d.consumed, job.len());
+            pcm.extend_from_slice(&d.pcm);
+        }
+        assert_eq!(inst.decoded, 10 * 1152);
+        let s: Vec<i16> = pcm
+            .chunks(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        assert_eq!(s.len(), 10 * 1152);
+        let tail = &s[2 * 1152..8 * 1152];
+        let rms =
+            (tail.iter().map(|&v| f64::from(v).powi(2)).sum::<f64>() / tail.len() as f64).sqrt();
+        assert!(rms > 1000.0, "decoded audio is near silent (rms {rms})");
+        let crossings = tail.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count();
+        let hz = crossings as f64 / 2.0 / (tail.len() as f64 / 48000.0);
+        assert!(
+            (hz - 1000.0).abs() < 20.0,
+            "decoded tone has the wrong pitch ({hz} Hz)"
+        );
+    }
+
+    #[test]
+    fn float_output() {
+        let mp3 = include_bytes!("ajm/testdata/sine-1khz.mp3");
+        let mut inst = Instance {
+            flags: 2 << 7,
+            ..Default::default()
+        };
+        let d = decode_mp3(&mut inst, mp3, 1 << 20);
+        assert_eq!(d.pcm.len(), 10 * 1152 * 4);
+        let peak = d
+            .pcm
+            .chunks(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()).abs())
+            .fold(0.0, f32::max);
+        assert!(
+            peak > 0.05 && peak <= 1.0,
+            "float output is silent or out of range (peak {peak})"
+        );
     }
 }

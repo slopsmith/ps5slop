@@ -704,3 +704,8 @@ Windowed mode adds `F9` (`.ps5frame`) and `F10` (Metal `.gputrace`) hotkeys writ
 ## 2026-11-23: User docs in docs/user, one list of environment variables
 
 Docs for people running games live in `docs/user/` (`running.md`, `environment.md`); `docs/` stays the developer and agent docs. Every environment variable, `PS5SLOP_*` and otherwise, is listed in `docs/user/environment.md`, which replaces the table in debugging.md. Reason: vic asked for one place listing all environment variables as their number grows, and for user-facing docs apart from the agents' design notes.
+
+## 2026-11-23: Ajm MP3 through FFmpeg
+
+`sceAjmBatchJobDecode` on an MP3 instance decodes each frame with libavcodec through the `ffmpeg-next` crate, linked to the dev shell's `ffmpeg-headless`. Reason: vic chose FFmpeg; GTA V plays all its game audio as MP3 through Ajm. Sizes still come from the frame headers, so a frame FFmpeg cannot decode is silence of the right length and the results the game reads do not depend on the decoder. Verified by unit tests on our own 1 kHz sine (pitch, level, S16 and float output); not listened to in game.
+
