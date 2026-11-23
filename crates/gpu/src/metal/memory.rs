@@ -42,12 +42,12 @@ pub(super) fn guest_bytes(host: &dyn Host, base: u64, len: u64) -> Option<&[u8]>
 /// A 64-bit digest of `bytes`, to tell whether guest memory changed.
 pub(super) fn digest(bytes: &[u8]) -> u64 {
     const K: u64 = 0x9E37_79B9_7F4A_7C15;
-    let (chunks, rest) = bytes.as_chunks::<32>();
-    let mut lanes = [1u64, 2, 3, 4];
+    // Sixteen independent lanes keep the multipliers busy: about memory speed.
+    let (chunks, rest) = bytes.as_chunks::<128>();
+    let mut lanes: [u64; 16] = std::array::from_fn(|i| i as u64 + 1);
     for c in chunks {
-        for (i, lane) in lanes.iter_mut().enumerate() {
-            let w = u64::from_le_bytes(c[i * 8..i * 8 + 8].try_into().unwrap());
-            *lane = (lane.rotate_left(23) ^ w).wrapping_mul(K);
+        for (lane, w) in lanes.iter_mut().zip(c.as_chunks::<8>().0) {
+            *lane = (lane.rotate_left(23) ^ u64::from_le_bytes(*w)).wrapping_mul(K);
         }
     }
     let mut h = bytes.len() as u64;
