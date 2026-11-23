@@ -30,8 +30,8 @@ struct Context {
     grain: u32,
     depth: u32,
     period: Duration,
-    /// When the grains queued so far have played out.
-    next: Instant,
+    /// When the grains queued so far have played out; `None` before the first.
+    next: Option<Instant>,
     /// An `Advance` played a grain that its `Push` has not waited for.
     advanced: bool,
     /// The context's queue in the host mixer.
@@ -185,7 +185,7 @@ fn context_create(env: &mut Env) -> Result<Outcome, CallError> {
             grain,
             depth,
             period: Duration::from_secs_f64(grain as f64 / RATE as f64),
-            next: Instant::now(),
+            next: None,
             advanced: false,
             queue,
             wav,
@@ -433,8 +433,18 @@ fn play_grain(env: &Env, handle: u64) -> Result<Option<(Instant, u64)>, CallErro
     let Some(c) = contexts.get_mut(&handle) else {
         return Ok(None);
     };
-    c.next = c.next.max(Instant::now()) + c.period;
-    let free = c.next - c.period * (c.depth - 1);
+    let now = Instant::now();
+    let next = c.next.unwrap_or(now);
+    if now > next + c.period {
+        diag::problems::record(
+            diag::problems::Kind::AudioLate,
+            "more than one grain late (a dropout on a device)",
+            format!("AudioOut2 context {handle} ({} frames)", c.grain),
+        );
+    }
+    let next = next.max(now) + c.period;
+    c.next = Some(next);
+    let free = next - c.period * (c.depth - 1);
     if let Some(w) = &mut c.wav
         && let Err(e) = w.append(&stereo)
     {
@@ -471,9 +481,10 @@ fn push(env: &mut Env) -> Result<Outcome, CallError> {
         .map(|c| std::mem::take(&mut c.advanced));
     let slot = match advanced {
         None => return ret(0),
-        Some(true) => lock(&env.kernel.audio.out2.contexts)
-            .get(&handle)
-            .map(|c| (c.next - c.period * (c.depth - 1), c.queue)),
+        Some(true) => lock(&env.kernel.audio.out2.contexts).get(&handle).map(|c| {
+            let next = c.next.unwrap_or_else(Instant::now);
+            (next - c.period * (c.depth - 1), c.queue)
+        }),
         Some(false) => play_grain(env, handle)?,
     };
     if blocking && let Some((free, queue)) = slot {
@@ -488,7 +499,9 @@ fn queue_level(env: &mut Env) -> Result<Outcome, CallError> {
     let (handle, queued_at, free_at) = (env.arg(0), env.arg(1), env.arg(2));
     let (queued, depth) = match lock(&env.kernel.audio.out2.contexts).get(&handle) {
         Some(c) => {
-            let ahead = c.next.saturating_duration_since(Instant::now());
+            let ahead = c.next.map_or(Duration::ZERO, |n| {
+                n.saturating_duration_since(Instant::now())
+            });
             let n = ahead.as_nanos().div_ceil(c.period.as_nanos().max(1)) as u32;
             (n.min(c.depth), c.depth)
         }
@@ -529,7 +542,7 @@ impl Out2 {
                     grain,
                     depth,
                     period,
-                    next: Instant::now(),
+                    next: None,
                     advanced,
                     queue,
                     wav: None,

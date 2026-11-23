@@ -49,6 +49,8 @@ A silent microphone (`audio/input.rs`): `sceAudioInOpen(user, type, index, grain
 
 GTA V decodes all its game audio this way: about 16 MP3 instances, 80 kbit/s mono 48 kHz streams, 960-byte jobs (exactly four 240-byte frames) with room for four frames of 16-bit samples (0x2400 bytes). Until 2026-11-22 every job reported zero bytes written and zero samples; from then until 2026-11-23 the samples were silence. Whether GTA V now plays sound has not been listened to. That did not cause the blast wall below ([gpu.md](gpu.md#gta-vs-blast-wall-2026-11-22)); whether RAGE's audio timing depends on it elsewhere is not known.
 
+**Late buffers.** An AudioOut buffer or AudioOut2 grain submitted more than one buffer after the previous one should have finished playing is counted in the problem report ("audio buffers submitted late", per port or context). On a device each one is a dropout. GTA V's logo movie, headless, 2026-11-23: 3 late grains in 45 s, so its crackle is not late submission; its movie port has sharp jumps that repeat about every 1,280 samples, and `PS5SLOP_JIT_VERIFY` found no translation differences. Not solved.
+
 ## Minecraft
 
 Minecraft (PPSA17221 v26.10) plays through FMOD (`libfmod.prx`, shipped with the game) and AudioOut2: one context (queue depth 1, 256-frame grains), one 8-channel float port at 48 kHz; the music and effects land in front left and right only. Its sounds are FSB5 banks (4,356 FMOD ADPCM, 70 PCM16) and its music is Ogg Vorbis, so FMOD decodes everything itself and Ajm is only initialised. The one thing it needed was a successful `sceAcmContextCreate` (above).

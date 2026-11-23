@@ -70,8 +70,9 @@ struct Port {
     channels: usize,
     float: bool,
     frames: usize,
+    freq: u32,
     period: Duration,
-    next: Instant,
+    next: Option<Instant>,
     volume: [f32; 8],
     wav: Option<wav::Wav>,
 }
@@ -296,8 +297,9 @@ fn open(env: &mut Env) -> Result<Outcome, CallError> {
             channels,
             float: matches!(format, 3 | 4 | 5 | 7),
             frames: frames as usize,
+            freq,
             period: Duration::from_secs_f64(frames as f64 / freq as f64),
-            next: Instant::now(),
+            next: None,
             volume: [1.0; 8],
             wav,
         },
@@ -314,8 +316,19 @@ fn submit(env: &Env, handle: u64, at: u64) -> Result<Result<Instant, u64>, CallE
     let Some(p) = ports.get_mut(&handle) else {
         return Ok(Err(ERROR_INVALID_PORT));
     };
-    let wake = p.next;
-    p.next = wake.max(Instant::now()) + p.period;
+    let now = Instant::now();
+    let wake = p.next.unwrap_or(now);
+    if now > wake + p.period {
+        diag::problems::record(
+            diag::problems::Kind::AudioLate,
+            "more than one buffer late (a dropout on a device)",
+            format!(
+                "AudioOut port {handle} ({} frames at {} Hz)",
+                p.frames, p.freq
+            ),
+        );
+    }
+    p.next = Some(wake.max(now) + p.period);
     if at == 0 {
         return Ok(Ok(wake));
     }
@@ -477,8 +490,9 @@ impl Audio {
                 channels,
                 float,
                 frames,
+                freq: (frames as f64 / period.as_secs_f64()).round() as u32,
                 period,
-                next: Instant::now(),
+                next: None,
                 volume,
                 wav: None,
             };

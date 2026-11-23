@@ -23,6 +23,7 @@ pub enum Kind {
     WaitTimeout,
     UnimplementedHle,
     JitFallback,
+    AudioLate,
 }
 
 impl Kind {
@@ -38,6 +39,7 @@ impl Kind {
             Kind::WaitTimeout => "wait timeouts",
             Kind::UnimplementedHle => "unimplemented and placeholder HLE calls",
             Kind::JitFallback => "JIT interpreter fallbacks",
+            Kind::AudioLate => "audio buffers submitted late",
         }
     }
 
@@ -52,6 +54,7 @@ impl Kind {
                 | Kind::WaitTimeout
                 | Kind::UnimplementedHle
                 | Kind::JitFallback
+                | Kind::AudioLate
         )
     }
 }
