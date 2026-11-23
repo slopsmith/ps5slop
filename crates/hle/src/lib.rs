@@ -42,6 +42,7 @@ mod process;
 mod pthread;
 mod rtld;
 mod savedata;
+mod savedata_memory;
 mod sem;
 mod services;
 mod snapshot;
@@ -643,6 +644,7 @@ fn functions() -> impl Iterator<Item = &'static Function> {
         .chain(net::FUNCTIONS)
         .chain(stubs::FUNCTIONS)
         .chain(savedata::FUNCTIONS)
+        .chain(savedata_memory::FUNCTIONS)
         .chain(ngs2::FUNCTIONS)
         .chain(audio::FUNCTIONS)
         .chain(audio::OUT2_FUNCTIONS)

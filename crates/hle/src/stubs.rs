@@ -364,10 +364,6 @@ pub static STUBS: &[Function] = &[
     zero("libSceGameUpdate", "sceGameUpdateTerminate"),
     zero("libScePlayGo", "scePlayGoClose"),
     zero("libScePlayGo", "scePlayGoTerminate"),
-    zero("libSceSaveData_native", "sceSaveDataSetupSaveDataMemory2"),
-    zero("libSceSaveData_native", "sceSaveDataGetSaveDataMemory2"),
-    zero("libSceSaveData_native", "sceSaveDataSetSaveDataMemory2"),
-    zero("libSceSaveData_native", "sceSaveDataSyncSaveDataMemory"),
     zero(
         "libSceJson2",
         "_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE",
