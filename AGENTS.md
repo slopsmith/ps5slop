@@ -19,7 +19,7 @@ ps5slop is a PS5 compatibility layer (HLE, Wine-style) for Apple Silicon Macs, w
 - Version control is jj (colocated with git). Small, focused changes with Conventional Commits descriptions. Edit the earlier change instead of adding fix-up changes. Do not push or add remotes; vic does that.
 - Local alias for the check: `jj config set --repo aliases.check '["util", "exec", "--", "scripts/check-forbidden"]'`.
 - When a title's status changes, update its row in [COMPATIBILITY.md](COMPATIBILITY.md) (status scale and rules are in the file).
-- Docs live in `docs/`, one area per file. Update the doc when a decision changes, and log decisions in [docs/decisions.md](docs/decisions.md) with the date and the reason.
+- Docs live in `docs/`, one area per file. User-facing docs (running games, controls, captures) live in `docs/user/`. A new environment variable goes into `diag::Config` and gets a row in `docs/user/environment.md`. Update the doc when a decision changes, and log decisions in [docs/decisions.md](docs/decisions.md) with the date and the reason.
 - Be honest in docs: say what is verified (and how), what is assumed and what is unknown.
 - Measure before optimising. Test against an oracle wherever one exists (an interpreter, a public test suite, differential testing, our own test programs on vic's PS4).
 - There is no PS5 to measure on. Anything about PS5 behaviour that rests only on documentation or other emulators is marked unverified.

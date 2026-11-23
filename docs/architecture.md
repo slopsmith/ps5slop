@@ -31,6 +31,7 @@ Status: commercial 2D and 3D PS5 titles boot and render through the HVF JIT, HLE
 - [audio.md](audio.md): AudioOut, NGS2 and the host's output device.
 - [test-targets.md](test-targets.md): test programs, commercial targets and the oracles we have without a PS5.
 - [debugging.md](debugging.md): logging, debug switches, the control socket and write watchpoints.
+- [user/](user/): docs for people running games: [running.md](user/running.md) and every environment variable in [environment.md](user/environment.md).
 - [input.md](input.md): controllers, keyboard, vibration, light bar and trigger effects.
 - [savestates.md](savestates.md): save states: what a save keeps, how threads stop for it, the file format and its limits.
 - [references.md](references.md): prior art, licenses, and what we read.

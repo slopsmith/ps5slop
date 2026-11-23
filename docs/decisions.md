@@ -700,3 +700,7 @@ Windowed mode adds `F9` (`.ps5frame`) and `F10` (Metal `.gputrace`) hotkeys writ
 - **Cheaper CPU work per draw:** image digests in sixteen lanes, fast-clear fills from one strip of up to 1 MiB, and targets a buffer store overwrites found by address instead of a scan of every target.
 - Measured offline with the new `ps5slop-replay bench` and in a headless run from the gta-perf state; see [gpu.md](gpu.md#encoding-cost-on-the-gpu-thread-2026-11-23).
 
+
+## 2026-11-23: User docs in docs/user, one list of environment variables
+
+Docs for people running games live in `docs/user/` (`running.md`, `environment.md`); `docs/` stays the developer and agent docs. Every environment variable, `PS5SLOP_*` and otherwise, is listed in `docs/user/environment.md`, which replaces the table in debugging.md. Reason: vic asked for one place listing all environment variables as their number grows, and for user-facing docs apart from the agents' design notes.

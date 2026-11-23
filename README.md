@@ -2,7 +2,7 @@
 
 A PS5 compatibility layer for Apple Silicon Macs. It runs a game's own x86-64 code, implements the Orbis kernel interface and system libraries in the host (HLE, the way Wine does it for Windows), and translates the GPU's command stream to Metal.
 
-Our own small test programs run under the interpreter. No game or homebrew app does yet.
+Some commercial games run, to different degrees: see [COMPATIBILITY.md](COMPATIBILITY.md).
 
 You supply your own games, dumped from your own console. Nothing from Sony is part of this project. See [docs/legal.md](docs/legal.md).
 
@@ -10,7 +10,11 @@ You supply your own games, dumped from your own console. Nothing from Sony is pa
 
 `nix develop` gives the toolchain: Rust with a matching clippy, and LLVM's `lld` for building test programs. `cargo run` and `cargo test` sign each binary ad hoc with the hypervisor entitlement (`scripts/hv-run.sh`), which the JIT's VM needs.
 
-## Tools
+## Running games
+
+See [docs/user/running.md](docs/user/running.md): starting a game, controls, save states, captures and reporting problems. Every environment variable is in [docs/user/environment.md](docs/user/environment.md).
+
+## Developer tools
 
 ```sh
 cargo run --release -p pkg -- info GAME.pkg
@@ -22,25 +26,24 @@ scripts/build-test-programs   # our own test programs -> target/test-programs/
 scripts/run-test-programs     # build, run under ps5slop, compare with expected output
 scripts/fetch-references && cargo run --release -p asmtest   # FEX's x86-64 tests against the interpreter
 cargo run --release -p ps5slop -- run target/test-programs/hello.elf
-cargo run --release -p ps5slop -- run games/TITLE   # an app folder; opens a window for VideoOut
-cargo run --release -p ps5slop -- run --headless GAME.pkg   # a package, read in place (--passcode for PS4 ones)
 cargo run --release -p pkg -- ls GAME.pkg   # list a package's app files
 cargo run --release -p pkg -- cat GAME.pkg data/x.xml   # one app file to stdout
-scripts/fetch-fonts   # open-source stand-ins for system fonts (needed by Astro Bot)
-cargo run --release -p ps5slop -- run --headless --dump-frame out.ppm --after 10 games/TITLE
-cargo run --release -p ps5slop -- run --interpreter games/TITLE   # no JIT; by default guest code is translated and runs in a Hypervisor.framework VM
-cargo run --release -p ps5slop -- run --headless --load-state X.state games/TITLE   # go on from a save state written by the control socket's `save X.state`
 PS5SLOP_JIT_VERIFY=1 RUST_LOG=jit::stats=info cargo run ...   # check the JIT against the interpreter / see what it leaves to the interpreter
 ```
 
-A DualShock 4, DualSense or other controller macOS knows (through its GameController framework) works as the pad, over USB or Bluetooth (pair it in System Settings first), and can be connected while a title runs. Vibration reaches it; the light bar works on a DualSense or DualShock 4 and trigger effects on a DualSense ([input](docs/input.md)). The keyboard works too, and the two combine: arrow keys for the D-pad, X Cross, C Circle, Z Square, V Triangle, Q/E for L1/R1, 1/3 for L2/R2, Enter for Options, T for the touchpad button; F9 captures a GPU frame (`.ps5frame`) and F10 captures a Metal `.gputrace` ([debugging](docs/debugging.md#gpu-frame-capture-and-replay)). Closing the window ends the guest. The window's title shows the game's name, version and title id, its frame rate (flips a second) and frame size, the guest's instruction rate in translated code and in the interpreter, and which controller is in use.
-
 ## Docs
 
+For users, in [docs/user/](docs/user/):
+
+- [Running games](docs/user/running.md)
+- [Environment variables](docs/user/environment.md)
 - [Compatibility](COMPATIBILITY.md): what each title does so far
+
+For developers and agents, in [docs/](docs/):
+
 - [Architecture](docs/architecture.md): overview, milestones and index of the other docs
-- [CPU](docs/cpu.md), [memory](docs/memory.md), [loader](docs/loader.md), [packages](docs/packages.md), [HLE](docs/hle-kernel.md), [input](docs/input.md), [JIT](docs/jit.md), [GPU](docs/gpu.md)
-- [Save states](docs/savestates.md)
+- [CPU](docs/cpu.md), [memory](docs/memory.md), [loader](docs/loader.md), [packages](docs/packages.md), [HLE](docs/hle-kernel.md), [input](docs/input.md), [audio](docs/audio.md), [JIT](docs/jit.md), [GPU](docs/gpu.md), [shaders](docs/shaders.md)
+- [Debugging](docs/debugging.md), [save states](docs/savestates.md)
 - [Test targets and oracles](docs/test-targets.md)
 - [References and prior art](docs/references.md)
 - [Legal boundaries](docs/legal.md)
