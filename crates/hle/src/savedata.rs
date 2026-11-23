@@ -132,6 +132,7 @@ fn mount(env: &mut Env, mode_at: u64) -> Result<Outcome, CallError> {
         return ret(ERROR_PARAMETER);
     }
     let name = String::from_utf8_lossy(&name).into_owned();
+    tracing::debug!("mount {name} mode {mode:#x}");
     let host = root.join(&name);
     let mut mounted = lock(&env.kernel.saves.mounted);
     if mounted.iter().flatten().any(|m| m.name == name) {
@@ -310,6 +311,11 @@ fn dir_name_search(env: &mut Env) -> Result<Outcome, CallError> {
                 .then_some((time, name))
         })
         .collect();
+    tracing::debug!(
+        "search {} by key {key}: {} found",
+        String::from_utf8_lossy(&pattern),
+        found.len()
+    );
     if key == 0 {
         found.sort_by(|a, b| a.1.cmp(&b.1));
     } else {
@@ -339,9 +345,8 @@ fn dir_name_search(env: &mut Env) -> Result<Outcome, CallError> {
             env.mem.write(infos + i as u64 * INFO_SIZE, &info)?;
         }
         if params != 0 {
-            let mut p = std::fs::read(dir.join("sce_sys").join("param0.bin")).unwrap_or_default();
-            p.resize(PARAM_SIZE, 0);
-            env.mem.write(params + (i * PARAM_SIZE) as u64, &p)?;
+            env.mem
+                .write(params + (i * PARAM_SIZE) as u64, &stamped_param(&dir))?;
         }
     }
     env.mem
@@ -395,13 +400,46 @@ fn get_param(env: &mut Env) -> Result<Outcome, CallError> {
     let Some(file) = param_file(env, env.arg(0), kind)? else {
         return ret(ERROR_NOT_MOUNTED);
     };
-    let mut data = std::fs::read(file).unwrap_or_default();
+    let mut data = match (kind, file.parent().and_then(|d| d.parent())) {
+        (0, Some(dir)) => stamped_param(dir),
+        _ => std::fs::read(file).unwrap_or_default(),
+    };
     data.resize(size, 0);
     env.mem.write(buf, &data)?;
     if got != 0 {
         env.mem.write_u64(got, size as u64)?;
     }
     ret(0)
+}
+
+/// Where `OrbisSaveDataParam` keeps `mtime`, which the system fills in.
+const PARAM_MTIME: usize = 0x508;
+
+/// The parameters `SetParam` stored for the save in `dir`, with `mtime` set
+/// to when its newest file changed. GTA V loads no profile whose time is 0.
+fn stamped_param(dir: &std::path::Path) -> Vec<u8> {
+    let mut p = std::fs::read(dir.join("sce_sys").join("param0.bin")).unwrap_or_default();
+    p.resize(PARAM_SIZE, 0);
+    let secs = last_modified(dir)
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    p[PARAM_MTIME..PARAM_MTIME + 8].copy_from_slice(&secs.to_le_bytes());
+    p
+}
+
+fn last_modified(dir: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let m = e.metadata().ok()?;
+            if m.is_dir() {
+                last_modified(&e.path())
+            } else {
+                m.modified().ok()
+            }
+        })
+        .max()
 }
 
 /// `OrbisSaveDataIcon`: buffer, its size and the data size in it.
@@ -479,6 +517,7 @@ fn delete(env: &mut Env) -> Result<Outcome, CallError> {
         return ret(ERROR_PARAMETER);
     }
     let name = String::from_utf8_lossy(&name).into_owned();
+    tracing::debug!("delete {name}");
     let Some(root) = env.kernel.vfs.saves.clone() else {
         return ret(ERROR_NOT_FOUND);
     };
@@ -527,7 +566,29 @@ impl Saves {
 
 #[cfg(test)]
 mod tests {
-    use super::{matches, valid_dir_name};
+    use super::{PARAM_MTIME, PARAM_SIZE, matches, stamped_param, valid_dir_name};
+
+    #[test]
+    fn params_carry_the_time_the_save_last_changed() {
+        let dir = std::env::temp_dir().join(format!("ps5slop-param-mtime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sce_sys")).unwrap();
+        std::fs::write(dir.join("sce_sys").join("param0.bin"), b"Title").unwrap();
+        std::fs::write(dir.join("Profile"), b"data").unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let p = stamped_param(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(p.len(), PARAM_SIZE);
+        assert_eq!(&p[..5], b"Title");
+        let mtime = u64::from_le_bytes(p[PARAM_MTIME..PARAM_MTIME + 8].try_into().unwrap());
+        assert!(
+            now.abs_diff(mtime) < 60,
+            "saves look never written, so GTA V drops its settings (mtime {mtime})"
+        );
+    }
 
     #[test]
     fn save_names_may_hold_at_signs_but_not_paths() {
