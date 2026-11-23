@@ -27,6 +27,8 @@ cargo run --release -p ps5slop -- run --load-state X.state GAME.pkg   # go on fr
 | `--interpreter` | Runs the game's code in the interpreter instead of the JIT (very slow, for comparing) |
 | `--dump-frame PATH --after SECONDS` | Writes the screen to a PPM file after that many seconds and stops |
 
+`ps5slop info FOLDER...` lists the games it finds in `.pkg` files and app folders (name, title id, version, compatibility status; `--json` and `--icons DIR` for launchers).
+
 Closing the window ends the game. The window title shows the game, its frame rate (flips a second), frame size, the instruction rate in the JIT and the interpreter, and which controller is in use.
 
 ## Controls

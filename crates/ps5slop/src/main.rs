@@ -58,9 +58,46 @@ enum Command {
         #[arg(long, value_name = "STATE")]
         load_state: Option<PathBuf>,
     },
+    /// Lists the games in `.pkg` files, app folders and folders searched for
+    /// them: name, title id, version, icon and compatibility status.
+    Info {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+        /// Prints one JSON array instead of a table.
+        #[arg(long)]
+        json: bool,
+        /// Writes each game's icon (`icon0.png`) into this folder.
+        #[arg(long, value_name = "DIR")]
+        icons: Option<PathBuf>,
+    },
+}
+
+fn info(paths: &[PathBuf], json: bool, icons: Option<&std::path::Path>) -> ExitCode {
+    let games = ps5slop::library::scan(paths, icons);
+    if json {
+        let list: Vec<_> = games.iter().map(|g| g.to_json()).collect();
+        println!("{}", serde_json::Value::Array(list));
+        return ExitCode::SUCCESS;
+    }
+    for g in &games {
+        let status = g.compat.as_ref().map_or("-", |c| c.status.as_str());
+        println!(
+            "{:<10} {:<10} {:<9} {}  {}",
+            g.title_id.as_deref().unwrap_or("-"),
+            g.version.as_deref().unwrap_or("-"),
+            status,
+            g.name.as_deref().or(g.error.as_deref()).unwrap_or("-"),
+            g.path.display()
+        );
+    }
+    ExitCode::SUCCESS
 }
 
 fn main() -> ExitCode {
+    let command = Cli::parse().command;
+    if let Command::Info { paths, json, icons } = &command {
+        return info(paths, *json, icons.as_deref());
+    }
     let Command::Run {
         path,
         headless,
@@ -73,7 +110,10 @@ fn main() -> ExitCode {
         passcode,
         control,
         load_state,
-    } = Cli::parse().command;
+    } = command
+    else {
+        unreachable!("info returned above");
+    };
     diag::init_logging();
     let control = control.unwrap_or_else(|| {
         std::env::temp_dir().join(format!("ps5slop-{}.sock", std::process::id()))

@@ -16,6 +16,7 @@ use x86::Cpu;
 use x86::cpu::reg::*;
 
 pub mod control;
+pub mod library;
 pub mod modules;
 pub mod title;
 #[cfg(all(target_os = "macos", feature = "window"))]
