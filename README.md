@@ -2,7 +2,7 @@
 
 A PS5 compatibility layer for Apple Silicon Macs. It runs a game's own x86-64 code, implements the Orbis kernel interface and system libraries in the host (HLE, the way Wine does it for Windows), and translates the GPU's command stream to Metal.
 
-Some commercial games run, to different degrees: see [COMPATIBILITY.md](COMPATIBILITY.md).
+Some commercial games run, to different degrees: see the [compatibility list](https://slopsmith.github.io/ps5slop/compat/), built from the reports in [slopsmith/ps5slop-compat](https://github.com/slopsmith/ps5slop-compat).
 
 You supply your own games, dumped from your own console. Nothing from Sony is part of this project. See [docs/legal.md](docs/legal.md).
 
@@ -38,7 +38,7 @@ For users, in [docs/user/](docs/user/):
 - [Running games](docs/user/running.md)
 - [Launcher app](docs/user/app.md): a Mac app with your game library
 - [Environment variables](docs/user/environment.md)
-- [Compatibility](COMPATIBILITY.md): what each title does so far
+- [Compatibility](https://slopsmith.github.io/ps5slop/compat/): what each title does so far, and [how to report a game](https://github.com/slopsmith/ps5slop-compat)
 
 For developers and agents, in [docs/](docs/):
 

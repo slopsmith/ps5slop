@@ -2,7 +2,7 @@
 
 ps5slop runs PS5 games on Apple Silicon Macs the way Wine runs Windows programs: the game's own x86-64 code runs, and everything below it (the Orbis kernel interface and system libraries) is implemented in our process. The GPU command stream is translated to Metal. We do not emulate Orbis itself (see [decisions.md](decisions.md)).
 
-Status: commercial 2D and 3D PS5 titles boot and render through the HVF JIT, HLE OS and Metal backend (see [COMPATIBILITY.md](../COMPATIBILITY.md)).
+Status: commercial 2D and 3D PS5 titles boot and render through the HVF JIT, HLE OS and Metal backend (see the [compatibility list](https://slopsmith.github.io/ps5slop/compat/)).
 
 ## Big picture
 

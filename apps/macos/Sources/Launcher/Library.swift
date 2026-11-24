@@ -15,6 +15,7 @@ final class Library {
     private(set) var games: [GameEntry] = []
     private(set) var isScanning = false
     private(set) var scanError: String?
+    private(set) var compatList: CompatList?
 
     private let source: Source
     private var scanTask: Task<Void, Never>?
@@ -24,7 +25,8 @@ final class Library {
         switch source {
         case .store(let store):
             folders = store.loadFolders()
-            games = store.loadCache()
+            compatList = store.loadCompat()
+            games = withCompat(store.loadCache())
         case .fixture(let url):
             do {
                 games = try GameInfoDecoder.decode(Data(contentsOf: url))
@@ -52,6 +54,7 @@ final class Library {
 
     func refresh() {
         guard case .store(let store) = source else { return }
+        Task { await refreshCompat() }
         guard let binary = BinaryLocator.ps5slop() else {
             scanError = "The ps5slop binary was not found. Set PS5SLOP_BIN or build target/release/ps5slop."
             return
@@ -64,7 +67,7 @@ final class Library {
             do {
                 let found = try await runner.scan(paths)
                 guard !Task.isCancelled else { return }
-                games = found
+                games = withCompat(found)
                 scanError = nil
                 saveCache()
             } catch {
@@ -73,6 +76,20 @@ final class Library {
             }
             isScanning = false
         }
+    }
+
+    func refreshCompat() async {
+        guard case .store(let store) = source, LauncherApp.argument("--snapshot") == nil,
+            let data = try? await CompatList.fetch(), let list = try? CompatList.decode(data)
+        else { return }
+        try? store.saveCompat(data)
+        compatList = list
+        games = withCompat(games)
+        saveCache()
+    }
+
+    private func withCompat(_ games: [GameEntry]) -> [GameEntry] {
+        compatList?.applied(to: games, chip: CompatList.localChip) ?? games
     }
 
     private func saveFolders() {

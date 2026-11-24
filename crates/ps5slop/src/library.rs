@@ -1,13 +1,11 @@
 //! Finds games in folders and reads what a launcher shows of them: name,
-//! title id, version, icon and compatibility status.
+//! title id, version and icon.
 
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use pkg::Package;
-
-const COMPATIBILITY: &str = include_str!("../../../COMPATIBILITY.md");
 
 /// How deep a scan descends below each folder it is given.
 const MAX_DEPTH: usize = 6;
@@ -19,12 +17,6 @@ pub enum Kind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Compat {
-    pub status: String,
-    pub note: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Game {
     pub path: PathBuf,
     pub kind: Kind,
@@ -32,7 +24,6 @@ pub struct Game {
     pub name: Option<String>,
     pub version: Option<String>,
     pub icon: Option<PathBuf>,
-    pub compat: Option<Compat>,
     pub error: Option<String>,
 }
 
@@ -49,10 +40,6 @@ impl Game {
             "name": self.name,
             "version": self.version,
             "icon": self.icon,
-            "compat": self.compat.as_ref().map(|c| serde_json::json!({
-                "status": c.status,
-                "note": c.note,
-            })),
             "error": self.error,
         })
     }
@@ -114,7 +101,6 @@ fn read(path: &Path, kind: Kind, icons: Option<&Path>) -> Game {
         name: None,
         version: None,
         icon: None,
-        compat: None,
         error: None,
     };
     let icon = match kind {
@@ -148,7 +134,6 @@ fn read(path: &Path, kind: Kind, icons: Option<&Path>) -> Game {
     if let (Some(dir), Some(png)) = (icons, icon) {
         game.icon = save_icon(dir, &game, &png);
     }
-    game.compat = game.title_id.as_deref().and_then(compat);
     game
 }
 
@@ -167,36 +152,9 @@ fn save_icon(dir: &Path, game: &Game, png: &[u8]) -> Option<PathBuf> {
     Some(file)
 }
 
-/// The row for `title_id` in COMPATIBILITY.md, as built into this binary.
-pub fn compat(title_id: &str) -> Option<Compat> {
-    COMPATIBILITY.lines().find_map(|line| {
-        let cells: Vec<&str> = line
-            .trim()
-            .trim_matches('|')
-            .split('|')
-            .map(str::trim)
-            .collect();
-        if cells.len() < 4 || cells[0] != title_id {
-            return None;
-        }
-        Some(Compat {
-            status: cells[2].split_whitespace().last()?.to_owned(),
-            note: cells[3].to_owned(),
-        })
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn compatibility_rows_parse() {
-        let c = compat("PPSA21402").unwrap();
-        assert_eq!(c.status, "Perfect");
-        assert!(!c.note.is_empty());
-        assert_eq!(compat("XXXX00000"), None);
-    }
 
     #[test]
     fn scans_app_folders_and_packages() {

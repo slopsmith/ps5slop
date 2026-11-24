@@ -1,6 +1,6 @@
 # Running games
 
-You supply your own games, dumped from your own console ([legal.md](../legal.md)). [COMPATIBILITY.md](../../COMPATIBILITY.md) says how far each title gets.
+You supply your own games, dumped from your own console ([legal.md](../legal.md)). The [compatibility list](https://slopsmith.github.io/ps5slop/compat/) says how far each title gets; reports go to [slopsmith/ps5slop-compat](https://github.com/slopsmith/ps5slop-compat).
 
 ## Building
 

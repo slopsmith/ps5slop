@@ -59,7 +59,7 @@ enum Command {
         load_state: Option<PathBuf>,
     },
     /// Lists the games in `.pkg` files, app folders and folders searched for
-    /// them: name, title id, version, icon and compatibility status.
+    /// them: name, title id, version and icon.
     Info {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
@@ -80,12 +80,10 @@ fn info(paths: &[PathBuf], json: bool, icons: Option<&std::path::Path>) -> ExitC
         return ExitCode::SUCCESS;
     }
     for g in &games {
-        let status = g.compat.as_ref().map_or("-", |c| c.status.as_str());
         println!(
-            "{:<10} {:<10} {:<9} {}  {}",
+            "{:<10} {:<10} {}  {}",
             g.title_id.as_deref().unwrap_or("-"),
             g.version.as_deref().unwrap_or("-"),
-            status,
             g.name.as_deref().or(g.error.as_deref()).unwrap_or("-"),
             g.path.display()
         );

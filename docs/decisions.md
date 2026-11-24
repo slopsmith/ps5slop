@@ -736,3 +736,9 @@ Reason: vic wanted nightly downloads for the website, shared between both projec
 ## 2026-11-24: Lockstep wave64 groups of several waves meet pairwise
 
 Compute programs whose groups hold several wave64s and read across a wave's halves or order LDS atomics by lane run in lockstep, with each wave's two SIMD groups waiting for each other through threadgroup atomics instead of a group barrier. Reason: GTA V's BVH radix sort depends on both, and a group barrier would tie waves together that the hardware runs independently between `s_barrier`s (their loops differ). Partial groups of such programs are dispatched whole with grid bounds. Details in [shaders.md](shaders.md#lockstep-groups-of-several-waves-2026-11-24).
+
+## 2026-11-24: Compatibility reports are issues in slopsmith/ps5slop-compat
+
+`COMPATIBILITY.md` is gone. Each report is an issue in [slopsmith/ps5slop-compat](https://github.com/slopsmith/ps5slop-compat), filed through one of two issue forms (a manual one with a status dropdown, and one the launcher fills in with six yes/no answers). An Action labels complete reports `accepted` and `status: <status>`, or `needs-info` with a comment. The website builds its pages and `compat.json` from the accepted issues, and the launcher reads `compat.json` instead of a list built into the binary. The seven rows of the old file were filed as issues #1 to #7 (label `seed`), with vic's Mac (Apple M4 Pro, macOS 27.3) and the commit that last changed each row as the environment.
+
+Reason: users can report without a pull request, every report records the Mac and build it was made on, and status changes no longer need a ps5slop commit. Accepting is automatic because vic does not intend to review reports by hand.

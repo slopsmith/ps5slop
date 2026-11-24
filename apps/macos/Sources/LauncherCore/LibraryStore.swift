@@ -1,7 +1,7 @@
 import Foundation
 
 /// The launcher's files under `~/Library/Application Support/ps5slop/launcher`:
-/// the library folders and the last `info` result, shown at once on the next start.
+/// the library folders, the last `info` result and the last compatibility list, shown at once on the next start.
 public struct LibraryStore: Sendable {
     public let root: URL
 
@@ -16,6 +16,7 @@ public struct LibraryStore: Sendable {
     public var iconsFolder: URL { root.appendingPathComponent("icons", isDirectory: true) }
     var foldersFile: URL { root.appendingPathComponent("library.json") }
     var cacheFile: URL { root.appendingPathComponent("games-cache.json") }
+    var compatFile: URL { root.appendingPathComponent("compat.json") }
 
     private struct FolderList: Codable {
         var folders: [String]
@@ -42,6 +43,15 @@ public struct LibraryStore: Sendable {
 
     public func saveCache(_ games: [GameEntry]) throws {
         try write(GameInfoDecoder.encode(games), to: cacheFile)
+    }
+
+    public func loadCompat() -> CompatList? {
+        guard let data = try? Data(contentsOf: compatFile) else { return nil }
+        return try? CompatList.decode(data)
+    }
+
+    public func saveCompat(_ data: Data) throws {
+        try write(data, to: compatFile)
     }
 
     private func write(_ data: Data, to file: URL) throws {

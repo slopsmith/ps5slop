@@ -20,6 +20,7 @@ struct LauncherApp: App {
                     .frame(minWidth: 760, minHeight: 480)
                     .task { await Snapshot.takeIfAsked() }
                     .task { await updates.checkOnLaunch() }
+                    .task { await library.refreshCompat() }
                     .modifier(UpdateAlert(updates: updates))
             }
         }
