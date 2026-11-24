@@ -14,15 +14,6 @@ static inline bool guard_stop(device atomic_uint* g, uint back) {
     return stop;
 }
 
-// The group leaves together once any thread's loop budget is spent (lockstep programs).
-static inline bool lockstep_leave(device atomic_uint* g, uint back, threadgroup bool& tg_bail) {
-    if (guard_stop(g, back)) tg_bail = true;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    bool leave = tg_bail;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    return leave;
-}
-
 static inline bool guard_leave(device atomic_uint* g, uint back, thread uint& bail_at, threadgroup bool& tg_bail) {
     if (bail_at == 0u && guard_stop(g, back)) {
         bail_at = back;
@@ -32,7 +23,16 @@ static inline bool guard_leave(device atomic_uint* g, uint back, thread uint& ba
 }
 "#;
 
-pub(super) const LOCKSTEP_BARRIER: &str = "threadgroup_barrier(mem_flags::mem_threadgroup);";
+/// The loop guard of lockstep programs (after `GUARD_PRELUDE` and `WAVE_PRELUDE`): a wave
+/// leaves together once any of its threads' budget is spent, and the rest of the group
+/// leaves at its next `s_barrier`.
+pub(super) const LOCKSTEP_GUARD_PRELUDE: &str = r#"
+static inline bool lockstep_leave(device atomic_uint* g, uint back, thread Wave& w, threadgroup bool& tg_bail) {
+    bool leave = wave_any(guard_stop(g, back), w);
+    if (leave) tg_bail = true;
+    return leave;
+}
+"#;
 
 pub(super) const PRELUDE: &str = r#"#include <metal_stdlib>
 using namespace metal;
@@ -578,28 +578,54 @@ static inline void buffer_store_format(device uchar* mem, Win mem_base, uint4 vs
 // Lockstep programs: a wave64 group run as two SIMD groups that meet at every
 // call below, so lane masks and lane reads span the whole wave.
 pub(super) const WAVE_PRELUDE: &str = r#"
-// Each exchange uses the other half of `vote`, so one barrier per exchange is enough.
-static inline bool wave_any(bool x, threadgroup uint* vote, ushort sgi, thread uint& k) {
-    threadgroup uint* v = vote + 2u * (k++ & 1u);
-    bool a = simd_any(x);
-    if (simd_is_first()) v[sgi & 1] = a ? 1u : 0u;
+// A wave64 is two Metal SIMD groups, which meet to exchange values. In a group of one wave
+// a barrier does; in a bigger one each SIMD group counts its meetings in `seq` and waits
+// for its partner to get as far, so waves stay independent between `s_barrier`s.
+struct Wave {
+    threadgroup uint* vote;
+    threadgroup atomic_uint* seq;
+    ushort sgi;
+    uint k;
+};
+
+static inline void wave_meet(thread Wave& w) {
+    w.k++;
+#if LOCKSTEP_WAVES == 1
     threadgroup_barrier(mem_flags::mem_threadgroup);
+#else
+    atomic_thread_fence(mem_flags::mem_threadgroup, memory_order_seq_cst, thread_scope_threadgroup);
+    if (simd_is_first()) atomic_store_explicit(&w.seq[w.sgi], w.k, memory_order_relaxed);
+    for (uint spin = 0u; spin < MEET_SPINS && atomic_load_explicit(&w.seq[w.sgi ^ 1u], memory_order_relaxed) < w.k; spin++) {}
+    atomic_thread_fence(mem_flags::mem_threadgroup, memory_order_seq_cst, thread_scope_threadgroup);
+#endif
+}
+
+// Each exchange uses the other half of the wave's `vote` slots, so one meeting per exchange is enough.
+static inline threadgroup uint* wave_slots(thread Wave& w) {
+    return w.vote + 4u * (w.sgi >> 1) + 2u * (w.k & 1u);
+}
+
+static inline bool wave_any(bool x, thread Wave& w) {
+    threadgroup uint* v = wave_slots(w);
+    bool a = simd_any(x);
+    if (simd_is_first()) v[w.sgi & 1] = a ? 1u : 0u;
+    wave_meet(w);
     return (v[0] | v[1]) != 0u;
 }
 
-static inline ulong wave_ballot(bool x, threadgroup uint* vote, ushort sgi, thread uint& k) {
-    threadgroup uint* v = vote + 2u * (k++ & 1u);
+static inline ulong wave_ballot(bool x, thread Wave& w) {
+    threadgroup uint* v = wave_slots(w);
     uint m = uint(static_cast<simd_vote::vote_t>(simd_ballot(x)));
-    if (simd_is_first()) v[sgi & 1] = m;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (simd_is_first()) v[w.sgi & 1] = m;
+    wave_meet(w);
     return ulong(v[1]) << 32 | ulong(v[0]);
 }
 
-static inline uint wave_readlane(uint x, uint lane, threadgroup uint* vote, ushort sgi, thread uint& k) {
-    threadgroup uint* v = vote + 2u * (k++ & 1u);
+static inline uint wave_readlane(uint x, uint lane, thread Wave& w) {
+    threadgroup uint* v = wave_slots(w);
     uint r = simd_shuffle(x, ushort(lane & 31u));
-    if ((sgi & 1) == ushort(lane >> 5 & 1u) && simd_is_first()) v[0] = r;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((w.sgi & 1) == ushort(lane >> 5 & 1u) && simd_is_first()) v[0] = r;
+    wave_meet(w);
     return v[0];
 }
 

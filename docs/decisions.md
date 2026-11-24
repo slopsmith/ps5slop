@@ -733,3 +733,6 @@ A scheduled GitHub Actions workflow builds `ps5slop.app` on a hosted `macos-26` 
 
 Reason: vic wanted nightly downloads for the website, shared between both projects and identified by Git SHA. A rolling release gives the site one fixed link and needs no clean-up; older builds can be rebuilt from their commit. Hosted runners are free for public repositories; they are a virtual M1 with three cores, `hv_vm_create` fails there with `HV_UNSUPPORTED` and Metal is a paravirtual device without the Apple7 family ([probe run](https://github.com/slopsmith/ci/actions/runs/45472958500), 2026-11-24), so the checks do not start a game and the JIT and hypervisor tests run only on a real Mac.
 
+## 2026-11-24: Lockstep wave64 groups of several waves meet pairwise
+
+Compute programs whose groups hold several wave64s and read across a wave's halves or order LDS atomics by lane run in lockstep, with each wave's two SIMD groups waiting for each other through threadgroup atomics instead of a group barrier. Reason: GTA V's BVH radix sort depends on both, and a group barrier would tie waves together that the hardware runs independently between `s_barrier`s (their loops differ). Partial groups of such programs are dispatched whole with grid bounds. Details in [shaders.md](shaders.md#lockstep-groups-of-several-waves-2026-11-24).

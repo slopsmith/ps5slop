@@ -152,8 +152,8 @@ impl Metal {
                 &user[..users as usize]
             )
         });
-        let program = self
-            .typed_program(
+        let mut fetch = |grid_bounds| {
+            self.typed_program(
                 host,
                 state,
                 Stage::Compute,
@@ -170,7 +170,20 @@ impl Metal {
                 DispatchError::FallbackCpu
             } else {
                 DispatchError::Skipped("compute program")
-            })?;
+            })
+        };
+        let mut program = fetch(grid_bounds)?;
+        let partial = match grid {
+            Grid::Direct(d) => d.threads,
+            Grid::Indirect { .. } => None,
+        };
+        let mut whole = partial.filter(|_| program.translated.lockstep);
+        if whole.is_some() {
+            match fetch(true) {
+                Ok(p) => program = p,
+                Err(_) => whole = None,
+            }
+        }
         self.trace_user_memory(host, &user[..users as usize], false);
         let task = program
             .compute
@@ -250,6 +263,21 @@ impl Metal {
                             )
                         }
                     }
+                }
+                Grid::Direct(_) if let Some(t) = whole => {
+                    Slot::Compute(&enc).bytes(
+                        t.as_ptr().cast(),
+                        size_of_val(&t),
+                        binding::BOUNDS as usize,
+                    );
+                    enc.dispatchThreadgroups_threadsPerThreadgroup(
+                        MTLSize {
+                            width: groups[0] as usize,
+                            height: groups[1] as usize,
+                            depth: groups[2] as usize,
+                        },
+                        per_group,
+                    )
                 }
                 Grid::Direct(crate::Dispatch {
                     threads: Some(t), ..

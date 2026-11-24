@@ -151,6 +151,10 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
 }
 
 fn compute(code: &[u32], user_sgprs: u32, rsrc2: u32) -> gfx10::Translated {
+    compute_group(code, user_sgprs, rsrc2, 64)
+}
+
+fn compute_group(code: &[u32], user_sgprs: u32, rsrc2: u32, threads: u32) -> gfx10::Translated {
     translate(&Request {
         stage: Stage::Compute,
         code,
@@ -162,7 +166,7 @@ fn compute(code: &[u32], user_sgprs: u32, rsrc2: u32) -> gfx10::Translated {
         ps_input_cntl: &[],
         col_format: 0,
         compute_rsrc2: rsrc2,
-        threads: [64, 1, 1],
+        threads: [threads, 1, 1],
         uint_textures: 0,
         sint_textures: 0,
         grid_bounds: false,
@@ -578,24 +582,14 @@ fn one_wave64_group_talking_through_lds_runs_in_step() {
         0xBF81_0000, // s_endpgm
     ];
     let t = compute(&code, 1, 0);
+    assert!(t.msl.contains("wave_any(scc, wv)"), "{}", t.msl);
     assert!(
-        t.msl.contains("wave_any(scc, lockstep_vote, sgi, wk)"),
-        "{}",
-        t.msl
-    );
-    assert!(
-        t.msl
-            .contains("wave_any(((vcc_lo | vcc_hi) != 0u), lockstep_vote, sgi, wk)"),
+        t.msl.contains("wave_any(((vcc_lo | vcc_hi) != 0u), wv)"),
         "{}",
         t.msl
     );
     assert!(t.msl.contains("wave_ballot("), "{}", t.msl);
-    assert!(
-        t.msl
-            .matches("threadgroup_barrier(mem_flags::mem_threadgroup);")
-            .count()
-            >= 4
-    );
+    assert!(t.msl.matches("wave_meet(wv);").count() >= 4);
     compile(&t.msl);
 }
 
@@ -1215,4 +1209,40 @@ fn a_sample_mask_export_writes_no_depth() {
     let t = pixel(&code, 0);
     assert!(!t.writes_depth);
     compile(&t.msl);
+}
+
+#[test]
+fn waves_of_a_bigger_group_that_cross_halves_meet_pairwise() {
+    let code = [
+        0xD880_0000,
+        0x0300_0504, // ds_add_rtn_u32 v3, v4, v5
+        0x92FE_A0A0, // s_bfm_b64 exec, 32, 32
+        0xD760_0008,
+        0x0001_3F02, // v_readlane_b32 s8, v2, 31
+        0xBEFE_04C1, // s_mov_b64 exec, -1
+        0xBF8A_0000, // s_barrier
+        0xBF84_FFF9, // s_cbranch_scc0 -7 (to 0)
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute_group(&code, 1, 0, 256);
+    assert!(t.msl.contains("#define LOCKSTEP_WAVES 4u"), "{}", t.msl);
+    assert!(t.msl.contains("wave_readlane(v2, 31u, wv)"), "{}", t.msl);
+    assert!(t.msl.contains("if ((wv.sgi & 1u) == 0u) {"), "{}", t.msl);
+    assert!(
+        t.msl.contains("lockstep_leave(guard, ++back, wv, tg_bail)"),
+        "{}",
+        t.msl
+    );
+    compile(&t.msl);
+    let plain = compute_group(
+        &[
+            0xD834_0000,
+            0x0000_0804, // ds_write_b32 v4, v8
+            0xBF81_0000, // s_endpgm
+        ],
+        1,
+        0,
+        256,
+    );
+    assert!(!plain.msl.contains("LOCKSTEP_WAVES"));
 }

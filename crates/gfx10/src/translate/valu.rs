@@ -153,7 +153,7 @@ impl<'a> Tx<'a> {
                             None => format!("({} & 63u)", self.src32(v.src[1], inst.literal, pc)?),
                         }
                     };
-                    format!("wave_readlane({a}, {k}, lockstep_vote, sgi, wk)")
+                    format!("wave_readlane({a}, {k}, wv)")
                 }
                 None => {
                     let a = self.usrc(pc, inst, v, 0)?;

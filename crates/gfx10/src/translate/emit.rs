@@ -45,11 +45,12 @@ impl<'a> Tx<'a> {
             lds_bytes: if self.lds { self.lds_bytes() } else { 0 },
             gds: self.gds,
             loop_guard: self.guarded,
+            lockstep: self.lockstep,
         }
     }
 
     /// Clears EXEC for threads past the grid size in `bounds`. A lockstep
-    /// wave is its whole one-dimensional group, so its active lanes are a prefix.
+    /// group is one-dimensional, so each wave's active lanes are a prefix.
     fn bounds_init(&self) -> String {
         let t = self.req.threads.map(|n| n.max(1));
         let outside = format!(
@@ -64,7 +65,7 @@ impl<'a> Tx<'a> {
             };
         }
         let mut s = format!(
-            "    {{ uint first = gid.x * {}u; uint n = (bounds[0] > first && gid.y < bounds[1] && gid.z < bounds[2]) ? min(bounds[0] - first, 64u) : 0u;\n",
+            "    {{ uint first = gid.x * {}u + (uint(sgi) >> 1) * 64u; uint n = (bounds[0] > first && gid.y < bounds[1] && gid.z < bounds[2]) ? min(bounds[0] - first, 64u) : 0u;\n",
             t[0]
         );
         if self.regs.contains("exec_lo") {
@@ -83,10 +84,11 @@ impl<'a> Tx<'a> {
     /// within what Metal allows.
     fn lds_bytes(&self) -> u32 {
         let declared = (self.req.compute_rsrc2 >> 15 & 0x1FF) * 512;
+        let most = (32 << 10) - if self.lockstep { LOCKSTEP_LDS } else { 0 };
         if declared == 0 {
-            32 << 10
+            most
         } else {
-            declared.clamp(16, 32 << 10)
+            declared.clamp(16, most)
         }
     }
 
@@ -94,7 +96,10 @@ impl<'a> Tx<'a> {
         let mut out = String::from(PRELUDE);
         if self.lockstep {
             self.simd_lane = true;
-            out.push_str(WAVE_PRELUDE);
+            out.push_str(&format!(
+                "#define LOCKSTEP_WAVES {}u\n#define MEET_SPINS {MEET_SPINS}u\n{WAVE_PRELUDE}",
+                self.waves()
+            ));
         }
         if self.lds {
             out.push_str(&format!(
@@ -113,6 +118,9 @@ impl<'a> Tx<'a> {
             out.push_str(&format!(
                 "#define GUARD_LIMIT {MAX_COMPUTE_BACK_BRANCHES}u\n#define GUARD_BUDGET {GUARD_BUDGET}u\n#define GUARD_UNIT {GUARD_UNIT}u\n{GUARD_PRELUDE}"
             ));
+            if self.lockstep {
+                out.push_str(LOCKSTEP_GUARD_PRELUDE);
+            }
         }
         let stage = self.req.stage;
         let mem_ty = if self.mem_write {
@@ -214,7 +222,7 @@ impl<'a> Tx<'a> {
             init.push_str("    uint addtid_lds[ADDTID_SLOTS] = {};\n");
         }
         if self.lockstep {
-            init.push_str("    uint wl = uint(sgi) * 32u + uint(slane);\n    uint wk = 0u;\n");
+            init.push_str("    uint wl = (uint(sgi) & 1u) * 32u + uint(slane);\n    Wave wv = { lockstep_vote, lockstep_seq, sgi, 0u };\n");
             for r in ["exec_lo", "exec_hi"] {
                 if self.regs.contains(r) {
                     init.push_str(&format!("    {r} = 0xffffffffu;\n"));
@@ -376,7 +384,15 @@ impl<'a> Tx<'a> {
                 }
                 let mut params = entry_params.join(", ");
                 if self.lockstep {
-                    lds.push_str("    threadgroup uint lockstep_vote[4];\n");
+                    let waves = self.waves();
+                    lds.push_str(&format!(
+                        "    threadgroup uint lockstep_vote[{}];\n    threadgroup atomic_uint lockstep_seq[{}];\n",
+                        4 * waves,
+                        2 * waves
+                    ));
+                    if waves > 1 {
+                        lds.push_str("    if (slane == 0) atomic_store_explicit(&lockstep_seq[sgi], 0u, memory_order_relaxed);\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n");
+                    }
                     params.push_str(", ushort sgi [[simdgroup_index_in_threadgroup]]");
                 }
                 out.push_str(&format!(

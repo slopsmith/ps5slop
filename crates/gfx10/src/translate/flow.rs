@@ -65,6 +65,11 @@ pub(super) fn crosses_lanes(inst: &Inst, insts: &[(usize, Inst)]) -> bool {
     }
 }
 
+/// An LDS atomic whose result depends on the order of the lanes that run it.
+pub(super) fn ordered_lds(inst: &Inst) -> bool {
+    matches!(inst.kind, Kind::Ds { gds: false, .. }) && inst.op.name.contains("_rtn_")
+}
+
 /// A scalar instruction that writes the lane mask.
 pub(super) fn writes_exec(inst: &Inst) -> bool {
     let exec = |d: u16| d == src::EXEC_LO || d == src::EXEC_HI;
@@ -224,16 +229,28 @@ impl<'a> Tx<'a> {
         self.line(&format!("// {text}"));
         let step = self.lockstep && matches!(inst.kind, Kind::Ds { gds: false, .. });
         if step {
-            self.line(LOCKSTEP_BARRIER);
+            self.line("wave_meet(wv);");
         }
-        self.inst(pc, inst)?;
+        if step && ordered_lds(inst) {
+            // A wave's LDS atomics take effect in lane order; within a SIMD group Metal's
+            // were seen to, so the low half goes first.
+            self.line("if ((wv.sgi & 1u) == 0u) {");
+            self.inst(pc, inst)?;
+            self.line("}");
+            self.line("wave_meet(wv);");
+            self.line("if ((wv.sgi & 1u) != 0u) {");
+            self.inst(pc, inst)?;
+            self.line("}");
+        } else {
+            self.inst(pc, inst)?;
+        }
         if !self.lockstep && writes_exec(inst) {
             // Other lanes are other threads: keep only this lane's bit.
             let (lo, hi) = (self.s(src::EXEC_LO), self.s(src::EXEC_HI));
             self.line(&format!("{lo} &= 1u; {hi} = 0u;"));
         }
         if step {
-            self.line(LOCKSTEP_BARRIER);
+            self.line("wave_meet(wv);");
         }
         Ok(())
     }
@@ -517,7 +534,7 @@ impl<'a> Tx<'a> {
     fn branch_cond(&mut self, pc: usize, n: &str) -> Result<String, TranslateError> {
         let cond = match n {
             "s_cbranch_scc0" | "s_cbranch_scc1" if self.lockstep => {
-                let any = "wave_any(scc, lockstep_vote, sgi, wk)";
+                let any = "wave_any(scc, wv)";
                 if n.ends_with('0') {
                     format!("!{any}")
                 } else {
@@ -529,7 +546,7 @@ impl<'a> Tx<'a> {
             "s_cbranch_vccz" | "s_cbranch_vccnz" | "s_cbranch_execz" | "s_cbranch_execnz" => {
                 let any = self.mask_any(if n.contains("vcc") { 106 } else { 126 });
                 let any = if self.lockstep {
-                    format!("wave_any({any}, lockstep_vote, sgi, wk)")
+                    format!("wave_any({any}, wv)")
                 } else if self.req.stage == Stage::Compute {
                     format!("simd_any({any})")
                 } else {
@@ -561,7 +578,7 @@ impl<'a> Tx<'a> {
             }
             Stage::Vertex => format!("if (++back > {MAX_BACK_BRANCHES}u) {{ return o; }} "),
             Stage::Compute if self.lockstep => {
-                "if (lockstep_leave(guard, ++back, tg_bail)) { return; } ".into()
+                "if (lockstep_leave(guard, ++back, wv, tg_bail)) { return; } ".into()
             }
             Stage::Compute if self.has_barrier => {
                 "if (guard_leave(guard, ++back, bail_at, tg_bail)) { return; } ".into()

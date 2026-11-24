@@ -22,9 +22,9 @@ mod scalar;
 mod sources;
 mod valu;
 
-use flow::{branch_target, crosses_lanes};
+use flow::{branch_target, crosses_lanes, ordered_lds};
 use half::{HALF_OPS, PACKED_F16};
-use prelude::{GUARD_PRELUDE, LDS_PRELUDE, LOCKSTEP_BARRIER, PRELUDE, WAVE_PRELUDE};
+use prelude::{GUARD_PRELUDE, LDS_PRELUDE, LOCKSTEP_GUARD_PRELUDE, PRELUDE, WAVE_PRELUDE};
 use sources::TRACKED_SGPRS;
 /// Pipeline stage of a program.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,6 +206,9 @@ pub struct Translated {
     /// Compute stage: the program loops, and gives up after too many backward
     /// branches, counted in the words bound at `[[buffer(25)]]` (zeroed per dispatch).
     pub loop_guard: bool,
+    /// Compute stage: each wave's two SIMD groups wait for each other, so a group
+    /// must run whole; a partial one is dispatched whole with grid bounds.
+    pub lockstep: bool,
 }
 
 /// Why a program could not be translated.
@@ -426,8 +429,8 @@ struct Tx<'a> {
     dpp_lane_off: bool,
     /// The program runs in wave32: lane masks a VALU instruction writes are one SGPR.
     wave32: bool,
-    /// A compute group that is one wave64 and talks through LDS without `s_barrier`,
-    /// relying on its lanes running together: its two Metal SIMD groups are kept in step.
+    /// Each wave64's two Metal SIMD groups are kept in step, because its lanes
+    /// rely on running together.
     lockstep: bool,
     /// The body holds indexed VGPR accesses (`movrel`) to fill in.
     movrel: bool,
@@ -436,12 +439,22 @@ struct Tx<'a> {
 }
 
 const SGPR_COUNT: u16 = 106;
+/// How long a SIMD group waits for the other half of its wave before going on
+/// without it, so a lost partner cannot hang the GPU.
+const MEET_SPINS: u32 = 1 << 22;
+/// Threadgroup memory kept from LDS for the lockstep exchange slots of up to 16 waves.
+const LOCKSTEP_LDS: u32 = 512;
 
 const VREAD: &str = "/*@VREAD:";
 const VWRITE: &str = "/*@VWRITE:";
 const VEND: &str = "@*/";
 
 impl<'a> Tx<'a> {
+    /// Wave64s in the group.
+    fn waves(&self) -> u32 {
+        (self.req.threads.iter().product::<u32>() / 64).max(1)
+    }
+
     fn new(req: &'a Request<'a>, insts: Vec<(usize, Inst)>) -> Self {
         let user_base = if req.stage == Stage::Vertex && req.ngg {
             8
@@ -480,13 +493,24 @@ impl<'a> Tx<'a> {
                         Kind::Sop1 { sdst: 126, .. } | Kind::Sop2 { sdst: 126, .. }
                     )
         });
+        let threads = req.threads.iter().product::<u32>();
+        let barrier = insts.iter().any(|(_, i)| i.op.name == "s_barrier");
+        let lds = |i: &Inst| matches!(i.kind, Kind::Ds { gds: false, .. });
         let lockstep = req.stage == Stage::Compute
             && !wave32
-            && req.threads.iter().product::<u32>() == 64
-            && !insts.iter().any(|(_, i)| i.op.name == "s_barrier")
-            && insts.iter().any(|(_, i)| {
-                matches!(i.kind, Kind::Ds { gds: false, .. }) || crosses_lanes(i, &insts)
-            });
+            && threads.is_multiple_of(64)
+            && match threads {
+                0 => false,
+                64 => {
+                    !barrier
+                        && insts
+                            .iter()
+                            .any(|(_, i)| lds(i) || crosses_lanes(i, &insts))
+                }
+                _ => insts
+                    .iter()
+                    .any(|(_, i)| lds(i) && ordered_lds(i) || crosses_lanes(i, &insts)),
+            };
         Tx {
             req,
             insts,
@@ -675,7 +699,7 @@ impl<'a> Tx<'a> {
         let hi = self.s(dst + 1);
         if self.lockstep {
             return format!(
-                " {{ ulong m = wave_ballot({bit}, lockstep_vote, sgi, wk); {lo} = uint(m); {hi} = uint(m >> 32); }}"
+                " {{ ulong m = wave_ballot({bit}, wv); {lo} = uint(m); {hi} = uint(m >> 32); }}"
             );
         }
         format!(" {lo} = uint({bit}); {hi} = 0u;")
