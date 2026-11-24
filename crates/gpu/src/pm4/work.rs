@@ -113,36 +113,60 @@ impl Processor {
         }
     }
 
-    /// With a watched word, waits for each draw and dispatch and reports
-    /// those that change it.
+    /// With watched memory, waits for each draw and dispatch and reports
+    /// those that change it (and with a dump folder, writes what they left).
     fn gpu_watch(&mut self, host: &dyn Host, what: impl FnOnce() -> String) {
-        static AT: std::sync::OnceLock<Option<(u64, Instant)>> = std::sync::OnceLock::new();
-        let Some((at, from)) = *AT.get_or_init(|| {
-            let (at, delay) = diag::config().gpu.watch?;
-            Some((at, Instant::now() + delay))
-        }) else {
+        static FROM: std::sync::OnceLock<Option<Instant>> = std::sync::OnceLock::new();
+        static DUMPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let config = &diag::config().gpu;
+        let Some(watch) = config.watch else {
             return;
         };
-        if Instant::now() < from {
+        let from = FROM.get_or_init(|| Some(Instant::now() + watch.delay));
+        if from.is_some_and(|from| Instant::now() < from) {
             return;
         }
         self.sync();
-        let now = read_u64(host, at);
-        if self.watched != Some(now) {
-            if self.watched.is_some() {
-                let user = &self.sh[crate::regs::sh::COMPUTE_USER_DATA_0
-                    ..crate::regs::sh::COMPUTE_USER_DATA_0 + 16];
-                tracing::info!(
-                    target: "gpu::watch",
-                    "{:.3}: {at:#x} {:#x?} -> {now:#x} after {} on {} (compute user {user:x?})",
-                    crate::seconds(),
-                    self.watched,
-                    what(),
-                    std::thread::current().name().unwrap_or("?")
-                );
+        let mut bytes = vec![0u8; watch.len as usize];
+        host.read(watch.addr, &mut bytes);
+        let now = match <[u8; 8]>::try_from(bytes.as_slice()) {
+            Ok(word) => u64::from_le_bytes(word),
+            Err(_) => {
+                use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+                BuildHasherDefault::<DefaultHasher>::default().hash_one(&bytes)
             }
-            self.watched = Some(now);
+        };
+        if self.watched == Some(now) {
+            return;
         }
+        if self.watched.is_some() {
+            let user = &self.sh
+                [crate::regs::sh::COMPUTE_USER_DATA_0..crate::regs::sh::COMPUTE_USER_DATA_0 + 16];
+            let change = match watch.len {
+                8 => format!("{:#x?} -> {now:#x}", self.watched),
+                n => format!("+{n:#x} changed"),
+            };
+            let dump = config.watch_dump.as_ref().map(|dir| {
+                let n = DUMPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let path = dir.join(format!("{n:05}.bin"));
+                if let Err(e) =
+                    std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&path, &bytes))
+                {
+                    tracing::error!("cannot write {}: {e}", path.display());
+                }
+                format!(", wrote {}", path.display())
+            });
+            tracing::info!(
+                target: "gpu::watch",
+                "{:.3}: {:#x} {change} after {} on {} (compute user {user:x?}){}",
+                crate::seconds(),
+                watch.addr,
+                what(),
+                std::thread::current().name().unwrap_or("?"),
+                dump.unwrap_or_default()
+            );
+        }
+        self.watched = Some(now);
     }
 
     pub(super) fn draw(&mut self, host: &dyn Host, op: u32, draw: Draw) {

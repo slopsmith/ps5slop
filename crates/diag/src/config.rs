@@ -110,6 +110,14 @@ impl Default for Jit {
     }
 }
 
+/// `PS5SLOP_GPU_WATCH`: a range of guest memory checked after each draw and dispatch.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Watch {
+    pub addr: u64,
+    pub len: u64,
+    pub delay: Duration,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Gpu {
     /// Command buffers are rendered through Metal (off with `PS5SLOP_GPU_RENDER=0`).
@@ -121,8 +129,10 @@ pub struct Gpu {
     pub trace_user_memory: bool,
     /// A compute program whose dispatches are logged.
     pub probe: Option<u64>,
-    /// A 64-bit word watched for changes by draws and dispatches, from this long after the first.
-    pub watch: Option<(u64, Duration)>,
+    /// Memory watched for changes by draws and dispatches, from this long after the first.
+    pub watch: Option<Watch>,
+    /// Where each new content of a watched range is written.
+    pub watch_dump: Option<PathBuf>,
     pub dump_targets: bool,
     pub snap_inputs: bool,
     pub snap_raw: bool,
@@ -226,9 +236,19 @@ impl Config {
                 trace_user_memory: flag("PS5SLOP_TRACE_USER_MEMORY"),
                 probe: text("PS5SLOP_GPU_PROBE").as_deref().and_then(hex),
                 watch: text("PS5SLOP_GPU_WATCH").and_then(|v| {
-                    let (addr, secs) = v.split_once('@').unwrap_or((&v, "0"));
-                    Some((hex(addr)?, Duration::from_secs(secs.parse().ok()?)))
+                    let (range, secs) = v.split_once('@').unwrap_or((&v, "0"));
+                    let (addr, len) = range.split_once('+').unwrap_or((range, "8"));
+                    Some(Watch {
+                        addr: hex(addr)?,
+                        len: match len.strip_prefix("0x") {
+                            Some(h) => u64::from_str_radix(h, 16).ok()?,
+                            None => len.parse().ok()?,
+                        }
+                        .max(1),
+                        delay: Duration::from_secs(secs.parse().ok()?),
+                    })
                 }),
+                watch_dump: path("PS5SLOP_GPU_WATCH_DUMP"),
                 dump_targets: flag("PS5SLOP_DUMP_TARGETS"),
                 snap_inputs: flag("PS5SLOP_SNAP_INPUTS"),
                 snap_raw: flag("PS5SLOP_SNAP_RAW"),
@@ -331,14 +351,29 @@ mod tests {
     }
 
     #[test]
-    fn a_watch_takes_a_hex_address_and_optional_seconds() {
+    fn a_watch_takes_a_hex_address_and_optional_length_and_seconds() {
+        let watch = |addr, len, secs| {
+            Some(Watch {
+                addr,
+                len,
+                delay: Duration::from_secs(secs),
+            })
+        };
         assert_eq!(
             with(&[("PS5SLOP_GPU_WATCH", "0x1000@30")]).gpu.watch,
-            Some((0x1000, Duration::from_secs(30)))
+            watch(0x1000, 8, 30)
         );
         assert_eq!(
             with(&[("PS5SLOP_GPU_WATCH", "1000")]).gpu.watch,
-            Some((0x1000, Duration::ZERO))
+            watch(0x1000, 8, 0)
+        );
+        assert_eq!(
+            with(&[("PS5SLOP_GPU_WATCH", "1000+0x20000@5")]).gpu.watch,
+            watch(0x1000, 0x20000, 5)
+        );
+        assert_eq!(
+            with(&[("PS5SLOP_GPU_WATCH", "1000+100")]).gpu.watch,
+            watch(0x1000, 100, 0)
         );
         assert_eq!(with(&[("PS5SLOP_GPU_WATCH", "1000@soon")]).gpu.watch, None);
     }

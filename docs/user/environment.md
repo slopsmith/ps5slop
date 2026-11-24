@@ -51,7 +51,8 @@ Every environment variable ps5slop reads. The `PS5SLOP_*` ones are read once at 
 | `PS5SLOP_TRACE_PIXELS` | Traced draws count the samples they pass, with Metal's visibility results |
 | `PS5SLOP_TRACE_USER_MEMORY` | Traced draws and dispatches dump 256 bytes behind each pointer-like pair of user data words |
 | `PS5SLOP_GPU_PROBE=ADDR` | Logs each dispatch of the compute program at ADDR (target `gpu::probe`) |
-| `PS5SLOP_GPU_WATCH=ADDR[@SECONDS]` | Waits for the GPU after every draw and dispatch (from SECONDS after the first) and logs those that change the 64-bit word at ADDR (target `gpu::watch`) |
+| `PS5SLOP_GPU_WATCH=ADDR[+LEN][@SECONDS]` | Waits for the GPU after every draw and dispatch (from SECONDS after the first) and logs those that change the LEN bytes at ADDR (default 8; hex with `0x`) (target `gpu::watch`) |
+| `PS5SLOP_GPU_WATCH_DUMP=DIR` | With `PS5SLOP_GPU_WATCH`, writes each new content of the watched range to `DIR/NNNNN.bin` |
 | `PS5SLOP_SNAP_INPUTS`, `PS5SLOP_SNAP_RAW` | `gpusnap` also copies every texture a pixel program samples, and writes raw texels next to each PPM |
 | `PS5SLOP_SHADER_DUMP=DIR` | Writes every translation request as a capture for the `captures` and `compile_times` examples |
 | `PS5SLOP_MSL_OVERRIDE=DIR` | Replaces a program's MSL by `DIR/STAGE-ADDR.metal` when that file exists |
