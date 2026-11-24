@@ -1279,12 +1279,35 @@ fn depth_clears_reach_past_a_smaller_color_target() {
     assert_eq!(cleared, [(0.25, 0.25), (0.25, 0.25)]);
 }
 
+/// Runs `code` as one compute thread with a V# to 0x8000 in s[0:3], and
+/// returns the dword at 0x8000.
+fn one_thread(code: &[u32]) -> Option<u32> {
+    let mut metal = Metal::new()?;
+    let mem = Mem::new(1 << 20);
+    for (i, w) in code.iter().enumerate() {
+        mem.write(0x1000 + 4 * i as u64, &w.to_le_bytes());
+    }
+    let (c, u) = (vec![0u32; 0x400], vec![0u32; 0x400]);
+    let mut sh = vec![0u32; 0x400];
+    sh[sh::COMPUTE_PGM_LO] = 0x10;
+    sh[sh::COMPUTE_PGM_RSRC2] = 4 << 1;
+    sh[sh::COMPUTE_NUM_THREAD_X] = 1;
+    sh[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + 4]
+        .copy_from_slice(&[0x8000, 0, 8, 0x5204]);
+    let state = State {
+        context: &c,
+        sh: &sh,
+        uconfig: &u,
+        color_control_written: false,
+    };
+    metal.dispatch(&mem, &state, crate::Dispatch::groups([1, 1, 1]));
+    assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
+    metal.flush_and_wait();
+    Some(word(&mem, 0x8000))
+}
+
 #[test]
 fn nested_loops_with_early_exits_run_as_on_hardware() {
-    let Some(mut metal) = Metal::new() else {
-        return;
-    };
-    let mem = Mem::new(1 << 20);
     let code: [u32; 18] = [
         0xBE85_0380, // s_mov_b32 s5, 0
         0xBE86_0383, // s_mov_b32 s6, 3
@@ -1305,26 +1328,50 @@ fn nested_loops_with_early_exits_run_as_on_hardware() {
         0x8000_0200, // buffer_store_dword v2, off, s[0:3], 0
         0xBF81_0000, // s_endpgm
     ];
-    for (i, w) in code.iter().enumerate() {
-        mem.write(0x1000 + 4 * i as u64, &w.to_le_bytes());
+    if let Some(got) = one_thread(&code) {
+        assert_eq!(got, 11);
     }
-    let (c, u) = (vec![0u32; 0x400], vec![0u32; 0x400]);
-    let mut sh = vec![0u32; 0x400];
-    sh[sh::COMPUTE_PGM_LO] = 0x10;
-    sh[sh::COMPUTE_PGM_RSRC2] = 4 << 1;
-    sh[sh::COMPUTE_NUM_THREAD_X] = 1;
-    sh[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + 4]
-        .copy_from_slice(&[0x8000, 0, 8, 0x5204]);
-    let state = State {
-        context: &c,
-        sh: &sh,
-        uconfig: &u,
-        color_control_written: false,
-    };
-    metal.dispatch(&mem, &state, crate::Dispatch::groups([1, 1, 1]));
-    assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
-    metal.flush_and_wait();
-    assert_eq!(word(&mem, 0x8000), 11);
+}
+
+#[test]
+fn a_uniform_if_else_runs_one_arm() {
+    for (start, want) in [(0x80, 7), (0x81, 9)] {
+        let code = [
+            0xBE85_0300 | start, // s_mov_b32 s5, 0 or 1
+            0xBF06_8005,         // s_cmp_eq_u32 s5, 0
+            0xBF84_0002,         // s_cbranch_scc0 (to else)
+            0xBE85_0387,         // s_mov_b32 s5, 7
+            0xBF82_0001,         // s_branch (to end)
+            0xBE85_0389,         // else: s_mov_b32 s5, 9
+            0x7E04_0205,         // end: v_mov_b32 v2, s5
+            0xE070_0000,
+            0x8000_0200, // buffer_store_dword v2, off, s[0:3], 0
+            0xBF81_0000, // s_endpgm
+        ];
+        if let Some(got) = one_thread(&code) {
+            assert_eq!(got, want);
+        }
+    }
+}
+
+#[test]
+fn a_branch_out_of_the_region_it_is_in_runs_as_on_hardware() {
+    let code = [
+        0xBE85_0380, // s_mov_b32 s5, 0
+        0xBF06_8005, // s_cmp_eq_u32 s5, 0
+        0xBF84_0003, // s_cbranch_scc0 (to add)
+        0xBE85_0381, // s_mov_b32 s5, 1
+        0xBF85_0002, // s_cbranch_scc1 (past add)
+        0xBE85_0385, // s_mov_b32 s5, 5
+        0x8005_8A05, // add: s_add_u32 s5, s5, 10
+        0x7E04_0205, // v_mov_b32 v2, s5
+        0xE070_0000,
+        0x8000_0200, // buffer_store_dword v2, off, s[0:3], 0
+        0xBF81_0000, // s_endpgm
+    ];
+    if let Some(got) = one_thread(&code) {
+        assert_eq!(got, 1);
+    }
 }
 
 #[test]

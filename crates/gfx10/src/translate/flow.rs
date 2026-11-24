@@ -85,7 +85,218 @@ pub(super) fn branch_target(pc: usize, inst: &Inst) -> Option<usize> {
     }
 }
 
+/// A program as nested regions, so the MSL needs no `pc` dispatcher. Indices
+/// are into the instruction list.
+enum Node {
+    /// An instruction other than a branch.
+    Inst(usize),
+    /// A forward branch over `then`; with `els`, the unconditional branch that
+    /// ends `then` and the code it skips.
+    If {
+        branch: usize,
+        then: Vec<Node>,
+        els: Option<(usize, Vec<Node>)>,
+    },
+    Loop(Vec<Node>),
+    /// A branch back to the start of the innermost loop.
+    Continue(usize),
+    /// A branch to the instruction after the innermost loop.
+    Break(usize),
+}
+
+/// Finds the nesting the guest compiler's structured code has.
+struct Nest<'i> {
+    insts: &'i [(usize, Inst)],
+    /// Loop starts, with the index of the last branch back to each.
+    loops: BTreeMap<usize, usize>,
+}
+
+impl<'i> Nest<'i> {
+    fn new(insts: &'i [(usize, Inst)]) -> Self {
+        let mut loops = BTreeMap::new();
+        for (i, (pc, inst)) in insts.iter().enumerate() {
+            if let Some(t) = branch_target(*pc, inst)
+                && t <= *pc
+            {
+                loops.insert(t, i);
+            }
+        }
+        Nest { insts, loops }
+    }
+
+    /// The index of the instruction at `pc`, or the length for the end of the code.
+    fn index(&self, pc: usize) -> Option<usize> {
+        match self.insts.binary_search_by_key(&pc, |(p, _)| *p) {
+            Ok(i) => Some(i),
+            Err(i) if i == self.insts.len() => Some(i),
+            Err(_) => None,
+        }
+    }
+
+    fn pc(&self, i: usize) -> usize {
+        self.insts.get(i).map_or(usize::MAX, |(p, _)| *p)
+    }
+
+    /// Instructions `a..b` as nodes, inside the loops `ctx` lists as (start,
+    /// end) addresses, innermost last; `None` when they do not nest.
+    fn region(&self, a: usize, b: usize, ctx: &mut Vec<(usize, usize)>) -> Option<Vec<Node>> {
+        let mut out = Vec::new();
+        let mut i = a;
+        while i < b {
+            let (pc, inst) = &self.insts[i];
+            let pc = *pc;
+            if let Some(&last) = self.loops.get(&pc)
+                && last < b
+                && !ctx.iter().any(|l| l.0 == pc)
+            {
+                ctx.push((pc, self.pc(last + 1)));
+                let body = self.region(i, last + 1, ctx);
+                ctx.pop();
+                out.push(Node::Loop(body?));
+                i = last + 1;
+                continue;
+            }
+            let Some(t) = branch_target(pc, inst) else {
+                out.push(Node::Inst(i));
+                i += 1;
+                continue;
+            };
+            let innermost = ctx.last().copied();
+            if t <= pc {
+                if innermost?.0 != t {
+                    return None;
+                }
+                out.push(Node::Continue(i));
+                i += 1;
+                continue;
+            }
+            if innermost.is_some_and(|l| l.1 == t) {
+                out.push(Node::Break(i));
+                i += 1;
+                continue;
+            }
+            let to = self.index(t)?;
+            if to > b {
+                return None;
+            }
+            if inst.op.name == "s_branch" {
+                if to != i + 1 {
+                    return None;
+                }
+                i += 1;
+                continue;
+            }
+            let j = to - 1;
+            let skip = (j > i && self.insts[j].1.op.name == "s_branch")
+                .then(|| branch_target(self.insts[j].0, &self.insts[j].1))
+                .flatten()
+                .filter(|&u| u > t && !innermost.is_some_and(|l| l.1 == u))
+                .and_then(|u| self.index(u))
+                .filter(|&u| u <= b);
+            if let Some(end) = skip {
+                let then = self.region(i + 1, j, ctx)?;
+                let els = self.region(to, end, ctx)?;
+                out.push(Node::If {
+                    branch: i,
+                    then,
+                    els: Some((j, els)),
+                });
+                i = end;
+            } else {
+                let then = self.region(i + 1, to, ctx)?;
+                out.push(Node::If {
+                    branch: i,
+                    then,
+                    els: None,
+                });
+                i = to;
+            }
+        }
+        Some(out)
+    }
+}
+
 impl<'a> Tx<'a> {
+    /// Emits one instruction other than a branch, with its disassembly.
+    fn emit_inst(&mut self, pc: usize, inst: &Inst) -> Result<(), TranslateError> {
+        self.pc = pc;
+        let text = print(inst, Syntax { wave64: true });
+        self.line(&format!("// {text}"));
+        let step = self.lockstep && matches!(inst.kind, Kind::Ds { gds: false, .. });
+        if step {
+            self.line(LOCKSTEP_BARRIER);
+        }
+        self.inst(pc, inst)?;
+        if !self.lockstep && writes_exec(inst) {
+            // Other lanes are other threads: keep only this lane's bit.
+            let (lo, hi) = (self.s(src::EXEC_LO), self.s(src::EXEC_HI));
+            self.line(&format!("{lo} &= 1u; {hi} = 0u;"));
+        }
+        if step {
+            self.line(LOCKSTEP_BARRIER);
+        }
+        Ok(())
+    }
+
+    fn emit_nodes(
+        &mut self,
+        insts: &[(usize, Inst)],
+        nodes: &[Node],
+    ) -> Result<(), TranslateError> {
+        for node in nodes {
+            match node {
+                Node::Inst(i) => self.emit_inst(insts[*i].0, &insts[*i].1)?,
+                Node::If { branch, then, els } => {
+                    let cond = self.branch_head(insts, *branch)?;
+                    self.line(&format!("if (!({cond})) {{"));
+                    self.emit_nodes(insts, then)?;
+                    if let Some((skip, els)) = els {
+                        self.branch_head(insts, *skip)?;
+                        self.line("} else {");
+                        self.emit_nodes(insts, els)?;
+                    }
+                    self.line("}");
+                }
+                Node::Loop(body) => {
+                    self.line("for (;;) {");
+                    self.emit_nodes(insts, body)?;
+                    self.line("break;");
+                    self.line("}");
+                }
+                Node::Continue(i) | Node::Break(i) => {
+                    let (pc, inst) = &insts[*i];
+                    let cond = self.branch_head(insts, *i)?;
+                    let jump = match node {
+                        Node::Continue(_) => {
+                            let t = branch_target(*pc, inst).unwrap_or(*pc);
+                            format!("{}continue;", self.loop_guard(*pc, t))
+                        }
+                        _ => "break;".to_string(),
+                    };
+                    if cond == "true" {
+                        self.line(&jump);
+                    } else {
+                        self.line(&format!("if ({cond}) {{ {jump} }}"));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The disassembly of branch `i` as a comment, and its condition
+    /// (`true` for `s_branch`).
+    fn branch_head(&mut self, insts: &[(usize, Inst)], i: usize) -> Result<String, TranslateError> {
+        let (pc, inst) = &insts[i];
+        self.pc = *pc;
+        let text = print(inst, Syntax { wave64: true });
+        self.line(&format!("// {text}"));
+        if inst.op.name == "s_branch" {
+            return Ok("true".into());
+        }
+        self.branch_cond(*pc, inst.op.name)
+    }
+
     pub(super) fn run(&mut self) -> Result<(), TranslateError> {
         let mut leaders: BTreeSet<usize> = BTreeSet::new();
         leaders.insert(0);
@@ -115,6 +326,18 @@ impl<'a> Tx<'a> {
         } else {
             "return o;"
         };
+        let nested = structured
+            .then(|| Nest::new(&insts).region(0, insts.len(), &mut Vec::new()))
+            .flatten();
+        if let Some(nodes) = nested {
+            self.regions = false;
+            let result = self.emit_nodes(&insts, &nodes);
+            self.close_guard();
+            self.insts = insts;
+            result?;
+            self.body = format!("    uint back = 0;\n{}    {ret}\n", self.body);
+            return Ok(());
+        }
         let mut block = None;
         for (pc, inst) in &insts {
             if self.regions && leaders.contains(pc) {
@@ -139,22 +362,7 @@ impl<'a> Tx<'a> {
                 self.close_guard();
                 self.body.push_str(&format!("    case {pc}:\n"));
             }
-            self.pc = *pc;
-            let text = print(inst, Syntax { wave64: true });
-            self.line(&format!("// {text}"));
-            let step = self.lockstep && matches!(inst.kind, Kind::Ds { gds: false, .. });
-            if step {
-                self.line(LOCKSTEP_BARRIER);
-            }
-            self.inst(*pc, inst)?;
-            if !self.lockstep && writes_exec(inst) {
-                // Other lanes are other threads: keep only this lane's bit.
-                let (lo, hi) = (self.s(src::EXEC_LO), self.s(src::EXEC_HI));
-                self.line(&format!("{lo} &= 1u; {hi} = 0u;"));
-            }
-            if step {
-                self.line(LOCKSTEP_BARRIER);
-            }
+            self.emit_inst(*pc, inst)?;
         }
         self.close_guard();
         self.insts = insts;
@@ -288,38 +496,7 @@ impl<'a> Tx<'a> {
             }
             n if n.starts_with("s_cbranch") => {
                 let t = branch_target(pc, inst).unwrap();
-                let cond = match n {
-                    "s_cbranch_scc0" | "s_cbranch_scc1" if self.lockstep => {
-                        let any = "wave_any(scc, lockstep_vote, sgi, wk)";
-                        if n.ends_with('0') {
-                            format!("!{any}")
-                        } else {
-                            any.to_string()
-                        }
-                    }
-                    "s_cbranch_scc0" => "!scc".to_string(),
-                    "s_cbranch_scc1" => "scc".to_string(),
-                    "s_cbranch_vccz" | "s_cbranch_vccnz" | "s_cbranch_execz"
-                    | "s_cbranch_execnz" => {
-                        let any = self.mask_any(if n.contains("vcc") { 106 } else { 126 });
-                        let any = if self.lockstep {
-                            format!("wave_any({any}, lockstep_vote, sgi, wk)")
-                        } else if self.req.stage == Stage::Compute {
-                            format!("simd_any({any})")
-                        } else {
-                            any
-                        };
-                        if n.ends_with("nz") {
-                            any
-                        } else {
-                            format!("!{any}")
-                        }
-                    }
-                    _ => return Err(err(pc, format!("unsupported branch {n}"))),
-                };
-                if cond.contains("scc") {
-                    self.regs.insert("scc".into());
-                }
+                let cond = self.branch_cond(pc, n)?;
                 let guard = self.loop_guard(pc, t);
                 if self.regions {
                     let next = pc + 1;
@@ -334,6 +511,42 @@ impl<'a> Tx<'a> {
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         }
         Ok(())
+    }
+
+    /// The condition under which the conditional branch `name` is taken.
+    fn branch_cond(&mut self, pc: usize, n: &str) -> Result<String, TranslateError> {
+        let cond = match n {
+            "s_cbranch_scc0" | "s_cbranch_scc1" if self.lockstep => {
+                let any = "wave_any(scc, lockstep_vote, sgi, wk)";
+                if n.ends_with('0') {
+                    format!("!{any}")
+                } else {
+                    any.to_string()
+                }
+            }
+            "s_cbranch_scc0" => "!scc".to_string(),
+            "s_cbranch_scc1" => "scc".to_string(),
+            "s_cbranch_vccz" | "s_cbranch_vccnz" | "s_cbranch_execz" | "s_cbranch_execnz" => {
+                let any = self.mask_any(if n.contains("vcc") { 106 } else { 126 });
+                let any = if self.lockstep {
+                    format!("wave_any({any}, lockstep_vote, sgi, wk)")
+                } else if self.req.stage == Stage::Compute {
+                    format!("simd_any({any})")
+                } else {
+                    any
+                };
+                if n.ends_with("nz") {
+                    any
+                } else {
+                    format!("!{any}")
+                }
+            }
+            _ => return Err(err(pc, format!("unsupported branch {n}"))),
+        };
+        if cond.contains("scc") {
+            self.regs.insert("scc".into());
+        }
+        Ok(cond)
     }
 
     /// Code that ends an invocation stuck in a loop (see `GUARD_PRELUDE`); with a

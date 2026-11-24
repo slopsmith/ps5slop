@@ -1136,9 +1136,36 @@ fn pixel_loops_give_up_after_too_many_branches_back() {
     let t = pixel(&code, 2);
     let limit = gfx10::translate::MAX_BACK_BRANCHES;
     assert!(t.msl.contains(&format!(
-        "if (++back > {limit}u) {{ discard_fragment(); return o; }} pc = 0; }}"
+        "if (!scc) {{ if (++back > {limit}u) {{ discard_fragment(); return o; }} continue; }}"
     )));
-    assert!(t.msl.contains("for (;;) {") && t.msl.contains("if (pc != 0u) break; }"));
+    assert!(t.msl.contains("for (;;) {") && !t.msl.contains("pc = 0"));
+    compile(&t.msl);
+}
+
+#[test]
+fn branches_become_nested_ifs_unless_one_leaves_its_region() {
+    let if_else = [
+        0xBF06_8005, // s_cmp_eq_u32 s5, 0
+        0xBF84_0002, // s_cbranch_scc0 (to else)
+        0xBE85_0387, // s_mov_b32 s5, 7
+        0xBF82_0001, // s_branch (to end)
+        0xBE85_0389, // else: s_mov_b32 s5, 9
+        0xBF81_0000, // end: s_endpgm
+    ];
+    let t = compute(&if_else, 6, 0);
+    assert!(t.msl.contains("if (!(!scc)) {") && t.msl.contains("} else {"));
+    assert!(!t.msl.contains("if (pc == "));
+    compile(&t.msl);
+    let leaving = [
+        0xBF06_8005, // s_cmp_eq_u32 s5, 0
+        0xBF84_0002, // s_cbranch_scc0 (to the add)
+        0xBF85_0002, // s_cbranch_scc1 (past the add)
+        0xBE85_0385, // s_mov_b32 s5, 5
+        0x8005_8A05, // s_add_u32 s5, s5, 10
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&leaving, 6, 0);
+    assert!(t.msl.contains("if (pc == "));
     compile(&t.msl);
 }
 
@@ -1153,7 +1180,7 @@ fn compute_loops_give_up_alone_or_together_at_a_barrier() {
     assert!(t.loop_guard);
     assert!(
         t.msl
-            .contains("if (guard_stop(guard, ++back)) { return; } pc = 0; }")
+            .contains("if (!scc) { if (guard_stop(guard, ++back)) { return; } continue; }")
     );
     assert!(t.msl.contains("device atomic_uint* guard [[buffer(25)]]"));
     compile(&t.msl);
