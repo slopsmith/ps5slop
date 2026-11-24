@@ -276,7 +276,19 @@ impl Metal {
                             let function = function.wait()?;
                             let made = std::time::Instant::now();
                             let t = crate::timing::start();
-                            let p = device.newComputePipelineStateWithFunction_error(&function);
+                            let p = if crate::timing::labels() {
+                                let desc = objc2_metal::MTLComputePipelineDescriptor::new();
+                                desc.setComputeFunction(Some(&function));
+                                desc.setLabel(Some(&NSString::from_str(&label)));
+                                device
+                                    .newComputePipelineStateWithDescriptor_options_reflection_error(
+                                        &desc,
+                                        objc2_metal::MTLPipelineOption::None,
+                                        None,
+                                    )
+                            } else {
+                                device.newComputePipelineStateWithFunction_error(&function)
+                            };
                             crate::timing::add(crate::timing::Part::Compile, t);
                             log_compile("compute pipeline", &label, 0, queued, start, Some(made));
                             p.map_err(|e| {
@@ -462,6 +474,12 @@ impl Metal {
                     desc.setStencilAttachmentPixelFormat(MTLPixelFormat(key.depth));
                 }
             }
+            if crate::timing::labels() {
+                desc.setLabel(Some(&NSString::from_str(&format!(
+                    "vertex {:#x} pixel {:#x}",
+                    key.vertex, key.pixel
+                ))));
+            }
             let t = crate::timing::start();
             let made = device.newRenderPipelineStateWithDescriptor_error(&desc);
             crate::timing::add(crate::timing::Part::Compile, t);
@@ -511,7 +529,13 @@ pub(super) fn compile(
     let lib = device.newLibraryWithSource_options_error(&NSString::from_str(msl), Some(&options));
     crate::timing::add(crate::timing::Part::Compile, t);
     match lib {
-        Ok(lib) => lib.newFunctionWithName(&NSString::from_str(entry)),
+        Ok(lib) => {
+            let f = lib.newFunctionWithName(&NSString::from_str(entry))?;
+            if crate::timing::labels() {
+                f.setLabel(Some(&NSString::from_str(label)));
+            }
+            Some(f)
+        }
         Err(e) => {
             let msg = e.localizedDescription().to_string();
             diag::problems::record_with_detail(

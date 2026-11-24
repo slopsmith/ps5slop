@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Summarises GPU shader costs from a Metal System Trace with GPU counters.
+
+    PS5SLOP_GPU_LABELS=1 xcrun xctrace record --no-prompt --template 'Metal System Trace' \\
+        --instrument 'Metal GPU Counters' --output X.trace --launch -- \\
+        target/release/ps5slop-replay time --warmup --runs 3 CAPTURE
+    scripts/shader-profile X.trace [PROCESS [N]]
+
+Prints the N shaders (default 40) with the most shader-profiler time, each with
+its compiled size, then the register spills by encoder. PROCESS is a substring
+of the traced process name (default "replay"). Without the labels, shaders show
+only as gen5_ps, gen5_cs and so on.
+"""
+import collections
+import os
+import subprocess
+import sys
+import tempfile
+import xml.etree.ElementTree as ET
+
+
+def export(trace, schema, out):
+    path = os.path.join(out, schema + ".xml")
+    xpath = f'/trace-toc/run[@number="1"]/data/table[@schema="{schema}"]'
+    subprocess.run(
+        ["xcrun", "xctrace", "export", "--input", trace, "--xpath", xpath, "--output", path],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    return path
+
+
+def rows(path):
+    """Yields each row as {column: (text, fmt)}, with id/ref deduplication undone."""
+    vals, cols = {}, None
+    for _, el in ET.iterparse(path, events=("end",)):
+        if el.tag == "schema":
+            cols = [c.findtext("mnemonic") for c in el.findall("col")]
+        elif el.tag == "row":
+            out = []
+            for c in el:
+                if "ref" in c.attrib:
+                    out.append(vals[c.attrib["ref"]])
+                    continue
+                for d in c.iter():
+                    if "id" in d.attrib:
+                        vals[d.attrib["id"]] = (d.text or "", d.attrib.get("fmt", ""))
+                out.append((c.text or "", c.attrib.get("fmt", "")))
+            yield dict(zip(cols, out))
+            el.clear()
+
+
+def ms(fmt):
+    value, unit = fmt.split()
+    return float(value) * {"ns": 1e-6, "µs": 1e-3, "ms": 1.0, "s": 1e3}[unit]
+
+
+def main():
+    trace = sys.argv[1]
+    proc = sys.argv[2] if len(sys.argv) > 2 else "replay"
+    top = int(sys.argv[3]) if len(sys.argv) > 3 else 40
+    with tempfile.TemporaryDirectory() as tmp:
+        shaders = export(trace, "metal-shader-profiler-shader-list", tmp)
+        intervals = export(trace, "metal-shader-profiler-intervals", tmp)
+        encoders = export(trace, "metal-application-encoders-list", tmp)
+        spills = export(trace, "graphics-compiler-spill-events", tmp)
+
+        # The profiler names shaders "gen5_ps (N)"; the shader list ties such a name
+        # to code addresses, and rows for the same code carry our function label.
+        ranges, labels = collections.defaultdict(set), {}
+        for r in rows(shaders):
+            if proc not in r["process"][1]:
+                continue
+            pc = (r["pc-start"][0], r["pc-end"][0])
+            ranges[r["name"][1]].add(pc)
+            if r["label"][1] and not r["label"][1].startswith(("detile", "htile")):
+                labels[pc] = " ".join(r["label"][1].split()[:2])
+
+        cost = collections.defaultdict(lambda: [0.0, 0, ""])
+        for r in rows(intervals):
+            if proc not in r["process"][1]:
+                continue
+            name = r["pso-label"][1]
+            pcs = ranges.get(name, set())
+            names = sorted({labels[p] for p in pcs if p in labels})
+            if not names and name.startswith(("Compute 0x", "Vertex 0x", "Pixel 0x")):
+                names = [" ".join(name.split()[:2])]
+                pcs = {p for p, l in labels.items() if l == names[0]}
+            entry = cost[(" / ".join(names) or name, r["shader-type"][1])]
+            entry[0] += ms(r["duration"][1])
+            entry[1] = max([int(e) - int(s) for s, e in pcs] + [entry[1]])
+
+        print(f"{'ms':>8} {'KiB':>7}  stage      shader")
+        for (name, stage), (t, size, _) in sorted(cost.items(), key=lambda kv: -kv[1][0])[:top]:
+            print(f"{t:8.2f} {size / 1024:7.1f}  {stage:10} {name}")
+
+        names = {}
+        for r in rows(encoders):
+            if proc in r["process"][1]:
+                names[int(r["encoder-id"][1], 16)] = r["encoder-label"][1]
+        spilled = collections.defaultdict(set)
+        for r in rows(spills):
+            if proc in r["process"][1]:
+                spilled[names.get(int(r["encoder-id"][0]), "?")].add(int(r["spilled-bytes"][0]))
+        print("\nspilled bytes per thread, by encoder")
+        for label, sizes in sorted(spilled.items(), key=lambda kv: -max(kv[1]))[:top]:
+            print(f"{max(sizes):6} {label[:110]}")
+
+
+if __name__ == "__main__":
+    main()
