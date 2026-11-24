@@ -8,7 +8,7 @@ use ps5slop::title::Title;
 
 /// A PS5 compatibility layer for Apple Silicon Macs.
 #[derive(Parser)]
-#[command(name = "ps5slop")]
+#[command(name = "ps5slop", version = ps5slop::VERSION)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -115,6 +115,7 @@ fn main() -> ExitCode {
         unreachable!("info returned above");
     };
     diag::init_logging();
+    tracing::info!("ps5slop {}", ps5slop::VERSION);
     let control = control.unwrap_or_else(|| {
         std::env::temp_dir().join(format!("ps5slop-{}.sock", std::process::id()))
     });

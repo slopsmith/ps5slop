@@ -6,17 +6,29 @@ import SwiftUI
 struct LauncherApp: App {
     @State private var library = Library(source: LauncherApp.librarySource())
     @State private var session = GameSession()
+    @State private var updates = Updates()
 
     var body: some Scene {
         Window("ps5slop", id: "library") {
-            ContentView()
-                .environment(library)
-                .environment(session)
-                .frame(minWidth: 760, minHeight: 480)
-                .task { await Snapshot.takeIfAsked() }
+            if Self.showsAbout {
+                AboutView()
+                    .task { await Snapshot.takeIfAsked() }
+            } else {
+                ContentView()
+                    .environment(library)
+                    .environment(session)
+                    .frame(minWidth: 760, minHeight: 480)
+                    .task { await Snapshot.takeIfAsked() }
+                    .task { await updates.checkOnLaunch() }
+                    .modifier(UpdateAlert(updates: updates))
+            }
         }
-        .defaultSize(width: 1100, height: 720)
+        .defaultSize(width: Self.showsAbout ? 860 : 1100, height: Self.showsAbout ? 600 : 720)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                AboutButton()
+                Button("Check for Updates…") { Task { await updates.checkNow() } }
+            }
             CommandGroup(after: .newItem) {
                 Button("Add Games Folder…") { AddFolderPanel.run(library) }
                     .keyboardShortcut("o")
@@ -28,10 +40,21 @@ struct LauncherApp: App {
             }
         }
 
+        Window("About ps5slop", id: "about") {
+            AboutView()
+        }
+        .defaultSize(width: 860, height: 600)
+        .defaultLaunchBehavior(.suppressed)
+        .windowResizability(.contentMinSize)
+        .restorationBehavior(.disabled)
+
         Settings {
             SettingsView()
         }
     }
+
+    /// `--about` shows the About view in the main window instead of the library, for `--snapshot`.
+    static let showsAbout = CommandLine.arguments.contains("--about")
 
     static func argument(_ name: String) -> String? {
         let args = CommandLine.arguments
@@ -45,6 +68,14 @@ struct LauncherApp: App {
             return .fixture(URL(fileURLWithPath: path))
         }
         return .store(.standard)
+    }
+}
+
+struct AboutButton: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("About ps5slop") { openWindow(id: "about") }
     }
 }
 
@@ -76,4 +107,5 @@ enum Defaults {
     static let fontsFolder = "fontsFolder"
     static let viewMode = "viewMode"
     static let showInspector = "showInspector"
+    static let checkForUpdates = "checkForUpdates"
 }

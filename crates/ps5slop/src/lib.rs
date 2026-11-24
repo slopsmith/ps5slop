@@ -22,6 +22,9 @@ pub mod title;
 #[cfg(all(target_os = "macos", feature = "window"))]
 pub mod window;
 
+/// The version and the commit this binary was built from (see `build.rs`).
+pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("SLOP_COMMIT"), ")");
+
 /// The guest address space spans 1 TiB, enough for the PS4 layout in
 /// `docs/memory.md` (GPU addresses stay below 2^40).
 pub const ADDRESS_SPACE: u64 = 1 << 40;

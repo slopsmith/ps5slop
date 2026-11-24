@@ -96,6 +96,14 @@ Read by the Swift launcher ([app.md](app.md)), not by `ps5slop`.
 | --- | --- |
 | `PS5SLOP_BIN=PATH` | The `ps5slop` binary to run when the launcher is not inside `ps5slop.app` (default: `target/release/ps5slop` in the current folder or a parent) |
 
+## Building
+
+Read when ps5slop is compiled, not when it runs.
+
+| Variable | What it does |
+| --- | --- |
+| `SLOP_COMMIT=SHA` | The commit `ps5slop --version` and the logs name (default: `git rev-parse HEAD` plus `-dev`). Set by `scripts/bundle-app` and the nightly workflow ([app.md](app.md#building)) |
+
 ## Adding a variable
 
 New switches go into `diag::Config`, not into a `std::env::var` call at the use site, and get a row here.

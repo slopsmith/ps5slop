@@ -5,6 +5,7 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage(Defaults.dataFolder) private var dataFolder = ""
     @AppStorage(Defaults.fontsFolder) private var fontsFolder = ""
+    @AppStorage(Defaults.checkForUpdates) private var checkForUpdates = true
     @State private var fonts = FontFetcher()
 
     var body: some View {
@@ -24,6 +25,11 @@ struct SettingsView: View {
                 }
             } footer: {
                 Text("Open-source stand-ins for the console's system fonts, fetched from Google Fonts. Some games, such as Astro Bot, need them.")
+            }
+            Section {
+                Toggle("Check for updates when ps5slop starts", isOn: $checkForUpdates)
+            } footer: {
+                Text("Compares this build with the newest nightly on GitHub. Local builds never check.")
             }
             Section {
                 Button("Open Captures Folder") { openCaptures() }

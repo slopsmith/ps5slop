@@ -1,7 +1,7 @@
 import AppKit
 import ScreenCaptureKit
 
-/// Launch options for screenshots: `--appearance light|dark`, `--window WxH`,
+/// Launch options for screenshots: `--appearance light|dark`, `--window WxH`, `--about`,
 /// and `--snapshot PATH`, which saves the window as a PNG once drawn and quits.
 @MainActor
 enum Snapshot {
@@ -9,7 +9,11 @@ enum Snapshot {
         if let appearance = LauncherApp.argument("--appearance") {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
         }
-        let window = NSApp.windows.first { $0.isVisible }
+        var window = NSApp.windows.first { $0.isVisible }
+        for _ in 0..<50 where window == nil {
+            try? await Task.sleep(for: .milliseconds(100))
+            window = NSApp.windows.first { $0.isVisible }
+        }
         if let size = LauncherApp.argument("--window")?.split(separator: "x").compactMap({ Double($0) }),
             size.count == 2
         {
