@@ -169,6 +169,89 @@ fn a_depth_layout_image_a_program_stored_is_sampled_as_stored() {
 }
 
 #[test]
+fn a_layered_depth_target_takes_every_slice_a_program_stored() {
+    let Some(mut metal) = Metal::new() else {
+        return;
+    };
+    let mem = Mem::new(0x100_0000);
+    let (at, n) = (0x80_0000, 64usize);
+    let image = Image {
+        address: at,
+        format: 11, // R16Uint, as GTA V clears a cube shadow map
+        width: n as u32,
+        height: n as u32,
+        swizzle: [4, 0, 0, 1],
+        tile: None,
+        raw_tile: 0x18,
+        kind: 13,
+        base_level: 0,
+        last_level: 0,
+        depth: 6,
+        base_array: 0,
+    };
+    let stored = metal
+        .storage_image(&mem, image, TextureKind::Tex2dArray)
+        .expect("a layered storage image");
+    let stored_words = metal
+        .device
+        .newBufferWithLength_options(n * n * 2, MTLResourceOptions::StorageModeShared)
+        .unwrap();
+    // Not 0xffff: a new depth target starts cleared to 1.0.
+    unsafe {
+        std::ptr::write_bytes(
+            stored_words.contents().as_ptr().cast::<u8>(),
+            0x12,
+            n * n * 2,
+        )
+    };
+    let size = MTLSize {
+        width: n,
+        height: n,
+        depth: 1,
+    };
+    let origin = MTLOrigin { x: 0, y: 0, z: 0 };
+    let cb = metal.command();
+    let blit = cb.blitCommandEncoder().unwrap();
+    unsafe {
+        blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
+            &stored_words, 0, n * 2, n * n * 2, size, &stored, 3, 0, origin,
+        );
+    }
+    blit.endEncoding();
+    let target = DepthTarget {
+        address: at,
+        format: 1,
+        stencil: false,
+        stencil_address: 0,
+        width: n as u32,
+        height: n as u32,
+        slice: 3,
+        slice_max: 5,
+    };
+    let (depth, _, _) = metal
+        .depth(&target, n as u32, n as u32)
+        .expect("the depth target");
+    let out = metal
+        .device
+        .newBufferWithLength_options(n * n * 2, MTLResourceOptions::StorageModeShared)
+        .unwrap();
+    let cb = metal.command();
+    let blit = cb.blitCommandEncoder().unwrap();
+    unsafe {
+        blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage(
+            &depth, 3, 0, origin, size, &out, 0, n * 2, n * n * 2,
+        );
+    }
+    blit.endEncoding();
+    metal.flush_and_wait();
+    let z = unsafe { *out.contents().as_ptr().cast::<u16>().add(n * 10 + 10) };
+    assert_eq!(
+        z, 0x1212,
+        "slice 3 of the depth target holds what was stored there"
+    );
+}
+
+#[test]
 fn a_capture_records_the_memory_of_windows_made_before_it() {
     let Some(mut metal) = Metal::new() else {
         return;

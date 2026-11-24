@@ -169,23 +169,36 @@ impl Metal {
         if !self.depth_stores.remove(&d.address) {
             return Some((t, format, fresh));
         }
+        let bytes = if format == MTLPixelFormat::Depth16Unorm {
+            2
+        } else {
+            4
+        };
+        let same_size = |s: &Texture| {
+            let p = s.pixelFormat();
+            let size = if [MTLPixelFormat::R32Float, MTLPixelFormat::R32Uint].contains(&p) {
+                4
+            } else if [MTLPixelFormat::R16Unorm, MTLPixelFormat::R16Uint].contains(&p) {
+                2
+            } else {
+                0
+            };
+            size == bytes && s.width() == t.width() && s.height() == t.height()
+        };
         let stored = self
             .volumes
             .get(&d.address)
             .cloned()
             .or_else(|| self.targets.get(&d.address).map(|x| x.texture.clone()))
-            .filter(|s| {
-                s.pixelFormat() == MTLPixelFormat::R32Float
-                    && s.width() == t.width()
-                    && s.height() == t.height()
-            });
-        let Some(src) = stored.filter(|_| format != MTLPixelFormat::Depth16Unorm) else {
+            .filter(|s| same_size(s));
+        let Some(src) = stored else {
             return Some((t, format, fresh));
         };
         let (w, h) = (t.width(), t.height());
+        let (row, image) = (w * bytes, w * h * bytes);
         let staging = self
             .device
-            .newBufferWithLength_options(w * h * 4, MTLResourceOptions::StorageModePrivate)?;
+            .newBufferWithLength_options(image, MTLResourceOptions::StorageModePrivate)?;
         self.end_pass();
         let command = self.command();
         let blit = command.blitCommandEncoder()?;
@@ -194,13 +207,21 @@ impl Metal {
         } else {
             MTLBlitOption::empty()
         };
-        unsafe {
-            blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage(
-                &src, 0, 0, MTLOrigin { x: 0, y: 0, z: 0 }, MTLSize { width: w, height: h, depth: 1 }, &staging, 0, w * 4, w * h * 4,
-            );
-            blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin_options(
-                &staging, 0, w * 4, w * h * 4, MTLSize { width: w, height: h, depth: 1 }, &t, d.slice as usize, 0, MTLOrigin { x: 0, y: 0, z: 0 }, options,
-            );
+        let size = MTLSize {
+            width: w,
+            height: h,
+            depth: 1,
+        };
+        let origin = MTLOrigin { x: 0, y: 0, z: 0 };
+        for slice in 0..src.arrayLength().min(t.arrayLength()) {
+            unsafe {
+                blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage(
+                    &src, slice, 0, origin, size, &staging, 0, row, image,
+                );
+                blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin_options(
+                    &staging, 0, row, image, size, &t, slice, 0, origin, options,
+                );
+            }
         }
         blit.endEncoding();
         self.note(|| {
