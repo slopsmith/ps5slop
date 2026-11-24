@@ -134,6 +134,41 @@ fn a_capture_records_the_memory_of_images_detiled_before_it() {
 }
 
 #[test]
+fn a_depth_layout_image_a_program_stored_is_sampled_as_stored() {
+    let Some(mut metal) = Metal::new() else {
+        return;
+    };
+    let mem = Mem::new(0x100_0000);
+    let image = |format| Image {
+        address: 0x80_0000,
+        format,
+        width: 64,
+        height: 64,
+        swizzle: [4, 0, 0, 1],
+        tile: None,
+        raw_tile: 0x18,
+        kind: 9,
+        base_level: 0,
+        last_level: 0,
+        depth: 1,
+        base_array: 0,
+    };
+    let stored = metal
+        .storage_image(&mem, image(0x14), TextureKind::Tex2d) // R32Uint, as a depth copy is written
+        .expect("a storage image for the copy");
+    let sampled = metal
+        .image(&mem, image(0x16), TextureKind::Tex2d) // R32Float, as it is read
+        .expect("the copy as a sampled texture");
+    let parent = sampled.parentTexture();
+    let same = parent.as_deref().map_or(&*sampled, |p| p) as *const _ as *const ()
+        == &*stored as *const _ as *const ();
+    assert!(
+        same,
+        "sampling must see the stored copy, not a blank texture"
+    );
+}
+
+#[test]
 fn a_capture_records_the_memory_of_windows_made_before_it() {
     let Some(mut metal) = Metal::new() else {
         return;

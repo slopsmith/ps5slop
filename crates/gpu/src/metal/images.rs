@@ -120,7 +120,15 @@ impl Metal {
                 return Some(v);
             }
         }
-        if image.tile.is_none() && is_depth_layout(image.raw_tile) && kind != TextureKind::Tex3d {
+        // A depth layout no draw rendered reads as zeros, unless a program stored it.
+        let stored = self.targets.get(&image.address).is_some_and(|t| {
+            t.texture.width() as u32 == image.width && t.texture.height() as u32 == image.height
+        });
+        if image.tile.is_none()
+            && is_depth_layout(image.raw_tile)
+            && kind != TextureKind::Tex3d
+            && !stored
+        {
             return self.blank_texture(image, kind, format);
         }
         if kind == TextureKind::Tex3d
