@@ -232,6 +232,25 @@ A GPU test runs one program with packed and scalar half ops, `op_sel`, SDWA and 
 
 `Request::grid_bounds` makes a compute program read the grid size in threads from `bounds` (`device const uint*` at `[[buffer(24)]]`) and start threads at or past it with EXEC clear; in a lockstep program the active lanes are the prefix of the wave below the bound, so a lockstep program with a group of more than one dimension is refused. The renderer uses it for indirect dispatches whose sizes count threads ([gpu.md](gpu.md#indirect-dispatch-sizes-on-the-gpu-2026-11-22-late-night)); a GPU test dispatches 70 threads in groups of 64 and checks that exactly 70 stores land. `Request::drop_depth_export` makes a pixel program drop its depth export, for draws without a depth target. Captures from version 4 on store both flags.
 
+## Toward a compiler (2026-11-24)
+
+The translator emits each instruction as its own MSL snippet, with every rare case written out inline, and leaves the rest to Metal's compiler. That compiler optimises well, but only what it can see, and on a GPU the price of what it cannot remove is higher than on a CPU: registers per thread set how many threads a core holds, spills go to memory, and the instruction cache is small.
+
+**Measured** in GTA V's Fidelity frame with `scripts/shader-profile` ([debugging.md](debugging.md)):
+
+- Compiled programs are 14 to 217 KiB. `0x115b185c00` is 3.7 KB of guest code (about 900 instructions), 140 KB of MSL and 136 KiB of GPU code, and spills 592 bytes per thread. Spills show up in about 200 encoders of the frame.
+- In `0x115b185c00` (a lockstep compute program, six dispatches, 9.2 ms), dropping the barriers around LDS operations or making the wave votes local to a SIMD group did not make it faster (the results are wrong; it only measures the ceiling). Dropping the per-dword fallback of multi-dword scalar loads, which almost never runs, made it 7.1 to 7.6 ms. The fallback is now two window lookups instead of one per dword ([gpu.md](gpu.md)).
+- A pixel program of the heaviest pass (`0x115aff4800`, 7 of pass 106's 16 draws) starts with 11 scalar loads of constants and descriptors, among them an `s_buffer_load_dwordx16`; each is a per-pixel read of guest memory through the window lookup. Most of its 89 KB of MSL is these loads.
+
+**Plan.** Each step keeps the current form as the fallback for what it cannot handle, so programs never stop translating; old and new output of the same program, compared on the GPU, is the oracle. Each step is measured by code size, spills and time per program in the frame, and the frame must stay pixel-identical.
+
+1. **Constant buffers.** A scalar load whose base the source pass traces (a pointer at a known place, or a V# at one) reads a Metal `constant` buffer the renderer binds per draw, at the guest address it resolves the same way as texture descriptors, from the same no-copy windows programs use. The load becomes `cbN[k]` with a constant index: no lookup, no fallback, and the compiler knows the value is the same for every thread. Slots 1 to 16. Where the address falls in no guest memory the renderer binds zeros, which is what the window lookup reads there.
+2. **Structured control flow.** Turn the basic blocks into nested `if`, `else` and loops where the branches allow it (forward branches to a common join, loops with one header), and keep the `pc` dispatcher for the rest. Exec-mask sequences the guest compiler emits for structured code (`s_and_saveexec` to enter, `s_or` with the saved mask to leave) become plain `if`s around this lane's work, outside lockstep programs.
+3. **Fewer whole-wave masks.** In lockstep programs, find which mask values reach an instruction that needs the whole wave (`crosses_lanes`, execz branches around barriers or LDS) and ballot only those.
+4. **Formats known at translation.** Buffer formats and strides from V#s the source pass traces are passed in the request, like integer texture formats, so `buffer_load_format` becomes the one conversion it needs.
+
+An SSA form between decoding and emission is not planned until a step needs it; Metal's compiler builds SSA from the register locals already.
+
 ## Open questions
 
 - The renderer asked for buffers at `[[buffer(1 + slot)]]` with their V#s at `[[buffer(30)]]`. Balatro's vertex programs build their V#s at run time, so the translator reads guest memory instead; static buffer slots could come back as an optimisation where a V# provably sits in user SGPRs.

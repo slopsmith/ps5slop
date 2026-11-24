@@ -716,3 +716,8 @@ Guest waits with a deadline (condition variables, mutexes, semaphores, event fla
 ## 2026-11-23: SwiftUI launcher, one process per game
 
 A native launcher app (`apps/macos`, SwiftUI) lists the games in chosen folders and starts each as a child process, `ps5slop run --control SOCKET PATH`, which opens its own game window. The launcher reads game details from `ps5slop info --json` and never links the emulator. Reason: Hypervisor.framework allows one VM per process, HLE state is process-global, and a GPU hang poisons Metal for the whole process, so a game in the launcher's process could take the library down with it and a second game could not start without a restart. SwiftUI because it gives the expected Mac look (sidebar, grid and table, toolbar search, Settings) with little code. Considered: a Rust GUI toolkit (one language, but a foreign look and more code for the same features).
+
+## 2026-11-24: The shader translator moves toward a compiler, in steps
+
+Instead of one MSL snippet per instruction with every edge case inline, the translator will resolve what is known per draw (constant buffers first, then buffer formats), emit structured control flow, and ballot only the lane masks that need the whole wave. Each step keeps the current form as its fallback and is checked against it. Reason: GTA V's Fidelity frame is bound by the GPU; its programs compile to 14 to 217 KiB with register spills, and the costs measured come from code around the work, not from the work ([shaders.md](shaders.md#toward-a-compiler-2026-11-24)). vic agreed to the direction on 2026-11-24.
+
