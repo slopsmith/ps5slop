@@ -342,6 +342,9 @@ fn gpu_thread(
                 match capture.on_frame_end() {
                     gpu::capture::FrameBoundary::None => {}
                     gpu::capture::FrameBoundary::Start(path) => {
+                        if let Some(b) = processor.backend.as_mut() {
+                            b.capture_starting();
+                        }
                         let textures = processor
                             .backend
                             .as_mut()

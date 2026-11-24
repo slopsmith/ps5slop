@@ -110,6 +110,9 @@ impl Metal {
             .iter()
             .find(|w| w.start <= addr && end <= w.end)
         {
+            if self.capture_reads {
+                host.extent(addr);
+            }
             return Some((w.buffer.clone(), (addr - w.start) as usize));
         }
         let (lo, hi) = host.extent(addr)?;

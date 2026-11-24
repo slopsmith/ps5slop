@@ -102,6 +102,58 @@ fn written_ranges_follow_the_v_sharp_bounds() {
 }
 
 #[test]
+fn a_capture_records_the_memory_of_images_detiled_before_it() {
+    let Some(mut metal) = Metal::new() else {
+        return;
+    };
+    let mut mem = Mem::new(0x100_0000);
+    mem.regions = vec![(0, 0x80_0000), (0x80_0000, 0x100_0000)];
+    let at = 0x80_0000;
+    mem.write(at, &[0x3f; 1024]);
+    let image = Image {
+        address: at,
+        format: 22, // R32Float
+        width: 4,
+        height: 4,
+        swizzle: [4, 5, 6, 7],
+        tile: Some(TileMode::Linear),
+        raw_tile: 0,
+        kind: 9,
+        base_level: 0,
+        last_level: 0,
+        depth: 1,
+        base_array: 0,
+    };
+    assert!(metal.image(&mem, image, TextureKind::Tex2d).is_some());
+    let recorder = crate::capture::FrameRecorder::new(None, Vec::new());
+    metal.capture_starting();
+    let host = recorder.recording_host(&mem);
+    assert!(metal.image(&host, image, TextureKind::Tex2d).is_some());
+    let page = at & !(crate::capture::PAGE_SIZE - 1);
+    assert!(recorder.finish().pages.contains_key(&page));
+}
+
+#[test]
+fn a_capture_records_the_memory_of_windows_made_before_it() {
+    let Some(mut metal) = Metal::new() else {
+        return;
+    };
+    let mut mem = Mem::new(0x100_0000);
+    mem.regions = vec![(0, 0x80_0000), (0x80_0000, 0x100_0000)];
+    let at = 0x80_0000;
+    mem.write(at, &[0x3f; 1024]);
+    assert!(metal.window(&mem, at, 1024).is_some());
+    let recorder = crate::capture::FrameRecorder::new(None, Vec::new());
+    metal.capture_starting();
+    assert!(
+        metal
+            .window(&recorder.recording_host(&mem), at, 1024)
+            .is_some()
+    );
+    assert!(recorder.finish().pages.contains_key(&at));
+}
+
+#[test]
 fn the_htile_check_marks_cleared_words_and_sets_the_draw() {
     let Some(mut metal) = Metal::new() else {
         return;

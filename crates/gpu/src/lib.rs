@@ -122,6 +122,9 @@ pub trait Backend: Send {
     fn save_textures(&mut self) -> Result<Vec<u8>, String> {
         Ok(Vec::new())
     }
+    /// A frame capture starts: guest memory the backend kept a copy of must be
+    /// read again through the host, so the capture records it.
+    fn capture_starting(&mut self) {}
     /// Makes textures saved by [`Backend::save_textures`] again.
     fn restore_textures(&mut self, _saved: &[u8]) -> Result<(), String> {
         Ok(())
@@ -181,6 +184,9 @@ impl Backend for SharedBackend {
     }
     fn save_textures(&mut self) -> Result<Vec<u8>, String> {
         self.lock().save_textures()
+    }
+    fn capture_starting(&mut self) {
+        self.lock().capture_starting()
     }
     fn restore_textures(&mut self, saved: &[u8]) -> Result<(), String> {
         self.lock().restore_textures(saved)

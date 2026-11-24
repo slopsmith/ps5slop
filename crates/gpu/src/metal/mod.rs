@@ -159,6 +159,9 @@ pub struct Metal {
     clear_helpers: Option<ClearHelpers>,
     clear_pipelines: HashMap<(usize, bool), Retained<RenderPipeline>>,
     htile_helpers: Option<HtileHelpers>,
+    /// A frame capture records this frame: cached windows still ask the host
+    /// about the memory they cover, so the capture holds it.
+    capture_reads: bool,
     indirect_sizes: Option<Retained<ComputePipeline>>,
     /// By colour formats, depth format and stencil.
     htile_pipelines: HashMap<([usize; 8], usize, bool), Retained<RenderPipeline>>,
@@ -307,6 +310,7 @@ impl Metal {
             clear_helpers: None,
             clear_pipelines: HashMap::new(),
             htile_helpers: None,
+            capture_reads: false,
             indirect_sizes: None,
             htile_pipelines: HashMap::new(),
             pending_writes: false,
@@ -434,6 +438,14 @@ impl Metal {
 }
 
 impl Backend for Metal {
+    fn capture_starting(&mut self) {
+        // Their next use checks them against guest memory, which reads it through the host.
+        for (epoch, _) in self.images.values_mut() {
+            *epoch = u64::MAX;
+        }
+        self.capture_reads = true;
+    }
+
     fn save_textures(&mut self) -> Result<Vec<u8>, String> {
         self.flush_and_wait();
         let mut out = Vec::new();
@@ -740,6 +752,7 @@ impl Backend for Metal {
     }
 
     fn frame_done(&mut self, shown: Option<u64>) {
+        self.capture_reads = false;
         if let Some(addr) = shown
             && let Some(t) = self.targets.get(&addr)
         {
