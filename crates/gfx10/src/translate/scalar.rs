@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// The operands of a scalar memory instruction.
+pub(super) struct Smem {
+    pub sdata: u16,
+    pub sbase: u16,
+    pub offset: i32,
+    pub soffset: u16,
+    pub glc: bool,
+}
+
 impl<'a> Tx<'a> {
     pub(super) fn sop1(
         &mut self,
@@ -372,15 +381,61 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
-    pub(super) fn smem(
+    /// The constant buffer slot and first dword of a load through a traced base.
+    fn constant_load(
         &mut self,
         pc: usize,
         name: &str,
-        sdata: u16,
         sbase: u16,
         offset: i32,
         soffset: u16,
-    ) -> Result<(), TranslateError> {
+        n: u16,
+    ) -> Option<(usize, u32)> {
+        // A program that invalidates the scalar cache may read what it wrote.
+        let invalidates =
+            |(_, i): &(usize, Inst)| matches!(i.op.name, "s_dcache_inv" | "s_gl1_inv");
+        if self.insts.iter().any(invalidates) {
+            return None;
+        }
+        let st = self.syms.as_ref()?.get(&pc)?;
+        let at = |r: u16| st.get(r as usize).cloned().flatten();
+        let words = if name.starts_with("s_buffer") { 4 } else { 2 };
+        let first = at(sbase)?;
+        if matches!(first, Source::Scaled { .. } | Source::Constant(_))
+            || (1..words).any(|i| at(sbase + i) != Some(first.advance(4 * i as u32)))
+            || soffset != src::NULL
+            || offset < 0
+            || offset % 4 != 0
+        {
+            return None;
+        }
+        let base = if words == 4 {
+            Base::Buffer(first)
+        } else {
+            Base::Pointer(first)
+        };
+        let end = offset as u32 + 4 * n as u32;
+        let slot = match self.constants.iter().position(|(b, _)| *b == base) {
+            Some(i) => i,
+            None if self.constants.len() < MAX_CONSTANTS => {
+                self.constants.push((base, 0));
+                self.constants.len() - 1
+            }
+            None => return None,
+        };
+        let bytes = &mut self.constants[slot].1;
+        *bytes = (*bytes).max(end);
+        Some((slot, offset as u32 / 4))
+    }
+
+    pub(super) fn smem(&mut self, pc: usize, name: &str, op: Smem) -> Result<(), TranslateError> {
+        let Smem {
+            sdata,
+            sbase,
+            offset,
+            soffset,
+            glc,
+        } = op;
         let n = match name {
             "s_load_dword" | "s_buffer_load_dword" => 1,
             "s_load_dwordx2" | "s_buffer_load_dwordx2" => 2,
@@ -390,9 +445,37 @@ impl<'a> Tx<'a> {
             "s_dcache_inv" | "s_gl1_inv" | "s_dcache_wb" => return Ok(()),
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
+        let dests = sdata..sdata + n;
+        if let Some(read) = &self.read_anywhere
+            && dests.end <= SGPR_COUNT
+            && !dests.clone().any(|r| read.contains(&r))
+        {
+            // Descriptors only: the host binds what they describe.
+            for r in dests {
+                self.sdst(r);
+            }
+            return Ok(());
+        }
+        let traced = (!glc).then(|| self.constant_load(pc, name, sbase, offset, soffset, n));
+        if let Some((cb, first)) = traced.flatten() {
+            let mut s = String::from("{");
+            for i in 0..n {
+                if let Some(d) = self.sdst(sdata + i) {
+                    write!(s, " {d} = cb{cb}[{}];", first + i as u32).unwrap();
+                }
+            }
+            s.push_str(" }");
+            self.line(&s);
+            return Ok(());
+        }
         self.mem = true;
-        let lo = self.s(sbase);
-        let hi = self.s(sbase + 1);
+        let mut bases = vec![sbase, sbase + 1];
+        if soffset != src::NULL {
+            bases.push(soffset);
+        }
+        self.load_bases.push((dests.collect(), bases));
+        let lo = self.sreg(sbase);
+        let hi = self.sreg(sbase + 1);
         let base = if name.starts_with("s_buffer") {
             format!("(ulong({hi} & 0xffffu) << 32 | ulong({lo}))")
         } else {
@@ -401,7 +484,7 @@ impl<'a> Tx<'a> {
         let so = if soffset == src::NULL {
             "0u".to_string()
         } else {
-            self.s(soffset)
+            self.sreg(soffset)
         };
         let mut s = format!("{{ ulong a = {base} + ulong({so}) + ulong(long({offset}));");
         if n == 1 {
@@ -428,7 +511,7 @@ impl<'a> Tx<'a> {
             s.push_str(" }");
         }
         for i in 0..n {
-            if let Some(d) = self.sdst(sdata + i as u16) {
+            if let Some(d) = self.sdst(sdata + i) {
                 write!(s, " {d} = t{i};").unwrap();
             }
         }

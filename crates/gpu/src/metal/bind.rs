@@ -12,6 +12,8 @@ pub(super) struct Bound {
     sampler_words: Vec<(usize, u32)>,
     pub(super) textures: Vec<(usize, Retained<Texture>)>,
     pub(super) samplers: Vec<(usize, Retained<ProtocolObject<dyn MTLSamplerState>>)>,
+    /// Constant buffers: binding index, buffer and offset.
+    constants: Vec<(usize, Retained<Buffer>, usize)>,
 }
 
 /// Where a program's resources are bound: one stage of an encoder.
@@ -146,6 +148,7 @@ impl Metal {
             sampler_words: Vec::new(),
             textures: Vec::new(),
             samplers: Vec::new(),
+            constants: Vec::new(),
         };
         if program.translated.gds {
             bound.gds = Some(self.gds_buffer()?);
@@ -271,6 +274,25 @@ impl Metal {
                     };
                     bound.textures.push((slot as usize, tex));
                 }
+                Resource::Constants {
+                    slot,
+                    ref base,
+                    bytes,
+                } => {
+                    let at = match base {
+                        Base::Pointer(p) => {
+                            let d = self.descriptor(host, user, p, 2)?;
+                            d[0] as u64 | (d[1] as u64) << 32
+                        }
+                        Base::Buffer(v) => {
+                            let d = self.descriptor(host, user, v, 4)?;
+                            d[0] as u64 | (d[1] as u64 & 0xFFFF) << 32
+                        }
+                    };
+                    let (buffer, offset) = self.constants(host, at, bytes as u64)?;
+                    let index = binding::CONSTANTS as usize + slot as usize;
+                    bound.constants.push((index, buffer, offset));
+                }
                 Resource::Sampler { slot, ref source } => {
                     let d = self.descriptor(host, user, source, 4)?;
                     bound.sampler_words.push((slot as usize, d[0]));
@@ -319,5 +341,48 @@ impl Metal {
         for (slot, s) in &bound.samplers {
             enc.sampler(s, *slot);
         }
+        for (index, b, offset) in &bound.constants {
+            enc.buffer(b, *offset, *index);
+        }
+    }
+
+    /// The buffer and offset of a constant buffer of `len` bytes at guest address `at`.
+    /// Outside guest memory, a copy in which unreadable dwords are 0, as scalar loads read them.
+    fn constants(
+        &mut self,
+        host: &dyn Host,
+        at: u64,
+        len: u64,
+    ) -> Option<(Retained<Buffer>, usize)> {
+        if at.is_multiple_of(4)
+            && let Some(b) = self.memory_buffer(host, at, len)
+        {
+            return Some(b);
+        }
+        let (buffer, offset) = self.scratch(len as usize)?;
+        let words = len.div_ceil(4);
+        // SAFETY: `scratch` gave `len` bytes, rounded up to dwords, at `offset`
+        // that no GPU work uses yet.
+        let out = unsafe {
+            buffer
+                .contents()
+                .as_ptr()
+                .cast::<u8>()
+                .add(offset)
+                .cast::<u32>()
+        };
+        for i in 0..words {
+            let mut w = [0u8; 4];
+            let a = at.wrapping_add(4 * i);
+            let mapped = host.extent(a).is_some_and(|(_, end)| a + 4 <= end);
+            let v = if mapped && host.read(a, &mut w) {
+                u32::from_le_bytes(w)
+            } else {
+                0
+            };
+            // SAFETY: as above, `i` is below the dwords given.
+            unsafe { out.add(i as usize).write_unaligned(v) };
+        }
+        Some((buffer, offset))
     }
 }

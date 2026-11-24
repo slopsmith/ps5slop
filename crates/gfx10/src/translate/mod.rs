@@ -163,6 +163,18 @@ pub enum Resource {
     },
     /// An S#, bound at `[[sampler(slot)]]`.
     Sampler { slot: u8, source: Source },
+    /// Guest memory scalar loads read, bound at `[[buffer(binding::CONSTANTS + slot)]]`
+    /// as `constant uint*` from the address `base` gives, at least `bytes` long.
+    Constants { slot: u8, base: Base, bytes: u32 },
+}
+
+/// Where the guest address of a [`Resource::Constants`] comes from.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Base {
+    /// The 64-bit pointer in the two dwords at the source (`s_load_*`).
+    Pointer(Source),
+    /// The base address of the V# at the source (`s_buffer_load_*`).
+    Buffer(Source),
 }
 
 /// The translated program.
@@ -236,7 +248,13 @@ pub mod binding {
     pub const GUARD: u32 = 25;
     /// `device const uint* bounds`: the grid size in threads, for [`Request::grid_bounds`].
     pub const BOUNDS: u32 = 24;
+    /// The first of the [`super::MAX_CONSTANTS`] `constant uint* cbN` buffers.
+    pub const CONSTANTS: u32 = 1;
 }
+
+/// Constant buffers a program may bind; scalar loads through more bases read
+/// guest memory instead.
+pub const MAX_CONSTANTS: usize = 16;
 
 /// Backward branches a vertex or pixel invocation may take before it gives up: a
 /// GPU hang makes macOS ignore all of the process's later Metal work.
@@ -293,6 +311,7 @@ pub fn translate(req: &Request) -> Result<Translated, TranslateError> {
     let mut tx = Tx::new(req, insts);
     tx.syms = Some(syms);
     tx.mem_write = dry.mem_write;
+    tx.read_anywhere = (!dry.movrel).then(|| dry.live_sgprs());
     tx.atomic_textures = dry
         .textures
         .iter()
@@ -373,6 +392,15 @@ struct Tx<'a> {
     /// instruction using it.
     textures: Vec<(u16, TextureKind, Source, Access)>,
     samplers: Vec<Source>,
+    /// Constant buffers by base, with the bytes the program reads from them.
+    constants: Vec<(Base, u32)>,
+    /// SGPRs anything reads other than as an image or sampler descriptor, or
+    /// writes through `s` rather than `sdst`.
+    sgpr_reads: BTreeSet<u16>,
+    /// `sgpr_reads` of the first pass; `None` in that pass.
+    read_anywhere: Option<BTreeSet<u16>>,
+    /// Destination and base SGPRs of each scalar load read through guest memory.
+    load_bases: Vec<(Vec<u16>, Vec<u16>)>,
     attrs: BTreeMap<u8, Interp>,
     params: BTreeSet<u8>,
     mrts: u8,
@@ -477,6 +505,10 @@ impl<'a> Tx<'a> {
             syms: None,
             textures: Vec::new(),
             samplers: Vec::new(),
+            constants: Vec::new(),
+            sgpr_reads: BTreeSet::new(),
+            read_anywhere: None,
+            load_bases: Vec::new(),
             attrs: BTreeMap::new(),
             params: BTreeSet::new(),
             mrts: 0,
@@ -509,8 +541,30 @@ impl<'a> Tx<'a> {
         self.body.push('\n');
     }
 
+    /// SGPRs read other than as descriptors, counting a load's base only
+    /// when something reads what the load gives.
+    fn live_sgprs(&self) -> BTreeSet<u16> {
+        let mut live = self.sgpr_reads.clone();
+        loop {
+            let before = live.len();
+            for (dests, bases) in &self.load_bases {
+                if dests.iter().any(|d| live.contains(d)) {
+                    live.extend(bases);
+                }
+            }
+            if live.len() == before {
+                return live;
+            }
+        }
+    }
+
     // The local holding scalar register `code` (32 bits).
     fn s(&mut self, code: u16) -> String {
+        self.sgpr_reads.insert(code);
+        self.sreg(code)
+    }
+
+    fn sreg(&mut self, code: u16) -> String {
         let name = match code {
             0..=105 => format!("s{code}"),
             106 => "vcc_lo".into(),
@@ -540,7 +594,7 @@ impl<'a> Tx<'a> {
 
     fn sdst(&mut self, code: u16) -> Option<String> {
         self.written(code);
-        (code != src::NULL).then(|| self.s(code))
+        (code != src::NULL).then(|| self.sreg(code))
     }
 
     // A 32-bit source operand as a `uint` expression; `f16` picks 16-bit float constants.

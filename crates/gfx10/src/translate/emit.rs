@@ -19,6 +19,13 @@ impl<'a> Tx<'a> {
                 source: source.clone(),
             });
         }
+        for (i, (base, bytes)) in self.constants.iter().enumerate() {
+            resources.push(Resource::Constants {
+                slot: i as u8,
+                base: base.clone(),
+                bytes: *bytes,
+            });
+        }
         let msl = self.emit();
         let entry = match self.req.stage {
             Stage::Vertex => "gen5_vs",
@@ -159,6 +166,21 @@ impl<'a> Tx<'a> {
             params.push(format!("{ty} t{i}"));
             args.push(format!("t{i}"));
             entry_params.push(format!("{ty} t{i} [[texture({i})]]"));
+        }
+        // Metal may read `constant` memory as it was when the dispatch began, but
+        // scalar loads see what the program stored before them.
+        let space = if self.mem_write {
+            "device const"
+        } else {
+            "constant"
+        };
+        for i in 0..self.constants.len() {
+            params.push(format!("{space} uint* cb{i}"));
+            args.push(format!("cb{i}"));
+            entry_params.push(format!(
+                "{space} uint* cb{i} [[buffer({})]]",
+                binding::CONSTANTS as usize + i
+            ));
         }
         for i in 0..self.samplers.len() {
             params.push(format!("sampler smp{i}"));

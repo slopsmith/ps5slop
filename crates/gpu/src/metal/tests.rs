@@ -692,23 +692,47 @@ fn wide_table_regions(table: u64) -> Vec<(u64, u64)> {
     ]
 }
 
+/// `LOAD_X4` as read through a constant buffer, and after an add the first
+/// pass cannot trace, as read through the guest memory windows.
+const LOAD_X4_BOTH_WAYS: [&[u32]; 2] = [
+    &LOAD_X4,
+    &[
+        0x8000_8000, // s_add_u32 s0, s0, 0
+        0x8201_8001, // s_addc_u32 s1, s1, 0
+        0xF408_0200,
+        0xFA00_0000, // s_load_dwordx4 s[8:11], s[0:1], 0x0
+    ],
+];
+
 #[test]
 fn a_scalar_load_of_several_dwords_reads_them_all() {
     let table = 0x400_0000;
-    if let Some(got) = scalar_loads(&LOAD_X4, table, wide_table_regions(table)) {
-        assert_eq!(got, [0xA1, 0xB2, 0xC3, 0xD4]);
+    for loads in LOAD_X4_BOTH_WAYS {
+        if let Some(got) = scalar_loads(loads, table, wide_table_regions(table)) {
+            assert_eq!(got, [0xA1, 0xB2, 0xC3, 0xD4]);
+        }
+    }
+}
+
+/// A small mapped region the user data does not point to the start of.
+fn small_region_regions() -> Vec<(u64, u64)> {
+    vec![
+        (0, 0x100_0000),
+        (0x400_0000, 0x400_1000),
+        (0x800_0000, 0x1000_0000),
+    ]
+}
+
+#[test]
+fn a_scalar_load_through_a_constant_buffer_reads_mapped_memory_and_zeros_past_it() {
+    if let Some(got) = scalar_loads(&LOAD_X4, 0x400_0ff8, small_region_regions()) {
+        assert_eq!(got, [0xA1, 0xB2, 0, 0]);
     }
 }
 
 #[test]
 fn a_scalar_load_from_memory_outside_every_window_reads_zeros() {
-    let table = 0x400_0ff8;
-    let regions = vec![
-        (0, 0x100_0000),
-        (0x400_0000, 0x400_1000),
-        (0x800_0000, 0x1000_0000),
-    ];
-    if let Some(got) = scalar_loads(&LOAD_X4, table, regions) {
+    if let Some(got) = scalar_loads(LOAD_X4_BOTH_WAYS[1], 0x400_0ff8, small_region_regions()) {
         assert_eq!(got, [0; 4]);
     }
 }
@@ -747,29 +771,46 @@ fn a_scalar_load_with_a_negative_offset_reads_below_its_base() {
     }
 }
 
-#[test]
-fn a_scalar_load_past_the_end_of_memory_reads_zeros_for_the_dwords_beyond() {
-    let table = 0x5ff_fff8;
-    let regions = vec![
+fn two_regions_with_a_gap() -> Vec<(u64, u64)> {
+    vec![
         (0, 0x100_0000),
         (0x100_0000, 0x600_0000),
         (0x800_0000, 0x1000_0000),
-    ];
-    if let Some(got) = scalar_loads(&LOAD_X4, table, regions) {
-        assert_eq!(got, [0xA1, 0xB2, 0, 0]);
+    ]
+}
+
+#[test]
+fn a_scalar_load_past_the_end_of_memory_reads_zeros_for_the_dwords_beyond() {
+    for loads in LOAD_X4_BOTH_WAYS {
+        if let Some(got) = scalar_loads(loads, 0x5ff_fff8, two_regions_with_a_gap()) {
+            assert_eq!(got, [0xA1, 0xB2, 0, 0]);
+        }
     }
 }
 
 #[test]
 fn a_scalar_load_that_starts_below_a_window_reads_zeros_then_the_window() {
-    let table = 0x7ff_fff8;
-    let regions = vec![
-        (0, 0x100_0000),
-        (0x100_0000, 0x600_0000),
-        (0x800_0000, 0x1000_0000),
+    for loads in LOAD_X4_BOTH_WAYS {
+        if let Some(got) = scalar_loads(loads, 0x7ff_fff8, two_regions_with_a_gap()) {
+            assert_eq!(got, [0, 0, 0xC3, 0xD4]);
+        }
+    }
+}
+
+#[test]
+fn a_scalar_load_sees_what_the_program_stored_before_it() {
+    let out = 0x800_0000;
+    let loads = [
+        0x7E02_02FF,
+        0x0000_0077, // v_mov_b32 v1, 0x77
+        0xE070_0000,
+        0x8001_0100, // buffer_store_dword v1, off, s[4:7], 0
+        0xBF8C_3F70, // s_waitcnt vmcnt(0)
+        LOAD_X4[0],
+        LOAD_X4[1],
     ];
-    if let Some(got) = scalar_loads(&LOAD_X4, table, regions) {
-        assert_eq!(got, [0, 0, 0xC3, 0xD4]);
+    if let Some(got) = scalar_loads(&loads, out, wide_table_regions(0x400_0000)) {
+        assert_eq!(got, [0x77, 0xB2, 0xC3, 0xD4]);
     }
 }
 

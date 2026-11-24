@@ -199,8 +199,19 @@ impl<'a> Tx<'a> {
                 sbase,
                 offset,
                 soffset,
+                glc,
                 ..
-            } => self.smem(pc, name, sdata as u16, sbase as u16, offset, soffset as u16),
+            } => self.smem(
+                pc,
+                name,
+                scalar::Smem {
+                    sdata: sdata as u16,
+                    sbase: sbase as u16,
+                    offset,
+                    soffset: soffset as u16,
+                    glc,
+                },
+            ),
             Kind::Valu(v) => self.valu(pc, inst, &v),
             Kind::Vintrp {
                 vdst,

@@ -30,7 +30,7 @@ use crate::tiling::{Layout, Mip, TileMode};
 use crate::{Backend, Draw, Host, State};
 
 use gfx10::translate::{
-    self as shader, Access, Resource, Source, Stage, TextureKind, Translated, binding,
+    self as shader, Access, Base, Resource, Source, Stage, TextureKind, Translated, binding,
 };
 
 mod bind;
