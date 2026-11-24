@@ -721,3 +721,9 @@ A native launcher app (`apps/macos`, SwiftUI) lists the games in chosen folders 
 
 Instead of one MSL snippet per instruction with every edge case inline, the translator will resolve what is known per draw (constant buffers first, then buffer formats), emit structured control flow, and ballot only the lane masks that need the whole wave. Each step keeps the current form as its fallback and is checked against it. Reason: GTA V's Fidelity frame is bound by the GPU; its programs compile to 14 to 217 KiB with register spills, and the costs measured come from code around the work, not from the work ([shaders.md](shaders.md#toward-a-compiler-2026-11-24)). vic agreed to the direction on 2026-11-24.
 
+## 2026-11-24: Game-shipped GPU programs are game code; ray tracing goes to Metal RT
+
+GTA V's ray-tracing and BVH programs (`0x4203300`, `0x424xxxx`, `0x41f4900`, `0x41b3b00`, `0x115b26xxxx`), held back as possible Sony library code since 2026-11-22, may be read like the rest of the game's code, and so may Sony libraries a game includes and code in a game whose origin is unclear, except libraries that may be system code, such as the AGC-like library in Astro Bot's executable ([legal.md](legal.md#analysing-user-supplied-binaries)). Reason (vic): code that is part of the game tells us what the game expects and about the game itself, not how to build our HLE modules or GPU, nor about console or Orbis internals.
+
+The software `image_bvh_intersect_ray` stays as it is while no title needs it, but ray tracing is to be built on Metal's ray tracing (acceleration structures built from the game's BVHs, or rebuilt from their geometry), not software traversal. Reason (vic): software traversal is not the right answer in any case, and Astro Bot and more demanding titles will need ray tracing.
+
