@@ -2,9 +2,11 @@
   description = "ps5slop: PS5 compatibility layer for Apple Silicon";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/0bb2eedc20e4739f29e8045034f2828ad7054f8f";
+  inputs.slopsmith-ci.url = "github:slopsmith/ci";
+  inputs.slopsmith-ci.inputs.nixpkgs.follows = "nixpkgs";
 
   outputs =
-    { nixpkgs, ... }:
+    { nixpkgs, slopsmith-ci, ... }:
     let
       system = "aarch64-darwin";
       pkgs = nixpkgs.legacyPackages.${system};
@@ -25,6 +27,8 @@
       }).overrideAttrs { doCheck = false; };
     in
     {
+      packages.${system}.slop-app = slopsmith-ci.packages.${system}.slop-app;
+
       devShells.${system}.default = pkgs.mkShellNoCC {
         packages = [
           pkgs.cargo

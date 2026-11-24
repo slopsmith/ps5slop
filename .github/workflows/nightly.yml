@@ -1,0 +1,30 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even if trunk has not changed since the last nightly
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  nightly:
+    uses: slopsmith/ci/.github/workflows/macos-nightly.yml@main
+    with:
+      project: ps5slop
+      app: target/ps5slop.app
+      binary: Contents/MacOS/ps5slop
+      bundle: scripts/bundle-app
+      # Hosted runners cannot make Hypervisor.framework VMs, and their three
+      # shared cores miss 5 ms sleep deadlines.
+      checks: >-
+        nix develop . -c cargo fmt --all --check &&
+        nix develop . -c cargo test --workspace --exclude jit --exclude hvf --
+        --skip timing::tests::five_millisecond_sleeps_end_on_time
+      force: ${{ inputs.force == true }}

@@ -18,7 +18,28 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "slopsmith-ci": "slopsmith-ci"
+      }
+    },
+    "slopsmith-ci": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1795552220,
+        "narHash": "sha256-HiP+PXSXZ/nvxA416cU6ttd0wqwa03EIycshovqiwYg=",
+        "owner": "slopsmith",
+        "repo": "ci",
+        "rev": "5ee14dcb45b2b61126e3dc784f0361f9746d4fea",
+        "type": "github"
+      },
+      "original": {
+        "owner": "slopsmith",
+        "repo": "ci",
+        "type": "github"
       }
     }
   },
