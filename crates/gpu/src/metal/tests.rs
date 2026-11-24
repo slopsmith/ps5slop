@@ -1369,6 +1369,11 @@ fn depth_clears_reach_past_a_smaller_color_target() {
 /// Runs `code` as one compute thread with a V# to 0x8000 in s[0:3], and
 /// returns the dword at 0x8000.
 fn one_thread(code: &[u32]) -> Option<u32> {
+    one_thread_with(code, [0x8000, 0, 8, 0x5204]).map(|mem| word(&mem, 0x8000))
+}
+
+/// Runs `code` as one compute thread with `buffer` in s[0:3], and returns the memory.
+fn one_thread_with(code: &[u32], buffer: [u32; 4]) -> Option<Mem> {
     let mut metal = Metal::new()?;
     let mem = Mem::new(1 << 20);
     for (i, w) in code.iter().enumerate() {
@@ -1379,8 +1384,7 @@ fn one_thread(code: &[u32]) -> Option<u32> {
     sh[sh::COMPUTE_PGM_LO] = 0x10;
     sh[sh::COMPUTE_PGM_RSRC2] = 4 << 1;
     sh[sh::COMPUTE_NUM_THREAD_X] = 1;
-    sh[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + 4]
-        .copy_from_slice(&[0x8000, 0, 8, 0x5204]);
+    sh[sh::COMPUTE_USER_DATA_0..sh::COMPUTE_USER_DATA_0 + 4].copy_from_slice(&buffer);
     let state = State {
         context: &c,
         sh: &sh,
@@ -1390,7 +1394,27 @@ fn one_thread(code: &[u32]) -> Option<u32> {
     metal.dispatch(&mem, &state, crate::Dispatch::groups([1, 1, 1]));
     assert_eq!(metal.skipped, 0, "{:?}", metal.reasons);
     metal.flush_and_wait();
-    Some(word(&mem, 0x8000))
+    Some(mem)
+}
+
+#[test]
+fn a_strided_buffer_without_an_index_is_in_range_up_to_its_stride() {
+    let code = [
+        0x7E04_02FF,
+        0x0000_0077, // v_mov_b32 v2, 0x77
+        0xE070_000C,
+        0x8000_0200, // buffer_store_dword v2, off, s[0:3], 0 offset:12
+        0x7E04_02FF,
+        0x0000_0088, // v_mov_b32 v2, 0x88
+        0xE070_0014,
+        0x8000_0200, // buffer_store_dword v2, off, s[0:3], 0 offset:20
+        0xBF81_0000, // s_endpgm
+    ];
+    // Stride 20, one record, OOB_SELECT 0: in range while the offset is below the stride.
+    if let Some(mem) = one_thread_with(&code, [0x8000, 20 << 16, 1, 0x5204]) {
+        assert_eq!(word(&mem, 0x800C), 0x77);
+        assert_eq!(word(&mem, 0x8014), 0);
+    }
 }
 
 #[test]

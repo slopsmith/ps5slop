@@ -229,7 +229,15 @@ static inline uint4 bvh_intersect(device const uchar* mem, Win w, uint4 d, ulong
 static inline long buffer_offset(Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
     ulong base = ulong(vs.x) | (ulong(vs.y & 0xffffu) << 32);
     uint stride = (vs.y >> 16) & 0x3fffu;
-    if (stride != 0u && idxen != 0u ? index >= vs.z : offset >= vs.z) return OOB_OFF;
+    // OOB_SELECT (word 3 bits 28-29) for strided buffers, as RDNA2 ISA 8.1.5 table 35 states it.
+    uint i = idxen != 0u ? index : 0u;
+    uint oob = (vs.w >> 28) & 3u;
+    bool out = stride == 0u ? offset >= vs.z
+        : oob == 0u ? i >= vs.z || offset >= stride
+        : oob == 1u ? i >= vs.z
+        : oob == 2u ? vs.z == 0u
+        : idxen != 0u ? i >= vs.z : offset >= vs.z;
+    if (out) return OOB_OFF;
     return goff(mem_base, base + ulong(index) * ulong(stride) * ulong(idxen) + ulong(offset));
 }
 

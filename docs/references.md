@@ -159,3 +159,4 @@ Low-credibility or very new Apple efforts (one or two days of commits, unverifia
 - LLVM AMDGPU backend (`GCNFeatures.td`, the disassembler) for what gfx1013 is. Official, Apache-2.0 with LLVM exception: read, do not copy.
 - Mesa (radv, ACO, the PS5 patches above). MIT for most of it.
 - psdevwiki (PS4 and PS5). Community wiki, blocks automated fetches; check pages by hand and note what each fact rests on.
+| 2026-11-24 | SharpEmu-mac `src/SharpEmu.ShaderCompiler.Metal/Gen5MslTranslator.Resources.cs` (GPL-2.0-or-later) | Its comment summarising the buffer range checks by `OOB_SELECT` (RDNA2 ISA 8.1.5, table 35) | Facts only; our check in `crates/gfx10/src/translate/prelude.rs` is our own code |
