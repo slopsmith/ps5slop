@@ -1,80 +1,92 @@
 # Audio
 
-How titles make sound and how it reaches the Mac. `crates/hle/src/audio` (libSceAudioOut, AudioOut2 and the host side), `crates/hle/src/ngs2` (libSceNgs2), `ajm.rs` and `acm.rs`.
+How titles make sound and how it reaches the Mac. Code: `crates/hle/src/audio` (AudioOut, AudioOut2, AudioIn and the host side), `crates/hle/src/ngs2`, `ajm.rs`, `acm.rs`.
 
-## The two paths
+## Paths through the system
 
-A PS5 title hands samples to the system in one of two ways:
+A title hands samples to the system in one of three ways:
 
-- **AudioOut directly.** The title mixes its own audio, opens a port with `sceAudioOutOpen` and pushes one buffer at a time with `sceAudioOutOutput`, which blocks for about one buffer period. Titles use that blocking as their audio clock.
-- **NGS2, then AudioOut.** The title builds a voice graph in libSceNgs2: sampler voices play waveform blocks, their output ports patch into submixer or mastering voices, and `sceNgs2SystemRender` mixes one grain (256 frames by default) into a buffer the title then passes to `sceAudioOutOutput`.
+- **AudioOut.** The title mixes its own audio, opens a port with `sceAudioOutOpen` and pushes one buffer at a time with `sceAudioOutOutput`, which blocks for about one buffer period. Titles use that blocking as their audio clock.
+- **NGS2, then AudioOut.** The title builds a voice graph in libSceNgs2 (sampler voices, submixers, mastering voices), and `sceNgs2SystemRender` mixes one grain into a buffer the title then passes to AudioOut.
+- **AudioOut2**, the PS5's output library, which FMOD and RAGE use. A context owns ports; the title points each port at one grain of samples with `PortSetAttributes` and plays the grain with `ContextAdvance` or `ContextPush`.
 
-Balatro (LÖVE) uses the second path: one stereo S16 port of 256 frames, one NGS2 system, a sampler rack (id `0x1000`, up to 128 voices, one per sound) and a mastering rack (id `0x3000`, one stereo voice). Every sound is a 16-bit stereo or mono WAVE file at 48 kHz in `resources/sounds`. Short effects are queued as one block covering the whole file; the five music tracks are streamed in 7 to 16 KiB blocks with the "continue" flag. All of this comes from tracing Balatro's calls (`RUST_LOG=hle::ngs2=debug`), not from Sony's code.
+Compressed audio is decoded by the title itself (FMOD decodes its own banks) or through **Ajm**.
 
-## What is implemented
+All three output paths end in one host mixer: every port's samples are converted to stereo float at 48 kHz and summed.
 
-**AudioOut** (`audio/mod.rs`): `Init`, `Open`, `Output`, `Outputs`, `Close`, `SetVolume`. Formats 0 to 7: S16 and float, mono, stereo and 8 channels (8-channel buffers are folded to stereo with the centre and surround channels at -3 dB). `SetVolume` takes one volume per channel bit, 32768 being unity. `Output` returns the port's frame count, as SharpEmu-mac does. Every port's buffer is converted to stereo float at 48 kHz and goes to:
+## The host side
 
-- the host's default output device, through an AudioToolbox output queue (`audio/coreaudio.rs`, our own small FFI, no new dependency): three 512-frame float buffers, filled on the queue's own thread from one queue per port, summed. A port's writer waits while more than 2048 frames (43 ms) are queued for it, so the device's clock paces the title. If the device stops taking samples for 250 ms, the excess is dropped and the writer carries on;
-- without a device, `Output` sleeps until the previous buffer would have finished playing (the console's pace by the host's clock), and the samples are dropped;
-- in both cases, a WAVE dump when `PS5SLOP_AUDIO_WAV=path` is set: 16-bit stereo, the first port to `path`, further ports to `<stem>-<port>.wav` beside it. The header is rewritten after every buffer, so the file is valid however the process ends.
+- **Device.** The mixer feeds the default output device through an AudioToolbox output queue (`audio/coreaudio.rs`, our own small FFI instead of a crate such as cpal, to avoid a dependency tree): three 512-frame float buffers, filled on the queue's own thread. A port's writer waits while more than 2048 frames (43 ms) are queued for it, so **the device's clock paces the title** and the title's audio clock never drifts from the speakers. If the device stops taking samples for 250 ms, the excess is dropped and the writer carries on.
+- **No device.** Writers sleep until the previous buffer would have finished playing (the host clock paces the title), and the samples are dropped.
+- The device opens with the first port when the window is shown; `--headless` keeps it closed. `PS5SLOP_AUDIO` overrides both ways ([environment.md](environment.md)).
+- **WAVE dump.** `PS5SLOP_AUDIO_WAV=path` records what each port plays as 16-bit stereo: the first port to `path`, further ports to `<stem>-<port>.wav`. The header is rewritten after every buffer, so the file is valid however the process ends. This is how output is checked without listening.
+- **Late buffers.** A buffer or grain submitted more than one buffer after the previous one should have finished is counted in the problem report, per port or context. On a device each one is a dropout.
 
-The device opens with the first port when the window is shown. `--headless` runs keep it closed. `PS5SLOP_AUDIO=1` opens it anyway and `PS5SLOP_AUDIO=0` keeps it closed.
+## AudioOut
 
-**NGS2** (`ngs2/`), ported from SharpEmu-mac's NGS2 library:
+Formats 0 to 7: S16 and float, mono, stereo and 8 channels. 8-channel buffers fold to stereo with the centre and surround channels at -3 dB. `SetVolume` takes one volume per channel bit, 32768 being unity. `Output` returns the port's frame count, as SharpEmu-mac does (unverified on a console).
 
-- Systems (grain size and rate from the option struct, `SetGrainSamples`, `SetSampleRate`), racks, voices. Handles are small numbers from one counter. `RackGetVoiceHandle` gives the same voice for the same index.
-- Voice parameter lists (`VoiceControl`) and 16-byte command records (`VoiceRunCommands`): waveform format, block queue (append, replace, join), pitch, port volume, level matrices, port patches (to another voice, a rack's voice 0, or a render buffer), events (play, stop, kill, pause, resume), callbacks, mastering channels, gain and output buffer. Effects parameters are accepted and ignored.
-- `SystemRender`: each playing sampler voice reads its blocks from guest memory (PCM 8, 16, 24, 32-bit and float, either byte order), is resampled to the system rate by linear interpolation at `rate / system rate * pitch`, and follows its patches (submixers pass the signal on unchanged) to a mastering voice, which adds it times its gain to its render buffer (S16 or float, 1 to 8 channels). Block callbacks are called as guest functions after the render, with SharpEmu-mac's 64-byte info block.
-- `VoiceGetState`, `VoiceGetStateFlags`: in use, playing, paused, stopped, error, out of blocks; decoded sample and byte counts; the current block.
-- `ParseWaveformData`, `ParseWaveformFile`: RIFF WAVE images (PCM and float, including `WAVE_FORMAT_EXTENSIBLE`) to `SceNgs2WaveformInfo` with one block covering the data.
-- `CalcWaveformBlock(&format, sample_pos, samples, &block)`: the byte range of `samples` frames from `sample_pos`, for PCM formats only (SharpEmu-mac also handles ATRAC9 and VAG, which we cannot play). Isaac calls it; whether its sounds then play correctly is not checked yet.
+Assumed: ports run at 48 kHz (other rates go to the dump as declared but to the device unconverted). Port types (main, BGM, voice, pad speaker) are not told apart.
 
-Two choices differ from SharpEmu-mac, both forced by Balatro:
+## AudioOut2
 
-- A voice ends when it plays out its last block, not whenever its queue is empty. Balatro starts its music voices before queueing their first block, and SharpEmu-mac's rule stopped them at the first render. A voice fed with streamed blocks (flag 1) waits for more instead of ending.
-- A block's sample count is clamped to the data it carries. Balatro's streamed blocks give the whole track's length (for example 8,332,853 frames for a 16 KiB block of `music1.wav`), which SharpEmu-mac refuses for PCM.
+- Port attributes: 0 is the PCM pointer for the next grain, 1 the gain (a float), 8 the port's ambisonics channel (`u32::MAX` for none, ACN numbering from 64). Other attributes are accepted.
+- Ports are float or S16 with 1 to 16 channels. Mono and stereo play as they are, 8 channels fold as in AudioOut, other layouts keep their first two channels.
+- A context has a clock of grains with the queue depth it asked for (default 4 grains of 256 frames). `Advance` plays a grain without waiting; `Push` plays one unless `Advance` already did and, if blocking, waits for a free slot. `GetQueueLevel` reports grains queued and slots left.
+- The context memory the title allocates is not used. Speaker arrays are created and destroyed, but nothing is mixed through them.
+- Structure layouts, attribute ids and error codes come from SharpEmu-mac's `AudioOut2Exports.cs`; the pacing is ours.
 
-Placeholders (`STUBS`, they log on the `hle::stub` target): `sceNgs2SystemGetInfo`.
+### Ambisonics
 
-### libSceAudioIn
+A mono port with an ambisonics channel is one channel of a soundfield, not a signal to play. Mixing every channel at full gain makes positioned sounds much too loud, with a level that jumps as sources or the camera move. So a soundfield is decoded to two virtual cardioid microphones pointing left and right from its first two ACN channels:
 
-A silent microphone (`audio/input.rs`): `sceAudioInOpen(user, type, index, grain, rate, param)` returns a handle, `sceAudioInInput(handle, dest)` waits one grain's time and writes a grain of 16-bit zeros, `sceAudioInClose` ends it. Argument positions are what Deltarune passes (type 1, a grain of 256 samples at 16 kHz); the sample format and the error code are assumed. Deltarune's capture thread reads it in a loop, so returning at once would spin.
+- left = (W + Y) / 2, right = (W - Y) / 2
+- Left plus right is the omnidirectional W from every direction, so the decode never exceeds the source's level.
+- Higher orders are dropped: they add spatial detail two speakers cannot show. An HRTF or speaker-array decode can replace this if a title needs real spatial audio.
 
-**AudioOut2** (`audio/out2.rs`), the PS5's output library, which FMOD uses: a context owns ports; the title points each port at one grain of samples with `PortSetAttributes` (attribute 0, PCM: the value points at the grain's address; attribute 1, gain: a float) and plays the grain with `ContextAdvance` or `ContextPush`. Each grain is mixed to stereo (float or S16 ports, 1 to 16 channels; layouts other than mono, stereo and 8 channels keep their first two channels) and goes to the same host mixer and WAVE dump as AudioOut. A mono port with an ambisonics channel (attribute 8, see GTA V below) is one channel of a soundfield, decoded to stereo instead of played as it is. A context has a clock of grains with the queue depth it asked for (default 4 grains of 256 frames); `Advance` plays a grain without waiting, `Push` plays one unless `Advance` already did and, if blocking, waits for a free slot (the device's pace when the device runs), and `GetQueueLevel` reports grains queued and slots left (32 bits each). `ResetParam` writes SharpEmu-mac's defaults and `QueryMemory` asks for its size; the context memory itself is not used. Structure layouts, attribute ids and error codes come from SharpEmu-mac's `AudioOut2Exports.cs`; the pacing is ours. Also `UserCreate`, `UserDestroy`, `PortCreate`, `PortDestroy`, `Initialize`.
+Assumed, not verified: the normalisation (SN3D or N3D changes only how wide Y pans), that Y's positive direction is left as in the ACN convention, and how loud a PS5 decoding to stereo makes W relative to the title's plain ports. A unit test checks the decode against a synthetic soundfield.
 
-**Acm** (`acm.rs`), placeholders: `sceAcmContextCreate`, `sceAcmContextDestroy`, `sceAcmBatchStartBuffers` and `sceAcmBatchWait` return 0 and write nothing. Only the first name was known before; the other three were hashed from guesses (`scripts/nid-guess`). What the library does is unknown to us (no public description, and no emulator we checked implements it). Minecraft's FMOD calls `sceAcmContextCreate(0x8003ac1d0, stack pointer, 0, 0, 0x200000)` once while it starts, right after loading system module `0x10b`; when that fails (our earlier placeholder returned `ENOSYS`), FMOD sets up no output at all and the title is silent. With 0 it carries on, and no batch was started at the menu. One more libSceAcm import of Minecraft, `u70oWo92SYQ`, has no name and is not bound.
+## NGS2
 
-**Ajm** (`ajm.rs`), MP3 is decoded through FFmpeg (`ajm/mp3.rs`); other codecs are not. Batch jobs take their space in the title's batch buffer as the library would (`{ buffer, offset, size, last job, last job return address }`, job sizes 48, 64 and 32 bytes), `GetCodecInfo` writes a zero result, and batches finish when they start. MP3 instances (codec 0, the codec in the instance id's bits 14 and up) are split into whole MPEG audio frames (ISO/IEC 11172-3 and 13818-3 headers): a decode job takes the frames that are complete in its input plus what the previous job of the instance left over, decodes each frame with FFmpeg's MP3 decoder (one decoder per instance, so the bit reservoir carries across jobs) while the output has room, and reports input consumed, bytes written and the running count of decoded samples in its result (`{ status, internal, consumed, written, total samples }`, then the frame count). An incomplete last frame waits for the next job; when the output fills first, the unused input is reported as not consumed. Each frame writes exactly its header's sample count, padded with silence when FFmpeg gives fewer (a missing reservoir at a stream's start, a broken frame). S16 output unless the instance flags (bits 7 to 9) ask for S32 (1) or float (2). Other codecs still consume all input and report no output. Instance ids, the result layout and the flag bits follow SharpEmu-mac's `AjmExports.cs`. Instances are not kept in save states: after a load, a stream's partial frame, decoder state and sample count start empty and its flags default to S16, so the first frames after a load may be silent.
+Ported from SharpEmu-mac's NGS2 (GPL-2.0-or-later, see [references.md](references.md)), PCM only:
 
-GTA V decodes all its game audio this way: about 16 MP3 instances, 80 kbit/s mono 48 kHz streams, 960-byte jobs (exactly four 240-byte frames) with room for four frames of 16-bit samples (0x2400 bytes). Until 2026-11-22 every job reported zero bytes written and zero samples; from then until 2026-11-23 the samples were silence. Whether GTA V now plays sound has not been listened to. That did not cause the blast wall below ([gpu.md](gpu.md#gta-vs-blast-wall-2026-11-22)); whether RAGE's audio timing depends on it elsewhere is not known. Seven minutes at the title screen, headless (2026-11-25): two instances (flags `0x1`, S16) took 960-byte jobs the whole time and every job was consumed whole; nothing called `JobInitialize` or `SetGaplessDecode`, so reusing or resetting an instance for a new sound was not exercised.
+- Systems, racks and voices. Handles are small numbers from one counter.
+- Voice parameter lists (`VoiceControl`) and 16-byte command records (`VoiceRunCommands`): waveform format, block queue, pitch, port volume, level matrices, patches, events, callbacks, mastering channels and gain. Effect parameters are accepted and ignored.
+- `SystemRender`: each playing sampler voice reads its blocks from guest memory (PCM 8 to 32 bit and float, either byte order), is resampled by linear interpolation at `rate / system rate * pitch`, and follows its patches to a mastering voice, which adds it times its gain into its render buffer. Block callbacks run as guest calls after the render.
+- `ParseWaveformData`, `ParseWaveformFile`: RIFF WAVE images only. `CalcWaveformBlock` handles PCM only.
 
-**GTA V's output: ambisonics through AudioOut2 (2026-11-25).** GTA V does not use AudioOut. Traced headless at the title screen (`RUST_LOG` debug lines added for the run, not kept), it opens one AudioOut2 context (queue depth 2, 256-frame grains) and 79 ports: two 8-channel float ports, 72 mono float object ports (port type `0x0100`) and one more mono object port whose gain attribute holds two floats of 1.0. With every grain it sets attribute 4 (four bytes, always 0 so far, meaning unknown) and attribute 8 on each of the 72 object ports, with the values `0x40` to `0x63`: two sets of 36 ports, channels 0 to 35 each. SharpEmu-mac reads attribute 8 as the port's ambisonics channel, `u32::MAX` for none and ACN numbering from 64, so these are two 5th-order soundfields, one ambisonics channel per port. Until this date we added every such port to both stereo channels at full gain. A soundfield's channels are spherical-harmonic components, not signals to listen to: assuming SN3D normalisation (not verified), a unit source on the horizon straight ahead sums to 3.76 over the 36 channels, and to between -1.24 and 4.69 depending on its direction, changing by up to 0.21 per degree. So a positioned sound came out up to 13.4 dB louder than its omnidirectional level (11.5 dB straight ahead), more if both soundfields carry it, and its loudness jumped as sources or the camera moved. vic heard "obnoxiously loud" effects everywhere in San Andreas, crashes worst; that fits, but nobody has listened since the fix. Whether the same mechanism caused the popping vic heard by the electrical box in North Yankton is not known; a sound whose gain swings with its direction could pop.
+Two rules differ from SharpEmu-mac:
 
-Now a soundfield is decoded to two virtual cardioid microphones pointing left and right from its first two ACN channels: left = (W + Y) / 2, right = (W - Y) / 2, so left plus right is the omnidirectional W from every direction, a source straight ahead plays at half its level on each side and a source to one side plays at its full level on that side only. Higher orders are dropped (they add spatial detail stereo cannot show). Assumed, not verified: the normalisation (SN3D or N3D only changes how wide Y pans, not W), that Y's positive direction is left as in the ACN convention, and how loud a PS5 decoding to stereo makes W relative to the 8-channel ports. A unit test checks the decode with a synthetic soundfield whose higher channels hold full-scale values. The two 8-channel ports and the 79th port are mixed as before.
+- A voice ends when it plays out its last block, not whenever its queue is empty: titles start voices before queueing their first block. A voice fed with streamed blocks waits for more instead of ending.
+- A block's sample count is clamped to the data it carries: streamed blocks may carry the whole track's length.
 
-**Late buffers.** An AudioOut buffer or AudioOut2 grain submitted more than one buffer after the previous one should have finished playing is counted in the problem report ("audio buffers submitted late", per port or context). On a device each one is a dropout. GTA V's logo movie, headless, 2026-11-23: 3 late grains in 45 s, so its crackle was not late submission.
+Not done: effects (reverb, EQ, filters, envelopes) and compressed waveforms (VAG and ATRAC9 are refused; ATRAC9 would need a decoder, which SharpEmu-mac ports from LibAtrac9). `ParseWaveformFile` reads host paths, so it cannot read files inside a package yet.
 
-**GTA V's logo movie crackle (2026-11-23).** The movie's port had sharp jumps repeating about every 1,280 samples (vic heard them in the WAVE dump), and `PS5SLOP_JIT_VERIFY` found no translation differences. Bink's sound thread refills the game's buffer from a loop of `scePthreadCondTimedwait` with a 5 ms timeout, and each wait took about 6.7 ms: macOS coalesces timers, and our process gets up to 50% slack (`kern.timer_coalesce_tier2_scale`; a plain 5 ms `usleep` takes 7.5 ms here, raising the thread's QoS or `NSActivityLatencyCritical` did not change it). Four such waits are 26.7 ms, 1,282 samples, the period of the jumps. Every guest wait toward a deadline now asks for two thirds of the time left and loops (`hle::timing`), so 5 ms waits end within about 0.1 ms. The movie's audio then has no jumps and is 15.0 s long instead of 12 to 13 s.
+## Ajm
 
-## Minecraft
+- Batch jobs take their space in the title's batch buffer as the library would, and batches finish when they start.
+- **MP3** (codec 0) is decoded with FFmpeg's libavcodec through `ffmpeg-next` (a slim LGPL build from the flake, bundled with the app; FFmpeg can also serve video later). A decode job takes the whole MPEG audio frames in its input plus what the previous job of the instance left over, decodes them with one decoder per instance (so the bit reservoir carries across jobs) while the output has room, and reports input consumed, bytes written and the running sample count. An incomplete last frame waits for the next job.
+- **Sizes come from the frame headers**, not from FFmpeg: each frame writes exactly its header's sample count, padded with silence when FFmpeg gives fewer. So the results a title reads never depend on the decoder.
+- Output is S16 unless the instance flags ask for S32 or float.
+- Other codecs consume all input, zero the output buffer and report nothing written.
+- Instance ids, the result layout and the flag bits follow SharpEmu-mac's `AjmExports.cs`.
+- Instances are not kept in save states: after a load, a stream's partial frame, decoder state and sample count start empty, so the first frames may be silent.
 
-Minecraft (PPSA17221 v26.10) plays through FMOD (`libfmod.prx`, shipped with the game) and AudioOut2: one context (queue depth 1, 256-frame grains), one 8-channel float port at 48 kHz; the music and effects land in front left and right only. Its sounds are FSB5 banks (4,356 FMOD ADPCM, 70 PCM16) and its music is Ogg Vorbis, so FMOD decodes everything itself and Ajm is only initialised. The one thing it needed was a successful `sceAcmContextCreate` (above).
+## Acm, AudioIn, AudioPropagation
+
+- **libSceAcm**: placeholders that return 0 and write nothing. What the library computes is unknown (no public description, and no emulator we checked implements it). FMOD gives up all output when the context create fails. If FMOD starts batches in game and needs their results, that will show as missing effects, not silence.
+- **libSceAudioIn**: a silent microphone. `Input` waits one grain and writes zeros, since capture threads read it in a loop and would spin otherwise.
+- **libSceAudioPropagation**: placeholders; no rooms, portals or sound paths are modelled.
 
 ## Verified, and how
 
-- **Minecraft, headless, WAVE dump (2026-11-20).** The menu music starts about 20 s in. Cross-correlating 2-second windows at 60 s and 75 s of the dump against the game's own `menu3.ogg` (decoded with ffmpeg to 48 kHz) gives correlation 1.0000 and a residual of 0.3 to 0.4 %, the windows sit exactly 15 s apart in the track, and the gain is 0.045 (-26.9 dB). That gain is the game's own: a fresh profile has `audio_main:0.5` and `audio_music:0.3` in `options.txt`, and `sound_definitions.json` plays the menu tracks at volume 0.3, and 0.5 × 0.3 × 0.3 = 0.045. So the music plays in real time at the level the game asks for; it only sounds quiet. vic listened to a dump and heard the music. Pad presses on the menu (one every 3 s) show up as peaks of about 1,400 every 3 s on top of the music: the menu's navigation sounds. In-game sound is not checked: a new world made through the first-run "Get started" flow faults on the main thread's stack, with or without audio.
+- Music in Balatro (NGS2 path) and Minecraft (FMOD through AudioOut2) was checked from WAVE dumps by cross-correlating windows against the game's own track files: correlation 1.0, right pitch and the gain the game asks for, in real time. vic listened to a Minecraft dump.
+- The device path paces the title by the device's clock (seconds of audio per second of wall time).
+- Unit tests: WAVE parsing, sample scaling, voice states, block looping and ending, channel mapping, the mixer, the WAVE writer, the ambisonics decode, MP3 decoding of our own sine (pitch, level, S16 and float).
+- Not checked: GTA V's sound in game since the Ajm and ambisonics changes; nobody has listened.
 
-- **Balatro, headless, 60 s, WAVE dump.** 58 of 60 seconds carry sound (per-second RMS 170 to 1,940 of 32,768, peaks up to 8,543, nothing clipped); the first two seconds are silent while the title loads. Cross-correlating 2-second windows of the dump at 30 s and 45 s against the game's own `music1.wav` resampled by 0.7 gives correlation 1.0000, gain 0.300 and a residual of 0.1 to 0.2 % of the signal, and the two windows sit exactly 15 s apart in the track. So the music plays continuously, in real time, at the pitch and volume Balatro asks for. The pitch is Balatro's: `engine/sound_manager.lua` plays music with `per = 0.7`, and the volume 0.3 is the port volume it sets. Before the menu music, the dump holds the start-up sounds and a song that fades out by the game's own volume commands.
-- **Device path, 20 s** with `PS5SLOP_AUDIO=1`: the queue opens, and 19.7 s of audio pass in 20 s of wall time, so the device's clock paces the title. Nobody listened to it for this check.
-- Unit tests: WAVE parsing and the info layout, sample scaling, voice event states, block looping and ending, channel mapping, the host mixer, the WAVE writer.
+## Unknown
 
-## Assumed, unknown
-
-- libSceAcm: what a context and a batch are, and whether FMOD needs real results from batches in game (reverb, for example), is unknown.
-- All NGS2 structure layouts, parameter and command ids, error codes and the waveform info layout come from SharpEmu-mac. Balatro's traced calls fit them (formats, block descriptors, patches and volumes decode to sensible values that reproduce the game's music exactly), but nothing was checked on a PS5. Only the parts Balatro uses are exercised.
-- What a real NGS2 voice does with an empty queue, and what the `samples` field of a streamed block means, is unknown; our rules are above.
-- No effects (reverb, EQ, filters, envelopes) and no compressed waveforms: VAG and ATRAC9 images are refused (`0x804A8431`), and Balatro has none. ATRAC9 would need a decoder (SharpEmu-mac ports one, LibAtrac9).
-- AudioOut ports are assumed to run at 48 kHz; other rates are written to the dump as declared but sent to the device unconverted. Port types (main, BGM, voice, pad speaker) are not told apart.
-- AudioOut2: Minecraft's FMOD plays through it (above). Superliminal's FMOD opens a port and pushes grains; before it got past its loading screen every grain was silence (90 s run, 2026-11-20). Since then vic hears sound in windowed runs, very choppy because the guest runs at about 30 MIPS or less (2026-11-21). It submits no Ajm decode job and does not use Acm. Its compressed sounds would be silent anyway if they went through Ajm, which decodes nothing (MP3 jobs report frames of silence). What codec 3 is, and real ATRAC9 or Opus decoding, are open (SharpEmu-mac decodes Opus and MP3 through FFmpeg).
-- The `sceAudioOutOutput` return value (the frame count) is SharpEmu-mac's; on a console it is unverified.
+- Every NGS2 layout, parameter id and error code is SharpEmu-mac's; only the parts our titles use are exercised.
+- What a real NGS2 voice does with an empty queue, and what a streamed block's sample count means.
+- What Ajm codec 3 is; ATRAC9 and Opus decoding are not done.

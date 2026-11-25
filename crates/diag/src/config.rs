@@ -1,5 +1,5 @@
 //! The `PS5SLOP_*` debug switches, read from the environment once. Each is
-//! described in docs/debugging.md.
+//! described in docs/environment.md.
 
 use std::ffi::OsString;
 use std::path::PathBuf;

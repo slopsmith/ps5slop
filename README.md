@@ -49,6 +49,5 @@ For developers and agents, in [docs/](docs/):
 - [Test targets and oracles](docs/test-targets.md)
 - [References and prior art](docs/references.md)
 - [Legal boundaries](docs/legal.md)
-- [Decisions](docs/decisions.md)
 
 Licensed under GPL-2.0-or-later. See [LICENSE](LICENSE) and the license notes in [docs/references.md](docs/references.md).

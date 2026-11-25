@@ -1,78 +1,61 @@
 # Test targets and oracles
 
+What we check behaviour against, given that there is no PS5.
+
 ## Constraints
 
-- **No PS5.** vic has no PS5, so we cannot measure PS5 behaviour. Anything about PS5 behaviour that rests only on documentation or other emulators is unverified, and the docs say so.
-- **A PS4 on firmware 12.50.** Same Orbis lineage: x86-64 (Jaguar), a FreeBSD-derived kernel, the same library design. It can show us observed behaviour of the kernel and system-library side (syscall results, error codes, threading, memory and file semantics). It tells us nothing about RDNA2, AGC or any PS5-only library, and PS4 behaviour may differ from PS5 behaviour. vic handles the console side himself, outside the repo. We only ever run our own test programs on it and record what they print.
-- "Measure first" applies to our own code on vic's M4 Pro: translator speed, renderer throughput, synthetic workloads.
+- **No PS5.** We cannot measure PS5 behaviour. Anything about it that rests only on documentation or other emulators is unverified, and the docs say so.
+- **A PS4 on firmware 12.50.** Same Orbis lineage: x86-64, a FreeBSD-derived kernel, the same library design. It can show kernel and system-library behaviour (results, error codes, threading, memory and file semantics). It tells us nothing about RDNA2, AGC or PS5-only libraries, and PS4 behaviour may differ from the PS5's: a PS4 result is a hint, not proof. vic runs things on it himself, outside the repo, and only our own test programs ever run there.
+- "Measure first" applies to our own code on vic's M4 Pro.
+- Tests are the regression bar. Agents do not run games to check a change; breakage the tests miss means the tests are missing something.
 
-## Oracles
+## Oracles in use
 
-| Area | Oracle | Status |
+| Area | Oracle | Where |
 | --- | --- | --- |
-| x86-64 instructions | Public test suites (FEX's assembly tests are MIT and carry expected results; QEMU's `tests/tcg`), checked against an interpreter of ours | To pick; check each suite's license and how its expected values were made |
-| x86-64 instructions, differential | Our interpreter vs. Rosetta 2 on this Mac (a user-mode x86-64 implementation, AVX2 since macOS 15) for user-mode code | Idea; Rosetta's own bugs would show up as false alarms, so disagreements need a third opinion |
-| JIT | Differential testing against our interpreter, as in 86slopper | Planned |
-| Kernel and libraries | Our own test programs, run on vic's PS4 and on our HLE layer, outputs compared | Proposed, see below |
-| GPU | AMD's ISA documents; open-source PM4 producers (Mesa) | Unverified by nature |
+| x86-64 interpreter | FEX-Emu's ASM tests (MIT), whose expected values were checked on real x86-64 hardware | `ps5slop-asmtest` ([cpu.md](cpu.md)) |
+| x86-64 interpreter, differential | Single instructions on random register states, our interpreter against Rosetta 2. Where Rosetta disagrees with the Intel SDM, we follow the SDM | `ps5slop-fuzz` ([cpu.md](cpu.md)) |
+| JIT | Our interpreter: unit programs run both ways and compared, and `PS5SLOP_JIT_VERIFY` runs every translated block in the interpreter too during a real run | `crates/jit` ([jit.md](jit.md)) |
+| GFX10 decoding and printing | `llvm-mc` for gfx1013: titles' programs, random encodings, every opcode | `crates/gfx10/tests/llvm.rs` ([shaders.md](shaders.md)) |
+| Translated GPU programs | Hand-assembled programs translated and compiled with Metal; some run on the GPU with known results. Instruction semantics come from AMD's ISA documents; mostly no oracle checks values | `crates/gfx10/tests`, `crates/gpu` |
+| Rendering | Captured frames replayed against golden pictures; the picture the game showed against the replay; reference screenshots and videos of the PS5 for visual bugs | `frame_replay`, `ps5slop-replay check` and `live` ([debugging.md](debugging.md)) |
+| Kernel and libraries | Our own test programs, with expected output; on the PS4 where useful | `tests/programs` (below) |
+| Audio | WAVE dumps cross-correlated with a title's own track files | [audio.md](audio.md) |
 
-## Our own test programs come first
+A visual bug needs a ground-truth picture (a PS5 screenshot or video frame) before it can be worked on: without one, "looks wrong" has no target.
 
-The first programs we load are ones we write: a small x86-64 ELF built with clang, with the Sony program headers and `NID#LIB#MOD` imports that we emit ourselves, computing NIDs only for names we chose (see [loader.md](loader.md)). This tests parsing, relocation, NID resolution, TLS and the calling convention with no third-party data, and no legal questions.
+## Our own test programs
 
-Binaries are built from source; they are never committed (`scripts/check-forbidden` refuses ELF files with Sony `e_type` values anyway).
+Each program is a folder in `tests/programs/` with C sources, an `imports.txt` naming the library (and module) of every imported function, and `expected.txt` (plus `expected-status` when the exit status is not 0). `scripts/build-test-programs` (inside `nix develop`) compiles them with Apple's clang for `x86_64-unknown-freebsd`, links with `ld.lld` (16 KiB pages, page-separated segments), and `ps5slop-mkelf` turns the result into an Orbis executable with NID imports we compute only for names we chose ([loader.md](loader.md)). `scripts/run-test-programs` runs each under ps5slop and compares stdout and exit status.
 
-How they are built (`scripts/build-test-programs`, inside `nix develop`): each program is a folder in `tests/programs/` with C sources and an `imports.txt` that names the library (and module) of every imported function. Apple's clang compiles for `x86_64-unknown-freebsd`, `ld.lld -shared -e _start` links with 16 KiB pages and page-separated segments, and `ps5slop-mkelf` turns the result into an Orbis executable in `target/test-programs/`.
-
-- `hello`: calls `write` and `exit` from `libkernel`. It loads and relocates; the two imports are reported missing until the HLE layer provides them. Which library really exports those names on Orbis is not checked yet; the program only has to agree with our own HLE.
+They test loading, relocation, NID resolution, TLS, the calling convention and the HLE layer with no third-party data. Current programs cover writing and exiting, threads and synchronisation, and direct memory. Which library really exports each name on Orbis is not checked; the programs only have to agree with our HLE. Binaries are never committed (`scripts/check-forbidden` refuses Sony ELF types).
 
 ## PS4 conformance programs
 
-A test program that runs both on vic's PS4 and on our HLE layer, with the outputs compared, would give us a real behavioural oracle for the kernel and library side. It is practical, with limits:
+A program that runs both on vic's PS4 and on our HLE, with outputs compared, is a real oracle for the kernel and library side:
 
-- **Toolchain:** [OpenOrbis PS4 Toolchain](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain), GPL-3.0, the only open-source toolchain that outputs the real format (fake-signed SELF, NID imports, `PT_SCE_DYNLIBDATA`). vic has built working PS4 homebrew with it, and has it at `~/OpenOrbis/PS4Toolchain` (the macOS `create-fself` and `readoelf` tools are there; the compiler is the host's clang). Our test sources stay ours (GPL-2.0-or-later); the binaries, linked with its GPL-3.0 runtime, are only built locally and never committed. The origin of its library stub lists is not documented and may be reverse engineering, which is a reason to keep its name lists out, but not to avoid it as a reference otherwise (see [decisions.md](decisions.md)).
-- **Our loader would need to accept PS4 binaries.** The format is shared, so this is mostly a question of which libraries we offer.
-- **Scope:** libkernel, libc, pthreads, memory, files, time. Not graphics: the PS4 uses GNM on GCN, the PS5 AGC on RDNA.
-- **Caveat:** PS4 firmware 12.50 is not PS5 firmware. Where the two might differ, a PS4 result is a hint, not proof.
-
-## Commercial titles (user-supplied, later)
-
-| Title | PS5 native? | Engine | Size | Notes |
-| --- | --- | --- | --- | --- |
-| Deltarune | Yes: PS5 product `PPSA27093`, separate PS5 and PS4 packages | GameMaker | ~452 MB (PS5) at launch | vic's suggestion. Sizes from PlatPrices; separate package inferred from sizes and PS5-only features. No public PS5 emulator report found. |
-| Balatro | Yes (`PPSA21401`) | LÖVE (Lua) | | Likely very light. |
-| Dead Cells | Yes (`PPSA15552`) | Heaps/HashLink | | Reaches menus or gameplay in several emulators. |
-| Hollow Knight, GRIS, Cult of the Lamb, DREDGE | Yes | Unity | | Second wave: Unity brings a large runtime. |
-
-Title IDs come from SharpEmu's compatibility list; `PPSA` is the PS5 title prefix. Engines other than Balatro's are from general knowledge (unverified).
-
-Nothing public describes GameMaker's PS5 runtime or which graphics API it uses (very likely AGC, but unverified).
+- **Toolchain:** the [OpenOrbis PS4 Toolchain](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain) (GPL-3.0), the only open-source toolchain that emits the real format (fake-signed SELF, NID imports). Our test sources stay ours (GPL-2.0-or-later); binaries linked with its GPL-3.0 runtime are built locally and never committed. Its library stub lists are of undocumented origin, so we keep its name lists out ([legal.md](legal.md)).
+- Our loader runs PS4 binaries; the format is shared, so it comes down to which libraries we offer.
+- **Scope:** libkernel, libc, pthreads, memory, files, time. Not graphics: the PS4 uses GNM on GCN.
 
 ## PS5 homebrew
 
-A survey on 2026-11-19 (by a research delegate; nothing downloaded, so archive contents come from READMEs and release notes and are unverified) found:
+Native PS5 homebrew ships as title folders (`eboot.bin`, `sce_sys/param.json`, `sce_module/libc.prx`), which ps5slop runs directly. Almost all of it comes from one template whose generated `libc.prx` (not Sony's) we load as guest code. The template's own reverse-engineered files are not read ([legal.md](legal.md)). Titles used:
 
-- **Native PS5 homebrew ships as title folders, not packages:** `<TITLEID>/eboot.bin` (a development fake-signed SELF), `sce_sys/param.json`, `sce_module/libc.prx` and assets, copied to the console's homebrew directory. That is the dumped-folder input ps5slop already takes. No clean homebrew `.pkg` turned up.
-- **Almost all of it is built from one template**, ps5-native-app-boilerplate (GPL-3.0-or-later; the original repository is gone, copies survive), with clang 18's `x86_64-sie-ps5` target and the ps5-payload-sdk headers and stubs. Every title carries the template's own generated `libc.prx`: not Sony's, about 2,566 exports, mostly stubs, with `malloc`/`free` forwarded to `libSceLibcInternal`. So a PS5 homebrew title needs us to load its own `sce_module` libraries as guest code and link them to our HLE libraries.
-- **Index:** the homebrew.page catalog (`https://homebrew.page/catalog/v1.json`, from `github.com/darkxex/ps5-homebrew-catalog`) lists about 209 apps with source, release URL, checksum and license. Many entries are recompiled commercial games that need the user's game data; we skip those.
+- **ScreenTester5** (GPL-3.0): colour patterns drawn on the CPU through VideoOut, and the pad. The first homebrew target.
+- **DriftCheck** (GPL-3.0): everything the controller reports, drawn on screen; writes a log to `/data`.
+- Candidates not yet run: a raymarch demo with a `--smoke-test` mode, a DOOM port drawing through AGC, a BennuGD2 runtime on Mesa. Payload-style homebrew (ps5-payload-dev) needs a faked kernel environment and is not a target; its stubs are generated from decrypted Sony modules and are not used.
 
-Candidates, simplest first:
+## Commercial titles
 
-| Title | Source | What it exercises |
-| --- | --- | --- |
-| ScreenTester5 (`PPSA69420`, 1 MB) | github.com/Marice/ScreenTester5, GPL-3.0 | Colour patterns drawn on the CPU through VideoOut, the pad. **First target.** |
-| DriftCheck (`PPSA98766`) | github.com/felipemelchior/driftcheck5, GPL-3.0 | Everything the DualSense reports. Draws its screen under ps5slop since 2026-11-19 (see [hle-kernel.md](hle-kernel.md)) |
-| Raymarch tech demo | github.com/Alexius0815/ps5-raymarch-techdemo, GPL-3.0-or-later | Threads, VideoOut, AudioOut, pad; `--smoke-test` renders 180 frames and exits 0. Only ever run under another emulator (AnyPS5), not on a PS5 |
-| DOOM port | github.com/lowbit/ps5-doom, GPL-2.0 | The first GPU target: draws through AGC with an OpenCL kernel compiled for gfx1010; ships the freely distributable shareware WAD |
-| BennuGD2 PS5 runtime | github.com/Rufidj/BennuGD2 (`ps5` branch) | OpenGL through the PS5 Mesa port; its README records sandbox behaviour (`stat`, `getcwd`, `opendir` refused, `exit()` raising SIGSYS) |
+User-supplied, never in the repo. Each is a target for a different part of the system:
 
-Legal notes from the survey:
+- **Balatro** (LÖVE): light; NGS2 audio and a small set of shaders.
+- **The Binding of Isaac**: libc start-up, pad output, NGS2.
+- **Minecraft** (Bedrock): FMOD through AudioOut2, save data, heavy threading and memory churn.
+- **Superliminal** (Unity IL2CPP, FMOD): modules and plugins, exceptions, APR, Unity's PSN plugin.
+- **Astro Bot** (Sony's own engine): fibers, fonts, AvPlayer, a large GPU workload with ray tracing.
+- **Grand Theft Auto V** (RAGE): the heaviest target; multiple GPU queues, streaming through APR, Ajm audio, ambisonics.
+- **Deltarune** (GameMaker, PS4 package): the PS4 library names and Fios2.
 
-- The template's documentation says reverse engineering was used to learn interface facts for its `libc.prx`. Its `libc_builder.cpp` and `api-surface.txt` are therefore not read here (see [decisions.md](decisions.md)). Running a title's own `libc.prx` as guest code is a different matter: it is part of the homebrew, not a Sony module.
-- LibProsperoPKG bundles key material (passcode and token files, a keys class). We only ever read its format write-up (see [references.md](references.md)); its code is not read or used.
-
-## Homebrew (PS4 era and payloads)
-
-- [ps5-payload-dev/sdk](https://github.com/ps5-payload-dev/sdk) (GPL-3.0) builds plain ELF "payloads" with their own run-time linker, which walks loaded system modules through kernel access. Running them unmodified means faking that environment; not a first target. Its `sce_stubs` are generated from decrypted Sony modules: do not use.
-- A PS5 port of Mesa's radv on top of AGC exists in that organisation's package repository. It is the only known open-source producer of PS5 PM4 command buffers, and could become a GPU test once our AGC layer exists.
-- No maintained open-source toolchain builds native-format PS5 apps (as of 2026-11-19).
+Compatibility status per title lives in the issues of [slopsmith/ps5slop-compat](https://github.com/slopsmith/ps5slop-compat), not here.

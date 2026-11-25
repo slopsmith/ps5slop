@@ -1,5 +1,5 @@
 //! Creating, joining and ending guest threads. Each guest thread runs on its
-//! own host thread (see `docs/decisions.md`); `pthread_t` is the thread
+//! own host thread (see `docs/hle-kernel.md`); `pthread_t` is the thread
 //! pointer. Of the thread attributes, only the stack (size, or a stack the
 //! caller supplies) and detach state are used; attributes read back from a
 //! thread report its real stack.

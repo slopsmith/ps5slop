@@ -1,68 +1,66 @@
 # Memory
 
-What the guest expects from its address space, and what macOS lets us give it. Proposal stage; nothing is implemented.
+The guest address space: what the guest expects, what macOS allows, and how `crates/memory` provides it. How the JIT mirrors it into the VM is in [jit.md](jit.md).
 
 ## What the guest expects
 
 | Fact | Source | Status |
 | --- | --- | --- |
-| Orbis allocates in 16 KiB pages | shadPS4 uses `GUEST_PAGE_BITS = 14` for the PS4; the PS5 radv patches use matching alignments | PS4: from an emulator. PS5: unverified |
-| Executables load at `0x400000`; "system managed" `0x400000..0x7_FFFF_BFFF`, "system reserved" up to `0xF_BFFF_FFFF`, user area from `0x10_0000_0000`, GPU addresses below 2^40 | shadPS4 `address_space.cpp` | PS4 only, from an emulator. PS5 layout unknown |
-| Two kinds of memory: **direct memory** (physical, allocated with `sceKernelAllocateDirectMemory`, mapped with `sceKernelMapDirectMemory`, with CPU and GPU protection bits) and **flexible memory** (ordinary virtual memory) | The PS5 radv patches call the direct-memory functions | Names observed; semantics unverified |
-| TLS is reached through the FS base (`mov reg, fs:[0]`) | shadPS4 `tls.cpp` | PS4, from an emulator |
+| Orbis allocates in 16 KiB pages | shadPS4 (`GUEST_PAGE_BITS = 14`); the PS5 radv patches use matching alignments | PS4 from an emulator; PS5 unverified |
+| Executables load at `0x400000`; "system managed" `0x400000..0x7_FFFF_BFFF`, "system reserved" up to `0xF_BFFF_FFFF`, user area from `0x10_0000_0000`, GPU addresses below 2^40 | shadPS4 `address_space.cpp` | PS4 only; PS5 layout unknown |
+| Two kinds of memory: **direct** (physical, `sceKernelAllocateDirectMemory` then `sceKernelMapDirectMemory`, with CPU and GPU protection bits) and **flexible** (ordinary virtual memory) | The PS5 radv patches call the direct-memory functions | Names observed; semantics partly assumed |
+| TLS is reached through the FS base | shadPS4 `tls.cpp` | PS4, from an emulator |
 
-Open: whether games depend on fixed addresses (by asking for them, or by assuming where the executable lands), or only on the APIs handing back addresses in certain ranges. ET_SCE_DYNEXEC executables carry relocations, so they may load anywhere; unverified. Our own test programs and vic's PS4 can answer parts of this for the PS4.
+Games do rely on fixed addresses in at least one way: GTA V maps a large streaming arena at the start of the user area with `MAP_FIXED` without reserving it first (seen in its own code). Where the PS5 kernel places maps without a fixed address is unknown.
 
-## What macOS gives a native arm64 process
+## What macOS allows a native arm64 process
 
-Measured on vic's M4 Pro, macOS 27.3, 2026-11-19, with `experiments/address-space-probe/run.sh`:
+Measured on an M4 Pro, macOS 27, with `experiments/address-space-probe/run.sh`:
 
-- Page size is 16 KiB. `mmap` and `mprotect` reject 4 KiB granularity (also seen by the CPU research pass).
-- `0..4 GiB` is `__PAGEZERO`. Linking with `-Wl,-pagezero_size,0x4000` builds, but the process is killed at exec (status 137; tried by hand, not in the probe). So `0x400000` cannot be host memory in our process.
-- The dyld shared cache occupies roughly `0x1_8000_0000..0x3_7000_0000`.
-- A reserved guard region spans `0xF_C000_0000..0x70_0000_0000` (385 GiB): `MAP_FIXED` at `0x10_0000_0000` fails. Its purpose is unknown to us.
-- `MAP_FIXED` at `0x8_0000_0000`, `0x100_0000_0000` and `0x7F00_0000_0000` worked. Our own executable and its heap land just above 4 GiB, so `0x1_0000_0000` was taken.
+- Pages are 16 KiB; `mmap` and `mprotect` reject 4 KiB granularity.
+- `0..4 GiB` is `__PAGEZERO`, and shrinking it gets the process killed at exec, so `0x400000` cannot be host memory at its own address.
+- The dyld shared cache sits around `0x1_8000_0000..0x3_7000_0000`, and a reserved region spans `0xF_C000_0000..0x70_0000_0000`, so `MAP_FIXED` at `0x10_0000_0000` fails.
 
-So "guest address = host address" does not work in-process for the PS4-style layout. Two ways out:
+So guest address = host address is impossible in-process. Instead the guest's whole space is one host reservation at a base: host address = base + guest address. The interpreter adds the base; the JIT needs no base at all, because its own page tables map guest addresses to IPAs equal to them, and stage 2 maps those onto the reservation's pages. GPU-visible ranges are the same host memory, which Metal wraps without copying (see [gpu.md](gpu.md)).
 
-1. **Base offset.** Guest memory is one large reservation at a host base; host address = base + guest address. The interpreter does this for free. A JIT keeps the base in a register.
-2. **HVF.** Our own stage-1 tables map guest VA directly, at any address and with 4 KiB or 16 KiB granules (`hv_vm_config_set_ipa_granule`, macOS 26+; max IPA is 40 bits on this machine). See [cpu.md](cpu.md#hypervisorframework).
+## Layout
 
-Either way the guest's whole address space is one host reservation we own. That keeps the GPU side simple: GPU-visible ranges are host memory that Metal can wrap with `newBufferWithBytesNoCopy`, as 86slopper does for VRAM. Whether the same pages can be mapped into an HVF VM and wrapped by Metal at once is plausible but untested; check with an experiment before relying on it.
+Our choices, until titles tell us otherwise. The constants live where noted.
 
-## Page size
+- The space is 1 TiB (`ADDRESS_SPACE` in `crates/ps5slop`); GPU addresses must stay below 2^40.
+- The executable loads at `0x40_0000` (`IMAGE_BASE`), the PS4 base (unverified for PS5). Modules follow one another from `0x8_0000_0000` (`MODULE_AREA` in `crates/ps5slop/src/modules.rs`).
+- Stacks, TLS blocks and the entry parameter block sit below `0x8_0000_0000` (`crates/ps5slop/src/lib.rs`, `crates/hle/src/process.rs`). The main thread gets 8 MiB of stack.
+- The first 4 GiB of the user area, `0x10_0000_0000..0x11_0000_0000`, is left to fixed maps. Direct memory, flexible memory, reservations and `mmap` without a fixed address are searched upward from `0x11_0000_0000` (`MAP_AREA` in `crates/hle/src/dmem.rs`). Reason: GTA V's fixed arena there replaced live memory when our maps used that range. The 4 GiB size is arbitrary beyond covering it. The GPU's guest-memory window covers the fixed part and 16 GiB of searched maps.
+- Memory host functions hand to the guest (`strdup`, `FILE` handles) comes from a host heap at `0x20_0000_0000` (`crates/hle/src/heap.rs`).
+- `0xFE_0000_0000..0xFF_0000_0000` is never guest memory: the JIT's runtime sits there in the VM's physical space.
+- `0xFF_0000_0000` up holds the HLE trap region (one 16-byte slot per imported function, `TRAP_BASE` in `crates/hle`) and then HLE variables at fixed addresses (stdio's `FILE`s and the like).
 
-If Orbis really uses 16 KiB pages, macOS's 16 KiB pages match and protections can be applied page for page. If some guest behaviour needs 4 KiB granularity (sub-16 KiB protections, guard pages), the base-offset route has to emulate it in software, while the HVF route can use a 4 KiB granule.
+Direct memory is 12.5 GiB (`DIRECT_MEMORY_SIZE`, our choice; the PS5's figure is unknown).
 
-## The layout we use today
+## How `crates/memory` works
 
-Our choices, in `crates/ps5slop` and `crates/hle`, until real titles tell us otherwise:
+- **One reservation, one region table.** The table is behind a read-write lock. Each thread holds its own `Memory` handle, a clone that caches the last 8 regions it touched and drops them when the generation counter shows the table changed.
+- **Guest protections are software.** Every mapped page is readable and writable on the host; the interpreter checks the guest's protection on each access. The JIT gets the same protections from its page tables.
+- **Finding a free range and mapping it is one step** (`Memory::map_free`, under the region lock). Two threads must never pick the same free range.
+- **Changes notify.** `memory::on_change` registers one function called on the changing thread after every change; the JIT syncs the VM there. A change log (`Memory::changes_near`) lets a guest fault print the recent changes around its address.
+- **Physical memory.** Direct memory is modelled as physical memory: a shared-memory object, mapped with `MAP_FIXED` at each guest mapping (`map_physical`), so two mappings of one direct range see the same bytes, as on the console. A mapping that repeats what is already there keeps its pages. A new allocation zeroes the physical range (`zero_physical`).
+- **`Memory::back`** gives every page of a range host memory without mapping it for the guest, so a GPU window can span holes.
 
-| Range | What |
-| --- | --- |
-| `0 .. 1 TiB` | The guest address space: one host reservation (`Memory::new`), host address = base + guest address |
-| `0x40_0000 ..` | The executable, at the PS4 base shadPS4 uses (unverified for PS5) |
-| `0x6_FF80_0000 .. 0x7_0000_0000` | The main thread's stack, 8 MiB |
-| `0x7_0000_0000` | The entry parameter block (argc, argv) |
-| `0x5_0000_0000 ..` | Stacks of threads made by `pthread_create`, 1 MiB each |
-| `0x7_0001_0000 ..` | Each thread's static TLS and thread control block (errno at the thread pointer + `0x800`) |
-| `0x8_0000_0000 ..` | Modules (`.prx`), one after another |
-| `0x10_0000_0000 .. 0x11_0000_0000` | Left to fixed maps: GTA V puts its streaming arena at `0x10_0000_0000` unasked ([decisions.md](decisions.md)) |
-| `0x11_0000_0000 ..` | Direct memory, flexible memory, reservations and `mmap` without a fixed address, searched upward; the GPU area window covers `0x10_0000_0000..0x15_0000_0000` |
-| `0x20_0000_0000 ..` | The host heap: memory host functions hand to the guest (`strdup`, `fopen`'s FILE handles, `getenv` strings), grown 1 MiB at a time |
-| `0xFE_0000_0000 .. 0xFF_0000_0000` | Reserved for the JIT's runtime in the VM's physical address space; never guest memory (see [jit.md](jit.md)) |
-| `0xFF_0000_0000 ..` | The HLE trap region, one 16-byte slot per imported function |
-| `0xFF_8000_0000 ..` | HLE variables. The first 4 KiB hold objects at fixed addresses: stdio's `stdin`, `stdout` and `stderr` FILEs |
+### Unmapping never makes host pages inaccessible
 
-Every mapped page is readable and writable on the host; the guest's protections live in `crates/memory`, which checks each access. This is simple and slow, and fine for the interpreter.
+A guest unmap removes the region from the table, but the host pages stay readable and writable. Reason: guest threads are host threads, and one racing with an unmap must read stale data or zeros, never crash the host.
 
-## Threads and memory ordering
+- A new mapping under 64 MiB over pages that already exist is zeroed in place, and an unmap under 64 MiB leaves the pages alone. Reason: replacing host pages invalidates everything else that maps them, Metal's no-copy buffers and the VM's stage 2. Titles map and unmap small pieces of direct memory many times a second, and remaking GPU windows of over 1 GB each time exhausted Metal's memory.
+- Larger mappings and unmaps get fresh `MAP_FIXED` pages, which is cheaper than writing zeros and gives memory back. Those ranges are logged (`take_fresh` for the VM, `replaced_since` for the GPU), and whoever mirrors those pages must map them again.
 
-Guest threads run on host threads (see [decisions.md](decisions.md)), so the address space is shared:
+### Threads and memory ordering
 
-- One reservation and one region table (behind a read-write lock). Each thread holds its own `Memory` handle, a clone that caches the last 8 regions it touched and drops them when a generation counter shows the table changed. `memory::on_change` registers a function called on the changing thread after every change (the JIT syncs the VM there). `Memory::mapped_extent` (a run of adjacent regions, for GPU windows) comes from a merged list rebuilt once per generation. `Memory::back` gives every page of a range host memory without mapping it for the guest, so a GPU window can span holes.
-- Host pages stay mapped after the guest unmaps a range, so a thread racing with an unmap never crashes the host. A new mapping under 64 MiB over pages that already exist is zeroed in place, keeping the same pages, so no-copy GPU buffers and the VM's stage 2 over them stay valid (2026-11-20: Minecraft maps and unmaps small pieces of direct memory many times a second, and every page replacement forced GPU windows of over 1 GB to be made again, until Metal ran out of memory). Larger mappings, and unmaps of 64 MiB and more, get fresh `MAP_FIXED` pages, which is cheaper than writing zeros and gives the memory back. A physical mapping over pages that already map the same physical offsets keeps them (2026-11-22: a third of Minecraft's 64 KiB direct-memory maps repeat the mapping already there; see [gpu.md](gpu.md#metal-running-out-of-memory-2026-11-22)).
-- **x86-TSO in software:** each guest load is followed by a load barrier, each guest store preceded by a store barrier. That permits only the reordering x86 permits (an earlier store with a later load). Accesses of 1, 2, 4 and 8 bytes are single host loads and stores, so aligned ones do not tear.
-- **Locked instructions** go through `Memory::atomic_update`, a compare-and-swap loop on host memory with sequentially consistent ordering. Misaligned locked accesses (which split across cache lines on x86 too) fall back to a lock that only excludes other atomic updates; a plain store from another thread could still slip in there.
+Guest threads run on host threads and share the address space (see [cpu.md](cpu.md)):
 
-**Measured on 2026-11-19** with `crates/x86/examples/bench.rs` (a five-instruction loop with one load and one store per iteration, M4 Pro): 30.0 M instructions/s before the change, 25.8 M after. With the barriers removed again it was 25.7 to 26.0 M, so the barriers cost nothing measurable here; the slowdown comes from the shared region cache's generation check. Something to revisit when the interpreter is optimised.
+- Interpreter: x86-TSO by barriers (a load barrier after each load, a store barrier before each store). Aligned accesses of 1, 2, 4 and 8 bytes are single host accesses, so they do not tear.
+- Locked instructions: `Memory::atomic_update`, a sequentially consistent compare-and-swap loop on host memory, and `atomic_cas128` for `cmpxchg16b`. Misaligned locked accesses fall back to a lock that excludes only other atomic updates; a plain store from another thread could still slip in there.
+- Translated code: hardware TSO in the VM, and LSE atomics on the same host words.
+
+### Write journal and watches
+
+`Memory` can journal writes (verify mode undoes the interpreter's writes with it) and log writes to watched ranges (`memory::watch`, used by the control socket's `watch`; the JIT protects watched pages at stage 2 so translated stores reach the interpreter).

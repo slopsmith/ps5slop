@@ -53,7 +53,7 @@ pub struct Cpu {
     pub fcw: u16,
     pub fsw: u16,
     /// x87 data registers R0-R7 as `f64` bits: we compute in double
-    /// precision, not 80-bit (see `docs/decisions.md`).
+    /// precision, not 80-bit (see `docs/cpu.md`).
     pub st: [u64; 8],
     /// Bit `i` is set when R`i` holds a value.
     pub ftag: u8,

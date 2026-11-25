@@ -1,4 +1,4 @@
-//! Where things are in the VM. See `docs/jit.md`, "VM layout".
+//! Where things are in the VM. See `docs/jit.md`.
 
 /// The VM's physical address space: guest memory at IPA = guest address.
 pub const IPA_BITS: u32 = 40;

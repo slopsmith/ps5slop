@@ -1,60 +1,55 @@
 # Save states
 
-A save state is the whole guest written to a file while every guest thread is stopped, from which a fresh process goes on. They are a debugging tool: GTA V's prologue takes 3 to 5 minutes of loading and scripted input to reach, and starts in 5 seconds from a state. They are not save games for players. vic asked for them on 2026-11-20; they exist since 2026-11-22.
+A save state is the whole guest written to a file while every guest thread is stopped, from which a fresh process goes on. They are a debugging tool for getting back to a hard-to-reach moment in seconds, not save games for players. Code: `crates/savestate` (encoding, wall clock), `crates/hle/src/snapshot.rs` (what is kept), the GPU side in `crates/gpu`.
 
 ## Using them
 
-- Save: the control socket's `save PATH` ([debugging.md](debugging.md)). The answer names the threads, the file size, the guest memory written before compression, how long stopping took and how long writing took. The game goes on afterwards.
-- Load: `ps5slop run --load-state PATH [other options] GAME`. `GAME` must be the same title (and package), and the binary must give guest memory the same host functions (see "Compatibility" below). Pass the same `--data` folder the saving run used: open files, save data mounts and APR files are opened again by path there.
-- Files are written to `PATH.partial` and renamed when complete, so a failed save never leaves a half file under `PATH`.
+- Save: the control socket's `save PATH` ([debugging.md](debugging.md)). The answer names the threads, the file size, the memory written and how long stopping and writing took. The game goes on afterwards.
+- Load: `ps5slop run --load-state PATH [options] GAME`. `GAME` must be the same title and package, and the binary must give guest memory the same host functions (see "Compatibility"). Pass the same `--data` folder: open files, save data mounts and APR files are opened again by path there.
+- Files are written to `PATH.partial` and renamed when complete, so a failed save never leaves a half file.
+- States hold game memory. They are local user data like a game dump: they never enter the repo, and nothing from one may be committed.
 
-States hold game memory: they are local user data like a game dump, never enter the repo, and nothing from one may be committed.
+## How threads stop
 
-## When a save can happen
+Guest threads are host threads, and a thread blocked in a host function has state on the host stack that cannot be written down. So a save parks every thread at a point where its CPU registers are its whole state:
 
-A save stops the world first:
+1. A flag asks every thread to stop, and running ones are kicked out of translated code. A thread parks at the top of its run loop, between two host calls.
+2. A thread blocked in a host function is woken the way exceptions wake it ([hle-kernel.md](hle-kernel.md)): the call returns with the CPU untouched and restarts after the load, or returns early where its contract allows (a sleep).
+3. A condition wait cannot restart, because it has released its mutex, and retaking the mutex before parking can deadlock against a parked owner. It parks at the internal stub `cond_relock`, which takes the mutex back after the load and returns 0, a spurious wake-up POSIX allows.
+4. A thread inside a guest callback run by a host function (`Env::call_guest`) parks only once back at depth 0.
+5. Once all threads are parked, each GPU queue hands over its state when idle, after waiting for all Metal work. If a queue still runs, or waits on memory a parked thread would write, the guest goes on for 300 ms and the save tries again, up to 8 times, then fails naming the queue or threads. Each failed try is printed (`save state: not stopped yet: ...`).
 
-1. A flag asks every guest thread to stop, and running ones are kicked out of translated code. A thread stops ("parks") at the top of its run loop, between two host calls, where its whole state is its CPU registers. A thread inside a blocking host function (mutex, condition variable, semaphore, event flag, event queue, join, sleep, `pthread_once`, ...) is woken by the mechanism exceptions use (`exception::interrupted`): the call either restarts after the load (it returns `Outcome::Resume` with the CPU untouched, so the guest calls it again) or returns early where its contract allows (a sleep ends early). A condition wait cannot restart, since it gave up its mutex: it leaves its CPU at the internal stub `cond_relock`, which takes the mutex back after the load and returns 0 to the caller, a spurious wake-up POSIX allows.
-2. A thread inside a guest callback run by a host function (`Env::call_guest`) does not park until it is back at depth 0, because part of its state is on the host stack.
-3. Once all threads are parked, each GPU queue is asked for its state. Its thread answers when it is idle, waits for all Metal work (`Processor::finish`) and hands over its register state. If a queue still runs, or waits on memory a parked thread would have written, the save lets the guest go on for 300 ms and tries again, up to 8 times, then fails with a message naming the queue or the threads that did not stop. Each failed try is printed (`save state: not stopped yet: ...`). In GTA V's Performance mode the graphics queue is often waiting at a REWIND the CPU has not patched yet, so a save there takes a few tries (12 to 14 s); until the JIT fix of 2026-11-22 ([jit.md](jit.md#stopping-a-kicked-thread-2026-11-22-late-night)) a try that let the guest go on could break a thread that had been kicked out of translated code.
+## Format
 
-## What is kept
+Our own small binary encoding (`crates/savestate`: little-endian fields in order, a `record!` macro for structs), so no dependency beyond zstd and every field of the private HLE structures stays visible in its own module. The file is a magic number, the format version (`savestate::FORMAT`) and a header (writing build, title id, host-function fingerprint, the guest's wall clock and uptime), then zstd-compressed sections:
 
-The file starts with a magic number, the format version (`savestate::FORMAT`) and a header: the build that wrote it, the title id, a fingerprint of the host-function layout, the guest's wall clock and uptime. Then sections, each zstd-compressed:
+- `REGN`: every mapped region with protection, name and, for direct memory, its physical offset, so aliases map the same pages again. Trap regions are checked, not made.
+- `PAGE`: one record per run of non-zero pages, compressed in parallel. Pages the host never backed and all-zero pages are skipped. Physical memory is read through its shared memory object, so allocated but unmapped direct memory is kept too.
+- `THRD`: each parked thread's CPU state, thread pointers and names.
+- `KERN`: the HLE objects (synchronisation objects, thread records, heaps, files, mounts, audio ports and NGS2 voices, pad and VideoOut state, modules, libc state, handle counters). `snapshot.rs` is the list.
+- `AGC.`: AGC's register defaults, shader and resource registries, each GPU queue's registers and the global data share, pending flips, and the textures only Metal holds (render targets, depth targets, program-written volumes) with their texels. GPU-written textures are needed because a frame can sample something the GPU wrote once at start-up, which guest memory does not hold in a form we can read; writing them back to guest memory would need tiling encoders we do not have.
 
-- `REGN`: every mapped region: address, size, protection, name, and for regions on physical (direct) memory the physical offset, so aliases of the same direct memory map the same pages again. Trap regions are checked, not made.
-- `PAGE`: one per run of non-zero pages, compressed by one worker per core: the address (or physical offset) and the bytes. Pages the host never backed (`mincore`) and all-zero pages are skipped. Physical memory is read through a temporary mapping of its shared memory object, so allocated but unmapped direct memory is kept too.
-- `THRD`: each parked thread's CPU state, every thread pointer handed out, and thread names.
-- `KERN`: the HLE objects: pthread mutexes (owner and count), condition variables, read-write locks, mutex attributes, keys and thread-specific values; thread records (join results, detach state), attributes and stacks; the host heap; POSIX and Sce semaphores; event flags; fibers; APR resolved files (by path) and command buffers; exception handlers and pending exceptions; direct memory allocations, mappings and protections; event queues and their registrations; pad state, AudioOut ports, AudioOut2 contexts and ports, AudioIn ports, NGS2 systems, racks and voices; VideoOut buffers and flip count; loaded modules and the libc hooks rtld keeps; libc's atexit list, environment, `strerror` strings and `rand` state; open files, stdio streams and directory descriptors (guest path, mode, position); save data mount points; and the handle counters of a few libraries (AJM batches, net pools, dialogs, the ids placeholder functions hand out, the user service's login event). Waiter counts are not kept: no thread waits at a save.
-- `AGC.`: AGC's register-default blocks, shader headers, owner and resource registry and AMM block; each GPU queue's processor registers (context, SH, uconfig, index and indirect bases, instance count) and the global data share; flip packets not yet submitted; and the textures only Metal holds: render targets, depth targets and program-written volumes, with their descriptors and texels (`Backend::save_textures`). Without these GTA V came back black: its frame samples a 3D colour-grading volume the GPU wrote once at start-up, which guest memory does not hold in a form we can read. Render targets in BGRA8, sRGB and BGR10A2 formats (GTA V's Performance mode makes some) are saved too since 2026-11-22; before, they were skipped with "texture format ... cannot be saved".
+Not kept, rebuilt after a load: JIT translations, Metal pipelines and compiled programs, textures read from guest memory, GPU memory windows. Audio already queued for the device is dropped, and WAVE recordings do not go on.
 
-Not kept, rebuilt after the load: JIT translations and code cache, Metal pipelines and compiled programs, textures read from guest memory, GPU memory windows. Audio already queued for the device is dropped, so sound restarts cleanly, and `PS5SLOP_AUDIO_WAV` recordings do not go on. The guest's clocks go on from the saved readings: the kernel's, VideoOut's and the pad's uptime are set back, and the guest's wall clock (`savestate::clock`, also behind `rdtsc` and GPU timestamps) runs behind the host's by the time between save and load.
+**Clocks.** Every wall-clock read the guest can make (`clock_gettime` realtime, `gettimeofday`, `time`, `rdtsc`, `sceKernelReadTsc`, RTC ticks, GPU timestamps) goes through `savestate::clock`, which a load sets to go on from the saved time, so a state loaded hours later does not see hours pass in one frame. Uptime clocks (kernel, VideoOut, pad) are set back the same way.
 
 ## Refused
 
-A save fails, saying why, when something in use is not kept: fonts (libSceFont, whose FreeType faces live on the host) and the PS4 command path (libSceGnmDriver). Any subsystem that grows host-side state must add it to `crates/hle/src/snapshot.rs` or to this refusal list.
+A save fails, saying why, when something in use is not kept: fonts (libSceFont's FreeType faces live on the host) and the PS4 command path (libSceGnmDriver). **Any subsystem that grows host-side state must add it to `snapshot.rs` or to this refusal list.**
 
 ## Compatibility
 
-A state loads only in a process whose host functions sit where the saving one's did, because guest memory holds their addresses (import tables, return addresses, `atexit` entries). The header's fingerprint hashes every stub (NID and library, in order), every HLE variable address and the TLS layout; a mismatch is refused before anything is touched. Internal stubs are made in sorted name order so this holds across processes (before, their order followed a `HashMap` and changed from run to run). A rebuild that changes nothing guest-visible loads older states (only a note is printed); one that changes anything encoded bumps `FORMAT`, and older states are refused with both version numbers. Adding an HLE function that a title imports does not move its stubs (they follow the title's imports), but adding an internal function does.
+Guest memory holds host-function addresses (import tables, return addresses, `atexit` entries), so a state loads only in a process whose stubs sit where the saving one's did. The header's fingerprint hashes every stub (NID and library, in order), every HLE variable address and the TLS layout; a mismatch is refused before anything is touched. Internal stubs are made in sorted name order for this reason.
 
-## Measured (2026-11-22, M4 Pro, headless)
-
-| Title | Where | File | Memory written (raw) | Save: stop + write | Load |
-| --- | --- | --- | --- | --- | --- |
-| Balatro | main menu | 57 MiB | 247 MiB | 0.05 + 0.18 s | 0.03 s |
-| GTA V | title screen | 256 MiB | 957 MiB | 2.35 + 0.50 s | 2.6 s |
-| GTA V | prologue, "Go to the guard." | 853 MiB | 1,866 MiB | 3.89 + 2.88 s | 4.5 to 4.7 s |
-
-Frames come right after the load; most of GTA V's stop and load time is reading back and uploading GPU textures one at a time.
-
-The GTA V prologue state was loaded three times into fresh processes and played for 130 s each: frames flipped throughout (about 2 a second; the rate just before the save was not measured), the depot and HUD rendered as before the save, `press lup` and `press rright` moved and turned the player, no faults, no failed command buffers, footprint about 3.4 GB. Balatro's menu went on animating and took pad input.
-
-Load reliability (2026-11-22, 34 loads of the GTA V prologue state on one build line): every load came up and rendered the depot by 30 to 40 s. Five logged `wait timed out on gpu compute 0x20` (2 to 6 times each), and in one of them the screen was still black at about 20 s and fine at 30 s. Four of the five compiled new Metal programs (shader dumps, MSL overrides, new translations; a load starts with no pipelines) and the fifth was the first load of the session; none of the 29 other runs timed out. The likely reading is the culling queue waiting more than 5 s on work held up behind compiles rather than lost state (not proven); nothing was changed in the save state.
+- A rebuild that changes nothing guest-visible loads older states (a note is printed). This is the point of a fingerprint rather than a build id: states stay usable across debugging rebuilds.
+- A change to anything encoded bumps `FORMAT`; older states are refused with both versions named.
+- Adding an HLE function a title imports does not move its stubs (they follow the title's imports); adding an internal function does.
 
 ## Limits and unknowns
 
 - Host files the guest wrote after the save keep their newer contents; a load sees the folder as it is.
-- A thread that blocks forever inside a guest callback (depth above 0) stops saves; none seen so far.
-- GPU textures in compressed formats cannot be read back and are skipped with a message. The renderer's fast-clear metadata per target (`color_meta`) and its bookkeeping sets around depth and volume textures start empty after a load; that changed nothing visible so far.
+- A thread that blocks forever inside a guest callback stops saves.
+- GPU textures in compressed formats cannot be read back and are skipped with a message. The renderer's fast-clear metadata and some bookkeeping around depth and volume textures start empty after a load.
+- Not kept: Ajm decoder instances and AudioOut2 ambisonics channels (set again by titles each grain).
+- Most of a large save's stop and load time is reading back and uploading GPU textures one at a time.
 - Whether a loaded run behaves exactly like an unbroken one is not checked frame by frame. A test that saves, loads and compares frames and memory hashes with a run that never saved is still to do.

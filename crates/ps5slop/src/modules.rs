@@ -1,5 +1,5 @@
 //! Finding, choosing and linking the modules an executable imports from.
-//! See `docs/loader.md`, "Modules".
+//! See `docs/loader.md`.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -11,7 +11,7 @@ use loader::{Dynamic, ElfFile};
 
 /// Sony modules from a title's `sce_module` folder that we load instead of
 /// providing their libraries in the HLE layer. Each must only need modules
-/// we provide (see `docs/decisions.md`).
+/// we provide (see `docs/loader.md`).
 pub const ALLOWED_SYSTEM_MODULES: &[&str] = &["libc"];
 
 /// Where modules are laid out, one after another (our choice; see

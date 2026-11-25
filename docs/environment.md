@@ -1,12 +1,12 @@
 # Environment variables
 
-Every environment variable ps5slop reads. The `PS5SLOP_*` ones are read once at start into `diag::Config` (`crates/diag/src/config.rs`). A variable shown without a value is on when set to anything.
+Every environment variable ps5slop reads; this is the one list, and other docs link here. The `PS5SLOP_*` ones are read once at start into `diag::Config` (`crates/diag/src/config.rs`). A variable shown without a value is on when set to anything, including `0`.
 
 ## Everyday
 
 | Variable | What it does |
 | --- | --- |
-| `RUST_LOG=FILTER` | Adds log output on top of the default (errors, warnings, milestones), in `tracing-subscriber`'s `EnvFilter` syntax: `RUST_LOG=gpu=debug`, `RUST_LOG=hle::stub=off`. Targets are listed in [debugging.md](debugging.md#logging) |
+| `RUST_LOG=FILTER` | Adds log output on top of the default (errors, warnings, milestones), in `tracing-subscriber`'s `EnvFilter` syntax: `RUST_LOG=gpu=debug`, `RUST_LOG=hle::stub=off`. Targets are described in [debugging.md](debugging.md) |
 | `PS5SLOP_REPORT=PATH` | Also writes the end-of-run problem report (skipped draws, placeholder calls, JIT fallbacks) to `PATH` |
 | `PS5SLOP_CAPTURE_DIR=DIR` | Where F9/F10 captures and unnamed `gpucapture`/`metalcapture` files go (default `~/Library/Application Support/ps5slop/captures`) |
 | `METAL_CAPTURE_ENABLED=1` | Needed for F10 (Metal `.gputrace` captures). Read by Metal, not by ps5slop |
@@ -64,11 +64,11 @@ Every environment variable ps5slop reads. The `PS5SLOP_*` ones are read once at 
 
 ## GPU scheduling
 
-These change when work reaches Metal. Most bring back an older way of doing something, for comparing ([gpu.md](gpu.md)).
+These change when work reaches Metal. Most bring back an older way of doing something, for comparing when a bug may come from scheduling ([gpu.md](gpu.md)).
 
 | Variable | What it does |
 | --- | --- |
-| `PS5SLOP_GPU_COMMIT_DRAWS=N` | Commits the command buffer when a render pass ends after N draws, so the GPU starts while encoding goes on (default 0: only at sync points). `100` is faster in GTA V but changes a few pixels; see gpu.md |
+| `PS5SLOP_GPU_COMMIT_DRAWS=N` | Commits the command buffer when a render pass ends after N draws, so the GPU starts while encoding goes on (default 0: only at sync points). Committing early can change a few pixels ([gpu.md](gpu.md)) |
 | `PS5SLOP_GPU_COMMIT_EVERY=N` | Commits the command buffer every N dispatches |
 | `PS5SLOP_GPU_SYNC_DISPATCHES` | Waits for Metal after every dispatch |
 | `PS5SLOP_GPU_FENCE` | Orders encoders that read guest memory after those that wrote it |
@@ -87,6 +87,8 @@ These change when work reaches Metal. Most bring back an older way of doing some
 | Variable | What it does |
 | --- | --- |
 | `PS5SLOP_FRAME_CAPTURES=DIR` | Folder of local `*.ps5frame` + `*.golden.png`/`.ppm` pairs checked by `cargo test -p gpu --test frame_replay` (default `captures/`) |
+| `GFX10_CASES=N` | Random encodings per instruction format in `cargo test -p gfx10 --test llvm` (default 300) |
+| `GFX10_SHOW=N`, `GFX10_SHOW_FALLBACK` | How many differing cases that test prints per format (default 6), and whether it also prints LLVM's fallback texts |
 | `PS5SLOP_TEST_PKG=PKG`, `PS5SLOP_TEST_DIR=DIR` | The ignored test `package_files_match_their_extraction` (`crates/ps5slop`) reads every file of `PKG` through the guest file system and compares it with the extraction in `DIR` |
 
 ## Launcher app
@@ -103,7 +105,7 @@ Read when ps5slop is compiled, not when it runs.
 
 | Variable | What it does |
 | --- | --- |
-| `SLOP_COMMIT=SHA` | The commit `ps5slop --version` and the logs name (default: `git rev-parse HEAD` plus `-dev`). Set by `scripts/bundle-app` and the nightly workflow ([launcher.md](launcher.md#building)) |
+| `SLOP_COMMIT=SHA` | The commit `ps5slop --version` and the logs name (default: `git rev-parse HEAD` plus `-dev`). Set by `scripts/bundle-app` and the nightly workflow ([launcher.md](launcher.md)) |
 
 ## Adding a variable
 
