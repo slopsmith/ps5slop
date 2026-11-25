@@ -37,6 +37,13 @@ shot grid-light --fixture "$fixture" --appearance light -showInspector NO
 shot grid-dark --fixture "$fixture" --appearance dark -showInspector NO
 shot inspector-light --fixture "$fixture" --appearance light --select PPSA90002 -showInspector YES
 shot inspector-dark --fixture "$fixture" --appearance dark --select PPSA90002 -showInspector YES
+sheet() {
+	shot "$@" --report
+}
+sheet report-question-light --fixture "$fixture" --appearance light --select PPSA90002 -showInspector YES
+sheet report-question-dark --fixture "$fixture" --appearance dark --select PPSA90002 --report-answers yes,yes,yes -showInspector YES
+sheet report-summary-light --fixture "$fixture" --appearance light --select PPSA90002 --report-answers yes,yes,yes,yes,yes,yes -showInspector YES
+sheet report-summary-dark --fixture "$fixture" --appearance dark --select PPSA90002 --report-answers yes,yes,no -showInspector YES
 shot empty-light --fixture "$out/empty.json" --appearance light -showInspector NO
 rm -rf "$(dirname "$app")" "$out/empty.json"
 echo "screenshots in $out"

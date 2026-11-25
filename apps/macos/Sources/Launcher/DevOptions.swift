@@ -5,14 +5,15 @@ import ScreenCaptureKit
 /// and `--snapshot PATH`, which saves the window as a PNG once drawn and quits.
 @MainActor
 enum Snapshot {
-    static func takeIfAsked() async {
+    static func takeIfAsked(openReport: () -> Void = {}) async {
         if let appearance = LauncherApp.argument("--appearance") {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
         }
-        var window = NSApp.windows.first { $0.isVisible }
+        func main() -> NSWindow? { NSApp.windows.first { $0.isVisible && $0.sheetParent == nil } }
+        var window = main()
         for _ in 0..<50 where window == nil {
             try? await Task.sleep(for: .milliseconds(100))
-            window = NSApp.windows.first { $0.isVisible }
+            window = main()
         }
         if let size = LauncherApp.argument("--window")?.split(separator: "x").compactMap({ Double($0) }),
             size.count == 2
@@ -20,9 +21,25 @@ enum Snapshot {
             window?.setContentSize(NSSize(width: size[0], height: size[1]))
             window?.center()
         }
-        guard let path = LauncherApp.argument("--snapshot"), let window else { return }
+        guard let path = LauncherApp.argument("--snapshot"), let main = window else { return }
         try? await Task.sleep(for: .seconds(2))
         let url = URL(fileURLWithPath: path)
+        if CommandLine.arguments.contains("--report") {
+            openReport()
+            for _ in 0..<50 where main.attachedSheet == nil {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard let sheet = main.attachedSheet else { exit(1) }
+            try? await Task.sleep(for: .seconds(1))
+            await save(sheet, to: url)
+            // The app does not quit while a sheet is open.
+            exit(0)
+        }
+        await save(main, to: url)
+        NSApp.terminate(nil)
+    }
+
+    private static func save(_ window: NSWindow, to url: URL) async {
         do {
             try await capture(window, to: url)
         } catch {
@@ -30,7 +47,6 @@ enum Snapshot {
                 Data("window capture failed (\(error.localizedDescription)); drawing without glass\n".utf8))
             drawWithoutWindowServer(window, to: url)
         }
-        NSApp.terminate(nil)
     }
 
     /// Misses everything the window server composites: glass, sidebar and inspector backgrounds.

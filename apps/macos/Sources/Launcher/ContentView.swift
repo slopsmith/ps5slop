@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var selection: GameEntry.ID?
     @State private var search = ""
     @State private var dropTargeted = false
+    @Environment(Reporting.self) private var reporting
     @Namespace private var glass
 
     var body: some View {
@@ -55,6 +56,9 @@ struct ContentView: View {
         ) { _ in
             Button("OK") {}
         } message: { Text($0) }
+        .sheet(item: Bindable(reporting).game) { game in
+            ReportSheet(game: game, answers: reporting.answers)
+        }
         .onAppear {
             if let id = LauncherApp.argument("--select") {
                 selection = library.games.first { $0.titleId == id }?.id

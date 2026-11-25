@@ -179,6 +179,7 @@ struct GameTable: View {
 struct GameMenu: View {
     let game: GameEntry
     let play: () -> Void
+    @Environment(Reporting.self) private var reporting
 
     var body: some View {
         Button("Play", systemImage: "play.fill", action: play)
@@ -191,6 +192,7 @@ struct GameMenu: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(id, forType: .string)
             }
+            Button("Report Compatibility…", systemImage: "exclamationmark.bubble") { reporting.start(game) }
         }
     }
 }

@@ -5,6 +5,7 @@ struct GameInspector: View {
     let game: GameEntry
     let play: (GameEntry) -> Void
     @Environment(GameSession.self) private var session
+    @Environment(Reporting.self) private var reporting
     @Namespace private var glass
 
     private var isRunning: Bool { session.game?.id == game.id }
@@ -110,6 +111,14 @@ struct GameInspector: View {
                 .controlSize(.extraLarge)
                 .help("Show in Finder")
                 .glassEffectID("finder", in: glass)
+                if game.titleId != nil {
+                    Button("Report Compatibility", systemImage: "exclamationmark.bubble") { reporting.start(game) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.glass)
+                        .controlSize(.extraLarge)
+                        .help("Report how this game runs")
+                        .glassEffectID("report", in: glass)
+                }
             }
         }
         .animation(.spring(duration: 0.4, bounce: 0.2), value: isRunning)

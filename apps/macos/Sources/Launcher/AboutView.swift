@@ -86,6 +86,12 @@ struct BuildInfo {
             commit: info["SlopCommit"] as? String)
     }
 
+    var shortCommit: String {
+        guard let commit else { return "unknown" }
+        let parts = commit.split(separator: "-", maxSplits: 1)
+        return parts.first.map { String($0.prefix(7)) + (parts.count > 1 ? "-\(parts[1])" : "") } ?? commit
+    }
+
     func commitURL(source: URL) -> URL {
         let sha = commit?.split(separator: "-").first.map(String.init) ?? ""
         return source.appending(path: "commit/\(sha)")

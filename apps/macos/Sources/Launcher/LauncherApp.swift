@@ -7,6 +7,7 @@ struct LauncherApp: App {
     @State private var library = Library(source: LauncherApp.librarySource())
     @State private var session = GameSession()
     @State private var updates = Updates()
+    @State private var reporting = Reporting()
 
     var body: some Scene {
         Window("ps5slop", id: "library") {
@@ -17,8 +18,19 @@ struct LauncherApp: App {
                 ContentView()
                     .environment(library)
                     .environment(session)
+                    .environment(reporting)
                     .frame(minWidth: 760, minHeight: 480)
-                    .task { await Snapshot.takeIfAsked() }
+                    .task {
+                        await Snapshot.takeIfAsked {
+                            let id = Self.argument("--select")
+                            guard let game = library.games.first(where: { $0.titleId == id }) else { return }
+                            let answers = (Self.argument("--report-answers") ?? "").split(separator: ",")
+                            reporting.start(
+                                game,
+                                answers: Dictionary(
+                                    uniqueKeysWithValues: zip(CompatReport.Question.allCases, answers.map { $0 == "yes" })))
+                        }
+                    }
                     .task { await updates.checkOnLaunch() }
                     .task { await library.refreshCompat() }
                     .modifier(UpdateAlert(updates: updates))

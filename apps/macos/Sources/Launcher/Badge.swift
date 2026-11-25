@@ -13,6 +13,18 @@ extension CompatStatus {
         }
     }
 
+    var meaning: String {
+        switch self {
+        case .perfect: "Plays through with no known problems."
+        case .playable: "Can be played start to end; may have glitches or slowdowns."
+        case .ingame: "Gets into gameplay, but problems keep it from being played properly."
+        case .menus: "Reaches the title screen or menus, not gameplay."
+        case .boots: "Starts and shows something (a logo, a loading screen), no menus."
+        case .nothing: "Stops or crashes before showing anything."
+        case .other: ""
+        }
+    }
+
     var symbol: String {
         switch self {
         case .perfect: "star.fill"
