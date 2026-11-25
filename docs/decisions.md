@@ -742,3 +742,9 @@ Compute programs whose groups hold several wave64s and read across a wave's halv
 `COMPATIBILITY.md` is gone. Each report is an issue in [slopsmith/ps5slop-compat](https://github.com/slopsmith/ps5slop-compat), filed through one of two issue forms (a manual one with a status dropdown, and one the launcher fills in with six yes/no answers). An Action labels complete reports `accepted` and `status: <status>`, or `needs-info` with a comment. The website builds its pages and `compat.json` from the accepted issues, and the launcher reads `compat.json` instead of a list built into the binary. The seven rows of the old file were filed as issues #1 to #7 (label `seed`), with vic's Mac (Apple M4 Pro, macOS 27.3) and the commit that last changed each row as the environment.
 
 Reason: users can report without a pull request, every report records the Mac and build it was made on, and status changes no longer need a ps5slop commit. Accepting is automatic because vic does not intend to review reports by hand.
+
+## 2026-11-25: AudioOut2 soundfields are decoded to stereo from W and Y
+
+A mono AudioOut2 port with an ambisonics channel is decoded as two virtual cardioid microphones pointing left and right (left = (W + Y) / 2, right = (W - Y) / 2); ACN channels 2 and up are dropped.
+
+Reason: GTA V sends its positioned sounds as two 5th-order soundfields, 36 ports each, and mixing every channel at full gain made them up to 13 dB too loud with a gain that jumped with direction ([audio.md](audio.md)). This decode keeps left plus right equal to the omnidirectional W from every direction and never exceeds the source's level. A first-order decode is enough for two speakers; an HRTF or speaker-array decode can replace it if a title or vic needs real spatial audio.

@@ -23,6 +23,10 @@ const PORT_PARAM_SIZE: usize = 0x40;
 const ATTRIBUTE_SIZE: u64 = 0x18;
 const ATTRIBUTE_PCM: u32 = 0;
 const ATTRIBUTE_GAIN: u32 = 1;
+/// The ambisonics channel a mono port carries: `u32::MAX` for none, ACN
+/// channel numbers from [`AMBISONICS_ACN`] on.
+const ATTRIBUTE_AMBISONICS: u32 = 8;
+const AMBISONICS_ACN: u32 = 64;
 const DEFAULT_GRAIN: u32 = 256;
 const DEFAULT_QUEUE_DEPTH: u32 = 4;
 
@@ -44,8 +48,39 @@ struct Port {
     channels: usize,
     float: bool,
     gain: f32,
+    /// The ambisonics channel this port carries, if any. Not saved: GTA V
+    /// sets it with every grain.
+    ambisonics: Option<u32>,
     /// The grain to play next, 0 for none.
     pcm: u64,
+}
+
+impl Port {
+    /// The port's gains into the left and right output, `None` for a port
+    /// that is not heard on stereo speakers.
+    fn stereo_gains(&self) -> Option<(f32, f32)> {
+        match self.ambisonics {
+            Some(channel) if self.channels == 1 => {
+                soundfield_gains(channel).map(|(l, r)| (l * self.gain, r * self.gain))
+            }
+            _ => Some((self.gain, self.gain)),
+        }
+    }
+}
+
+/// Decodes a first-order soundfield to two virtual cardioid microphones
+/// pointing left and right: `L = (W + Y) / 2`, `R = (W - Y) / 2`, so `L + R`
+/// is the omnidirectional `W` from every direction. Higher orders only add
+/// spatial detail stereo cannot show, and channels outside ACN numbering
+/// are not placed.
+fn soundfield_gains(channel: u32) -> Option<(f32, f32)> {
+    const W: u32 = AMBISONICS_ACN;
+    const Y: u32 = AMBISONICS_ACN + 1;
+    match channel {
+        W => Some((0.5, 0.5)),
+        Y => Some((0.5, -0.5)),
+        _ => None,
+    }
 }
 
 #[derive(Default)]
@@ -253,6 +288,7 @@ fn port_create(env: &mut Env) -> Result<Outcome, CallError> {
             channels,
             float,
             gain: 1.0,
+            ambisonics: None,
             pcm: 0,
         },
     );
@@ -381,6 +417,9 @@ fn port_set_attributes(env: &mut Env) -> Result<Outcome, CallError> {
                     p.gain = g;
                 }
             }
+            ATTRIBUTE_AMBISONICS => {
+                p.ambisonics = Some(read_u32(env, value)?).filter(|&c| c != u32::MAX);
+            }
             _ => {}
         }
     }
@@ -396,10 +435,13 @@ fn mix(env: &Env, handle: u64, grain: usize) -> Result<Vec<f32>, CallError> {
         .values_mut()
         .filter(|p| p.context == handle && p.pcm != 0)
     {
+        let pcm = std::mem::take(&mut p.pcm);
+        let Some((left, right)) = p.stereo_gains() else {
+            continue;
+        };
         let bytes = if p.float { 4 } else { 2 };
         let mut raw = vec![0u8; grain * p.channels * bytes];
-        env.mem.read(p.pcm, &mut raw)?;
-        p.pcm = 0;
+        env.mem.read(pcm, &mut raw)?;
         let samples: Vec<f32> = raw
             .chunks_exact(bytes)
             .map(|b| {
@@ -408,14 +450,26 @@ fn mix(env: &Env, handle: u64, grain: usize) -> Result<Vec<f32>, CallError> {
                 } else {
                     i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0
                 };
-                if x.is_finite() { x * p.gain } else { 0.0 }
+                if x.is_finite() { x } else { 0.0 }
             })
             .collect();
-        for (s, x) in sum.iter_mut().zip(to_stereo(&samples, p.channels)) {
-            *s += x;
-        }
+        add_port(&mut sum, &samples, p.channels, (left, right));
     }
     Ok(sum)
+}
+
+/// Adds one port's grain, folded to stereo, to `sum` with left and right gains.
+fn add_port(sum: &mut [f32], samples: &[f32], channels: usize, (left, right): (f32, f32)) {
+    let stereo = to_stereo(samples, channels);
+    for (s, x) in sum
+        .as_chunks_mut::<2>()
+        .0
+        .iter_mut()
+        .zip(stereo.as_chunks::<2>().0)
+    {
+        s[0] += x[0] * left;
+        s[1] += x[1] * right;
+    }
 }
 
 /// Plays one grain of context `handle` and returns when its queue has a
@@ -559,6 +613,7 @@ impl Out2 {
                     channels,
                     float,
                     gain,
+                    ambisonics: None,
                     pcm,
                 };
                 (id, p)
@@ -566,5 +621,67 @@ impl Out2 {
             .collect();
         self.next_id.store(d.get()?, Ordering::Relaxed);
         Ok(queues)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mono_port(ambisonics: Option<u32>) -> Port {
+        Port {
+            context: 1,
+            channels: 1,
+            float: true,
+            gain: 1.0,
+            ambisonics,
+            pcm: 0,
+        }
+    }
+
+    /// A 5th-order soundfield of a unit source at `azimuth` (radians,
+    /// counter-clockwise from the front) on the horizon, mixed as GTA V
+    /// sends it: one mono port per ACN channel. W and Y follow the SN3D
+    /// encoding equations; every higher channel is filled with a full-scale
+    /// value, which the stereo decode must not hear.
+    fn mix_soundfield(azimuth: f32) -> (f32, f32) {
+        let mut sum = [0.0f32; 2];
+        for acn in 0..36 {
+            let x = match acn {
+                0 => 1.0,
+                1 => azimuth.sin(),
+                _ => 1.0,
+            };
+            let p = mono_port(Some(AMBISONICS_ACN + acn));
+            if let Some(gains) = p.stereo_gains() {
+                add_port(&mut sum, &[x], 1, gains);
+            }
+        }
+        (sum[0], sum[1])
+    }
+
+    #[test]
+    fn a_soundfield_decodes_to_stereo_at_the_sources_level() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-6;
+        let (l, r) = mix_soundfield(0.0);
+        assert!(close(l, 0.5) && close(r, 0.5), "front: {l} {r}");
+        let (l, r) = mix_soundfield(std::f32::consts::FRAC_PI_2);
+        assert!(close(l, 1.0) && close(r, 0.0), "left: {l} {r}");
+        let (l, r) = mix_soundfield(-std::f32::consts::FRAC_PI_2);
+        assert!(close(l, 0.0) && close(r, 1.0), "right: {l} {r}");
+        for k in 0..16 {
+            let (l, r) = mix_soundfield(k as f32 * std::f32::consts::TAU / 16.0);
+            assert!(close(l + r, 1.0) && l <= 1.0 && r <= 1.0);
+        }
+    }
+
+    #[test]
+    fn ports_without_a_soundfield_channel_keep_their_gain() {
+        let mut p = mono_port(None);
+        p.gain = 0.25;
+        assert_eq!(p.stereo_gains(), Some((0.25, 0.25)));
+        p.channels = 2;
+        p.ambisonics = Some(AMBISONICS_ACN);
+        assert_eq!(p.stereo_gains(), Some((0.25, 0.25)));
     }
 }
