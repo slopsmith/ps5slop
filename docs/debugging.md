@@ -28,7 +28,7 @@ Reports that would repeat every frame are rate-limited (`diag::FirstN`, `diag::D
 
 ## Debug switches
 
-`PS5SLOP_*` environment variables, read once at start into `diag::Config` (`crates/diag/src/config.rs`). All of them are listed in [user/environment.md](user/environment.md). Traces that need nothing but output are log targets instead (see above).
+`PS5SLOP_*` environment variables, read once at start into `diag::Config` (`crates/diag/src/config.rs`). All of them are listed in [environment.md](environment.md). Traces that need nothing but output are log targets instead (see above).
 
 ## The control socket
 

@@ -12,7 +12,9 @@ You supply your own games, dumped from your own console. Nothing from Sony is pa
 
 ## Running games
 
-See [docs/user/running.md](docs/user/running.md): starting a game, controls, save states, captures and reporting problems. Every environment variable is in [docs/user/environment.md](docs/user/environment.md).
+Players: download the app and follow [docs/user/getting-started.md](docs/user/getting-started.md).
+
+From source: `cargo run --release -p ps5slop -- run GAME.pkg` (or an extracted folder with `eboot.bin`). `ps5slop run --help` lists the options. Some titles need `scripts/fetch-fonts` once. Every environment variable is in [docs/environment.md](docs/environment.md).
 
 ## Developer tools
 
@@ -35,16 +37,15 @@ PS5SLOP_JIT_VERIFY=1 RUST_LOG=jit::stats=info cargo run ...   # check the JIT ag
 
 For users, in [docs/user/](docs/user/):
 
-- [Running games](docs/user/running.md)
-- [Launcher app](docs/user/app.md): a Mac app with your game library
-- [Environment variables](docs/user/environment.md)
+- [Getting started](docs/user/getting-started.md), [playing games](docs/user/playing.md), [reporting problems](docs/user/reporting.md), [troubleshooting](docs/user/troubleshooting.md) and the [command line](docs/user/command-line.md)
 - [Compatibility](https://slopsmith.github.io/ps5slop/compat/): what each title does so far, and [how to report a game](https://github.com/slopsmith/ps5slop-compat)
 
 For developers and agents, in [docs/](docs/):
 
 - [Architecture](docs/architecture.md): overview, milestones and index of the other docs
 - [CPU](docs/cpu.md), [memory](docs/memory.md), [loader](docs/loader.md), [packages](docs/packages.md), [HLE](docs/hle-kernel.md), [input](docs/input.md), [audio](docs/audio.md), [JIT](docs/jit.md), [GPU](docs/gpu.md), [shaders](docs/shaders.md)
-- [Debugging](docs/debugging.md), [save states](docs/savestates.md)
+- [Debugging](docs/debugging.md), [environment variables](docs/environment.md), [save states](docs/savestates.md)
+- [Launcher app](docs/launcher.md)
 - [Test targets and oracles](docs/test-targets.md)
 - [References and prior art](docs/references.md)
 - [Legal boundaries](docs/legal.md)

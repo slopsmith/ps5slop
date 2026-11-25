@@ -6,12 +6,12 @@ Every environment variable ps5slop reads. The `PS5SLOP_*` ones are read once at 
 
 | Variable | What it does |
 | --- | --- |
-| `RUST_LOG=FILTER` | Adds log output on top of the default (errors, warnings, milestones), in `tracing-subscriber`'s `EnvFilter` syntax: `RUST_LOG=gpu=debug`, `RUST_LOG=hle::stub=off`. Targets are listed in [debugging.md](../debugging.md#logging) |
+| `RUST_LOG=FILTER` | Adds log output on top of the default (errors, warnings, milestones), in `tracing-subscriber`'s `EnvFilter` syntax: `RUST_LOG=gpu=debug`, `RUST_LOG=hle::stub=off`. Targets are listed in [debugging.md](debugging.md#logging) |
 | `PS5SLOP_REPORT=PATH` | Also writes the end-of-run problem report (skipped draws, placeholder calls, JIT fallbacks) to `PATH` |
 | `PS5SLOP_CAPTURE_DIR=DIR` | Where F9/F10 captures and unnamed `gpucapture`/`metalcapture` files go (default `~/Library/Application Support/ps5slop/captures`) |
 | `METAL_CAPTURE_ENABLED=1` | Needed for F10 (Metal `.gputrace` captures). Read by Metal, not by ps5slop |
 | `PS5SLOP_AUDIO=0\|1` | `1` opens the Mac's audio device even with `--headless`, `0` never opens it |
-| `PS5SLOP_AUDIO_WAV=PATH` | Records everything the game plays as WAVE files ([audio.md](../audio.md)) |
+| `PS5SLOP_AUDIO_WAV=PATH` | Records everything the game plays as WAVE files ([audio.md](audio.md)) |
 | `PS5SLOP_COMPILE_THREADS=N` | Shader compile threads (default one per performance core) |
 | `PS5SLOP_INPUT=SECONDS:BUTTONS,...` | Scripted pad input: each step holds the buttons (joined by `+`, names as for the control socket's `press`) from that many seconds after start; an empty list lets go |
 
@@ -33,7 +33,7 @@ Every environment variable ps5slop reads. The `PS5SLOP_*` ones are read once at 
 | Variable | What it does |
 | --- | --- |
 | `PS5SLOP_JIT_VERIFY` | Runs every translated block in the interpreter too and logs differences |
-| `PS5SLOP_JIT_TRACE` | Sends every block exit to the host and keeps the last 64 blocks per thread for fault reports ([jit.md](../jit.md)) |
+| `PS5SLOP_JIT_TRACE` | Sends every block exit to the host and keeps the last 64 blocks per thread for fault reports ([jit.md](jit.md)) |
 | `PS5SLOP_JIT_LAZY_SYNC` | Memory map changes reach running vCPUs at their next entry instead of at once |
 | `PS5SLOP_JIT_NO_NATIVES` | Keeps `memset`, `memcpy` and `memmove` as host calls, so `calls` and watches see them |
 | `PS5SLOP_JIT_SEGMENTS=N` | Uses N code cache segments (at least 2), to test eviction |
@@ -64,7 +64,7 @@ Every environment variable ps5slop reads. The `PS5SLOP_*` ones are read once at 
 
 ## GPU scheduling
 
-These change when work reaches Metal. Most bring back an older way of doing something, for comparing ([gpu.md](../gpu.md)).
+These change when work reaches Metal. Most bring back an older way of doing something, for comparing ([gpu.md](gpu.md)).
 
 | Variable | What it does |
 | --- | --- |
@@ -91,7 +91,7 @@ These change when work reaches Metal. Most bring back an older way of doing some
 
 ## Launcher app
 
-Read by the Swift launcher ([app.md](app.md)), not by `ps5slop`.
+Read by the Swift launcher ([launcher.md](launcher.md)), not by `ps5slop`.
 
 | Variable | What it does |
 | --- | --- |
@@ -103,7 +103,7 @@ Read when ps5slop is compiled, not when it runs.
 
 | Variable | What it does |
 | --- | --- |
-| `SLOP_COMMIT=SHA` | The commit `ps5slop --version` and the logs name (default: `git rev-parse HEAD` plus `-dev`). Set by `scripts/bundle-app` and the nightly workflow ([app.md](app.md#building)) |
+| `SLOP_COMMIT=SHA` | The commit `ps5slop --version` and the logs name (default: `git rev-parse HEAD` plus `-dev`). Set by `scripts/bundle-app` and the nightly workflow ([launcher.md](launcher.md#building)) |
 
 ## Adding a variable
 

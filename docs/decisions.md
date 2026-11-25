@@ -701,9 +701,9 @@ Windowed mode adds `F9` (`.ps5frame`) and `F10` (Metal `.gputrace`) hotkeys writ
 - Measured offline with the new `ps5slop-replay bench` and in a headless run from the gta-perf state; see [gpu.md](gpu.md#encoding-cost-on-the-gpu-thread-2026-11-23).
 
 
-## 2026-11-23: User docs in docs/user, one list of environment variables
+## 2026-11-23: User docs in docs/user, one list of environment variables (revised 2026-11-25)
 
-Docs for people running games live in `docs/user/` (`running.md`, `environment.md`); `docs/` stays the developer and agent docs. Every environment variable, `PS5SLOP_*` and otherwise, is listed in `docs/user/environment.md`, which replaces the table in debugging.md. Reason: vic asked for one place listing all environment variables as their number grows, and for user-facing docs apart from the agents' design notes.
+`docs/user/` holds docs for players only. The website publishes them, so they use plain words, link only to each other and to the website, and leave out internals. Everything for developers stays in `docs/`, including the one list of every environment variable, `docs/environment.md`. Reason: vic asked for one place listing all environment variables, and for user docs apart from the agents' notes. On 2026-11-25 vic found the user docs unusable for players (build commands, debug switches, links into developer docs), so they were rewritten and the developer parts moved to `docs/`.
 
 ## 2026-11-23: Ajm MP3 through FFmpeg
 
