@@ -68,6 +68,16 @@ pub struct ReplayOptions {
     /// Run the frame this many times in one renderer (at least once), resetting
     /// guest memory and registers before each, so caches stay warm as in a game.
     pub frames: usize,
+    /// Read this texel `(target, x, y)` after every draw that binds the target.
+    pub history: Option<(u64, u32, u32)>,
+}
+
+/// The value of the texel given by [`ReplayOptions::history`] after one draw.
+#[derive(Clone, Debug)]
+pub struct TexelAfter {
+    pub draw: usize,
+    pub format: String,
+    pub bytes: Vec<u8>,
 }
 
 /// CPU cost of one replayed frame.
@@ -91,6 +101,7 @@ pub struct ReplayResult {
     pub summary: String,
     /// One entry per frame run; `draws` and `dispatches` hold the last frame's.
     pub frames: Vec<FrameTime>,
+    pub history: Vec<TexelAfter>,
 }
 
 struct Segment {
@@ -360,6 +371,7 @@ struct ReplayState {
     dispatch_ms: Vec<Vec<f64>>,
     open_pass: Option<(Vec<u64>, usize, f64)>,
     shown: Option<u64>,
+    history: Vec<TexelAfter>,
 }
 
 impl ReplayState {
@@ -457,7 +469,7 @@ impl Backend for ReplayBackend {
                 s.flush_pass_timing();
                 s.metal.sync();
                 let _ = s.metal.take_gpu_time_secs();
-                s.open_pass = Some((target_addrs, 0, 0.0));
+                s.open_pass = Some((target_addrs.clone(), 0, 0.0));
             }
         }
 
@@ -474,6 +486,22 @@ impl Backend for ReplayBackend {
         if let Some((_, count, cpu)) = s.open_pass.as_mut() {
             *count += 1;
             *cpu += cpu_ms;
+        }
+        if let Some((target, x, y)) = s.options.history
+            && target_addrs.contains(&target)
+        {
+            s.metal.sync();
+            let tex = s
+                .metal
+                .target_texture(target)
+                .or_else(|| s.metal.depth_texture_at(target));
+            if let Some((format, bytes)) = tex.and_then(|t| crate::metal::read_texel(&t, x, y)) {
+                s.history.push(TexelAfter {
+                    draw: draw_index,
+                    format: format!("{format:?}"),
+                    bytes,
+                });
+            }
         }
 
         if s.options.stop_after_draw == Some(draw_index) {
@@ -689,6 +717,7 @@ pub fn replay(capture: &FrameCapture, options: ReplayOptions) -> Result<ReplayRe
             dispatch_ms: Vec::new(),
             open_pass: None,
             shown: None,
+            history: Vec::new(),
         })));
 
         let mut frames = Vec::new();
@@ -751,6 +780,7 @@ pub fn replay(capture: &FrameCapture, options: ReplayOptions) -> Result<ReplayRe
             depths,
             summary,
             frames,
+            history: std::mem::take(&mut s.history),
         })
     })
 }

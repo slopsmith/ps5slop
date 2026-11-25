@@ -229,3 +229,53 @@ pub(super) fn read_depth(t: &Texture) -> Option<(u32, u32, Vec<u8>)> {
         .collect();
     Some((w as u32, h as u32, px))
 }
+
+/// The bytes of one texel of a colour or depth texture as stored, with its
+/// pixel format, or `None` outside the texture or for formats without a known size.
+/// Depth with stencil gives the 32-bit depth, then the stencil byte.
+pub fn read_texel(texture: &SharedTexture, x: u32, y: u32) -> Option<(MTLPixelFormat, Vec<u8>)> {
+    let t = &texture.0;
+    let format = t.pixelFormat();
+    let bpp = texel_bytes(format).or(match format {
+        MTLPixelFormat::Depth32Float => Some(4),
+        MTLPixelFormat::Depth32Float_Stencil8 => Some(8),
+        _ => None,
+    })?;
+    if x as usize >= t.width() || y as usize >= t.height() {
+        return None;
+    }
+    let device = t.device();
+    let queue = device.newCommandQueue()?;
+    let buffer = device.newBufferWithLength_options(bpp, MTLResourceOptions::StorageModeShared)?;
+    let cb = queue.commandBuffer()?;
+    let blit = cb.blitCommandEncoder()?;
+    let origin = MTLOrigin {
+        x: x as usize,
+        y: y as usize,
+        z: 0,
+    };
+    let size = MTLSize {
+        width: 1,
+        height: 1,
+        depth: 1,
+    };
+    unsafe {
+        if format == MTLPixelFormat::Depth32Float_Stencil8 {
+            blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage_options(
+                t, 0, 0, origin, size, &buffer, 0, 4, 4, MTLBlitOption::DepthFromDepthStencil,
+            );
+            blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage_options(
+                t, 0, 0, origin, size, &buffer, 4, 1, 1, MTLBlitOption::StencilFromDepthStencil,
+            );
+        } else {
+            blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage(
+                t, 0, 0, origin, size, &buffer, 0, bpp, bpp,
+            );
+        }
+    }
+    blit.endEncoding();
+    cb.commit();
+    cb.waitUntilCompleted();
+    let bytes = unsafe { std::slice::from_raw_parts(buffer.contents().as_ptr() as *const u8, bpp) };
+    Some((format, bytes.to_vec()))
+}

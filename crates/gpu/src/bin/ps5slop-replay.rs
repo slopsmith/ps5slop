@@ -122,6 +122,21 @@ enum Command {
         #[arg(long, value_name = "N", default_value_t = 1)]
         warmup: usize,
     },
+    /// Prints one texel of a target after every draw that binds the target, marking changes.
+    History {
+        /// Path to the `.ps5frame` capture file.
+        capture: PathBuf,
+        /// Guest hex address of the color or depth target.
+        #[arg(long, value_name = "HEX", value_parser = parse_hex)]
+        target: u64,
+        /// Texel column.
+        x: u32,
+        /// Texel row.
+        y: u32,
+        /// Also list draws that left the texel unchanged.
+        #[arg(long)]
+        all: bool,
+    },
     /// Compares a replayed target against a golden PNG or PPM image.
     Check {
         /// Path to the `.ps5frame` capture file.
@@ -304,6 +319,46 @@ fn run(cmd: Command) -> Result<(), String> {
                     "  channel {c}: min {min} max {max} mean {} non-finite {bad}",
                     sum / finite as f64
                 );
+            }
+        }
+        Command::History {
+            capture,
+            target,
+            x,
+            y,
+            all,
+        } => {
+            let cap = FrameCapture::load(&capture)?;
+            let res = replay(
+                &cap,
+                ReplayOptions {
+                    history: Some((target, x, y)),
+                    ..ReplayOptions::default()
+                },
+            )?;
+            let Some(first) = res.history.first() else {
+                return Err(format!("no draw binds target {target:#x}"));
+            };
+            println!("target {target:#x} ({}) texel ({x}, {y})", first.format);
+            let mut last: Option<&[u8]> = None;
+            for t in &res.history {
+                let changed = last.is_some_and(|l| l != t.bytes.as_slice());
+                if changed || all || last.is_none() {
+                    let d = &res.draws[t.draw];
+                    let hex: String = t.bytes.iter().map(|b| format!("{b:02x}")).collect();
+                    println!(
+                        "  draw #{:04} {} {hex} vs={:#x} ps={:#x}",
+                        t.draw,
+                        match (last, changed) {
+                            (None, _) => "first  ",
+                            (_, true) => "changed",
+                            _ => "same   ",
+                        },
+                        d.vs,
+                        d.ps
+                    );
+                }
+                last = Some(&t.bytes);
             }
         }
         Command::List { capture } => {
