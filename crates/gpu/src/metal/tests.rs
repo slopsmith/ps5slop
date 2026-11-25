@@ -872,3 +872,19 @@ fn a_program_in_a_mapping_that_runs_past_the_gpu_area_gets_a_window() {
     assert_eq!(memory.win[0], 0x10_0000);
     assert!(memory.win[1] > 0x30_0000);
 }
+
+#[test]
+fn a_masked_target_the_program_exports_to_keeps_its_attachment() {
+    let hair: Vec<_> = attached_targets(0x4307, 0x4444).collect();
+    assert_eq!(hair, [0, 1, 2, 3]);
+    let unexported: Vec<_> = attached_targets(0x4307, 0x4404).collect();
+    assert_eq!(unexported, [0, 2, 3]);
+}
+
+#[test]
+fn a_masked_export_after_the_last_written_target_is_not_attached() {
+    let depth_only: Vec<_> = attached_targets(0, 0x1).collect();
+    assert!(depth_only.is_empty());
+    let trailing: Vec<_> = attached_targets(0x7, 0x44).collect();
+    assert_eq!(trailing, [0]);
+}

@@ -334,9 +334,6 @@ impl<'a> Tx<'a> {
                 if self.depth {
                     out.push_str("    float depth [[depth(any)]];\n");
                 }
-                if self.sample_mask {
-                    out.push_str("    uint mask [[sample_mask]];\n");
-                }
                 out.push_str("};\n\n");
                 init.push_str(&self.ps_vgprs());
                 if self.regs.contains("m0") {

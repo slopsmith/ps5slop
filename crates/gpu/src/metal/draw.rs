@@ -51,6 +51,17 @@ fn expand_indexed_triangle_fan(bytes: &[u8], wide: bool, restart: Option<u32>) -
     out
 }
 
+/// The colour targets a draw attaches, in attachment order: those it writes and
+/// those its pixel program exports to before the last one it writes, so export
+/// `k` lands on attachment `k`. A masked export after that writes nothing, and
+/// its target (often left bound from an earlier pass) would clip the pass to
+/// its size.
+pub(super) fn attached_targets(mask: u32, exports: u32) -> impl Iterator<Item = usize> {
+    let set = |bits: u32, n: usize| bits >> (4 * n) & 0xF != 0;
+    let end = (0..8).rev().find(|&n| set(mask, n)).map_or(0, |n| n + 1);
+    (0..8).filter(move |&n| set(mask, n) || (set(exports, n) && n < end))
+}
+
 /// Derives fallback target dimensions from the scissor and viewport registers.
 fn viewport_target_size(c: &[u32]) -> (u32, u32) {
     let (_, _, x1, y1) = regs::scissor(c);
@@ -301,11 +312,8 @@ impl Metal {
             stencil: false,
             rect,
         };
-        for n in 0..8 {
+        for n in attached_targets(mask, col_format) {
             let write = (mask >> (4 * n)) & 0xF;
-            if write == 0 {
-                continue;
-            }
             let Some(t) = ColorTarget::read(c, n) else {
                 continue;
             };

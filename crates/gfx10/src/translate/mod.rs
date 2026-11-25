@@ -408,7 +408,6 @@ struct Tx<'a> {
     params: BTreeSet<u8>,
     mrts: u8,
     depth: bool,
-    sample_mask: bool,
     mem: bool,
     mem_write: bool,
     /// See [`Translated::store_buffers`].
@@ -537,7 +536,6 @@ impl<'a> Tx<'a> {
             params: BTreeSet::new(),
             mrts: 0,
             depth: false,
-            sample_mask: false,
             mem: false,
             mem_write: false,
             stores: Some(Vec::new()),

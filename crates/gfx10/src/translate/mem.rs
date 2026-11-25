@@ -145,9 +145,10 @@ impl<'a> Tx<'a> {
                     self.depth = true;
                     stmt += &format!("o.depth = F({});", comps[0].1);
                 }
+                // Targets are single-sampled, and a `[[sample_mask]]` output
+                // turns off Metal's stencil test (measured, gpu.md).
                 if en & 4 != 0 {
-                    self.sample_mask = true;
-                    stmt += &format!(" o.mask = {};", comps[2].1);
+                    stmt += &format!(" if (({} & 1u) == 0u) discard_fragment();", comps[2].1);
                 }
                 stmt
             }
