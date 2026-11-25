@@ -6,6 +6,12 @@ use super::*;
 const WINDOW: u64 = 64 << 20;
 
 const PAGE: u64 = 0x4000;
+/// Unmapped space in the GPU area that the low area window does not grow
+/// across: Metal gives every page of a window memory, and GTA V maps 6 GiB at
+/// the area's start and 0.7 GiB at its end, 10 GiB apart.
+pub(super) const AREA_GAP: u64 = 2 << 30;
+/// The step area windows grow in.
+const AREA_STEP: u64 = 1 << 30;
 
 pub(super) struct Window {
     pub(super) start: u64,
@@ -79,18 +85,20 @@ impl Metal {
                         .into_iter()
                         .partition(|w| ranges.iter().any(|&(s, e)| s < w.end && w.start < e));
                     self.windows = kept;
-                    if self
-                        .area
-                        .as_ref()
-                        .is_some_and(|w| ranges.iter().any(|&(s, e)| s < w.end && w.start < e))
-                    {
-                        self.stale += self.area.take().map_or(0, |w| w.end - w.start);
+                    for area in [&mut self.area, &mut self.area_high] {
+                        if area
+                            .as_ref()
+                            .is_some_and(|w| ranges.iter().any(|&(s, e)| s < w.end && w.start < e))
+                        {
+                            self.stale += area.take().map_or(0, |w| w.end - w.start);
+                        }
                     }
                     gone
                 }
                 None => {
                     self.flush_and_wait();
                     self.area = None;
+                    self.area_high = None;
                     std::mem::take(&mut self.windows)
                 }
             };
@@ -182,10 +190,9 @@ impl Metal {
         len: u64,
     ) -> Option<(Retained<Buffer>, usize)> {
         match host.gpu_area() {
-            Some((start, end)) if (start..end).contains(&at) && at + len <= end => Some((
-                self.area_window(host, start, end, at + len)?,
-                (at - start) as usize,
-            )),
+            Some((start, end)) if (start..end).contains(&at) && at + len <= end => self
+                .area_buffer(host, (start, end), at, at + len)
+                .map(|(b, base)| (b, (at - base) as usize)),
             _ => self.window(host, at, len),
         }
     }
@@ -302,7 +309,9 @@ impl Metal {
     /// over the GPU area (or the other way round), as programs read both, and
     /// over the largest other region the user data points into. Buffer
     /// descriptors in tables the user data points to count after aligned
-    /// pointers and before unaligned ones.
+    /// pointers and before unaligned ones. The area windows reach every region
+    /// in the area that the user data or those descriptors point into; the
+    /// high one, when needed, takes the third window from other regions.
     pub(super) fn guest_window(
         &mut self,
         host: &dyn Host,
@@ -320,12 +329,16 @@ impl Metal {
             pointed.push((lo, hi, lo >> 32 != 0, 2));
         }
         let mut tables = Vec::new();
+        let mut area_spans: Vec<(u64, u64)> = Vec::new();
         for pair in user.windows(2) {
             for ptr in [
                 pair[0] as u64 | (pair[1] as u64) << 32,
                 pair[0] as u64 | ((pair[1] & 0xFFFF) as u64) << 32,
             ] {
                 if let Some((lo, hi)) = host.extent(ptr) {
+                    if in_area(lo) {
+                        area_spans.push((lo, hi));
+                    }
                     pointed.push((lo, hi, ptr >> 32 != 0, if ptr % 4 == 0 { 2 } else { 0 }));
                     if best.is_none_or(|(l, h)| hi - lo > h - l) {
                         best = Some((lo, hi));
@@ -336,7 +349,6 @@ impl Metal {
                 }
             }
         }
-        // Follow V# tables in user data to discover buffer pools outside the GPU area.
         for (ptr, hi) in tables {
             let mut words = [0u8; 4 * TABLE_DWORDS];
             let n = ((hi - ptr) as usize).min(words.len()) & !15;
@@ -347,11 +359,15 @@ impl Metal {
                 let d =
                     |i: usize| u32::from_le_bytes(q[4 * i..4 * i + 4].try_into().unwrap_or([0; 4]));
                 let base = d(0) as u64 | ((d(1) & 0xFFFF) as u64) << 32;
-                if base >> 32 == 0 || in_area(base) || d(2) == 0 {
+                if base >> 32 == 0 || d(2) == 0 {
                     continue;
                 }
                 if let Some((lo, hi)) = host.extent(base) {
-                    pointed.push((lo, hi, true, 1));
+                    if in_area(base) {
+                        area_spans.push((lo, hi));
+                    } else {
+                        pointed.push((lo, hi, true, 1));
+                    }
                 }
             }
         }
@@ -365,27 +381,68 @@ impl Metal {
             let (buf, offset) = this.window(host, lo, (hi - lo).min(max))?;
             Some((buf, lo - offset as u64))
         };
-        let (first, second) = match area {
-            Some((start, end)) if in_area(lo) => {
-                let w = self.area_window(host, start, end, hi.min(end))?;
-                (Some((w, start)), outside.and_then(|r| region(self, r)))
-            }
-            Some((start, end)) => {
-                let need = self
-                    .area
-                    .as_ref()
-                    .map_or(self.area_reach.max(start + 1), |w| w.end);
-                let a = self.area_window(host, start, end, need).map(|w| (w, start));
-                (region(self, (lo, hi)), a)
-            }
-            None => (region(self, (lo, hi)), None),
-        };
         // A word followed by 0 often only looks like a pointer: prefer ones above 4 GiB.
-        let third = pointed
-            .into_iter()
-            .filter(|&(l, _, _, _)| !in_area(l) && Some(l) != outside.map(|o| o.0) && l != lo)
-            .max_by_key(|&(l, h, wide, rank)| (rank, wide, h - l))
-            .and_then(|(l, h, _, _)| region(self, (l, h)));
+        let other = pointed
+            .iter()
+            .filter(|&&(l, _, _, _)| !in_area(l) && Some(l) != outside.map(|o| o.0) && l != lo)
+            .max_by_key(|&&(l, h, wide, rank)| (rank, wide, h - l))
+            .map(|&(l, h, _, _)| (l, h));
+        let (first, second, third) = match area {
+            Some((start, end)) => {
+                if in_area(lo) {
+                    area_spans.push((lo, hi));
+                }
+                let (mut low, mut high) = (None::<u64>, None::<(u64, u64)>);
+                for &(l, h) in &area_spans {
+                    let h = h.min(end);
+                    if self.is_high(start, l) {
+                        high = Some(high.map_or((l, h), |(a, b)| (a.min(l), b.max(h))));
+                    } else {
+                        low = Some(low.map_or(h, |n| n.max(h)).min(start + max));
+                    }
+                }
+                let low_part = |this: &mut Self, need: u64| {
+                    this.area_window(host, start, end, need).map(|w| (w, start))
+                };
+                let high_part =
+                    |this: &mut Self, (l, h): (u64, u64)| this.area_high_window(host, end, l, h);
+                if !in_area(lo) {
+                    let need = self
+                        .area
+                        .as_ref()
+                        .map_or(self.area_reach.max(start + 1), |w| w.end)
+                        .max(low.unwrap_or(0));
+                    let second = low_part(self, need);
+                    let third = match high {
+                        Some(r) => high_part(self, r),
+                        None => other.and_then(|r| region(self, r)),
+                    };
+                    (region(self, (lo, hi)), second, third)
+                } else if self.is_high(start, lo) {
+                    let first = high.and_then(|r| high_part(self, r));
+                    let (second, third) = match (outside, low) {
+                        (Some(r), Some(n)) => (region(self, r), low_part(self, n)),
+                        (Some(r), None) => (region(self, r), other.and_then(|r| region(self, r))),
+                        (None, Some(n)) => (low_part(self, n), other.and_then(|r| region(self, r))),
+                        (None, None) => (None, other.and_then(|r| region(self, r))),
+                    };
+                    (first, second, third)
+                } else {
+                    let first = low.and_then(|n| low_part(self, n));
+                    let second = outside.and_then(|r| region(self, r));
+                    let third = match high {
+                        Some(r) => high_part(self, r),
+                        None => other.and_then(|r| region(self, r)),
+                    };
+                    (first, second, third)
+                }
+            }
+            None => (
+                region(self, (lo, hi)),
+                None,
+                other.and_then(|r| region(self, r)),
+            ),
+        };
         let (buffer, base) = first?;
         let (ro, ro_end) = outside.and_then(|(lo, _)| host.image(lo)).unwrap_or((0, 0));
         let mut win = [
@@ -435,9 +492,40 @@ impl Metal {
         }
     }
 
-    /// The window over the GPU area `[start, end)` reaching at least `need`
-    /// and as far as any window before it, made again (in 1 GiB steps) when
-    /// it does not reach that far.
+    /// The area window that holds `[at, need)` of the GPU area `area`, and
+    /// its start.
+    pub(super) fn area_buffer(
+        &mut self,
+        host: &dyn Host,
+        (start, end): (u64, u64),
+        at: u64,
+        need: u64,
+    ) -> Option<(Retained<Buffer>, u64)> {
+        if self.is_high(start, at) {
+            self.area_high_window(host, end, at, need)
+        } else {
+            self.area_window(host, start, end, need).map(|b| (b, start))
+        }
+    }
+
+    /// Whether GPU-area address `at` belongs to the high area window: it lies
+    /// in it already, or [`AREA_GAP`] or more past the low one.
+    fn is_high(&self, start: u64, at: u64) -> bool {
+        if self.area_high.as_ref().is_some_and(|w| w.start <= at) {
+            return true;
+        }
+        let low = self
+            .area
+            .as_ref()
+            .map_or(start, |w| w.end)
+            .max(self.area_reach);
+        at >= low.saturating_add(AREA_GAP)
+    }
+
+    /// The low window over the GPU area `[start, end)`, from its start to at
+    /// least `need` and as far as any window before it, made again (in
+    /// [`AREA_STEP`]s) when it does not reach that far. Reaching the high
+    /// window, it takes over what that one held.
     pub(super) fn area_window(
         &mut self,
         host: &dyn Host,
@@ -466,54 +554,17 @@ impl Metal {
             return None;
         }
         self.area_reach = self.area_reach.max(need);
-        let stop = self
+        let mut stop = self
             .area_reach
-            .next_multiple_of(1 << 30)
+            .next_multiple_of(AREA_STEP)
             .min(end)
             .min(start + max);
-        if !host.back(start, stop) {
-            diag::problems::record(
-                diag::problems::Kind::MemoryWindow,
-                "GPU area window backing failed",
-                format!("{start:#x}..{stop:#x}"),
-            );
-            self.report(tracing::Level::ERROR, format!(
-                "GPU area window: guest memory {start:#x}..{stop:#x} could not be given host pages"
-            ));
-            return None;
+        if let Some(high) = self.area_high.take_if(|h| stop > h.start) {
+            stop = stop.max(high.end).min(start + max);
+            self.stale += high.end - high.start;
         }
         self.stale += self.area.take().map_or(0, |w| w.end - w.start);
-        self.make_room(stop - start);
-        let ptr = NonNull::new(host.host_pointer(start)?)?;
-        // SAFETY: `back` gave every page host memory, which stays mapped; the
-        // window is dropped when pages under it are replaced.
-        let buffer = unsafe {
-            self.device
-                .newBufferWithBytesNoCopy_length_options_deallocator(
-                    ptr.cast(),
-                    (stop - start) as usize,
-                    MTLResourceOptions::StorageModeShared,
-                    None,
-                )
-        };
-        let Some(buffer) = buffer else {
-            diag::problems::record_with_detail(
-                diag::problems::Kind::MemoryWindow,
-                "Metal refused GPU area buffer",
-                format!("{start:#x}..{stop:#x}"),
-                format!(
-                    "{} MiB ({} MiB allocated)",
-                    (stop - start) >> 20,
-                    self.device.currentAllocatedSize() >> 20
-                ),
-            );
-            self.report(tracing::Level::ERROR, format!(
-                "GPU area window: Metal refused a {} MiB buffer over guest memory ({} MiB allocated)",
-                (stop - start) >> 20,
-                self.device.currentAllocatedSize() >> 20
-            ));
-            return None;
-        };
+        let buffer = self.new_area_buffer(host, start, stop)?;
         // Made again after mapping changes: report only growth, so the
         // window does not use up the reports.
         static LARGEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -533,6 +584,103 @@ impl Metal {
             buffer: buffer.clone(),
         });
         Some(buffer)
+    }
+
+    /// The high window over the GPU area, ending at most at `end`: over
+    /// `[lo, hi)` and what it held before, in [`AREA_STEP`]s; and its start.
+    fn area_high_window(
+        &mut self,
+        host: &dyn Host,
+        end: u64,
+        lo: u64,
+        hi: u64,
+    ) -> Option<(Retained<Buffer>, u64)> {
+        if let Some(w) = &self.area_high
+            && w.start <= lo
+            && hi <= w.end
+        {
+            return Some((w.buffer.clone(), w.start));
+        }
+        let (lo, hi) = self
+            .area_high
+            .as_ref()
+            .map_or((lo, hi), |w| (w.start.min(lo), w.end.max(hi)));
+        let start = lo & !(AREA_STEP - 1);
+        let stop = hi.next_multiple_of(AREA_STEP).min(end);
+        let max = self.device.maxBufferLength() as u64 & !(PAGE - 1);
+        if stop - start > max {
+            self.report(
+                tracing::Level::ERROR,
+                format!("high GPU area window {start:#x}..{stop:#x} past Metal limit {max:#x}"),
+            );
+            return None;
+        }
+        self.stale += self.area_high.take().map_or(0, |w| w.end - w.start);
+        let buffer = self.new_area_buffer(host, start, stop)?;
+        self.note(|| {
+            format!(
+                "      new high GPU area window of {} MiB at {start:#x}",
+                (stop - start) >> 20
+            )
+        });
+        self.area_high = Some(Window {
+            start,
+            end: stop,
+            buffer: buffer.clone(),
+        });
+        Some((buffer, start))
+    }
+
+    /// A no-copy buffer over GPU-area memory `[start, stop)`, its holes given
+    /// host pages first.
+    fn new_area_buffer(
+        &mut self,
+        host: &dyn Host,
+        start: u64,
+        stop: u64,
+    ) -> Option<Retained<Buffer>> {
+        if !host.back(start, stop) {
+            diag::problems::record(
+                diag::problems::Kind::MemoryWindow,
+                "GPU area window backing failed",
+                format!("{start:#x}..{stop:#x}"),
+            );
+            self.report(tracing::Level::ERROR, format!(
+                "GPU area window: guest memory {start:#x}..{stop:#x} could not be given host pages"
+            ));
+            return None;
+        }
+        self.make_room(stop - start);
+        let ptr = NonNull::new(host.host_pointer(start)?)?;
+        // SAFETY: `back` gave every page host memory, which stays mapped; the
+        // window is dropped when pages under it are replaced.
+        let buffer = unsafe {
+            self.device
+                .newBufferWithBytesNoCopy_length_options_deallocator(
+                    ptr.cast(),
+                    (stop - start) as usize,
+                    MTLResourceOptions::StorageModeShared,
+                    None,
+                )
+        };
+        if buffer.is_none() {
+            diag::problems::record_with_detail(
+                diag::problems::Kind::MemoryWindow,
+                "Metal refused GPU area buffer",
+                format!("{start:#x}..{stop:#x}"),
+                format!(
+                    "{} MiB ({} MiB allocated)",
+                    (stop - start) >> 20,
+                    self.device.currentAllocatedSize() >> 20
+                ),
+            );
+            self.report(tracing::Level::ERROR, format!(
+                "GPU area window: Metal refused a {} MiB buffer over guest memory ({} MiB allocated)",
+                (stop - start) >> 20,
+                self.device.currentAllocatedSize() >> 20
+            ));
+        }
+        buffer
     }
 }
 

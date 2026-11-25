@@ -874,6 +874,57 @@ fn a_program_in_a_mapping_that_runs_past_the_gpu_area_gets_a_window() {
 }
 
 #[test]
+fn area_buffers_far_above_the_user_datas_own_mapping_get_the_high_window() {
+    let (area, end) = (0x1_0000_0000u64, 0x2_8000_0000u64);
+    let (table, near, direct, through_table) = (
+        area + 0x1000,
+        area + 0x5000_0000,
+        area + 0x1_4000_0000,
+        area + 0x1_6000_0000,
+    );
+    let mut mem = Mem::new(end);
+    mem.area = Some((area, end));
+    mem.regions = vec![
+        (area, area + 0x100_0000),
+        (near, near + 0x10_0000),
+        (direct, direct + 0x10_0000),
+        (through_table, through_table + 0x10_0000),
+    ];
+    let v_sharp = [through_table as u32, (through_table >> 32) as u32, 0x100, 0];
+    let bytes: Vec<u8> = v_sharp.iter().flat_map(|d| d.to_le_bytes()).collect();
+    assert!(mem.write(table, &bytes));
+    let covers = |win: &[u64], at: u64| win[7] <= at && at < win[8];
+
+    for user in [
+        [table as u32, (table >> 32) as u32],
+        [direct as u32, (direct >> 32) as u32],
+    ] {
+        let Some(mut metal) = Metal::new() else {
+            return;
+        };
+        let memory = metal
+            .guest_window(&mem, &user, area)
+            .expect("a window for the program");
+        assert_eq!(memory.win[0], area);
+        assert!(memory.win[1] <= near, "{:#x}", memory.win[1]);
+        let far = if user[0] == table as u32 {
+            through_table
+        } else {
+            direct
+        };
+        assert!(covers(&memory.win, far), "{:x?}", memory.win);
+    }
+
+    let mut metal = Metal::new().expect("a Metal device");
+    let user = [near as u32, (near >> 32) as u32];
+    let memory = metal
+        .guest_window(&mem, &user, area)
+        .expect("a window for the program");
+    assert!(memory.win[1] > near, "{:#x}", memory.win[1]);
+    assert_eq!(memory.win[7..9], [0, 0]);
+}
+
+#[test]
 fn a_masked_target_the_program_exports_to_keeps_its_attachment() {
     let hair: Vec<_> = attached_targets(0x4307, 0x4444).collect();
     assert_eq!(hair, [0, 1, 2, 3]);

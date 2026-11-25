@@ -137,6 +137,9 @@ pub struct Metal {
     /// One window from the start of the host's GPU area (see
     /// [`Host::gpu_area`]) up to what programs have pointed into so far.
     area: Option<Window>,
+    /// The window over GPU-area data more than [`memory::AREA_GAP`] past the
+    /// end of `area`, so the unmapped space between is not given host pages.
+    area_high: Option<Window>,
     /// The furthest programs have pointed into the GPU area, so a window
     /// made again after a mapping change reaches as far as earlier ones.
     area_reach: u64,
@@ -299,6 +302,7 @@ impl Metal {
             depth_states: HashMap::new(),
             windows: Vec::new(),
             area: None,
+            area_high: None,
             area_reach: 0,
             stale: 0,
             reported_stuck: None,
@@ -624,8 +628,8 @@ impl Backend for Metal {
         // Metal orders work only within one object.
         let target = match host.gpu_area() {
             Some((start, end)) if start <= dest && dest + len as u64 <= end => self
-                .area_window(host, start, end, dest + len as u64)
-                .map(|b| (b, (dest - start) as usize)),
+                .area_buffer(host, (start, end), dest, dest + len as u64)
+                .map(|(b, base)| (b, (dest - base) as usize)),
             _ => None,
         };
         let Some((buffer, offset)) = target else {

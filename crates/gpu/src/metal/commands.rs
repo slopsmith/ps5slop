@@ -145,7 +145,11 @@ impl Metal {
                     e.code(),
                     self.inflight.len(),
                     windows >> 20,
-                    self.area.as_ref().map_or(0, |w| w.end - w.start) >> 20,
+                    [&self.area, &self.area_high]
+                        .iter()
+                        .map(|a| a.as_ref().map_or(0, |w| w.end - w.start))
+                        .sum::<u64>()
+                        >> 20,
                     self.device.currentAllocatedSize() >> 20,
                     self.device.recommendedMaxWorkingSetSize() >> 20,
                 );
