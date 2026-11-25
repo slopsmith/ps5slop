@@ -1997,3 +1997,65 @@ fn fallback_rows_report_readable_opcode_names() {
         "expected readable fallback name in {rows:?}"
     );
 }
+
+#[test]
+fn a_kick_at_an_exception_vector_reports_the_exception() {
+    let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
+    let mem = guest();
+    let mut m = machine().unwrap();
+    m.sync(&mem).unwrap();
+    let pc = m.load_code(0x1000, &increment());
+    let at = (pc - layout::RUNTIME_VA) as usize;
+    let mut cpu = Cpu::new(&mut m).unwrap().unwrap();
+    let root = SHARED.roots[SHARED.active.load(Ordering::SeqCst)].load(Ordering::SeqCst);
+
+    // A kick made before entering lands before the first instruction.
+    cpu.vcpu.kicker().kick();
+    let exit = cpu.enter(root, at, None, 0).unwrap();
+    assert!(
+        matches!(exit, Exit::Canceled { pc: p, .. } if p == pc),
+        "{exit:?}"
+    );
+
+    // A vCPU kicked while at the synchronous vector, after taking a fault
+    // in translated code but before the vector's hvc, reports that fault.
+    let (esr, far, elr) = (0x9600_0007, 0x60_0000, pc);
+    cpu.vcpu.set_sys_reg(sysreg::ESR_EL1, esr).unwrap();
+    cpu.vcpu.set_sys_reg(sysreg::FAR_EL1, far).unwrap();
+    cpu.vcpu.set_sys_reg(sysreg::ELR_EL1, elr).unwrap();
+    cpu.vcpu.kicker().kick();
+    let exit = cpu.enter(root, layout::VECTORS + 0x200, None, 0).unwrap();
+    assert_eq!(exit, Exit::Fault { esr, far, elr });
+    cpu.release(&mut m);
+}
+
+/// Maps a page in each of `count` separate 2 MiB blocks from `base`, so each
+/// needs a level-3 table of its own.
+fn scattered_pages(mem: &Memory, base: u64, count: u64) {
+    for k in 0..count {
+        mem.map(base + (k << 21), PAGE_SIZE, Prot::RW, "scattered")
+            .unwrap();
+    }
+}
+
+#[test]
+fn a_map_as_fragmented_as_gta_v_reaches_the_vm() {
+    let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
+    const BASE: u64 = 0x10_0000_0000;
+    let mem = guest();
+    scattered_pages(&mem, BASE, 1500);
+    let mut m = machine().unwrap();
+    assert!(m.sync(&mem).unwrap());
+    // Added in place to the tables vCPUs use, then a full rebuild.
+    scattered_pages(&mem, BASE + (1500 << 21), 1500);
+    assert!(m.sync(&mem).unwrap());
+    let last = BASE + (2999 << 21);
+    mem.protect(BASE, Prot::READ).unwrap();
+    assert!(m.sync(&mem).unwrap());
+    let pc = m.load_code(0x1000, &increment());
+    let mut cpu = Cpu::new(&mut m).unwrap().unwrap();
+    cpu.set_reg(0, last).unwrap();
+    assert_eq!(cpu.run(&m, pc).unwrap(), Exit::Hvc(7));
+    assert_eq!(mem.read_u64(last).unwrap(), 1);
+    cpu.release(&mut m);
+}

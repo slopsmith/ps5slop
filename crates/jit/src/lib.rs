@@ -128,7 +128,15 @@ fn sync_after_change(mem: &Memory) {
         return;
     }
     let Ok(mut m) = machine() else { return };
-    while let Ok(false) = m.sync(mem) {
+    loop {
+        match m.sync(mem) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(e) => {
+                tracing::error!("cannot mirror guest memory into the VM: {e:?}");
+                return;
+            }
+        }
         m.kick_running();
         drop(m);
         std::thread::yield_now();
@@ -612,6 +620,10 @@ impl Machine {
         let mut t = tables::Tables::new(self.runtime.as_mut_slice(), pool);
         for &(start, end, write) in &access {
             if !t.map(start, end, write) {
+                tracing::error!(
+                    "the VM's page table pool is full ({} ranges to map)",
+                    access.len()
+                );
                 return Err(Error(-2));
             }
         }
@@ -1358,6 +1370,14 @@ impl Cpu {
         let syndrome = match self.vcpu.run()? {
             hvf::Exit::Canceled => {
                 let pc = self.vcpu.reg(reg::PC)?;
+                let vectors = layout::va(layout::VECTORS)..layout::va(layout::VECTORS + 0x800);
+                if vectors.contains(&pc) {
+                    // The exception was taken but its vector's `hvc` has not
+                    // run. Resuming would overwrite ELR with the vector's own
+                    // address, so report the exception now.
+                    let slot = ((pc - vectors.start) / 0x80) as u16;
+                    return self.vector_exit(if slot == 4 { HVC_SYNC } else { HVC_OTHER });
+                }
                 let cpsr = self.vcpu.reg(reg::CPSR)?;
                 return Ok(Exit::Canceled { pc, cpsr });
             }
@@ -1365,19 +1385,25 @@ impl Cpu {
             _ => return Ok(Exit::Other),
         };
         Ok(match syndrome >> 26 & 0x3f {
-            0x16 => match syndrome as u16 {
-                HVC_SYNC => Exit::Fault {
-                    esr: self.vcpu.sys_reg(sysreg::ESR_EL1)?,
-                    far: self.vcpu.sys_reg(sysreg::FAR_EL1)?,
-                    elr: self.vcpu.sys_reg(sysreg::ELR_EL1)?,
-                },
-                HVC_OTHER => Exit::Other,
-                n => Exit::Hvc(n),
-            },
+            0x16 => return self.vector_exit(syndrome as u16),
             0x20 | 0x24 => Exit::Stage2 {
                 pc: self.vcpu.reg(reg::PC)?,
             },
             _ => Exit::Other,
+        })
+    }
+
+    /// The exit for `hvc #n`, as the exception vectors and translated code
+    /// make them.
+    fn vector_exit(&self, n: u16) -> Result<Exit, Error> {
+        Ok(match n {
+            HVC_SYNC => Exit::Fault {
+                esr: self.vcpu.sys_reg(sysreg::ESR_EL1)?,
+                far: self.vcpu.sys_reg(sysreg::FAR_EL1)?,
+                elr: self.vcpu.sys_reg(sysreg::ELR_EL1)?,
+            },
+            HVC_OTHER => Exit::Other,
+            n => Exit::Hvc(n),
         })
     }
 

@@ -843,7 +843,15 @@ impl Engine {
                     count_exit(Count::Fault);
                     self.fpcr_dirty = true;
                     let Some(rip) = machine()?.rip_at(pc) else {
-                        panic!("the JIT faulted outside translated code at {pc:#x}");
+                        let x16 = self.cpu.reg(RIP.0)?;
+                        let what = match exit {
+                            Exit::Fault { esr, far, .. } => format!("ESR {esr:#x}, FAR {far:#x}"),
+                            _ => "a stage-2 fault".to_string(),
+                        };
+                        panic!(
+                            "the JIT faulted outside translated code at {pc:#x} ({what}; \
+                             x16, the guest RIP of the last block exit, {x16:#x})"
+                        );
                     };
                     note_exit(Cause::Fault, rip);
                     SHARED.slots[self.cpu.slot]

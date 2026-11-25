@@ -36,13 +36,16 @@ pub const FPCR_SSE: usize = 0x260;
 pub const FPSR_KEPT: usize = 0x268;
 pub const MXCSR: usize = 0x270;
 /// Two pools the TTBR0 tables are built in, alternately, so one can be
-/// rebuilt while vCPUs still walk the other.
-pub const TABLES: [(usize, usize); 2] = [(0x10_0000, 0x90_0000), (0x90_0000, 0x110_0000)];
+/// rebuilt while vCPUs still walk the other. Each holds 8,192 tables: a
+/// fragmented map needs one per 2 MiB that is not wholly mapped, and GTA V's
+/// needed 2,059 in its first Franklin mission, more than the 8 MiB pools
+/// held before (see `docs/jit.md`).
+pub const TABLES: [(usize, usize); 2] = [(0x10_0000, 0x210_0000), (0x210_0000, 0x410_0000)];
 /// Guest RIP to translated code: `LOOKUP_ENTRIES` of (RIP, address).
 pub const LOOKUP: usize = RUNTIME_SIZE - LOOKUP_ENTRIES * 16;
 pub const LOOKUP_BITS: u32 = 22;
 pub const LOOKUP_ENTRIES: usize = 1 << LOOKUP_BITS;
-pub const CODE_CACHE: usize = 0x120_0000;
+pub const CODE_CACHE: usize = 0x420_0000;
 /// Blocks branch with B, which reaches 128 MiB, so each segment of the
 /// cache starts with its own copy of the dispatcher (see `cache.rs`).
 pub const CODE_CACHE_END: usize = LOOKUP;
