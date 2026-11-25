@@ -21,6 +21,7 @@ const TAG_QUEU: [u8; 4] = *b"QUEU";
 const TAG_TEXS: [u8; 4] = *b"TEXS";
 const TAG_SUBS: [u8; 4] = *b"SUBS";
 const TAG_MEMP: [u8; 4] = *b"MEMP";
+const TAG_LIVE: [u8; 4] = *b"LIVE";
 
 /// One submitted command buffer captured at submission time.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,6 +62,22 @@ savestate::record!(CaptureMeta {
     display_buffers
 });
 
+/// The picture the running game showed for the captured frame, as RGBA8.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LiveFrame {
+    pub address: u64,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+savestate::record!(LiveFrame {
+    address,
+    width,
+    height,
+    rgba
+});
+
 /// A self-contained GPU frame capture ready for offline replay.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrameCapture {
@@ -72,6 +89,8 @@ pub struct FrameCapture {
     pub submissions: Vec<Submission>,
     /// Non-zero 16 KiB guest memory pages as seen before the frame modified them.
     pub pages: BTreeMap<u64, Vec<u8>>,
+    /// What the game showed for this frame; captures made before 2026-11-25 have none.
+    pub live: Option<LiveFrame>,
 }
 
 impl FrameCapture {
@@ -101,6 +120,11 @@ impl FrameCapture {
             .map_err(|e| e.to_string())?;
         w.section(TAG_SUBS, &savestate::to_bytes(&self.submissions))
             .map_err(|e| e.to_string())?;
+        if let Some(live) = &self.live {
+            let raw = savestate::to_bytes(live);
+            w.packed(TAG_LIVE, raw.len() as u64, &savestate::compress(&raw, 1))
+                .map_err(|e| e.to_string())?;
+        }
 
         // Compress 16 MiB page chunks in parallel at zstd level 1 to keep capture
         // writes fast without holding the whole compressed stream in memory.
@@ -170,7 +194,13 @@ impl FrameCapture {
             savestate::from_bytes(&r.expect(TAG_SUBS).map_err(|e| e.0)?)
                 .map_err(|e| e.to_string())?;
         let mut pages = BTreeMap::new();
+        let mut live = None;
         while let Some(section) = r.next_section().map_err(|e| e.to_string())? {
+            if section.tag == TAG_LIVE {
+                let raw = section.unpack().map_err(|e| e.to_string())?;
+                live = Some(savestate::from_bytes(&raw).map_err(|e| e.to_string())?);
+                continue;
+            }
             if section.tag != TAG_MEMP {
                 return Err(format!("unexpected capture section {}", section.name()));
             }
@@ -187,6 +217,7 @@ impl FrameCapture {
             textures,
             submissions,
             pages,
+            live,
         })
     }
 }
@@ -372,6 +403,7 @@ impl FrameRecorder {
             textures: std::mem::take(&mut s.textures),
             submissions: std::mem::take(&mut s.submissions),
             pages: std::mem::take(&mut s.pages),
+            live: None,
         }
     }
 }
@@ -774,12 +806,27 @@ mod tests {
                 ends_frame: true,
             }],
             pages,
+            live: None,
+        };
+        let live = LiveFrame {
+            address: 0x10_0010_0000,
+            width: 2,
+            height: 1,
+            rgba: vec![1, 2, 3, 255, 4, 5, 6, 255],
         };
 
-        let mut buf = Vec::new();
-        cap.write_to(&mut buf).unwrap();
-        let back = FrameCapture::read_from(&buf[..]).unwrap();
-        assert_eq!(back, cap);
+        for cap in [
+            cap.clone(),
+            FrameCapture {
+                live: Some(live),
+                ..cap
+            },
+        ] {
+            let mut buf = Vec::new();
+            cap.write_to(&mut buf).unwrap();
+            let back = FrameCapture::read_from(&buf[..]).unwrap();
+            assert_eq!(back, cap);
+        }
     }
 
     #[test]

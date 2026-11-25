@@ -137,6 +137,30 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
+    /// Prints captured guest memory as it was before the frame, as hex and as 32-bit floats.
+    Mem {
+        /// Path to the `.ps5frame` capture file.
+        capture: PathBuf,
+        /// Guest hex address.
+        #[arg(value_parser = parse_hex)]
+        address: u64,
+        /// Number of bytes (decimal).
+        #[arg(default_value_t = 64)]
+        len: u64,
+    },
+    /// Compares the picture the game showed while capturing with the replay of the same frame.
+    Live {
+        /// Path to the `.ps5frame` capture file.
+        capture: PathBuf,
+        /// Where to save the live picture (defaults to `<capture>.live.png`).
+        out: Option<PathBuf>,
+        /// Also save the replay with the pixels that differ from the live picture in red.
+        #[arg(long, value_name = "PNG")]
+        diff: Option<PathBuf>,
+        /// Largest per-channel difference not counted as differing (0 to 255).
+        #[arg(long, value_name = "N", default_value_t = 8)]
+        tolerance: u8,
+    },
     /// Compares a replayed target against a golden PNG or PPM image.
     Check {
         /// Path to the `.ps5frame` capture file.
@@ -563,6 +587,67 @@ fn run(cmd: Command) -> Result<(), String> {
                 );
             }
         }
+        Command::Mem {
+            capture,
+            address,
+            len,
+        } => {
+            let cap = FrameCapture::load(&capture)?;
+            let page = gpu::capture::PAGE_SIZE;
+            for line in (address..address + len).step_by(16) {
+                let bytes: Vec<u8> = (line..line + 16)
+                    .map(|a| {
+                        cap.pages
+                            .get(&(a & !(page - 1)))
+                            .map_or(0, |p| p[(a & (page - 1)) as usize])
+                    })
+                    .collect();
+                let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                let floats: Vec<String> = bytes
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|w| format!("{:>12.5}", f32::from_le_bytes(*w)))
+                    .collect();
+                println!("{line:#012x}  {}  {}", hex.join(" "), floats.join(" "));
+            }
+        }
+        Command::Live {
+            capture,
+            out,
+            diff,
+            tolerance,
+        } => {
+            let cap = FrameCapture::load(&capture)?;
+            let live = cap.live.as_ref().ok_or(
+                "the capture holds no live picture (captures made before 2026-11-25 do not)",
+            )?;
+            let out = out.unwrap_or_else(|| capture.with_extension("live.png"));
+            write_png(&out, live.width, live.height, &live.rgba)?;
+            println!("wrote {} ({}x{})", out.display(), live.width, live.height);
+            let res = replay(&cap, ReplayOptions::default())?;
+            let (addr, w, h, rgba) = select_target(&res, Some(live.address))?;
+            if (w, h) != (live.width, live.height) {
+                return Err(format!(
+                    "replay target {addr:#x} is {w}x{h}, the live picture {}x{}",
+                    live.width, live.height
+                ));
+            }
+            let d = diff_pixels(w, &rgba, &live.rgba, tolerance);
+            println!(
+                "target {addr:#x} ({w}x{h}): {} of {} pixels differ by more than {tolerance}, largest difference {}",
+                d.count,
+                w as usize * h as usize,
+                d.largest
+            );
+            if let Some((x0, y0, x1, y1)) = d.bounds {
+                println!("differing pixels lie in ({x0}, {y0})..=({x1}, {y1})");
+            }
+            if let Some(path) = diff {
+                write_png(&path, w, h, &d.image)?;
+                println!("wrote {}", path.display());
+            }
+        }
         Command::Check {
             capture,
             golden,
@@ -604,6 +689,47 @@ fn run(cmd: Command) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+struct PixelDiff {
+    count: usize,
+    largest: u8,
+    bounds: Option<(u32, u32, u32, u32)>,
+    /// The replay dimmed, with differing pixels in red.
+    image: Vec<u8>,
+}
+
+#[cfg(target_os = "macos")]
+fn diff_pixels(width: u32, replayed: &[u8], live: &[u8], tolerance: u8) -> PixelDiff {
+    let mut d = PixelDiff {
+        count: 0,
+        largest: 0,
+        bounds: None,
+        image: Vec::with_capacity(replayed.len()),
+    };
+    let pairs = replayed
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(live.as_chunks::<4>().0);
+    for (i, (r, l)) in pairs.enumerate() {
+        let most = (0..3).map(|c| r[c].abs_diff(l[c])).max().unwrap_or(0);
+        d.largest = d.largest.max(most);
+        if most > tolerance {
+            d.count += 1;
+            let (x, y) = ((i % width as usize) as u32, (i / width as usize) as u32);
+            d.bounds = Some(match d.bounds {
+                None => (x, y, x, y),
+                Some((x0, y0, x1, y1)) => (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+            });
+            d.image.extend_from_slice(&[255, 0, 0, 255]);
+        } else {
+            d.image.extend(r[..3].iter().map(|&c| c / 3));
+            d.image.push(255);
+        }
+    }
+    d
 }
 
 fn print_draw_times(res: &gpu::replay::ReplayResult, top: usize) {
@@ -678,5 +804,32 @@ fn print_draw_times(res: &gpu::replay::ReplayResult, top: usize) {
             d.draw,
             targets.join(", ")
         );
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::diff_pixels;
+
+    #[test]
+    fn pixels_past_the_tolerance_are_counted_bounded_and_marked_red() {
+        let replayed = [
+            [10, 10, 10, 255],
+            [90, 90, 90, 255],
+            [30, 30, 30, 255],
+            [60, 0, 0, 255],
+        ]
+        .concat();
+        let live = [
+            [12, 10, 10, 255],
+            [90, 90, 90, 255],
+            [30, 30, 30, 255],
+            [0, 0, 0, 255],
+        ]
+        .concat();
+        let d = diff_pixels(2, &replayed, &live, 2);
+        assert_eq!((d.count, d.largest, d.bounds), (1, 60, Some((1, 1, 1, 1))));
+        assert_eq!(&d.image[12..], &[255, 0, 0, 255]);
+        assert_eq!(&d.image[..4], &[3, 3, 3, 255]);
     }
 }

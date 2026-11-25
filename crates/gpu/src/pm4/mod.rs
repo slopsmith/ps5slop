@@ -151,6 +151,8 @@ pub struct Processor {
     /// The global data share when the backend does not keep one.
     gds: Vec<u8>,
     last_flip: Option<Instant>,
+    /// The display buffer the last flip showed.
+    pub shown: Option<u64>,
     /// Releases and memory writes whose earlier GPU work is committed but
     /// not known to be done, in command order.
     pending: Vec<Pending>,
@@ -255,6 +257,7 @@ impl Default for Processor {
             retiring: Default::default(),
             watched: None,
             last_flip: None,
+            shown: None,
             color_control_written: false,
         }
     }

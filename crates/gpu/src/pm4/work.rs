@@ -273,8 +273,9 @@ impl Processor {
 
     fn flip(&mut self, host: &dyn Host, flip: Flip) {
         self.drain(host);
+        self.shown = host.display_buffer(flip.index);
         if let Some(b) = self.backend.as_mut() {
-            b.frame_done(host.display_buffer(flip.index));
+            b.frame_done(self.shown);
         }
         if let Some(last) = self.last_flip
             && let Some(wait) = (last + VBLANK).checked_duration_since(Instant::now())

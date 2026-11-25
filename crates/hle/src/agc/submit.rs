@@ -355,7 +355,8 @@ fn gpu_thread(
                         capture.activate(path, recorder);
                     }
                     gpu::capture::FrameBoundary::Finish { path, recorder } => {
-                        let cap = recorder.finish();
+                        let mut cap = recorder.finish();
+                        cap.live = live_frame(processor.shown);
                         capture.spawn_writer(path, cap);
                     }
                 }
@@ -609,4 +610,22 @@ impl Gpu {
         *lock(&self.textures) = (!textures.is_empty()).then_some(textures);
         Ok(())
     }
+}
+
+/// What the GPU showed at `shown`, for a frame capture.
+#[cfg(target_os = "macos")]
+fn live_frame(shown: Option<u64>) -> Option<gpu::capture::LiveFrame> {
+    let address = shown?;
+    let (width, height, rgba) = gpu::metal::read_rgba(&gpu::metal::frame(address)?)?;
+    Some(gpu::capture::LiveFrame {
+        address,
+        width,
+        height,
+        rgba,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn live_frame(_: Option<u64>) -> Option<gpu::capture::LiveFrame> {
+    None
 }
