@@ -177,8 +177,8 @@ fn flag_rw(i: &Insn) -> (u8, u8) {
             (reads_cc(i.op & 0xf), 0)
         }
         (Map::M0F, 0xaf) | (Map::Primary, 0x69 | 0x6b) => (0, ALL),
-        (Map::Primary, 0xf7) if matches!(i.ext(), 6 | 7) => (ALL, 0),
-        (Map::Primary, 0xdb) if i.mem.is_some() && matches!(i.ext(), 5 | 7) => (ALL, 0),
+        (Map::Primary, 0xf6 | 0xf7) if matches!(i.ext(), 6 | 7) => (ALL, 0),
+        (Map::M0F, 0xae) if i.ext() == 2 => (ALL, 0),
         _ => match classify(i) {
             Some((_, f)) if f.reads => (ALL, 0),
             _ => (0, 0),

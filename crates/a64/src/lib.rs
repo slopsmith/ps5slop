@@ -1608,7 +1608,13 @@ impl Asm {
 
     /// INS Vd.H[i], Wn.
     pub fn ins_h(&mut self, rd: V, i: u32, rn: Reg) {
-        self.emit(0x4e00_1c00 | (i << 2 | 2) << 16 | (rn.0 as u32) << 5 | rd.0 as u32);
+        self.ins_gen(1, rd, i, rn);
+    }
+
+    /// INS (general): element `i` of `rd` = the low 1 << `size` bytes of `rn`.
+    pub fn ins_gen(&mut self, size: u32, rd: V, i: u32, rn: Reg) {
+        let imm5 = (i << (size + 1)) | 1 << size;
+        self.emit(0x4e00_1c00 | imm5 << 16 | (rn.0 as u32) << 5 | rd.0 as u32);
     }
 
     pub fn mull(&mut self, signed: bool, size: u32, rd: V, rn: V, rm: V) {

@@ -141,6 +141,8 @@ const CASES: &[Case] = &[
         a.mull(false, 2, V(16), V(17), V(18))
     }),
     ("mov v16.h[3], w9", |a| a.ins_h(V(16), 3, r(9))),
+    ("mov v16.s[2], w9", |a| a.ins_gen(2, V(16), 2, r(9))),
+    ("mov v16.d[1], x9", |a| a.ins_gen(3, V(16), 1, r(9))),
     ("uabd v16.16b, v17.16b, v18.16b", |a| {
         a.vec3(true, true, 0, 0b01110, V(16), V(17), V(18))
     }),

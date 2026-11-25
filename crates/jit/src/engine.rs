@@ -512,6 +512,7 @@ pub fn kick_all() {
 
 /// FPCR for MXCSR `mxcsr`: AH and NEP give x86's NaN, min/max and scalar
 /// rules (86slopper's `docs/sse-neon.md`); DAZ, FTZ and RC map across.
+/// Translated LDMXCSR computes the same (`Translator::mxcsr`).
 fn fpcr(mxcsr: u32) -> u64 {
     const AH: u64 = 1 << 1;
     const NEP: u64 = 1 << 2;
@@ -576,6 +577,7 @@ impl Engine {
             self.put(crate::layout::FPCR_SSE, v);
             self.fpcr_dirty = false;
         }
+        self.put(crate::layout::MXCSR, x.mxcsr as u64);
         for (k, &v) in x.st.iter().enumerate() {
             self.put(crate::layout::X87_ST + 8 * k, v);
         }
@@ -612,7 +614,7 @@ impl Engine {
             x.regs[i] = self.cpu.reg(i as u8)?;
         }
         let fpsr = self.cpu.vcpu.reg(hvf::reg::FPSR)?;
-        x.mxcsr |= mxcsr_flags(fpsr);
+        x.mxcsr = self.get(crate::layout::MXCSR) as u32 | mxcsr_flags(fpsr);
         self.fpsr_dirty = fpsr != 0;
         // SAFETY: as in `load`.
         unsafe {

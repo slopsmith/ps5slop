@@ -48,7 +48,9 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
     let arith = matches!(ext, 0 | 1 | 4..=7);
     let ok = match (i.op, i.mem.is_some()) {
         (0xd8 | 0xda | 0xdc | 0xde, true) => arith,
-        (0xd9, true) => matches!(ext, 0 | 2 | 3 | 5 | 7),
+        (0xd9, true) => {
+            matches!(ext, 0 | 2 | 3 | 5 | 7) || (matches!(ext, 4 | 6) && !i.opsize_prefix)
+        }
         (0xdb, true) => matches!(ext, 0..=3 | 5 | 7),
         (0xdd, true) => matches!(ext, 0..=3 | 7),
         (0xdf, true) => matches!(ext, 0..=3 | 5 | 7),
@@ -296,6 +298,8 @@ impl Translator {
                     self.pop();
                 }
             }
+            (0xd9, 4) => self.load_env(),
+            (0xd9, 6) => self.store_env(),
             (0xd9, 5) => {
                 self.a.ldr(Width::H, A, ADDR, 0);
                 self.a.str(Width::X, A, CTX, FCW);
@@ -507,45 +511,161 @@ impl Translator {
         a.str(w, A, ADDR, 0);
     }
 
-    /// `VA` = the 80-bit value at x19, rounded to a double; values that are
-    /// neither zero nor normal doubles go to the interpreter.
+    /// FLDENV of the 28-byte environment at x19: the control and status
+    /// words, and a tag bit for each register whose 2-bit tag is not empty.
+    fn load_env(&mut self) {
+        let a = &mut self.a;
+        a.ldr(Width::H, A, ADDR, 0);
+        a.ldr(Width::H, F, ADDR, 4);
+        a.ldr(Width::H, T, ADDR, 8);
+        a.logic_shift(Logic::And, false, Size::X, U, T, T, Shift::Lsr, 1);
+        for (shift, keep) in [
+            (0, 0x5555_5555_5555_5555),
+            (1, 0x3333_3333_3333_3333),
+            (2, 0x0f0f_0f0f_0f0f_0f0f),
+            (4, 0x00ff_00ff_00ff_00ff),
+        ] {
+            if shift != 0 {
+                a.logic_shift(Logic::Orr, false, Size::X, U, U, U, Shift::Lsr, shift);
+            }
+            assert!(a.logic_imm(Logic::And, Size::X, U, U, keep));
+        }
+        assert!(a.logic_imm(Logic::Eor, Size::X, U, U, 0xff));
+        a.str(Width::X, A, CTX, FCW);
+        a.str(Width::X, U, CTX, FTAG);
+    }
+
+    /// FNSTENV of the 28-byte environment at x19 (the instruction and
+    /// operand pointers as zeros), then masks every exception.
+    fn store_env(&mut self) {
+        let a = &mut self.a;
+        a.ldr(Width::X, U, CTX, FTAG);
+        a.mov_imm(Size::X, T, 0);
+        for p in 0..8 {
+            let put = a.label();
+            a.mov_imm(Size::X, B, 3);
+            a.tbz(U, p, put);
+            a.ldr(Width::X, A, CTX, ST + 8 * p as i32);
+            a.lsl_imm(Size::X, A, A, 1);
+            a.mov_imm(Size::X, B, 1);
+            a.cbz(Size::X, A, put);
+            a.lsr_imm(Size::X, A, A, 53);
+            a.mov_imm(Size::X, B, 2);
+            a.cbz(Size::X, A, put);
+            a.add_imm(Size::X, A, A, 1);
+            a.tbnz(A, 11, put);
+            a.mov_imm(Size::X, B, 0);
+            a.bind(put);
+            a.logic_shift(Logic::Orr, false, Size::X, T, T, B, Shift::Lsl, 2 * p);
+        }
+        a.ldr(Width::X, A, CTX, FCW);
+        for (k, v) in [A, F, T].into_iter().enumerate() {
+            assert!(a.logic_imm(Logic::Orr, Size::W, B, v, 0xffff_0000));
+            a.str(Width::W, B, ADDR, 4 * k as i32);
+        }
+        for k in 3..7 {
+            a.str(Width::W, Reg(31), ADDR, 4 * k);
+        }
+        assert!(a.logic_imm(Logic::Orr, Size::X, A, A, 0x3f));
+        a.str(Width::X, A, CTX, FCW);
+    }
+
+    /// `VA` = the 80-bit value at x19 rounded to the nearest double, as the
+    /// interpreter's `from_extended` does: unnormals give the default NaN,
+    /// NaNs keep their sign and top payload bits, and results too large or
+    /// too small become infinities, subnormals or zeros.
     fn load_f80(&mut self) {
-        let bail = self.bail();
-        let (zero, done) = (self.a.label(), self.a.label());
+        let [
+            denormal,
+            special,
+            nan,
+            normalized,
+            tiny,
+            round,
+            inf,
+            zero,
+            sign,
+            done,
+        ] = std::array::from_fn(|_| self.a.label());
         let a = &mut self.a;
         a.ldr(Width::X, A, ADDR, 0);
         a.ldr(Width::H, B, ADDR, 8);
         a.ubfx(Size::X, T, B, 0, 15);
-        a.cbz(Size::X, A, zero);
-        a.tbz(A, 63, bail);
+        a.lsr_imm(Size::X, B, B, 15);
+        a.cbz(Size::X, T, denormal);
+        a.tbz(A, 63, nan);
+        assert!(a.logic_imm(Logic::Eor, Size::X, U, T, 0x7fff));
+        a.cbz(Size::X, U, special);
+
+        // A: the significand with its top bit set; T: its biased exponent,
+        // which may be zero or negative after normalising a denormal.
+        a.bind(normalized);
         a.mov_imm(Size::X, U, 15361);
+        a.sub(Size::X, U, U, T);
+        a.tbz(U, 63, tiny);
+        a.neg(Size::X, T, U);
+        a.sub_imm(Size::X, U, T, 0x7ff);
+        a.tbz(U, 63, inf);
+        a.mov_imm(Size::X, U, 0);
+        a.b(round);
+        a.bind(tiny);
+        a.sub_imm(Size::X, T, U, 54);
+        a.tbz(T, 63, zero);
+        a.mov_imm(Size::X, T, 0);
+
+        // Rounds A to nearest even after dropping 11 + U bits, then adds
+        // the exponent in T: the significand's top bit carries into it.
+        a.bind(round);
+        a.add_imm(Size::X, U, U, 10);
+        a.lsrv(Size::X, ADDR, A, U);
+        a.neg(Size::X, U, U);
+        a.lslv(Size::X, A, A, U);
+        a.neg(Size::X, U, A);
+        a.orr(Size::X, A, A, U);
+        a.lsr_imm(Size::X, A, A, 63);
+        a.logic_shift(Logic::Orr, false, Size::X, A, A, ADDR, Shift::Lsr, 1);
+        a.and(Size::X, A, A, ADDR);
+        assert!(a.logic_imm(Logic::And, Size::X, A, A, 1));
+        a.add_shift(Size::X, A, A, ADDR, Shift::Lsr, 1);
+        a.add_shift(Size::X, A, A, T, Shift::Lsl, 52);
+        a.lsr_imm(Size::X, U, A, 52);
+        a.sub_imm(Size::X, U, U, 0x7ff);
+        a.tbz(U, 63, inf);
+        a.b(sign);
+
+        a.bind(denormal);
+        a.cbz(Size::X, A, zero);
+        a.clz(Size::X, U, A);
+        a.lslv(Size::X, A, A, U);
+        a.mov_imm(Size::X, T, 1);
         a.sub(Size::X, T, T, U);
-        a.add_imm(Size::X, U, T, 2);
-        a.lsr_imm(Size::X, U, U, 11);
-        a.cbnz(Size::X, U, bail);
-        a.lsr_imm(Size::X, U, A, 11);
-        assert!(a.logic_imm(Logic::And, Size::X, A, A, 0x7ff));
-        a.add_imm(Size::X, A, A, 0x3ff);
-        a.ubfx(Size::X, ADDR, U, 0, 1);
-        a.add(Size::X, A, A, ADDR);
-        a.lsr_imm(Size::X, A, A, 11);
-        a.add(Size::X, U, U, A);
-        a.add_shift(Size::X, U, U, T, Shift::Lsl, 52);
-        a.lsr_imm(Size::X, B, B, 15);
-        a.logic_shift(Logic::Orr, false, Size::X, U, U, B, Shift::Lsl, 63);
+        a.b(normalized);
+
+        a.bind(special);
+        a.lsl_imm(Size::X, U, A, 1);
+        a.cbz(Size::X, U, inf);
+        a.ubfx(Size::X, A, A, 11, 52);
+        assert!(a.logic_imm(Logic::Orr, Size::X, A, A, 0x7ff8 << 48));
+        a.b(sign);
+
+        a.bind(nan);
+        a.mov_imm(Size::X, A, f64::NAN.to_bits());
         a.b(done);
+
+        a.bind(inf);
+        a.mov_imm(Size::X, A, f64::INFINITY.to_bits());
+        a.b(sign);
+
         a.bind(zero);
-        a.cbnz(Size::X, T, bail);
-        a.lsr_imm(Size::X, B, B, 15);
-        a.lsl_imm(Size::X, U, B, 63);
+        a.mov_imm(Size::X, A, 0);
+        a.bind(sign);
+        a.logic_shift(Logic::Orr, false, Size::X, A, A, B, Shift::Lsl, 63);
         a.bind(done);
-        a.fmov_dx(VA, U);
+        a.fmov_dx(VA, A);
     }
 
-    /// Stores `VA` at x19 as an 80-bit value; subnormal doubles go to the
-    /// interpreter.
+    /// Stores `VA` at x19 as an 80-bit value.
     fn store_f80(&mut self) {
-        let bail = self.bail();
         let (low, special, write) = (self.a.label(), self.a.label(), self.a.label());
         let a = &mut self.a;
         a.fmov_xd(A, VA);
@@ -566,7 +686,13 @@ impl Translator {
         a.b(write);
         a.bind(low);
         a.lsl_imm(Size::X, U, A, 1);
-        a.cbnz(Size::X, U, bail);
+        a.cbz(Size::X, U, write);
+        a.ubfx(Size::X, A, A, 0, 52);
+        a.clz(Size::X, T, A);
+        a.lslv(Size::X, U, A, T);
+        a.mov_imm(Size::X, A, 15372);
+        a.sub(Size::X, A, A, T);
+        a.orr(Size::X, B, B, A);
         a.bind(write);
         a.str(Width::X, U, ADDR, 0);
         a.str(Width::H, B, ADDR, 8);

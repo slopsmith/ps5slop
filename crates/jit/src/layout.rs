@@ -21,8 +21,9 @@ pub const MAX_VCPUS: usize = 64;
 /// One context block per vCPU: YMM0-15, then the direction flag (0 or all
 /// ones, so a string step is `(size ^ df) - df`), then the x87 state (R0-R7
 /// as doubles, and the status word, control word and tag bits as 64-bit
-/// slots), then the FPCR that MXCSR gives and room to keep FPSR while x87
-/// code runs with the host's default FPCR.
+/// slots), then the FPCR that MXCSR gives, room to keep FPSR while x87
+/// code runs with the host's default FPCR, and MXCSR without the exception
+/// flags FPSR has gathered since.
 pub const CONTEXTS: usize = 0x6_0000;
 pub const CONTEXT_SIZE: usize = 0x400;
 pub const YMM_SIZE: usize = 0x200;
@@ -33,6 +34,7 @@ pub const X87_FCW: usize = 0x250;
 pub const X87_FTAG: usize = 0x258;
 pub const FPCR_SSE: usize = 0x260;
 pub const FPSR_KEPT: usize = 0x268;
+pub const MXCSR: usize = 0x270;
 /// Two pools the TTBR0 tables are built in, alternately, so one can be
 /// rebuilt while vCPUs still walk the other.
 pub const TABLES: [(usize, usize); 2] = [(0x10_0000, 0x90_0000), (0x90_0000, 0x110_0000)];
@@ -54,6 +56,6 @@ pub const fn ipa(offset: usize) -> u64 {
 }
 
 const _: () = assert!(STACKS + MAX_VCPUS * STACK_SIZE <= CONTEXTS);
-const _: () = assert!(FPSR_KEPT + 8 <= CONTEXT_SIZE);
+const _: () = assert!(MXCSR + 8 <= CONTEXT_SIZE);
 const _: () = assert!(CONTEXTS + MAX_VCPUS * CONTEXT_SIZE <= TABLES[0].0);
 const _: () = assert!(TABLES[1].1 <= CODE_CACHE && CODE_CACHE_END <= LOOKUP);

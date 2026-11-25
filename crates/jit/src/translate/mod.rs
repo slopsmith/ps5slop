@@ -151,6 +151,7 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
     let crc32 = i.rep == Rep::Repne && i.map == Map::M0F38 && matches!(i.op, 0xf0 | 0xf1);
     let string = i.map == Map::Primary && matches!(i.op, 0xa4..=0xa7 | 0xaa..=0xaf);
     let pause = i.rep == Rep::Rep && i.map == Map::Primary && i.op == 0x90 && i.rex & 1 == 0;
+    let rep_ret = i.rep == Rep::Rep && i.map == Map::Primary && i.op == 0xc3;
     if i.vex.is_none()
         && !i.lock
         && i.seg != Some(Seg::Gs)
@@ -162,7 +163,7 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
     if i.vex.is_some()
         || (i.lock && !lockable(i))
         || i.seg == Some(Seg::Gs)
-        || (i.rep != Rep::None && !counts && !crc32 && !string && !pause)
+        || (i.rep != Rep::None && !counts && !crc32 && !string && !pause && !rep_ret)
     {
         return None;
     }
@@ -251,7 +252,7 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         (Map::Primary, 0xd2 | 0xd3) if i.ext() >= 4 => (false, both),
         (Map::Primary, 0xc9) if i.osize64() == 8 => (false, none),
         (Map::Primary, 0xff) if i.ext() == 6 && i.osize64() == 8 => (false, none),
-        (Map::M0F, 0x40..=0x4f) if i.osize() >= 4 => (false, reads),
+        (Map::M0F, 0x40..=0x4f) => (false, reads),
         (Map::M0F, 0x80..=0x8f) => (true, reads),
         (Map::M0F, 0x90..=0x9f) => (false, reads),
         (Map::M0F, 0xaf) => (false, writes),

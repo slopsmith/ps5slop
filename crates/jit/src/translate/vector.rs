@@ -200,6 +200,11 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
             i.vex.is_none() && i.mem.is_none() && ((p == Pfx::P66 && i.ext() == 0) || p == Pfx::F2)
         }
         0x179 => i.vex.is_none() && i.mem.is_none() && matches!(p, Pfx::P66 | Pfx::F2),
+        0x1ae => p == Pfx::None && i.mem.is_some() && matches!(i.ext(), 2 | 3),
+        0x30f => p == Pfx::P66,
+        0x20c => i.vex.is_some() && p == Pfx::P66 && !i.rex_w(),
+        0x22c..=0x22f => i.vex.is_some() && p == Pfx::P66 && !i.rex_w() && i.mem.is_some(),
+        0x28c | 0x28e => i.vex.is_some() && p == Pfx::P66 && i.mem.is_some(),
         _ => false,
     };
     if !ok || (i.vex.is_none() && wide) {
@@ -291,6 +296,51 @@ impl Translator {
             self.addr(&m, next);
         }
         match op {
+            0x1ae => return self.mxcsr(i),
+            0x22c..=0x22f | 0x28c | 0x28e => return self.masked_move(i, op, halves),
+            0x30f => {
+                let n = i.imm as u32 & 0xff;
+                for h in 0..halves {
+                    self.a.ldr_q(XA, CTX, ymm(src1, h));
+                    self.rm_half(i, h, XB);
+                    let out = match n {
+                        0 => XB,
+                        1..=15 => {
+                            self.a.ext(XR, XB, XA, n);
+                            XR
+                        }
+                        16 => XA,
+                        _ => {
+                            self.a.vec3(true, true, 0, 0b00011, XT, XT, XT);
+                            if n < 32 {
+                                self.a.ext(XT, XA, XT, n - 16);
+                            }
+                            XT
+                        }
+                    };
+                    self.a.str_q(out, CTX, ymm(i.reg, h));
+                }
+            }
+            0x20c => {
+                let offsets = V(6);
+                let a = &mut self.a;
+                a.mov_imm(Size::W, T, 3);
+                a.dup_gen(2, XS, T);
+                a.mov_imm(Size::W, T, 0x0404_0404);
+                a.dup_gen(2, XU, T);
+                a.mov_imm(Size::W, T, 0x0302_0100);
+                a.dup_gen(2, offsets, T);
+                for h in 0..halves {
+                    self.a.ldr_q(XA, CTX, ymm(src1, h));
+                    self.rm_half(i, h, XB);
+                    let a = &mut self.a;
+                    a.vec3(true, false, 0, 0b00011, XB, XB, XS);
+                    a.vec3(true, false, 2, 0b10011, XB, XB, XU);
+                    a.vec3(true, false, 2, 0b10000, XB, XB, offsets);
+                    a.tbl(XR, XA, XB);
+                    a.str_q(XR, CTX, ymm(i.reg, h));
+                }
+            }
             0x2f2 | 0x2f6 | 0x2f7 | 0x3f0 => return self.bmi(i, op, p, flags),
             0x2f5 => return self.bmi2_bits(i, p, flags),
             0x2f3 => return self.bmi1_lowest(i, flags),
@@ -1632,6 +1682,88 @@ impl Translator {
                 a.str_q(XR, CTX, ymm(i.rm, 0));
                 self.zero_upper(i.rm);
             }
+        }
+    }
+
+    /// LDMXCSR and STMXCSR (and their VEX forms) on the MXCSR slot of the
+    /// context block. A load sets FPCR as `engine::fpcr` does and clears
+    /// FPSR, whose flags MXCSR now replaces; a value with reserved bits set
+    /// goes to the interpreter, which raises #GP. A store adds the flags
+    /// FPSR gathered since.
+    fn mxcsr(&mut self, i: &Insn) {
+        const MXCSR: i32 = crate::layout::MXCSR as i32;
+        const FPCR_SSE: i32 = crate::layout::FPCR_SSE as i32;
+        if i.ext() == 2 {
+            let bail = self.bail();
+            let a = &mut self.a;
+            a.ldr(Width::W, A, ADDR, 0);
+            a.lsr_imm(Size::W, T, A, 16);
+            a.cbnz(Size::W, T, bail);
+            a.mov_imm(Size::X, B, 0b110);
+            for (from, to) in [(6, 0), (15, 24), (13, 23), (14, 22)] {
+                a.ubfx(Size::X, T, A, from, 1);
+                a.logic_shift(Logic::Orr, false, Size::X, B, B, T, a64::Shift::Lsl, to);
+            }
+            a.msr(a64::sysreg::FPCR, B);
+            a.msr(a64::sysreg::FPSR, Reg(31));
+            a.str(Width::X, B, CTX, FPCR_SSE);
+            a.str(Width::X, A, CTX, MXCSR);
+        } else {
+            let a = &mut self.a;
+            a.mrs(T, a64::sysreg::FPSR);
+            a.ldr(Width::X, A, CTX, MXCSR);
+            assert!(a.logic_imm(Logic::And, Size::X, B, T, 1));
+            a.orr(Size::X, A, A, B);
+            a.ubfx(Size::X, B, T, 7, 1);
+            a.logic_shift(Logic::Orr, false, Size::X, A, A, B, a64::Shift::Lsl, 1);
+            assert!(a.logic_imm(Logic::And, Size::X, B, T, 0x1e));
+            a.logic_shift(Logic::Orr, false, Size::X, A, A, B, a64::Shift::Lsl, 1);
+            a.str(Width::W, A, ADDR, 0);
+        }
+    }
+
+    /// VMASKMOVPS/PD and VPMASKMOVD/Q, loads and stores. Each lane whose
+    /// mask sign bit is set is moved on its own, so masked-off lanes never
+    /// touch memory; a load builds the whole result before writing it.
+    fn masked_move(&mut self, i: &Insn, op: u16, halves: u32) {
+        let double = matches!(op, 0x22d | 0x22f) || (op >= 0x28c && i.rex_w());
+        let store = matches!(op, 0x22e | 0x22f | 0x28e);
+        let (size, bytes, w) = if double {
+            (3, 8, Width::X)
+        } else {
+            (2, 4, Width::W)
+        };
+        let lanes = 16 / bytes;
+        let mask = i.vex.expect("VEX only").vvvv;
+        for h in 0..halves {
+            let out = if h == 0 { XR } else { XT };
+            if !store {
+                self.a.vec3(true, true, 0, 0b00011, out, out, out);
+            }
+            for k in 0..lanes {
+                let lane = ymm(mask, h) + (bytes * k) as i32;
+                let at = (16 * h + bytes * k) as i32;
+                let skip = self.a.label();
+                self.a.ldr(w, A, CTX, lane);
+                self.a.tbz(A, bytes * 8 - 1, skip);
+                if store {
+                    self.a.ldr(w, A, CTX, ymm(i.reg, h) + (bytes * k) as i32);
+                    self.a.str(w, A, ADDR, at);
+                } else {
+                    self.a.ldr(w, A, ADDR, at);
+                    self.a.ins_gen(size, out, k, A);
+                }
+                self.a.bind(skip);
+            }
+        }
+        if store {
+            return;
+        }
+        self.a.str_q(XR, CTX, ymm(i.reg, 0));
+        if halves == 2 {
+            self.a.str_q(XT, CTX, ymm(i.reg, 1));
+        } else {
+            self.zero_upper(i.reg);
         }
     }
 
