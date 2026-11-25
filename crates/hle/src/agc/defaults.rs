@@ -1,7 +1,7 @@
-//! AGC register-default tables, versions 8, 10 and 11: (register, value) pairs
-//! in four tables, pointer offsets into them, and (hash, location, 0) type
-//! triples. Ported from SharpEmu (GPL-2.0-or-later), whose values come from
-//! Kyty; see `docs/references.md`.
+//! AGC register-default tables, versions 8, 10 and 11 (12 and 13 use those of
+//! 10 and 11): (register, value) pairs in four tables, pointer offsets into
+//! them, and (hash, location, 0) type triples. Ported from SharpEmu
+//! (GPL-2.0-or-later), whose values come from Kyty; see `docs/references.md`.
 
 /// One version's public or internal register defaults.
 pub(super) struct CompactDefaults {

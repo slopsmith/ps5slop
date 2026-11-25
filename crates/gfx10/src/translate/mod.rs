@@ -2,8 +2,9 @@
 //!
 //! The model is a straight register one, see `docs/shaders.md`: every Metal thread
 //! is one lane, SGPRs and VGPRs are local `uint`s, a lane mask holds this lane in
-//! bit 0 of its low half (the whole wave's mask in lockstep programs), and branches
-//! become a `switch` inside a loop.
+//! bit 0 of its low half (the whole wave's mask in lockstep programs), and blocks
+//! are guarded by `pc` in address order with a loop around each backward branch's
+//! range; a `switch` inside one loop is the fallback.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
