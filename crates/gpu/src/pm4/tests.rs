@@ -593,3 +593,60 @@ fn saved_register_state_carries_over_to_a_new_processor() {
     q.restore(back, true);
     assert_eq!(q.gds[10], 0x55);
 }
+
+#[test]
+fn indirect_draws_with_no_instances_draw_nothing() {
+    let host = Fake::default();
+    host.mem.replace(vec![0; 0x1000]);
+    host.write(
+        0xA00,
+        &[[0x30u32, 0, 0, 0, 0], [0x30, 2, 0, 0, 0]]
+            .concat()
+            .iter()
+            .flat_map(|w| w.to_le_bytes())
+            .collect::<Vec<_>>(),
+    );
+    let packets = [
+        header(4, IT_SET_BASE, 0),
+        1,
+        0xA00,
+        0,
+        header(5, IT_DRAW_INDEX_INDIRECT, 0),
+        0,
+        0,
+        0,
+        0,
+        header(5, IT_DRAW_INDEX_INDIRECT, 0),
+        20,
+        0,
+        0,
+        0,
+    ];
+    let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+    host.write(0x100, &bytes);
+    struct Draws(std::sync::Arc<std::sync::Mutex<Vec<Draw>>>);
+    impl Backend for Draws {
+        fn draw(&mut self, _: &dyn Host, _: &State, d: Draw) {
+            self.0.lock().unwrap().push(d);
+        }
+        fn dispatch(&mut self, _: &dyn Host, _: &State, _: crate::Dispatch) {}
+        fn sync(&mut self) {}
+        fn frame_done(&mut self, _: Option<u64>) {}
+    }
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut p = Processor {
+        backend: Some(Box::new(Draws(seen.clone()))),
+        ..Processor::default()
+    };
+    p.run(&host, 0x100, packets.len() as u32).unwrap();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert!(matches!(
+        seen[0],
+        Draw::Indexed {
+            count: 0x30,
+            instances: 2,
+            ..
+        }
+    ));
+}

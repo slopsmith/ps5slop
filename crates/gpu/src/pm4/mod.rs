@@ -479,26 +479,30 @@ impl Processor {
                 let a = self.indirect_args(host, p[0], 5);
                 let size = if self.uconfig[0x243] & 3 == 1 { 4 } else { 2 };
                 let address = self.index_base + a[2] as u64 * size;
-                self.draw(
-                    host,
-                    op,
-                    Draw::Indexed {
-                        count: a[0],
-                        address,
-                        instances: a[1].max(1),
-                    },
-                )
+                if a[1] != 0 {
+                    self.draw(
+                        host,
+                        op,
+                        Draw::Indexed {
+                            count: a[0],
+                            address,
+                            instances: a[1],
+                        },
+                    )
+                }
             }
             IT_DRAW_INDIRECT if !p.is_empty() => {
                 let a = self.indirect_args(host, p[0], 4);
-                self.draw(
-                    host,
-                    op,
-                    Draw::Auto {
-                        count: a[0],
-                        instances: a[1].max(1),
-                    },
-                )
+                if a[1] != 0 {
+                    self.draw(
+                        host,
+                        op,
+                        Draw::Auto {
+                            count: a[0],
+                            instances: a[1],
+                        },
+                    )
+                }
             }
             IT_DRAW_INDIRECT_MULTI | IT_DRAW_INDEX_INDIRECT_MULTI | IT_DRAW_INDEX_MULTI_AUTO => {
                 self.stats.draws += 1
