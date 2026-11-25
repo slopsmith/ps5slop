@@ -46,9 +46,8 @@ pub(super) fn number(f: MTLPixelFormat) -> Number {
     }
 }
 
-pub(super) fn write_mask(bits: u32, swap: u32) -> usize {
+pub(super) fn write_mask(bits: u32) -> usize {
     let (r, g, b, a) = (bits & 1, (bits >> 1) & 1, (bits >> 2) & 1, (bits >> 3) & 1);
-    let (r, b) = if swap & 1 == 1 { (b, r) } else { (r, b) };
     let m = |on: u32, bit: MTLColorWriteMask| if on != 0 { bit.0 } else { 0 };
     m(r, MTLColorWriteMask::Red)
         | m(g, MTLColorWriteMask::Green)

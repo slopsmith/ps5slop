@@ -333,7 +333,7 @@ impl Metal {
                 (view, t.address | (t.mip_level as u64) << 40)
             };
             key.formats[targets.len()] = format.0;
-            key.blends[targets.len()] = (Blend::read(c, n), write_mask(write, t.format.swap) as u8);
+            key.blends[targets.len()] = (Blend::read(c, n), write_mask(write) as u8);
             let slice = if tex.textureType() == MTLTextureType::Type2DArray {
                 t.slice
             } else {

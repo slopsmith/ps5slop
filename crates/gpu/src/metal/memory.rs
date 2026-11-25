@@ -367,7 +367,7 @@ impl Metal {
         };
         let (first, second) = match area {
             Some((start, end)) if in_area(lo) => {
-                let w = self.area_window(host, start, end, hi)?;
+                let w = self.area_window(host, start, end, hi.min(end))?;
                 (Some((w, start)), outside.and_then(|r| region(self, r)))
             }
             Some((start, end)) => {
@@ -445,19 +445,14 @@ impl Metal {
         end: u64,
         need: u64,
     ) -> Option<Retained<Buffer>> {
-        self.area_reach = self.area_reach.max(need);
         if let Some(w) = &self.area
             && need <= w.end
         {
             return Some(w.buffer.clone());
         }
         let max = self.device.maxBufferLength() as u64 & !(PAGE - 1);
-        let stop = self
-            .area_reach
-            .next_multiple_of(1 << 30)
-            .min(end)
-            .min(start + max);
-        if need > stop {
+        if need > end.min(start + max) {
+            let stop = end.min(start + max);
             let msg = format!(
                 "{need:#x} past {stop:#x} (area {start:#x}..{end:#x}, Metal limit {max:#x})"
             );
@@ -470,6 +465,12 @@ impl Metal {
             self.report(tracing::Level::ERROR, format!("GPU area window: {msg}"));
             return None;
         }
+        self.area_reach = self.area_reach.max(need);
+        let stop = self
+            .area_reach
+            .next_multiple_of(1 << 30)
+            .min(end)
+            .min(start + max);
         if !host.back(start, stop) {
             diag::problems::record(
                 diag::problems::Kind::MemoryWindow,

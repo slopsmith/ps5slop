@@ -842,3 +842,33 @@ fn four_waves(x: u32, threads: bool) -> Option<(Vec<u32>, std::time::Duration)> 
     p.finish(&mem);
     Some((got, start.elapsed()))
 }
+
+#[test]
+fn a_target_mask_picks_export_channels_on_a_bgra_target() {
+    let target = regs::ColorFormat {
+        layout: 10,
+        number: 0,
+        swap: 1,
+    };
+    assert_eq!(color_format(target), Some(MTLPixelFormat::BGRA8Unorm));
+    assert_eq!(write_mask(0b0100), MTLColorWriteMask::Blue.0);
+    assert_eq!(
+        write_mask(0b1001),
+        (MTLColorWriteMask::Red | MTLColorWriteMask::Alpha).0
+    );
+}
+
+#[test]
+fn a_program_in_a_mapping_that_runs_past_the_gpu_area_gets_a_window() {
+    let Some(mut metal) = Metal::new() else {
+        return;
+    };
+    let mut mem = Mem::new(0x100_0000);
+    mem.area = Some((0x10_0000, 0x40_0000));
+    mem.regions = vec![(0x20_0000, 0x60_0000)];
+    let memory = metal
+        .guest_window(&mem, &[], 0x30_0000)
+        .expect("a window for the program");
+    assert_eq!(memory.win[0], 0x10_0000);
+    assert!(memory.win[1] > 0x30_0000);
+}
