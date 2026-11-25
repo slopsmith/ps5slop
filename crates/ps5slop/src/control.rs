@@ -571,6 +571,14 @@ fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// The profile report of the window still open when the run ends, if profiling is on.
+pub fn final_profile(kernel: &Kernel) -> Option<String> {
+    if !jit::profile::on() {
+        return None;
+    }
+    jit::profile::report().map(|r| profile_report(kernel, &r, 20))
+}
+
 static PROFILE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn profile_report(kernel: &Kernel, r: &jit::profile::Report, top: usize) -> String {

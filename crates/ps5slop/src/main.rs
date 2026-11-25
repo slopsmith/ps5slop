@@ -229,23 +229,30 @@ fn main() -> ExitCode {
                 hle::trace_calls(Some(f), filter.clone());
             }
             let kernel_for_report = booted.kernel.clone();
-            let result = run(booted, headless, label, capture_tag);
-            kernel_for_report.finish_captures();
-            let report = ps5slop::problem_report(&kernel_for_report);
-            if !report.is_empty() {
-                if let Some(path) = &config.run.report {
-                    match std::fs::write(path, &report) {
-                        Ok(()) => tracing::info!("wrote problem report to {}", path.display()),
-                        Err(e) => {
-                            tracing::warn!(
-                                "cannot write problem report to {}: {e}",
-                                path.display()
-                            );
+            let report_path = config.run.report.clone();
+            ps5slop::at_exit(move || {
+                kernel_for_report.finish_captures();
+                if let Some(profile) = ps5slop::control::final_profile(&kernel_for_report) {
+                    println!("{profile}");
+                }
+                let report = ps5slop::problem_report(&kernel_for_report);
+                if !report.is_empty() {
+                    if let Some(path) = &report_path {
+                        match std::fs::write(path, &report) {
+                            Ok(()) => tracing::info!("wrote problem report to {}", path.display()),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "cannot write problem report to {}: {e}",
+                                    path.display()
+                                );
+                            }
                         }
                     }
+                    tracing::info!(target: "ps5slop::report", "\n{}", report.trim_end());
                 }
-                tracing::info!(target: "ps5slop::report", "\n{}", report.trim_end());
-            }
+            });
+            let result = run(booted, headless, label, capture_tag);
+            ps5slop::run_at_exit();
             result
         });
     let _ = std::fs::remove_file(&control);

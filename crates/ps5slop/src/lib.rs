@@ -550,9 +550,36 @@ pub fn problem_report(kernel: &Kernel) -> String {
     diag::problems::global().format_with(&extra)
 }
 
+static AT_EXIT: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> = std::sync::Mutex::new(None);
+
+/// Sets the work to do once when the run ends, whether the guest exits, the
+/// window closes or the app is quit (⌘Q ends the process without returning).
+pub fn at_exit(f: impl FnOnce() + Send + 'static) {
+    *AT_EXIT.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(f));
+}
+
+/// Runs the work [`at_exit`] set, if it has not run yet.
+pub fn run_at_exit() {
+    let f = AT_EXIT.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some(f) = f {
+        f();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_exit_work_runs_once_however_the_run_ends() {
+        static RUNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        at_exit(|| {
+            RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
+        run_at_exit();
+        run_at_exit();
+        assert_eq!(RUNS.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
 
     #[test]
     fn problem_report_includes_hle_unimplemented_and_placeholder_calls() {

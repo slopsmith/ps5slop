@@ -271,6 +271,10 @@ impl App {
 }
 
 impl ApplicationHandler<Wake> for App {
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        crate::run_at_exit();
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
