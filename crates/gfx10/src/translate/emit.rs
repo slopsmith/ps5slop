@@ -49,6 +49,7 @@ impl<'a> Tx<'a> {
             lockstep: self.lockstep,
             reads_blend_color: self.req.stage == Stage::Pixel
                 && !self.blend_statements().is_empty(),
+            flat_inputs: self.attrs.values().any(|&m| m == Interp::Flat),
         }
     }
 

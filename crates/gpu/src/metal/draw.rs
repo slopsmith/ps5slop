@@ -16,37 +16,33 @@ pub(super) type OpenPass = (
     Option<(Retained<Texture>, usize)>,
 );
 
-/// Converts a 16-bit or 32-bit indexed triangle fan into a 32-bit triangle list,
-/// honoring primitive restart when `restart` is `Some`.
-fn expand_indexed_triangle_fan(bytes: &[u8], wide: bool, restart: Option<u32>) -> Vec<u32> {
+// Metal's provoking vertex is the first; rotating a triangle keeps its winding.
+fn triangle_list(
+    indices: impl IntoIterator<Item = u32>,
+    prim: u32,
+    restart: Option<u32>,
+    last_provokes: bool,
+) -> Vec<u32> {
     let mut out = Vec::new();
-    let mut first: Option<u32> = None;
-    let mut prev: Option<u32> = None;
-    let mut push = |idx: u32| {
-        if restart == Some(idx) {
-            first = None;
-            prev = None;
-            return;
-        }
-        match (first, prev) {
-            (None, _) => first = Some(idx),
-            (Some(_), None) => prev = Some(idx),
-            (Some(a), Some(b)) => {
-                out.push(a);
-                out.push(b);
-                out.push(idx);
-                prev = Some(idx);
-            }
-        }
+    let mut emit = |a, b, c| {
+        out.extend(if last_provokes { [c, a, b] } else { [a, b, c] });
     };
-    if wide {
-        for chunk in bytes.as_chunks::<4>().0 {
-            push(u32::from_le_bytes(*chunk));
+    let (mut n, mut first, mut older, mut prev) = (0usize, 0, 0, 0);
+    for idx in indices {
+        if restart == Some(idx) {
+            n = 0;
+            continue;
         }
-    } else {
-        for chunk in bytes.as_chunks::<2>().0 {
-            push(u16::from_le_bytes(*chunk) as u32);
+        match prim {
+            5 if n == 0 => first = idx,
+            5 if n >= 2 => emit(first, prev, idx),
+            6 if n >= 2 && n % 2 == 0 => emit(older, prev, idx),
+            6 if n >= 2 => emit(prev, older, idx),
+            4 if n % 3 == 2 => emit(older, prev, idx),
+            _ => {}
         }
+        (older, prev) = (prev, idx);
+        n += 1;
     }
     out
 }
@@ -153,6 +149,24 @@ impl Metal {
             .map(|(_, t, _, slice)| (t.clone(), *slice as usize));
         self.pass = Some((enc.clone(), addresses, colors, depth_texture));
         Some(enc)
+    }
+
+    /// `indices` copied to scratch memory as a 32-bit index buffer.
+    fn upload_indices(
+        &mut self,
+        indices: &[u32],
+    ) -> Result<(Retained<Buffer>, usize), &'static str> {
+        let bytes = std::mem::size_of_val(indices);
+        let (buf, offset) = self.scratch(bytes).ok_or("index buffer")?;
+        // SAFETY: `scratch` returns fresh shared memory of at least `bytes` bytes.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                indices.as_ptr().cast::<u8>(),
+                buf.contents().as_ptr().cast::<u8>().add(offset),
+                bytes,
+            );
+        }
+        Ok((buf, offset))
     }
 
     /// An index buffer that draws a triangle fan of `count` vertices as a
@@ -586,9 +600,12 @@ impl Metal {
         if self.snap.is_some() && diag::config().gpu.snap_inputs {
             self.snap_inputs(ps_addr, &ps_bound);
         }
-        let fan = u[uconfig::VGT_PRIMITIVE_TYPE] == 5;
+        let fan = prim == 5;
+        let last_provokes = c[context::PA_SU_SC_MODE_CNTL] & (1 << 19) != 0
+            && pixel.translated.flat_inputs
+            && matches!(prim, 4..=6);
         let index = match draw {
-            Draw::Indexed { count, address, .. } if !rect && fan => {
+            Draw::Indexed { count, address, .. } if !rect && (fan || last_provokes) => {
                 if count < 3 {
                     return Ok(());
                 }
@@ -604,21 +621,28 @@ impl Metal {
                     let r = c[context::VGT_MULTI_PRIM_IB_RESET_INDX];
                     if wide { r } else { r & 0xFFFF }
                 });
-                let expanded = expand_indexed_triangle_fan(&raw, wide, restart);
-                if expanded.is_empty() {
+                let raw: Vec<u32> = if wide {
+                    raw.as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|c| u32::from_le_bytes(*c))
+                        .collect()
+                } else {
+                    let half = raw.as_chunks::<2>().0.iter();
+                    half.map(|c| u16::from_le_bytes(*c) as u32).collect()
+                };
+                let list = triangle_list(raw, prim, restart, last_provokes);
+                if list.is_empty() {
                     return Ok(());
                 }
-                let out_bytes = expanded.len() * 4;
-                let (buf, offset) = self.scratch(out_bytes).ok_or("fan index buffer")?;
-                // SAFETY: `scratch` returns fresh shared memory of at least `out_bytes` bytes.
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        expanded.as_ptr().cast::<u8>(),
-                        buf.contents().as_ptr().cast::<u8>().add(offset),
-                        out_bytes,
-                    );
+                Some((self.upload_indices(&list)?, true, list.len()))
+            }
+            Draw::Auto { count, .. } if last_provokes => {
+                let list = triangle_list(0..count, prim, None, true);
+                if list.is_empty() {
+                    return Ok(());
                 }
-                Some(((buf, offset), true, expanded.len()))
+                Some((self.upload_indices(&list)?, true, list.len()))
             }
             Draw::Indexed { count, address, .. } if !rect => {
                 let wide = u[uconfig::VGT_INDEX_TYPE] & 3 == 1;
@@ -724,7 +748,8 @@ impl Metal {
             2 => MTLPrimitiveType::Line,
             3 => MTLPrimitiveType::LineStrip,
             4 | 5 | 7 | 17 => MTLPrimitiveType::Triangle,
-            6 => MTLPrimitiveType::TriangleStrip,
+            6 if index.is_none() => MTLPrimitiveType::TriangleStrip,
+            6 => MTLPrimitiveType::Triangle,
             p => {
                 self.note(|| format!("primitive type {p:#x}"));
                 diag::problems::record(
@@ -779,6 +804,18 @@ impl Metal {
                     );
                 }
             }
+            Draw::Auto { instances, .. } if let Some(((buf, offset), _, n)) = &index => unsafe {
+                enc.drawIndexedPrimitives_indexCount_indexType_indexBuffer_indexBufferOffset_instanceCount_baseVertex_baseInstance(
+                    primitive,
+                    *n,
+                    MTLIndexType::UInt32,
+                    buf,
+                    *offset,
+                    instances.max(1) as usize,
+                    start as isize,
+                    0,
+                );
+            },
             Draw::Auto { count, instances } if fan => {
                 if count < 3 {
                     return Ok(());
@@ -833,30 +870,33 @@ impl Metal {
 }
 
 #[cfg(test)]
-mod fan_tests {
-    use super::expand_indexed_triangle_fan;
+mod index_tests {
+    use super::triangle_list;
 
     #[test]
-    fn expands_16bit_and_32bit_indexed_triangle_fans_with_restart() {
-        let idx16: Vec<u8> = [10u16, 11, 12, 13, 0xFFFF, 20, 21, 0xFFFF, 30, 31, 32]
-            .into_iter()
-            .flat_map(u16::to_le_bytes)
-            .collect();
+    fn fans_with_restart_become_lists() {
+        let fan = [10, 11, 12, 13, 0xFFFF, 20, 21, 0xFFFF, 30, 31, 32];
         assert_eq!(
-            expand_indexed_triangle_fan(&idx16, false, Some(0xFFFF)),
-            vec![10, 11, 12, 10, 12, 13, 30, 31, 32]
+            triangle_list(fan, 5, Some(0xFFFF), false),
+            [10, 11, 12, 10, 12, 13, 30, 31, 32]
         );
-
-        let idx32: Vec<u8> = [0u32, 1, 2, 3, 4]
-            .into_iter()
-            .flat_map(u32::to_le_bytes)
-            .collect();
         assert_eq!(
-            expand_indexed_triangle_fan(&idx32, true, None),
-            vec![0, 1, 2, 0, 2, 3, 0, 3, 4]
+            triangle_list(0..5, 5, None, false),
+            [0, 1, 2, 0, 2, 3, 0, 3, 4]
         );
+        assert!(triangle_list([0, 1], 5, None, false).is_empty());
+    }
 
-        let short: Vec<u8> = [0u16, 1].into_iter().flat_map(u16::to_le_bytes).collect();
-        assert!(expand_indexed_triangle_fan(&short, false, None).is_empty());
+    #[test]
+    fn the_last_vertex_provokes_with_the_winding_kept() {
+        assert_eq!(triangle_list(0..7, 4, None, true), [2, 0, 1, 5, 3, 4]);
+        assert_eq!(
+            triangle_list(0..5, 6, None, true),
+            [2, 0, 1, 3, 2, 1, 4, 2, 3]
+        );
+        assert_eq!(
+            triangle_list([0, 1, 2, 9, 3, 4, 5], 6, Some(9), true),
+            [2, 0, 1, 5, 3, 4]
+        );
     }
 }

@@ -301,6 +301,8 @@ pub struct Translated {
     /// Pixel stage: the program blends, and reads the blend constant at
     /// [`binding::BLEND_COLOR`].
     pub reads_blend_color: bool,
+    /// Pixel stage: some input is flat, so the draw's provoking vertex matters.
+    pub flat_inputs: bool,
 }
 
 /// Why a program could not be translated.
