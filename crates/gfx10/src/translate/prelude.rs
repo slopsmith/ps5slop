@@ -206,6 +206,10 @@ static inline float cb_factor(uint f, uint c, float4 s, float4 d, float4 s1, flo
 }
 
 static inline float4 cb_blend(float4 s, float4 d, float4 s1, float4 k, uint w) {
+    if ((w >> 15) & 1u) {
+        uint4 u = as_type<uint4>(d);
+        d = as_type<float4>((u + 0x7FFu + ((u >> 12) & 1u)) & 0xFFFFF000u);
+    }
     uint clamp_kind = (w >> 13) & 3u;
     if (clamp_kind != 0u) {
         float lo = clamp_kind == 1u ? 0.0f : -1.0f;

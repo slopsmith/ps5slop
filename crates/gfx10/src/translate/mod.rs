@@ -89,8 +89,8 @@ pub struct Request<'a> {
     pub dual_source: bool,
     /// Pixel stage, per MRT: 0, or `CB_BLENDn_CONTROL` with ENABLE set and
     /// the alpha fields filled in when it does not blend alpha separately,
-    /// and [`BLEND_CLAMP_UNORM`] or [`BLEND_CLAMP_SNORM`] in its unused bits
-    /// 13 and 14. The program reads the target and blends as the CB does.
+    /// [`BLEND_CLAMP_UNORM`] or [`BLEND_CLAMP_SNORM`] in its unused bits 13
+    /// and 14, and [`BLEND_DST_12_BITS`] in bit 15. The program reads the target and blends as the CB does.
     pub blends: [u32; 8],
     /// Pixel stage: `CB_COLOR_CONTROL.ROP3`, applied to the MRTs that
     /// `logic_targets` names; 0xCC (copy) applies nothing.
@@ -349,6 +349,9 @@ pub mod binding {
 pub const BLEND_CLAMP_UNORM: u32 = 1 << 13;
 /// The same on a snorm target, to [-1, 1].
 pub const BLEND_CLAMP_SNORM: u32 = 2 << 13;
+/// For a [`Request::blends`] word: the CB reads the target's value as a float
+/// of 12 significant bits, rounded to nearest even, before blending it.
+pub const BLEND_DST_12_BITS: u32 = 1 << 15;
 
 /// Constant buffers a program may bind; scalar loads through more bases read
 /// guest memory instead.

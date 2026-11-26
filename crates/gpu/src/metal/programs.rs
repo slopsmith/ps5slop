@@ -753,7 +753,9 @@ fn attached(c: &[u32], n: usize) -> bool {
 /// since Metal's fixed-function blending differs from the CB's in rounding,
 /// NaNs, min and max, and some factors. Integer targets and those with
 /// `CB_COLOR_INFO.BLEND_BYPASS` do not blend, as Mesa's `ac_descriptors.c`
-/// sets that bit for integer formats.
+/// sets that bit for integer formats. 8-bit unorm targets are read at 12
+/// significant bits (measured on RDNA2 with the blend sweep; other unorm
+/// widths and sRGB are not measured).
 pub(super) fn blends(c: &[u32]) -> [u32; 8] {
     std::array::from_fn(|n| {
         let b = Blend::read(c, n);
@@ -770,10 +772,15 @@ pub(super) fn blends(c: &[u32]) -> [u32; 8] {
             1 => gfx10::translate::BLEND_CLAMP_SNORM,
             _ => 0,
         };
+        let dst_bits = match (t.format.number, t.format.layout) {
+            (0, 1 | 3 | 10) => gfx10::translate::BLEND_DST_12_BITS,
+            _ => 0,
+        };
         b.color_src
             | b.color_op << 5
             | b.color_dst << 8
             | clamp
+            | dst_bits
             | b.alpha_src << 16
             | b.alpha_op << 21
             | b.alpha_dst << 24
