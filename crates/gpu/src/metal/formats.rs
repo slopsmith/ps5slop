@@ -232,8 +232,8 @@ pub(super) fn image_format(format: u32) -> Option<(MTLPixelFormat, u32)> {
         27 => (P::RG16Uint, 4),
         28 => (P::RG16Sint, 4),
         29 => (P::RG16Float, 4),
-        36 | 43 => (P::RG11B10Float, 4),
-        44 | 50 => (P::RGB10A2Unorm, 4),
+        36 => (P::RG11B10Float, 4),
+        50 => (P::RGB10A2Unorm, 4),
         56 => (P::RGBA8Unorm, 4),
         57 => (P::RGBA8Snorm, 4),
         60 => (P::RGBA8Uint, 4),
@@ -288,6 +288,33 @@ pub(super) fn channel_selects(image: &Image) -> [u8; 4] {
     image
         .swizzle
         .map(|s| if s >= 4 { 4 + (s - 4) % n } else { s })
+}
+
+/// The texture for an image of a format Metal lacks, read and written raw:
+/// unsigned integers of the element's size, which programs convert.
+pub(super) fn coded_format(format: u32) -> Option<(MTLPixelFormat, u32)> {
+    use MTLPixelFormat as P;
+    let bytes = match format {
+        1..=6 | 131 | 137 => 1,
+        7..=19 | 133 | 135 | 136 => 2,
+        20..=61 | 132 | 140..=144 => 4,
+        62..=71 | 145 | 146 => 8,
+        75..=77 => 16,
+        _ => return None,
+    };
+    Some(match bytes {
+        1 => (P::R8Uint, 1),
+        2 => (P::R16Uint, 2),
+        4 => (P::R32Uint, 4),
+        8 => (P::RG32Uint, 8),
+        _ => (P::RGBA32Uint, 16),
+    })
+}
+
+/// The Metal format and bytes per element of an image read or written
+/// raw: its own format where Metal has one, otherwise [`coded_format`].
+pub(super) fn raw_format(format: u32) -> Option<(MTLPixelFormat, u32)> {
+    image_format(format).or_else(|| coded_format(format))
 }
 
 pub(super) fn is_depth_format(f: MTLPixelFormat) -> bool {

@@ -44,6 +44,8 @@ pub(super) struct Variant {
     pub(super) col_format: u32,
     pub(super) uint_textures: u32,
     pub(super) sint_textures: u32,
+    /// Raw texture slots whose format Metal lacks (see `Request::coded_textures`).
+    pub(super) coded_textures: u32,
     /// Compute: threads past a grid size read from a buffer do nothing.
     pub(super) grid_bounds: bool,
     /// Pixel: no depth target is bound, so a depth export is dropped.
@@ -153,7 +155,10 @@ impl Metal {
         let mut variant = base;
         for r in &program.translated.resources {
             if let Resource::Texture {
-                slot, ref source, ..
+                slot,
+                ref source,
+                raw,
+                ..
             } = *r
                 && let Some(d) = self.descriptor(host, user, source, 8)
             {
@@ -165,7 +170,11 @@ impl Metal {
                 match image_format(image.format).map(|f| number(f.0)) {
                     Some(Number::Uint) => variant.uint_textures |= 1 << slot,
                     Some(Number::Sint) => variant.sint_textures |= 1 << slot,
-                    _ => {}
+                    Some(Number::Float) => {}
+                    None if raw && coded_format(image.format).is_some() => {
+                        variant.coded_textures |= 1 << slot
+                    }
+                    None => {}
                 }
             }
         }
@@ -250,6 +259,7 @@ impl Metal {
                     .map(|i| (state.sh[sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1)),
                 uint_textures: variant.uint_textures,
                 sint_textures: variant.sint_textures,
+                coded_textures: variant.coded_textures,
                 grid_bounds: variant.grid_bounds,
                 drop_depth_export: variant.drop_depth_export,
                 half_targets: variant.half_targets,

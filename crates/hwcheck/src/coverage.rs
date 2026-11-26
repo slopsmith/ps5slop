@@ -79,6 +79,7 @@ pub fn coverage(op: &OpInfo) -> Coverage {
         threads: [64, 1, 1],
         uint_textures: 0,
         sint_textures: 0,
+        coded_textures: 0,
         grid_bounds: false,
         drop_depth_export: false,
         half_targets: 0,

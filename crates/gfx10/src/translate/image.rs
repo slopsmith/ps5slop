@@ -5,7 +5,9 @@ use super::*;
 impl<'a> Tx<'a> {
     // The element type of texture slot `t` and how a component of it becomes a VGPR value.
     pub(super) fn texel(&self, t: usize) -> (&'static str, &'static str) {
-        if self.atomic_textures >> t & 1 != 0 {
+        if self.req.coded_textures >> t & 1 != 0 {
+            ("uint", "")
+        } else if self.atomic_textures >> t & 1 != 0 {
             if self.req.sint_textures >> t & 1 != 0 {
                 ("int", "uint")
             } else {
@@ -278,6 +280,11 @@ impl<'a> Tx<'a> {
         };
         let d = m.vdata as u16;
         let (elem, conv) = self.texel(t);
+        let coded = self.req.coded_textures >> t & 1 != 0;
+        if coded && m.d16 {
+            return Err(err(pc, format!("unsupported form of {name}")));
+        }
+        let w = binding::TEXTURE_WORDS + 2 * t as u32;
         if store {
             let mut comps = Vec::new();
             let mut j = 0u16;
@@ -312,18 +319,28 @@ impl<'a> Tx<'a> {
             } else {
                 String::new()
             };
-            let w = binding::TEXTURE_WORDS + 2 * t as u32;
+            let (encode, when) = if coded {
+                (
+                    "image_encode",
+                    format!("if (image_storable((user[{w}] >> 20) & 0x1ffu)) "),
+                )
+            } else {
+                ("image_store_channels", String::new())
+            };
             self.guard(&format!(
-                "t{t}.write(image_store_channels({elem}4({}), user[{w}]), {coord}, {lvl});{fence}",
+                "{when}t{t}.write({encode}({elem}4({}), user[{w}]), {coord}, {lvl});{fence}",
                 comps.join(", ")
             ));
         } else {
             let mut s = format!("{elem}4 r = t{t}.read({coord}, {lvl});");
-            let w = binding::TEXTURE_WORDS + 2 * t as u32;
-            if elem == "float" {
-                write!(s, " r = image_srgb(r, user[{w}]);").unwrap();
+            if coded {
+                write!(s, " r = image_decode(r, user[{w}], user[{}]);", w + 1).unwrap();
+            } else {
+                if elem == "float" {
+                    write!(s, " r = image_srgb(r, user[{w}]);").unwrap();
+                }
+                write!(s, " r = image_sel(r, user[{w}], user[{}]);", w + 1).unwrap();
             }
-            write!(s, " r = image_sel(r, user[{w}], user[{}]);", w + 1).unwrap();
             let comps: Vec<usize> = (0..4).filter(|&i| m.dmask >> i & 1 != 0).collect();
             self.write_results(&mut s, m, elem, conv, &comps);
             self.guard(&s);

@@ -26,7 +26,7 @@ impl Metal {
         image: Image,
         kind: TextureKind,
     ) -> Option<Retained<Texture>> {
-        let (format, bpe) = image_format(image.format)?;
+        let (format, bpe) = raw_format(image.format)?;
         let depth_current = !self.color_newer.contains(&image.address);
         if kind == TextureKind::Cube
             && depth_current
@@ -705,7 +705,7 @@ impl Metal {
         image: Image,
         kind: TextureKind,
     ) -> Option<Retained<Texture>> {
-        let (format, bpe) = image_format(image.format)?;
+        let (format, bpe) = raw_format(image.format)?;
         self.color_newer.insert(image.address);
         if is_depth_layout(image.raw_tile) {
             self.depth_stores.insert(image.address);
@@ -801,13 +801,16 @@ impl Metal {
             self.targets.remove(&image.address);
         }
         let chain = image.last_level + 1;
-        let texture =
-            self.new_texture_levels(format, image.width, image.height, true, chain)?;
+        let texture = self.new_texture_levels(format, image.width, image.height, true, chain)?;
         if let Some(mode) = image.tile
             && let Some(layout) = Layout::new(mode, bpe, image.width, image.height)
         {
             let mips = layout.mips(chain, (image.width, image.height), 1);
-            for (level, mip) in mips.into_iter().enumerate().take(texture.mipmapLevelCount()) {
+            for (level, mip) in mips
+                .into_iter()
+                .enumerate()
+                .take(texture.mipmapLevelCount())
+            {
                 self.detile_level_into(host, &texture, 0, level, image.address, mip);
             }
         }
@@ -830,7 +833,7 @@ impl Metal {
     pub fn write_back_images(&mut self, host: &dyn Host) {
         self.sync();
         for (image, tex) in std::mem::take(&mut self.stored_images) {
-            let Some((format, bpe)) = image_format(image.format) else {
+            let Some((format, bpe)) = raw_format(image.format) else {
                 continue;
             };
             let Some(layout) = image

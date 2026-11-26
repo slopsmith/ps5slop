@@ -6,7 +6,7 @@
 use crate::translate::{Request, Stage, program};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"g10c");
-const VERSION: u32 = 6;
+const VERSION: u32 = 7;
 const GRID_BOUNDS: u32 = 1;
 const DROP_DEPTH_EXPORT: u32 = 2;
 const DUAL_SOURCE: u32 = 4;
@@ -25,6 +25,7 @@ pub struct Capture {
     pub threads: [u32; 3],
     pub uint_textures: u32,
     pub sint_textures: u32,
+    pub coded_textures: u32,
     pub address: u64,
     pub grid_bounds: bool,
     pub drop_depth_export: bool,
@@ -56,6 +57,7 @@ impl Capture {
             threads: req.threads,
             uint_textures: req.uint_textures,
             sint_textures: req.sint_textures,
+            coded_textures: req.coded_textures,
             address: req.address,
             grid_bounds: req.grid_bounds,
             drop_depth_export: req.drop_depth_export,
@@ -84,6 +86,7 @@ impl Capture {
             threads: self.threads,
             uint_textures: self.uint_textures,
             sint_textures: self.sint_textures,
+            coded_textures: self.coded_textures,
             grid_bounds: self.grid_bounds,
             drop_depth_export: self.drop_depth_export,
             half_targets: self.half_targets,
@@ -137,6 +140,7 @@ impl Capture {
             u32::from_le_bytes([s[0], s[1], s[2], s[3]]),
             u32::from_le_bytes([s[4], s[5], s[6], s[7]]),
             self.scratch_wave_bytes,
+            self.coded_textures,
         ]);
         w.extend_from_slice(&self.code);
         w.iter().flat_map(|x| x.to_le_bytes()).collect()
@@ -192,6 +196,11 @@ impl Capture {
             scratch_wave_bytes = *w.get(code_at)?;
             code_at += 1;
         }
+        let mut coded = 0;
+        if w[1] >= 7 {
+            coded = *w.get(code_at)?;
+            code_at += 1;
+        }
         Some(Capture {
             stage,
             user_sgprs: w[3],
@@ -203,6 +212,7 @@ impl Capture {
             threads: [w[9], w[10], w[11]],
             uint_textures: masks[0],
             sint_textures: masks[1],
+            coded_textures: coded,
             ps_input_cntl: cntl,
             address,
             grid_bounds: flags & GRID_BOUNDS != 0,

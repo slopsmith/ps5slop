@@ -744,6 +744,182 @@ static inline vec<T, 4> image_store_channels(vec<T, 4> v, uint w1) {
     return v;
 }
 
+// How a GFX10 image format lays out its channels: their widths from the
+// lowest bits up and their number type (0 UNORM, 1 SNORM, 2 USCALED,
+// 3 SSCALED, 4 UINT, 5 SINT, 6 FLOAT, 7 SRGB, 8 shared exponent).
+struct ImageLayout {
+    uint4 width;
+    uint type;
+};
+
+static inline ImageLayout image_layout(uint f) {
+    ImageLayout l;
+    l.type = 4u;
+    l.width = uint4(0u);
+    if (f >= 1u && f <= 6u) { l.width = uint4(8u, 0u, 0u, 0u); l.type = f - 1u; }
+    else if (f >= 7u && f <= 13u) { l.width = uint4(16u, 0u, 0u, 0u); l.type = f - 7u; }
+    else if (f >= 14u && f <= 19u) { l.width = uint4(8u, 8u, 0u, 0u); l.type = f - 14u; }
+    else if (f >= 20u && f <= 22u) { l.width = uint4(32u, 0u, 0u, 0u); l.type = f - 16u; }
+    else if (f >= 23u && f <= 29u) { l.width = uint4(16u, 16u, 0u, 0u); l.type = f - 23u; }
+    else if (f >= 30u && f <= 36u) { l.width = uint4(11u, 11u, 10u, 0u); l.type = f - 30u; }
+    else if (f >= 37u && f <= 43u) { l.width = uint4(10u, 11u, 11u, 0u); l.type = f - 37u; }
+    else if (f >= 44u && f <= 49u) { l.width = uint4(2u, 10u, 10u, 10u); l.type = f - 44u; }
+    else if (f >= 50u && f <= 55u) { l.width = uint4(10u, 10u, 10u, 2u); l.type = f - 50u; }
+    else if (f >= 56u && f <= 61u) { l.width = uint4(8u); l.type = f - 56u; }
+    else if (f >= 62u && f <= 64u) { l.width = uint4(32u, 32u, 0u, 0u); l.type = f - 58u; }
+    else if (f >= 65u && f <= 71u) { l.width = uint4(16u); l.type = f - 65u; }
+    else if (f >= 75u && f <= 77u) { l.width = uint4(32u); l.type = f - 71u; }
+    else if (f == 132u) { l.width = uint4(9u, 9u, 9u, 5u); l.type = 8u; }
+    else if (f == 133u) { l.width = uint4(5u, 6u, 5u, 0u); l.type = 0u; }
+    else if (f == 135u) { l.width = uint4(1u, 5u, 5u, 5u); l.type = 0u; }
+    else if (f == 136u) { l.width = uint4(4u); l.type = 0u; }
+    else if (f == 137u) { l.width = uint4(4u, 4u, 0u, 0u); l.type = 0u; }
+    else if (f == 140u) { l.width = uint4(32u, 0u, 0u, 0u); l.type = 6u; }
+    else if (f == 141u || f == 142u) { l.width = uint4(24u, 8u, 0u, 0u); l.type = f == 141u ? 0u : 4u; }
+    else if (f == 143u || f == 144u) { l.width = uint4(8u, 24u, 0u, 0u); l.type = f == 143u ? 0u : 4u; }
+    else if (f == 145u || f == 146u) { l.width = uint4(32u, 8u, 0u, 0u); l.type = f == 145u ? 4u : 6u; }
+    return l;
+}
+
+static inline uint image_mask(uint w) {
+    return w >= 32u ? 0xffffffffu : (1u << w) - 1u;
+}
+
+static inline int image_sext(uint u, uint w) {
+    return w >= 32u ? int(u) : int(u << (32u - w)) >> (32u - w);
+}
+
+// An unsigned float of `m` mantissa bits and a 5-bit exponent (the 10- and
+// 11-bit channels), as float bits.
+static inline uint image_small_float(uint u, uint m) {
+    uint e = u >> m, f = u & ((1u << m) - 1u);
+    if (e == 31u) return 0x7f800000u | f << (23u - m);
+    if (e == 0u) return as_type<uint>(float(f) * exp2(-14.0f - float(m)));
+    return (e + 112u) << 23 | f << (23u - m);
+}
+
+// A texel read raw from an image of a format Metal lacks (T# dwords `w1`
+// and `w3`), converted and its channels selected as the hardware does.
+static inline uint4 image_decode(uint4 raw, uint w1, uint w3) {
+    uint f = (w1 >> 20) & 0x1ffu;
+    ImageLayout l = image_layout(f);
+    uint4 c = uint4(0u);
+    uint at = 0u, n = 0u;
+    for (uint i = 0u; i < 4u; i++) {
+        uint w = l.width[i];
+        if (w == 0u) break;
+        uint u = (raw[at / 32u] >> (at % 32u)) & image_mask(w);
+        at += w;
+        n++;
+        switch (l.type) {
+        case 0u: c[i] = as_type<uint>(precise::divide(float(u), float(image_mask(w)))); break;
+        case 1u: c[i] = as_type<uint>(max(precise::divide(float(image_sext(u, w)), float(image_mask(w - 1u))), -1.0f)); break;
+        case 2u: c[i] = as_type<uint>(float(u)); break;
+        case 3u: c[i] = as_type<uint>(float(image_sext(u, w))); break;
+        case 5u: c[i] = uint(image_sext(u, w)); break;
+        case 6u:
+            c[i] = w == 32u ? u : w == 16u ? as_type<uint>(float(as_type<half>(ushort(u))))
+                : image_small_float(u, w - 5u);
+            break;
+        case 7u: {
+            float x = precise::divide(float(u), float(image_mask(w)));
+            if (i < 3u) {
+                x = x <= 0.04045f ? x / 12.92f : precise::pow((x + 0.055f) / 1.055f, 2.4f);
+                uint b = as_type<uint>(x);
+                x = as_type<float>((b + 0x7fffu + ((b >> 16) & 1u)) & 0xffff0000u);
+            }
+            c[i] = as_type<uint>(x);
+            break;
+        }
+        default: c[i] = u; break;
+        }
+    }
+    if (l.type == 8u) {
+        float scale = exp2(float(int(c[3]) - 24));
+        c = uint4(as_type<uint3>(float3(c.xyz) * scale), 0u);
+        n = 3u;
+    }
+    if (n == 0u) n = 1u;
+    uint one = l.type == 4u || l.type == 5u ? 1u : 0x3f800000u;
+    uint4 r;
+    for (uint i = 0u; i < 4u; i++) {
+        uint s = (w3 >> (3u * i)) & 7u;
+        r[i] = s >= 4u ? c[(s - 4u) % n] : (s == 1u ? one : 0u);
+    }
+    return r;
+}
+
+// An unsigned float of `m` mantissa bits and a 5-bit exponent from float
+// bits `b`.
+static inline uint image_to_small_float(uint b, uint m) {
+    float x = as_type<float>(b);
+    if (isnan(x)) return 31u << m | (b >> (23u - m) & ((1u << m) - 1u)) | 1u;
+    if (x <= 0.0f) return 0u;
+    if (isinf(x)) return 31u << m;
+    uint e = (b >> 23) & 0xffu;
+    if (e < 113u) return uint(rint(x * exp2(14.0f + float(m))));
+    uint v = ((e - 112u) << m) + ((b & 0x7fffffu) >> (23u - m));
+    uint rest = b & ((1u << (23u - m)) - 1u), half_way = 1u << (22u - m);
+    if (rest > half_way || (rest == half_way && (v & 1u) != 0u)) v++;
+    return min(v, (31u << m) - 1u);
+}
+
+// Whether image stores write an image of format `f`: not the depth and
+// stencil, 4_4 and 96-bit formats (measured on RDNA2).
+static inline bool image_storable(uint f) {
+    return !(f >= 72u && f <= 74u) && f != 137u && !(f >= 141u && f <= 146u);
+}
+
+// Store data (VGPR bits) for an image of a format Metal lacks, converted
+// into the bits of one element. SCALED formats are written as NORM
+// (measured on RDNA2).
+static inline uint4 image_encode(uint4 v, uint w1) {
+    uint f = (w1 >> 20) & 0x1ffu;
+    ImageLayout l = image_layout(f);
+    uint n = 0u;
+    for (uint i = 0u; i < 4u; i++) n += l.width[i] != 0u ? 1u : 0u;
+    if (n == 2u) v.y = v.w;
+    uint4 raw = uint4(0u);
+    uint at = 0u;
+    if (l.type == 8u) {
+        float3 x = clamp(as_type<float3>(v.xyz), 0.0f, 65408.0f);
+        x = select(x, float3(0.0f), isnan(x));
+        float top = max(max(x.x, x.y), x.z);
+        int e = max(-16, int(floor(log2(top)))) + 16;
+        float scale = exp2(float(e - 24));
+        if (uint(rint(top / scale)) == 512u) { e++; scale *= 2.0f; }
+        uint3 m = uint3(rint(x / scale));
+        raw.x = m.x | m.y << 9 | m.z << 18 | uint(e) << 27;
+        return raw;
+    }
+    for (uint i = 0u; i < n; i++) {
+        uint w = l.width[i], u;
+        float x = as_type<float>(v[i]);
+        float top = float(image_mask(w));
+        switch (l.type) {
+        case 0u: case 2u: case 7u: u = isnan(x) ? 0u : uint(rint(clamp(x, 0.0f, 1.0f) * top)); break;
+        case 1u: case 3u: {
+            float h = float(image_mask(w - 1u));
+            u = isnan(x) ? 0u : uint(int(rint(clamp(x, -1.0f, 1.0f) * h)));
+            break;
+        }
+        case 4u: u = min(v[i], image_mask(w)); break;
+        case 5u: {
+            int h = int(image_mask(w - 1u));
+            u = uint(clamp(int(v[i]), -h - 1, h));
+            break;
+        }
+        default:
+            u = w == 32u ? v[i] : w == 16u ? uint(as_type<ushort>(half(x)))
+                : image_to_small_float(v[i], w - 5u);
+            break;
+        }
+        raw[at / 32u] |= (u & image_mask(w)) << (at % 32u);
+        at += w;
+    }
+    return raw;
+}
+
 // SQ_TEX_DEPTH_COMPARE: the reference against the fetched value.
 static inline bool depth_compare(uint f, float ref, float v) {
     switch (f) {

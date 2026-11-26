@@ -235,6 +235,8 @@ impl Metal {
                         }
                     } else if image.address == 0 || image.kind < 8 {
                         self.null_texture(kind)
+                    } else if image_format(image.format).is_none() && !raw {
+                        None
                     } else if raw {
                         self.image(host, image, kind).and_then(without_srgb)
                     } else {
