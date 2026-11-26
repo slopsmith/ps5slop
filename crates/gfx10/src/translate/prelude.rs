@@ -255,53 +255,99 @@ static inline uint4 bvh_intersect(device const uchar* mem, Win w, uint4 d, ulong
     return uint4(U(INFINITY), U(1.0f), 0u, 0u);
 }
 
-// Byte offset into the memory buffer of a buffer element, or OOB_OFF when out of range.
-static inline long buffer_offset(Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
+// Whether the range check rejects `bytes` bytes at `offset` in record `index` of
+// buffer `vs` (RDNA2 ISA 8.1.5). The SGPR offset is not part of the record offset; in
+// OOB_SELECT 3 it shrinks the buffer. With stride 0, modes 0 and 1 check the offset
+// against the size.
+static inline bool buffer_oob(uint4 vs, uint index, uint offset, uint soffset, uint idxen, uint bytes) {
+    uint stride = (vs.y >> 16) & 0x3fffu;
+    bool swizzle = (vs.y >> 31) != 0u;
+    uint i = idxen != 0u ? index : 0u;
+    switch ((vs.w >> 28) & 3u) {
+    case 0u: return stride == 0u ? offset >= vs.z : i >= vs.z || offset >= stride;
+    case 1u: return stride == 0u ? offset >= vs.z : i >= vs.z;
+    case 2u: return vs.z == 0u;
+    default:
+        return swizzle && stride != 0u ? i >= vs.z || ulong(offset) + bytes > stride
+            : ulong(offset) + bytes + soffset > ulong(vs.z);
+    }
+}
+
+// Guest address of an access at `offset` in record `index`. Swizzled buffers
+// interleave the dwords of `index_stride` records; what an access moves lies
+// contiguous from there, and accesses without an index stay linear (both measured
+// on gfx1033).
+static inline ulong buffer_addr(uint4 vs, uint index, uint offset, uint soffset, uint idxen) {
     ulong base = ulong(vs.x) | (ulong(vs.y & 0xffffu) << 32);
     uint stride = (vs.y >> 16) & 0x3fffu;
-    // OOB_SELECT (word 3 bits 28-29) for strided buffers, as RDNA2 ISA 8.1.5 table 35 states it.
     uint i = idxen != 0u ? index : 0u;
-    uint oob = (vs.w >> 28) & 3u;
-    bool out = stride == 0u ? offset >= vs.z
-        : oob == 0u ? i >= vs.z || offset >= stride
-        : oob == 1u ? i >= vs.z
-        : oob == 2u ? vs.z == 0u
-        : idxen != 0u ? i >= vs.z : offset >= vs.z;
-    if (out) return OOB_OFF;
-    return goff(mem_base, base + ulong(index) * ulong(stride) * ulong(idxen) + ulong(offset));
+    if ((vs.y >> 31) == 0u || idxen == 0u) return base + soffset + ulong(i) * stride + offset;
+    uint is = 8u << ((vs.w >> 21) & 3u);
+    return base + soffset + (ulong(i / is) * stride + (offset & ~3u)) * is + (i % is) * 4u + (offset & 3u);
+}
+
+// Byte offset from `mem` of an access of `bytes` bytes, or OOB_OFF when out of range.
+static inline long buffer_offset(Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen, uint bytes) {
+    if (buffer_oob(vs, index, offset, soffset, idxen, bytes)) return OOB_OFF;
+    return goff(w, buffer_addr(vs, index, offset, soffset, idxen));
 }
 
 // As `buffer_offset`, for stores and atomics: OOB_OFF inside [ro, ro_end) too.
-static inline long buffer_store_offset(Win w, uint4 vs, uint index, uint offset, uint idxen) {
-    ulong a = (ulong(vs.x) | (ulong(vs.y & 0xffffu) << 32))
-        + ulong(index) * ulong((vs.y >> 16) & 0x3fffu) * ulong(idxen) + ulong(offset);
+static inline long buffer_store_offset(Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen, uint bytes) {
+    if (buffer_oob(vs, index, offset, soffset, idxen, bytes)) return OOB_OFF;
+    ulong a = buffer_addr(vs, index, offset, soffset, idxen);
     if (a >= w.ro && a < w.ro_end) return OOB_OFF;
-    return buffer_offset(w, vs, index, offset, idxen);
+    return goff(w, a);
 }
 
-static inline uint4 buffer_load_raw(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
-    long o = buffer_offset(mem_base, vs, index, offset, idxen);
-    if (o == OOB_OFF) return uint4(0u);
-    device const uint* p = (device const uint*)(mem + o);
-    return uint4(p[0], p[1], p[2], p[3]);
+// Offset of dword `k` of a dword access starting at `o0` (OOB_OFF if the access
+// is outside every window), or OOB_OFF when that dword fails the range check.
+static inline long buffer_dword(long o0, uint4 vs, uint index, uint offset, uint soffset, uint idxen, uint k) {
+    if (o0 == OOB_OFF || buffer_oob(vs, index, offset + 4u * k, soffset, idxen, 4u)) return OOB_OFF;
+    return o0 + 4 * long(k);
+}
+
+static inline long buffer_dwords(Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen) {
+    return goff(w, buffer_addr(vs, index, offset, soffset, idxen));
+}
+
+static inline long buffer_store_dwords(Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen) {
+    ulong a = buffer_addr(vs, index, offset, soffset, idxen);
+    if (a >= w.ro && a < w.ro_end) return OOB_OFF;
+    return goff(w, a);
+}
+
+static inline uint4 buffer_load_raw(device const uchar* mem, Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen, uint n) {
+    long o0 = buffer_dwords(w, vs, index, offset, soffset, idxen);
+    uint4 r = uint4(0u);
+    for (uint k = 0u; k < n; k++) {
+        long o = buffer_dword(o0, vs, index, offset, soffset, idxen, k);
+        if (o != OOB_OFF) r[k] = *(device const uint*)(mem + o);
+    }
+    return r;
 }
 
 // GLC loads and stores, which other groups may be polling or writing while
 // this one runs: atomics, so the compiler keeps them in loops and in order.
-static inline uint4 buffer_load_atomic(device uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen, uint n) {
-    long o = buffer_offset(mem_base, vs, index, offset, idxen);
+static inline uint4 buffer_load_atomic(device uchar* mem, Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen, uint n) {
+    long o0 = buffer_dwords(w, vs, index, offset, soffset, idxen);
     uint4 r = uint4(0u);
-    if (o == OOB_OFF) return r;
-    if ((o & 3) != 0) return buffer_load_raw(mem, mem_base, vs, index, offset, idxen);
-    for (uint i = 0u; i < n; i++) r[i] = atomic_load_explicit((device atomic_uint*)(mem + o) + i, memory_order_relaxed);
+    for (uint k = 0u; k < n; k++) {
+        long o = buffer_dword(o0, vs, index, offset, soffset, idxen, k);
+        if (o == OOB_OFF) continue;
+        r[k] = (o & 3) != 0 ? *(device const uint*)(mem + o)
+            : atomic_load_explicit((device atomic_uint*)(mem + o), memory_order_relaxed);
+    }
     return r;
 }
 
-static inline uint4 buffer_load_volatile(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen, uint n) {
-    long o = buffer_offset(mem_base, vs, index, offset, idxen);
+static inline uint4 buffer_load_volatile(device const uchar* mem, Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen, uint n) {
+    long o0 = buffer_dwords(w, vs, index, offset, soffset, idxen);
     uint4 r = uint4(0u);
-    if (o == OOB_OFF) return r;
-    for (uint i = 0u; i < n; i++) r[i] = ((volatile device const uint*)(mem + o))[i];
+    for (uint k = 0u; k < n; k++) {
+        long o = buffer_dword(o0, vs, index, offset, soffset, idxen, k);
+        if (o != OOB_OFF) r[k] = *(volatile device const uint*)(mem + o);
+    }
     return r;
 }
 
@@ -310,23 +356,23 @@ static inline void store_atomic(device uchar* mem, long o, uint v) {
     atomic_store_explicit((device atomic_uint*)(mem + o), v, memory_order_relaxed);
 }
 
-static inline uint4 buffer_load_ubyte(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
-    long o = buffer_offset(mem_base, vs, index, offset, idxen);
+static inline uint4 buffer_load_ubyte(device const uchar* mem, Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen) {
+    long o = buffer_offset(w, vs, index, offset, soffset, idxen, 1u);
     return uint4(o == OOB_OFF ? 0u : uint(mem[o]), 0u, 0u, 0u);
 }
 
-static inline uint4 buffer_load_sbyte(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
-    long o = buffer_offset(mem_base, vs, index, offset, idxen);
+static inline uint4 buffer_load_sbyte(device const uchar* mem, Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen) {
+    long o = buffer_offset(w, vs, index, offset, soffset, idxen, 1u);
     return uint4(o == OOB_OFF ? 0u : uint(int(char(mem[o]))), 0u, 0u, 0u);
 }
 
-static inline uint4 buffer_load_ushort(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
-    long o = buffer_offset(mem_base, vs, index, offset, idxen);
+static inline uint4 buffer_load_ushort(device const uchar* mem, Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen) {
+    long o = buffer_offset(w, vs, index, offset, soffset, idxen, 2u);
     return uint4(o == OOB_OFF ? 0u : uint(*(device const ushort*)(mem + o)), 0u, 0u, 0u);
 }
 
-static inline uint4 buffer_load_sshort(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
-    long o = buffer_offset(mem_base, vs, index, offset, idxen);
+static inline uint4 buffer_load_sshort(device const uchar* mem, Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen) {
+    long o = buffer_offset(w, vs, index, offset, soffset, idxen, 2u);
     return uint4(o == OOB_OFF ? 0u : uint(int(*(device const short*)(mem + o))), 0u, 0u, 0u);
 }
 
@@ -403,26 +449,6 @@ static inline uint atomic_rmw_smax(device uchar* mem, long o, uint v) {
     return uint(atomic_fetch_max_explicit((device atomic_int*)(mem + o), int(v), memory_order_relaxed));
 }
 
-static inline uint atomic_rmw_fmin(device uchar* mem, long o, uint v) {
-    if (o == OOB_OFF) return 0u;
-    device atomic_uint* p = (device atomic_uint*)(mem + o);
-    uint e = atomic_load_explicit(p, memory_order_relaxed);
-    for (;;) {
-        uint n = as_type<uint>(fmin(as_type<float>(e), as_type<float>(v)));
-        if (n == e || atomic_compare_exchange_weak_explicit(p, &e, n, memory_order_relaxed, memory_order_relaxed)) return e;
-    }
-}
-
-static inline uint atomic_rmw_fmax(device uchar* mem, long o, uint v) {
-    if (o == OOB_OFF) return 0u;
-    device atomic_uint* p = (device atomic_uint*)(mem + o);
-    uint e = atomic_load_explicit(p, memory_order_relaxed);
-    for (;;) {
-        uint n = as_type<uint>(fmax(as_type<float>(e), as_type<float>(v)));
-        if (n == e || atomic_compare_exchange_weak_explicit(p, &e, n, memory_order_relaxed, memory_order_relaxed)) return e;
-    }
-}
-
 static inline uint atomic_rmw_swap(device uchar* mem, long o, uint v) {
     if (o == OOB_OFF) return 0u;
     return uint(atomic_exchange_explicit((device atomic_uint*)(mem + o), v, memory_order_relaxed));
@@ -434,6 +460,144 @@ static inline uint atomic_cas(device uchar* mem, long o, uint v, uint cmp) {
     uint e = cmp;
     while (!atomic_compare_exchange_weak_explicit(p, &e, v, memory_order_relaxed, memory_order_relaxed) && e == cmp) {}
     return e;
+}
+
+// Float min and max as the memory atomics do them: denormals flush to signed zero,
+// a signalling NaN comes back quieted, a quiet NaN loses to a number, -0 < +0.
+static inline uint fminmax_bits(uint a, uint b, bool mx) {
+    if ((a & 0x7f800000u) == 0u) a &= 0x80000000u;
+    if ((b & 0x7f800000u) == 0u) b &= 0x80000000u;
+    bool an = (a & 0x7fffffffu) > 0x7f800000u, bn = (b & 0x7fffffffu) > 0x7f800000u;
+    if (an && (a & 0x400000u) == 0u) return a | 0x400000u;
+    if (bn && (b & 0x400000u) == 0u) return b | 0x400000u;
+    if (an) return b;
+    if (bn) return a;
+    // Signed-magnitude order as two's complement keys.
+    int ka = (a >> 31) != 0u ? int(~(a & 0x7fffffffu)) : int(a);
+    int kb = (b >> 31) != 0u ? int(~(b & 0x7fffffffu)) : int(b);
+    return (mx ? ka >= kb : ka <= kb) ? a : b;
+}
+
+static inline uint atomic_rmw_fmin(device uchar* mem, long o, uint v) {
+    if (o == OOB_OFF) return 0u;
+    device atomic_uint* p = (device atomic_uint*)(mem + o);
+    uint e = atomic_load_explicit(p, memory_order_relaxed);
+    for (;;) {
+        uint n = fminmax_bits(e, v, false);
+        if (n == e || atomic_compare_exchange_weak_explicit(p, &e, n, memory_order_relaxed, memory_order_relaxed)) return e;
+    }
+}
+
+static inline uint atomic_rmw_fmax(device uchar* mem, long o, uint v) {
+    if (o == OOB_OFF) return 0u;
+    device atomic_uint* p = (device atomic_uint*)(mem + o);
+    uint e = atomic_load_explicit(p, memory_order_relaxed);
+    for (;;) {
+        uint n = fminmax_bits(e, v, true);
+        if (n == e || atomic_compare_exchange_weak_explicit(p, &e, n, memory_order_relaxed, memory_order_relaxed)) return e;
+    }
+}
+
+// Wrapping increment and decrement: past `v` (or below 1) the value starts over.
+static inline uint atomic_rmw_inc(device uchar* mem, long o, uint v) {
+    if (o == OOB_OFF) return 0u;
+    device atomic_uint* p = (device atomic_uint*)(mem + o);
+    uint e = atomic_load_explicit(p, memory_order_relaxed);
+    for (;;) {
+        uint n = e >= v ? 0u : e + 1u;
+        if (n == e || atomic_compare_exchange_weak_explicit(p, &e, n, memory_order_relaxed, memory_order_relaxed)) return e;
+    }
+}
+
+static inline uint atomic_rmw_dec(device uchar* mem, long o, uint v) {
+    if (o == OOB_OFF) return 0u;
+    device atomic_uint* p = (device atomic_uint*)(mem + o);
+    uint e = atomic_load_explicit(p, memory_order_relaxed);
+    for (;;) {
+        uint n = e == 0u || e > v ? v : e - 1u;
+        if (n == e || atomic_compare_exchange_weak_explicit(p, &e, n, memory_order_relaxed, memory_order_relaxed)) return e;
+    }
+}
+
+static inline bool feq_bits(uint a, uint b) {
+    return F(a) == F(b);
+}
+
+// Float compare-and-swap: +0 and -0 are equal, NaN equals nothing.
+static inline uint atomic_fcas(device uchar* mem, long o, uint v, uint cmp) {
+    if (o == OOB_OFF) return 0u;
+    device atomic_uint* p = (device atomic_uint*)(mem + o);
+    uint e = atomic_load_explicit(p, memory_order_relaxed);
+    while (feq_bits(e, cmp) && !atomic_compare_exchange_weak_explicit(p, &e, v, memory_order_relaxed, memory_order_relaxed)) {}
+    return e;
+}
+
+// 64-bit atomics from 32-bit ones (Metal has none wider on every Apple GPU). Adds
+// carry into the high half, so concurrent ones leave the exact sum; the others
+// read and write the halves apart and can tear when lanes update one place at once.
+static inline ulong atomic_add64(device uchar* mem, long o, ulong v) {
+    if (o == OOB_OFF) return 0ul;
+    device atomic_uint* p = (device atomic_uint*)(mem + o);
+    uint lo = atomic_fetch_add_explicit(p, uint(v), memory_order_relaxed);
+    uint carry = lo + uint(v) < lo ? 1u : 0u;
+    uint hi = atomic_fetch_add_explicit(p + 1, uint(v >> 32) + carry, memory_order_relaxed);
+    return ulong(hi) << 32 | lo;
+}
+
+static inline ulong atomic_sub64(device uchar* mem, long o, ulong v) {
+    if (o == OOB_OFF) return 0ul;
+    device atomic_uint* p = (device atomic_uint*)(mem + o);
+    uint lo = atomic_fetch_sub_explicit(p, uint(v), memory_order_relaxed);
+    uint borrow = lo < uint(v) ? 1u : 0u;
+    uint hi = atomic_fetch_sub_explicit(p + 1, uint(v >> 32) + borrow, memory_order_relaxed);
+    return ulong(hi) << 32 | lo;
+}
+
+static inline bool f64_nan(ulong a) {
+    return (a & 0x7ffffffffffffffful) > 0x7ff0000000000000ul;
+}
+
+static inline ulong f64_minmax(ulong a, ulong b, bool mx) {
+    bool an = f64_nan(a), bn = f64_nan(b);
+    ulong quiet = 0x0008000000000000ul;
+    if (an && (a & quiet) == 0ul) return a | quiet;
+    if (bn && (b & quiet) == 0ul) return b | quiet;
+    if (an) return b;
+    if (bn) return a;
+    long ka = (a >> 63) != 0ul ? long(~(a & 0x7ffffffffffffffful)) : long(a);
+    long kb = (b >> 63) != 0ul ? long(~(b & 0x7ffffffffffffffful)) : long(b);
+    return (mx ? ka >= kb : ka <= kb) ? a : b;
+}
+
+static inline bool f64_eq(ulong a, ulong b) {
+    return !f64_nan(a) && !f64_nan(b) && (a == b || ((a | b) << 1) == 0ul);
+}
+
+// op: 0 umin, 1 umax, 2 smin, 3 smax, 4 inc, 5 dec, 6 fmin, 7 fmax, 8 cmpswap
+// (`c` is the compared value), 9 fcmpswap.
+static inline ulong atomic_rmw64(device uchar* mem, long o, ulong v, ulong c, uint op) {
+    if (o == OOB_OFF) return 0ul;
+    device atomic_uint* p = (device atomic_uint*)(mem + o);
+    uint lo = atomic_load_explicit(p, memory_order_relaxed);
+    uint hi = atomic_load_explicit(p + 1, memory_order_relaxed);
+    ulong old = ulong(hi) << 32 | lo, n;
+    switch (op) {
+    case 0u: n = min(old, v); break;
+    case 1u: n = max(old, v); break;
+    case 2u: n = ulong(min(long(old), long(v))); break;
+    case 3u: n = ulong(max(long(old), long(v))); break;
+    case 4u: n = old >= v ? 0ul : old + 1ul; break;
+    case 5u: n = old == 0ul || old > v ? v : old - 1ul; break;
+    case 6u: n = f64_minmax(old, v, false); break;
+    case 7u: n = f64_minmax(old, v, true); break;
+    case 8u: n = old == c ? v : old; break;
+    default: n = f64_eq(old, c) ? v : old; break;
+    }
+    if (n != old) {
+        atomic_store_explicit(p, uint(n), memory_order_relaxed);
+        atomic_store_explicit(p + 1, uint(n >> 32), memory_order_relaxed);
+    }
+    return old;
 }
 
 static inline float cube_ma(float x, float y, float z) {
@@ -500,8 +664,71 @@ static inline uint fmt_sel(uint sel, uint4 v, uint one) {
     }
 }
 
-// One component of `bits` bits converted as `kind`: 0 UNORM, 1 SNORM, 2 USCALED,
-// 3 SSCALED, 4 UINT, 5 SINT, 6 FLOAT.
+// A buffer format (GFX10 unified encoding, BUF_FMT_*): its component count (0 for
+// formats not handled), each component's bits from bit 0 up, and its number kind:
+// 0 UNORM, 1 SNORM, 2 USCALED, 3 SSCALED, 4 UINT, 5 SINT, 6 FLOAT. Format names list
+// components from the top bit down: 2_10_10_10 has x in its low 10 bits.
+struct BufFmt { uint n; uint4 bits; uint kind; };
+
+static inline BufFmt buffer_fmt(uint fmt) {
+    if (fmt >= 1u && fmt <= 6u) return { 1u, uint4(8u, 0u, 0u, 0u), fmt - 1u };
+    if (fmt >= 7u && fmt <= 13u) return { 1u, uint4(16u, 0u, 0u, 0u), fmt - 7u };
+    if (fmt >= 14u && fmt <= 19u) return { 2u, uint4(8u, 8u, 0u, 0u), fmt - 14u };
+    if (fmt >= 20u && fmt <= 22u) return { 1u, uint4(32u, 0u, 0u, 0u), fmt - 16u };
+    if (fmt >= 23u && fmt <= 29u) return { 2u, uint4(16u, 16u, 0u, 0u), fmt - 23u };
+    if (fmt >= 30u && fmt <= 36u) return { 3u, uint4(11u, 11u, 10u, 0u), fmt - 30u };
+    if (fmt >= 37u && fmt <= 43u) return { 3u, uint4(10u, 11u, 11u, 0u), fmt - 37u };
+    if (fmt >= 44u && fmt <= 49u) return { 4u, uint4(2u, 10u, 10u, 10u), fmt - 44u };
+    if (fmt >= 50u && fmt <= 55u) return { 4u, uint4(10u, 10u, 10u, 2u), fmt - 50u };
+    if (fmt >= 56u && fmt <= 61u) return { 4u, uint4(8u), fmt - 56u };
+    if (fmt >= 62u && fmt <= 64u) return { 2u, uint4(32u, 32u, 0u, 0u), fmt - 58u };
+    if (fmt >= 65u && fmt <= 71u) return { 4u, uint4(16u), fmt - 65u };
+    if (fmt >= 72u && fmt <= 74u) return { 3u, uint4(32u, 32u, 32u, 0u), fmt - 68u };
+    if (fmt >= 75u && fmt <= 77u) return { 4u, uint4(32u), fmt - 71u };
+    return { 0u, uint4(0u), 0u };
+}
+
+static inline uint fmt_bytes(BufFmt f) {
+    return (f.bits.x + f.bits.y + f.bits.z + f.bits.w) / 8u;
+}
+
+// An unsigned float of 5 exponent bits and `mb` mantissa bits as an f32.
+static inline uint small_float(uint v, uint mb) {
+    uint e = v >> mb, m = v & ((1u << mb) - 1u);
+    if (e == 31u) return 0x7f800000u | (m << (23u - mb));
+    if (e == 0u) return U(float(m) * exp2(-14.0f - float(mb)));
+    return ((e + 112u) << 23) | (m << (23u - mb));
+}
+
+// An f32 as an unsigned float of 5 exponent bits and `mb` mantissa bits, rounded
+// toward zero like the 16-bit stores: negatives go to zero, overflow to the largest
+// finite value, NaN keeps the top of its payload.
+static inline uint to_small_float(float f, uint mb) {
+    uint mask = (1u << mb) - 1u;
+    uint b = as_type<uint>(f);
+    if (isnan(f)) return (31u << mb) | ((b & 0x7fffffu) >> (23u - mb));
+    if (!(f > 0.0f)) return 0u;
+    if (isinf(f)) return 31u << mb;
+    int e = int((b >> 23) & 0xffu) - 112;
+    uint m = b & 0x7fffffu;
+    if (e >= 31) return (30u << mb) | mask;
+    if (e <= 0) return 1 - e > 24 ? 0u : ((m | 0x800000u) >> uint(1 - e)) >> (23u - mb);
+    return (uint(e) << mb) | (m >> (23u - mb));
+}
+
+// One component of `bits` bits converted to its result dword as `kind` says.
+// Halves to and from f32 keeping NaN payloads, which Metal's conversions drop;
+// stores round toward zero.
+static inline uint half_to_f32(uint h) {
+    if ((h & 0x7c00u) == 0x7c00u && (h & 0x3ffu) != 0u) return (h & 0x8000u) << 16 | 0x7f800000u | (h & 0x3ffu) << 13;
+    return as_type<uint>(float(as_type<half>(ushort(h))));
+}
+
+static inline uint f32_to_half_rtz(uint v) {
+    if ((v & 0x7fffffffu) > 0x7f800000u) return (v >> 16 & 0x8000u) | 0x7c00u | (v & 0x7fffffu) >> 13;
+    return uint(as_type<ushort>(half_rtz(as_type<float>(v))));
+}
+
 static inline uint fmt_conv(uint v, uint bits, uint kind) {
     uint m = bits == 32u ? 0xffffffffu : (1u << bits) - 1u;
     v &= m;
@@ -513,7 +740,32 @@ static inline uint fmt_conv(uint v, uint bits, uint kind) {
     case 3u: return as_type<uint>(float(s));
     case 4u: return v;
     case 5u: return uint(s);
-    default: return bits == 16u ? as_type<uint>(float(as_type<half>(ushort(v)))) : v;
+    default:
+        if (bits == 16u) return half_to_f32(v);
+        if (bits == 11u) return small_float(v, 6u);
+        if (bits == 10u) return small_float(v, 5u);
+        return v;
+    }
+}
+
+// A result dword packed into a `bits`-bit component of `kind`: NaN stores zero in
+// the fixed-point kinds, integers saturate, floats round toward zero.
+static inline uint fmt_pack(uint v, uint bits, uint kind) {
+    uint m = bits == 32u ? 0xffffffffu : (1u << bits) - 1u;
+    float f = as_type<float>(v);
+    int hi = int(m >> 1), lo = -hi - 1;
+    switch (kind) {
+    case 0u: return isnan(f) ? 0u : uint(rint(clamp(f, 0.0f, 1.0f) * float(m))) & m;
+    case 1u: return isnan(f) ? 0u : uint(int(rint(clamp(f, -1.0f, 1.0f) * float(hi)))) & m;
+    case 2u: return isnan(f) ? 0u : uint(clamp(f, 0.0f, float(m))) & m;
+    case 3u: return isnan(f) ? 0u : uint(int(clamp(f, float(lo), float(hi)))) & m;
+    case 4u: return min(v, m);
+    case 5u: return bits == 32u ? v : uint(clamp(int(v), lo, hi)) & m;
+    default:
+        if (bits == 16u) return f32_to_half_rtz(v);
+        if (bits == 11u) return to_small_float(f, 6u);
+        if (bits == 10u) return to_small_float(f, 5u);
+        return v;
     }
 }
 
@@ -523,84 +775,86 @@ static inline uint ld_le(device const uchar* p, uint bytes) {
     return v;
 }
 
-// Components, bits per component and conversion of a buffer format
-// (GFX10 unified encoding, BUF_FMT_*); n is 0 for formats not handled.
-static inline uint3 buffer_fmt(uint fmt) {
-    uint n = 0u, bits = 0u, kind = 0u;
-    if (fmt >= 1u && fmt <= 6u) { n = 1u; bits = 8u; kind = fmt - 1u; }
-    else if (fmt >= 7u && fmt <= 13u) { n = 1u; bits = 16u; kind = fmt - 7u; }
-    else if (fmt >= 14u && fmt <= 19u) { n = 2u; bits = 8u; kind = fmt - 14u; }
-    else if (fmt >= 20u && fmt <= 22u) { n = 1u; bits = 32u; kind = fmt - 16u; }
-    else if (fmt >= 23u && fmt <= 29u) { n = 2u; bits = 16u; kind = fmt - 23u; }
-    else if (fmt >= 50u && fmt <= 55u) { n = 4u; bits = 10u; kind = fmt - 50u; }
-    else if (fmt >= 56u && fmt <= 61u) { n = 4u; bits = 8u; kind = fmt - 56u; }
-    else if (fmt >= 62u && fmt <= 64u) { n = 2u; bits = 32u; kind = fmt - 58u; }
-    else if (fmt >= 65u && fmt <= 71u) { n = 4u; bits = 16u; kind = fmt - 65u; }
-    else if (fmt >= 72u && fmt <= 74u) { n = 3u; bits = 32u; kind = fmt - 68u; }
-    else if (fmt >= 75u && fmt <= 77u) { n = 4u; bits = 32u; kind = fmt - 71u; }
-    return uint3(n, bits, kind);
-}
-
-// Buffer formats as raw result dwords.
-static inline uint4 buffer_load_format(device const uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen) {
-    long o = buffer_offset(mem_base, vs, index, offset, idxen);
-    if (o == OOB_OFF) return uint4(0u);
-    device const uchar* p = mem + o;
-    uint3 f = buffer_fmt((vs.w >> 12) & 0x7fu);
-    uint n = f.x, bits = f.y, kind = f.z;
-    uint4 r = uint4(0u);
-    if (bits == 10u) {
-        uint w = ld_le(p, 4u);
-        r = uint4(fmt_conv(w, 10u, kind), fmt_conv(w >> 10, 10u, kind), fmt_conv(w >> 20, 10u, kind), fmt_conv(w >> 30, 2u, kind));
-    } else {
-        uint bytes = bits / 8u;
-        for (uint i = 0u; i < n; i++) r[i] = fmt_conv(ld_le(p + i * bytes, bytes), bits, kind);
-    }
-    uint one = kind == 4u || kind == 5u ? 1u : 0x3f800000u;
-    return uint4(fmt_sel(vs.w & 7u, r, one), fmt_sel((vs.w >> 3) & 7u, r, one),
-                 fmt_sel((vs.w >> 6) & 7u, r, one), fmt_sel((vs.w >> 9) & 7u, r, one));
-}
-
-// The inverse of fmt_conv: a result dword packed into a `bits`-bit component.
-static inline uint fmt_pack(uint v, uint bits, uint kind) {
-    uint m = bits == 32u ? 0xffffffffu : (1u << bits) - 1u;
-    float f = as_type<float>(v);
-    switch (kind) {
-    case 0u: return uint(rint(clamp(f, 0.0f, 1.0f) * float(m))) & m;
-    case 1u: return uint(int(rint(clamp(f, -1.0f, 1.0f) * float(m >> 1)))) & m;
-    case 2u: return uint(clamp(f, 0.0f, float(m))) & m;
-    case 3u: return uint(int(clamp(f, -float(m >> 1) - 1.0f, float(m >> 1)))) & m;
-    case 4u: case 5u: return v & m;
-    default: return bits == 16u ? uint(as_type<ushort>(half(f))) : v;
-    }
-}
-
 static inline void st_le(device uchar* p, uint bytes, uint v) {
     for (uint i = 0u; i < bytes; i++) p[i] = uchar(v >> (8u * i));
 }
 
-// Typed store: the first n data components go to the format's components in
-// order; components past n are left as they are.
-static inline void buffer_store_format(device uchar* mem, Win mem_base, uint4 vs, uint index, uint offset, uint idxen, uint4 d, uint n) {
-    long o = buffer_store_offset(mem_base, vs, index, offset, idxen);
-    if (o == OOB_OFF) return;
-    device uchar* p = mem + o;
-    uint3 f = buffer_fmt((vs.w >> 12) & 0x7fu);
-    uint bits = f.y, kind = f.z;
-    if (f.x == 0u) return;
-    if (bits == 10u) {
-        uint w = ld_le(p, 4u);
-        uint shift[4] = {0u, 10u, 20u, 30u};
-        for (uint i = 0u; i < min(n, 4u); i++) {
-            uint b = i == 3u ? 2u : 10u;
-            uint m = ((1u << b) - 1u) << shift[i];
-            w = (w & ~m) | ((fmt_pack(d[i], b, kind) << shift[i]) & m);
+// Typed loads. MUBUF ones fill the components a format lacks with the ones it has
+// (x for one, x and y for two, x for the fourth of three), and then DST_SEL picks the
+// results. MTBUF ones (`sel` 0) ignore DST_SEL and read zero past the format's
+// components. Both measured on gfx1033.
+static inline uint4 buffer_load_format(device const uchar* mem, Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen, uint sel) {
+    BufFmt f = buffer_fmt((vs.w >> 12) & 0x7fu);
+    if (f.n == 0u) return uint4(0u);
+    uint bytes = fmt_bytes(f);
+    long o = buffer_offset(w, vs, index, offset, soffset, idxen, bytes);
+    uint one = f.kind == 4u || f.kind == 5u ? 1u : 0x3f800000u;
+    uint4 r = uint4(0u);
+    if (o != OOB_OFF) {
+        uint4 raw;
+        for (uint k = 0u; k < 4u; k++) raw[k] = 4u * k < bytes ? ld_le(mem + o + 4 * k, min(4u, bytes - 4u * k)) : 0u;
+        uint4 c;
+        uint pos = 0u;
+        for (uint i = 0u; i < f.n; i++) {
+            uint b = f.bits[i];
+            c[i] = fmt_conv(raw[pos / 32u] >> (pos % 32u), b, f.kind);
+            pos += b;
         }
-        st_le(p, 4u, w);
-        return;
+        for (uint i = 0u; i < 4u; i++) r[i] = sel != 0u ? c[i % f.n] : i < f.n ? c[i] : 0u;
     }
-    uint bytes = bits / 8u;
-    for (uint i = 0u; i < min(n, f.x); i++) st_le(p + i * bytes, bytes, fmt_pack(d[i], bits, kind));
+    if (sel == 0u) return r;
+    return uint4(fmt_sel(vs.w & 7u, r, one), fmt_sel((vs.w >> 3) & 7u, r, one),
+                 fmt_sel((vs.w >> 6) & 7u, r, one), fmt_sel((vs.w >> 9) & 7u, r, one));
+}
+
+// Typed stores write the whole element. Data components past `n` are zero. In
+// MUBUF ones memory component c takes the data DST_SEL c picks, except that the
+// second component of a two-component format takes DST_SEL_W's; a constant select
+// stores one for SEL_0 and zero for SEL_1. MTBUF ones (`sel` 0) store the data in
+// order. Measured on gfx1033 (constants on one 32_32_32_32_FLOAT descriptor only).
+static inline void buffer_store_format(device uchar* mem, Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen, uint4 d, uint n, uint sel) {
+    BufFmt f = buffer_fmt((vs.w >> 12) & 0x7fu);
+    if (f.n == 0u) return;
+    uint bytes = fmt_bytes(f);
+    long o = buffer_store_offset(w, vs, index, offset, soffset, idxen, bytes);
+    if (o == OOB_OFF) return;
+    for (uint i = n; i < 4u; i++) d[i] = 0u;
+    uint one = f.kind == 4u || f.kind == 5u ? 1u : 0x3f800000u;
+    uint4 raw = uint4(0u);
+    uint pos = 0u;
+    for (uint i = 0u; i < f.n; i++) {
+        uint slot = f.n == 2u && i == 1u ? 3u : i;
+        uint s = sel != 0u ? (vs.w >> (3u * slot)) & 7u : 4u + i;
+        uint v = s >= 4u ? d[s - 4u] : s == 0u ? one : 0u;
+        uint b = f.bits[i];
+        raw[pos / 32u] |= fmt_pack(v, b, f.kind) << (pos % 32u);
+        pos += b;
+    }
+    for (uint k = 0u; 4u * k < bytes; k++) st_le(mem + o + 4 * k, min(4u, bytes - 4u * k), raw[k]);
+}
+
+// D16 typed loads: results as 16 bits. Normalized and scaled values round to the
+// nearest half, float ones toward zero; integers saturate (measured on gfx1033).
+static inline uint4 buffer_load_format_d16(device const uchar* mem, Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen, uint sel) {
+    uint4 r = buffer_load_format(mem, w, vs, index, offset, soffset, idxen, sel);
+    uint kind = buffer_fmt((vs.w >> 12) & 0x7fu).kind;
+    for (uint i = 0u; i < 4u; i++) {
+        r[i] = kind == 4u ? min(r[i], 0xffffu)
+            : kind == 5u ? uint(clamp(int(r[i]), -32768, 32767)) & 0xffffu
+            : kind == 6u ? f32_to_half_rtz(r[i])
+            : uint(as_type<ushort>(half(F(r[i]))));
+    }
+    return r;
+}
+
+// D16 typed stores: 16-bit data widened as the format's kind reads it.
+static inline void buffer_store_format_d16(device uchar* mem, Win w, uint4 vs, uint index, uint offset, uint soffset, uint idxen, uint4 h, uint n, uint sel) {
+    uint kind = buffer_fmt((vs.w >> 12) & 0x7fu).kind;
+    uint4 d;
+    for (uint i = 0u; i < 4u; i++) {
+        d[i] = kind == 4u ? h[i] : kind == 5u ? uint(int(short(ushort(h[i])))) : half_to_f32(h[i]);
+    }
+    buffer_store_format(mem, w, vs, index, offset, soffset, idxen, d, n, sel);
 }
 
 "#;

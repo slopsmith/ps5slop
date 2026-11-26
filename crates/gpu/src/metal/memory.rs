@@ -705,17 +705,21 @@ impl Written {
     }
 }
 
-/// The bytes a buffer store through V# `v` can reach: `buffer_offset` checks
+/// The bytes a buffer store through V# `v` can reach: `buffer_oob` checks
 /// the index against the record count when `indexed` (the offset is taken to
-/// stay within one record), else the offset; plus the widest store.
+/// stay within one record), else the offset; plus the widest store. Swizzled
+/// buffers interleave `index_stride` records' dwords, so the last group of
+/// records reaches up to a whole group further.
 pub(super) fn buffer_range(v: &[u32], indexed: bool) -> (u64, u64) {
     let base = v[0] as u64 | (v[1] as u64 & 0xFFFF) << 32;
     let stride = ((v[1] >> 16) & 0x3FFF) as u64;
     let records = v[2] as u64;
-    let len = if indexed && stride != 0 {
-        (records + 1) * stride
-    } else {
-        records
+    let swizzle = v[1] >> 31 != 0;
+    let index_stride = 8u64 << ((v[3] >> 21) & 3);
+    let len = match (indexed && stride != 0, swizzle) {
+        (true, true) => (records / index_stride + 1) * stride * index_stride + 4 * index_stride,
+        (true, false) => (records + 1) * stride,
+        _ => records,
     };
     (base, base + len + 16)
 }
