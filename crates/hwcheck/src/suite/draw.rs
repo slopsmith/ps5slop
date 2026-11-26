@@ -416,6 +416,8 @@ pub struct Draw {
     pub raster: u32,
     /// `VGT_PRIMITIVE_TYPE`.
     pub primitive: u32,
+    /// `PA_SU_LINE_CNTL` WIDTH: half the line width in 12.4 fixed point.
+    pub line_half_width: u32,
     /// A negative `PA_CL_VPORT_YSCALE`, as PS5 titles set it.
     pub flip_y: bool,
     /// `PA_SC_GENERIC_SCISSOR` top left and bottom right.
@@ -447,6 +449,7 @@ impl Draw {
             write_mask: 0xF,
             raster: 0,
             primitive: TRILIST,
+            line_half_width: 4 << 4,
             flip_y: true,
             scissor: (0, 0, WIDTH, HEIGHT),
             vertices,
@@ -635,7 +638,7 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
         set(0x2_8C38, &[u32::MAX, u32::MAX]),
         set(0x2_8C44, &[2 | 1 << 18]),
         set(0x2_8A00, &[8 << 16 | 8, 0xFFFF_0000]),
-        set(0x2_8A08, &[8 << 3]),
+        set(0x2_8A08, &[d.line_half_width]),
         set(0x2_8754, &[0, 0, 0]),
         set(0x2_8760, &[sx_blend_opt(d.blend, dual); 8]),
         packet(NUM_INSTANCES, &[1]),
@@ -1141,7 +1144,43 @@ pub fn cases() -> Vec<Case> {
         d.primitive = prim;
         out.push(case(d));
     }
+    for (name, transpose) in [("x-major", false), ("y-major", true)] {
+        let mut d = Draw::new(
+            "draw primitive",
+            format!("wide line ends, {name}"),
+            Interp::PerspCenter,
+            Out::F32,
+            line_ends(transpose),
+        );
+        d.primitive = 2;
+        d.line_half_width = 1 << 4;
+        out.push(case(d));
+    }
     out.extend(texture::cases());
+    out
+}
+
+/// Short 2-pixel-wide lines, 16 going each way, whose ends step through
+/// sixteenths of a pixel along their major axis, so the hardware's rule for
+/// which end pixels a line covers can be read off. `transpose` swaps x and y.
+fn line_ends(transpose: bool) -> Vec<[f32; 8]> {
+    let mut out = Vec::new();
+    for k in 0..16 {
+        let f = k as f32 / 16.0;
+        let g = ((k * 7) % 16) as f32 / 16.0;
+        let across = 2.0 + 4.0 * k as f32 + 0.375;
+        for (from, to) in [(2.0 + f, 26.0 + g), (62.0 - f, 34.0 - g)] {
+            for along in [from, to] {
+                let (x, y) = if transpose {
+                    (across, along)
+                } else {
+                    (along, across)
+                };
+                let t = (along - 2.0) / 60.0;
+                out.push([x / 32.0 - 1.0, 1.0 - y / 32.0, 0.5, 1.0, t, 1.0 - t, f, 1.0]);
+            }
+        }
+    }
     out
 }
 
