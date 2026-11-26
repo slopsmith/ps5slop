@@ -94,13 +94,14 @@ impl Metal {
         self.encode_detile(texture, (slice, level), mip, (&buffer, offset), None, at)
     }
 
-    /// Copies into slice `slice` of `texture` only the texels whose bytes in
-    /// the tiled surface `new` differ from those in `old`.
+    /// Copies into slice `slice`, level `level` of `texture` only the texels
+    /// whose bytes in the tiled level `new` (laid out as `mip`, from its
+    /// offset) differ from those in `old`.
     pub(super) fn detile_changes(
         &mut self,
         texture: &Texture,
-        slice: usize,
-        layout: Layout,
+        (slice, level): (usize, usize),
+        mip: Mip,
         new: &[u8],
         old: &[u8],
         address: u64,
@@ -118,12 +119,8 @@ impl Metal {
         let (Some(new), Some(old)) = (bytes(new), bytes(old)) else {
             return false;
         };
-        let mip = Mip {
-            offset: 0,
-            layout,
-            origin: (0, 0),
-        };
-        self.encode_detile(texture, (slice, 0), mip, (&new, 0), Some(&old), address)
+        let mip = Mip { offset: 0, ..mip };
+        self.encode_detile(texture, (slice, level), mip, (&new, 0), Some(&old), address)
     }
 
     fn encode_detile(

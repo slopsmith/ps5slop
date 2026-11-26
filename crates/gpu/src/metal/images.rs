@@ -780,10 +780,11 @@ impl Metal {
                     self.end_pass();
                     let command = self.command();
                     let blit = command.blitCommandEncoder()?;
+                    let levels = old.mipmapLevelCount().min(texture.mipmapLevelCount());
                     for slice in 0..old.arrayLength().min(texture.arrayLength()) {
                         unsafe {
                             blit.copyFromTexture_sourceSlice_sourceLevel_toTexture_destinationSlice_destinationLevel_sliceCount_levelCount(
-                                &old, slice, 0, &texture, slice, 0, 1, 1,
+                                &old, slice, 0, &texture, slice, 0, 1, levels,
                             );
                         }
                     }
@@ -910,8 +911,10 @@ impl Metal {
         }
     }
 
-    /// Fills the slices of a 2D-array `texture` from the guest memory behind
-    /// `image`, returning what [`Metal::refresh_volume`] needs to notice later CPU writes there.
+    /// Fills every level of the slices of a 2D-array `texture` from the
+    /// guest memory behind `image`, each slice holding its own mip chain,
+    /// returning what [`Metal::refresh_volume`] needs to notice later CPU
+    /// writes there.
     fn fill_volume(
         &mut self,
         host: &dyn Host,
@@ -921,24 +924,24 @@ impl Metal {
         slices: u32,
     ) -> Option<VolumeSource> {
         let layout = Layout::new(image.tile?, bpe, image.width, image.height)?;
-        let base = image.address + layout.mip0_offset(image.last_level + 1);
-        let stride = layout.size().next_multiple_of(layout.block_bytes());
-        for slice in 0..slices {
-            self.detile_into(
-                host,
-                texture,
-                slice as usize,
-                base + slice as u64 * stride,
-                layout,
-            );
+        let chain = image.last_level + 1;
+        let stride = layout
+            .chain_size(chain)
+            .next_multiple_of(layout.block_bytes());
+        let mips = layout.mips(chain, (image.width, image.height), 1);
+        for slice in 0..slices as usize {
+            let at = image.address + slice as u64 * stride;
+            for (level, mip) in mips.iter().enumerate().take(texture.mipmapLevelCount()) {
+                self.detile_level_into(host, texture, slice, level, at, *mip);
+            }
         }
         let len = stride * slices as u64;
-        let shadow = guest_bytes(host, base, len).map(|b| Arc::new(b.to_vec()));
+        let shadow = guest_bytes(host, image.address, len).map(|b| Arc::new(b.to_vec()));
         Some(VolumeSource {
             image,
             bpe,
             slices,
-            base,
+            base: image.address,
             len,
             shadow,
             epoch: self.epoch,
@@ -988,18 +991,25 @@ impl Metal {
             ),
         );
         let stride = (src.len / src.slices as u64) as usize;
-        let size = layout.size() as usize;
+        let mips = layout.mips(
+            src.image.last_level + 1,
+            (src.image.width, src.image.height),
+            1,
+        );
         for slice in 0..src.slices as usize {
-            let range = slice * stride..slice * stride + size;
-            if new[range.clone()] != old[range.clone()] {
-                self.detile_changes(
-                    &texture,
-                    slice,
-                    layout,
-                    &new[range.clone()],
-                    &old[range],
-                    src.base + (slice * stride) as u64,
-                );
+            for (level, mip) in mips.iter().enumerate().take(texture.mipmapLevelCount()) {
+                let at = slice * stride + mip.offset as usize;
+                let range = at..at + mip.layout.size() as usize;
+                if range.end <= new.len() && new[range.clone()] != old[range.clone()] {
+                    self.detile_changes(
+                        &texture,
+                        (slice, level),
+                        *mip,
+                        &new[range.clone()],
+                        &old[range],
+                        src.base + at as u64,
+                    );
+                }
             }
         }
         if let Some(s) = self.volume_sources.get_mut(&address) {
@@ -1085,9 +1095,13 @@ impl Metal {
         }
         desc.setUsage(usage);
         desc.setStorageMode(MTLStorageMode::Shared);
-        if kind == TextureKind::Tex3d {
-            unsafe { desc.setMipmapLevelCount(volume_levels(image) as usize) };
-        }
+        let levels = if kind == TextureKind::Tex3d {
+            volume_levels(image)
+        } else {
+            let full = 32 - image.width.max(image.height).leading_zeros();
+            (image.last_level + 1).clamp(1, full)
+        };
+        unsafe { desc.setMipmapLevelCount(levels as usize) };
         let t = self.device.newTextureWithDescriptor(&desc)?;
         let row = w * texel_bytes(format)?;
         let zero = vec![0u8; row * h * if kind == TextureKind::Tex3d { d } else { 1 }];
