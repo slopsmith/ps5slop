@@ -314,13 +314,15 @@ pub fn gather(t: &Texture, s: &Sampler, u: f32, v: f32, comp: usize) -> [f64; 4]
     ]
 }
 
-/// The isotropic LOD of a texture of `size` texels whose coordinates change
-/// by `du` and `dv` (per x and per y pixel step).
+/// The LOD of a texture of `size` texels whose coordinates change by `du`
+/// and `dv` (per x and per y pixel step): log2 of the larger singular value
+/// of the derivatives in texels, as RDNA2's `image_get_lod` answers.
 pub fn lod(size: (u32, u32), du: [f64; 2], dv: [f64; 2]) -> f64 {
     let (w, h) = (size.0 as f64, size.1 as f64);
-    let x = (du[0] * w).hypot(dv[0] * h);
-    let y = (du[1] * w).hypot(dv[1] * h);
-    x.max(y).log2()
+    let (a, b, c, d) = (du[0] * w, du[1] * w, dv[0] * h, dv[1] * h);
+    let s = a * a + b * b + c * c + d * d;
+    let det = a * d - b * c;
+    (0.5 * (s + (s * s - 4.0 * det * det).max(0.0).sqrt())).log2() / 2.0
 }
 
 #[cfg(test)]

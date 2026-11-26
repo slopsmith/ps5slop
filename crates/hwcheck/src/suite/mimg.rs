@@ -449,14 +449,44 @@ fn room_for_every_lane(mut dim: Dim) -> Dim {
     dim
 }
 
+/// How a test's float coordinates are chosen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Coords {
+    /// Normalized, random per lane.
+    Random,
+    /// In texels (the instruction's UNORM), random per lane.
+    Texels,
+    /// Each quad of lanes a small 2x2 block (top left, top right, bottom
+    /// left, bottom right), its spacing sweeping the LOD from -1.5 to 3.5
+    /// over the quads; the bottom right lane is off the grid, so per-lane
+    /// and per-quad derivatives differ.
+    Quads,
+}
+
 /// Every lane's record: its address operands, store data, the destination's start.
-fn records(args: &[Arg], dim: Dim, unique: bool, integer: bool, seed: &str) -> Vec<u32> {
+fn records(
+    args: &[Arg],
+    dim: Dim,
+    unique: bool,
+    integer: bool,
+    coords: Coords,
+    seed: &str,
+) -> Vec<u32> {
     let mut rng = Rng::new(seed);
     let lanes = (GROUPS * 64) as usize;
     let mut out = Vec::with_capacity(lanes * IN_WORDS);
     let (w, h, d) = dim.size;
     let extent = [w, h, d];
+    let mut quad = [0.0f32; 3];
     for i in 0..lanes {
+        if coords == Coords::Quads && i % 4 == 0 {
+            let lod = -1.5 + 5.0 * (i / 4) as f32 / (lanes / 4) as f32;
+            quad = [
+                rng.below(1000) as f32 / 1000.0,
+                rng.below(1000) as f32 / 1000.0,
+                lod.exp2(),
+            ];
+        }
         let mut rec = [0u32; IN_WORDS];
         for (k, &a) in args.iter().enumerate() {
             let f = |v: f32| v.to_bits();
@@ -477,7 +507,25 @@ fn records(args: &[Arg], dim: Dim, unique: bool, integer: bool, seed: &str) -> V
                 Arg::Coord(c) if integer => {
                     (rng.below(extent[c].max(1) as usize + 4) as i32 - 2) as u32
                 }
-                Arg::Coord(_) => f((rng.next() % 1501) as f32 / 1000.0 - 0.25),
+                Arg::Coord(c) if coords == Coords::Quads && c < 2 => {
+                    let lane = i % 4;
+                    let step = quad[2] / extent[c] as f32;
+                    let (on, skew) = if c == 0 {
+                        (lane & 1, 0.5)
+                    } else {
+                        (lane >> 1, -0.3)
+                    };
+                    let skew = if lane == 3 { skew } else { 0.0 };
+                    f(quad[c] + step * (on as f32 + skew))
+                }
+                Arg::Coord(c) => {
+                    let v = (rng.next() % 1501) as f32 / 1000.0 - 0.25;
+                    f(if coords == Coords::Texels {
+                        v * extent[c] as f32
+                    } else {
+                        v
+                    })
+                }
                 Arg::Slice if unique => (i as u32 / w) % d,
                 Arg::Slice if integer => rng.below(d as usize + 1) as u32,
                 Arg::Slice => f(rng.below(d as usize + 1) as f32 + 0.3),
@@ -486,7 +534,7 @@ fn records(args: &[Arg], dim: Dim, unique: bool, integer: bool, seed: &str) -> V
                 Arg::Mip => rng.below(3) as u32,
             };
         }
-        for word in &mut rec[8..12] {
+        for word in rec[8..12].iter_mut().skip(args.len().saturating_sub(8)) {
             *word = rng.next() as u32;
         }
         rec[14] = rng.next() as u32;
@@ -503,8 +551,9 @@ fn case(
     format: usize,
     samp: usize,
     dmask: u32,
-    unorm: bool,
+    coords: Coords,
 ) -> Option<Case> {
+    let unorm = coords == Coords::Texels;
     let args = args(op.name, dim);
     if args.len() > 13 {
         return None;
@@ -540,13 +589,13 @@ fn case(
     if dmask != 0xF {
         variant += &format!(" dmask {dmask:#x}");
     }
-    if unorm {
-        variant += " unorm";
+    match coords {
+        Coords::Random => {}
+        Coords::Texels => variant += " unorm",
+        Coords::Quads => variant += " quad derivatives",
     }
     let seed = format!("{} {variant}", op.name);
-    let integer = !(op.name.starts_with("image_sample")
-        || op.name.starts_with("image_gather")
-        || op.name == "image_get_lod");
+    let integer = !uses_sampler(op.name);
     let mut case = build(Test {
         opcode: op.name,
         variant,
@@ -563,7 +612,7 @@ fn case(
             Dst::F32
         },
         lds_bytes: 0,
-        inputs: records(&args, dim, writes, integer || unorm, &seed),
+        inputs: records(&args, dim, writes, integer, coords, &seed),
     });
     let mut table: Vec<u32> = descriptor(dim, fcode, levels).to_vec();
     table.extend(sampler(samp));
@@ -603,6 +652,26 @@ const SWEEP: [&str; 11] = [
     "image_sample_c_lz",
     "image_gather4",
     "image_gather4_c",
+];
+
+/// Opcodes that also run over quads whose LOD is known ([`Coords::Quads`]).
+const QUADS: [&str; 3] = ["image_sample", "image_gather4", "image_get_lod"];
+const TRILINEAR: usize = 12;
+const POINT_MIPS: usize = 13;
+
+/// Opcodes that compare against a reference also run over the formats
+/// depth images use, with a comparing sampler.
+const COMPARED: [&str; 2] = ["image_sample_c_lz", "image_gather4_c"];
+const COMPARE_LESS: usize = 10;
+const DEPTH_FORMATS: [&str; 8] = [
+    "32_FLOAT",
+    "16_UNORM",
+    "16_FLOAT",
+    "8_UNORM",
+    "32_32_FLOAT",
+    "8_24_UNORM",
+    "24_8_UNORM",
+    "X24_8_32_FLOAT",
 ];
 
 /// Every image test, in opcode table order.
@@ -768,24 +837,43 @@ fn image_cases() -> Vec<Case> {
             0xF
         };
         for dim in dims(op.name) {
-            out.extend(case(op, dim, base, 0, dmask, false));
+            out.extend(case(op, dim, base, 0, dmask, Coords::Random));
         }
         if !atomic {
             for f in [r32_float, rgba16_float] {
-                out.extend(case(op, two_d, f, 0, dmask, false));
+                out.extend(case(op, two_d, f, 0, dmask, Coords::Random));
+            }
+        }
+        if QUADS.contains(&op.name) {
+            for s in [TRILINEAR, POINT_MIPS] {
+                out.extend(case(op, two_d, base, s, dmask, Coords::Quads));
+            }
+        }
+        if COMPARED.contains(&op.name) {
+            for f in DEPTH_FORMATS {
+                out.extend(case(
+                    op,
+                    two_d,
+                    format(f),
+                    COMPARE_LESS,
+                    dmask,
+                    Coords::Random,
+                ));
             }
         }
         if SWEEP.contains(&op.name) {
             let writes = op.name.starts_with("image_store");
             let storable = |f: usize| !(writes && FORMATS[f].0.starts_with("BC"));
             for f in (0..FORMATS.len()).filter(|&f| f != base && storable(f)) {
-                out.extend(case(op, two_d, f, 0, dmask, false));
+                out.extend(case(op, two_d, f, 0, dmask, Coords::Random));
             }
             for s in 1..SAMPLERS.len() {
-                out.extend(case(op, two_d, base, s, dmask, false));
+                out.extend(case(op, two_d, base, s, dmask, Coords::Random));
             }
-            out.extend(case(op, two_d, base, 0, 0x5, false));
-            out.extend(case(op, two_d, base, 0, dmask, true));
+            out.extend(case(op, two_d, base, 0, 0x5, Coords::Random));
+            // Unnormalized coordinates need a clamping sampler (Vulkan's rule).
+            let clamp = if uses_sampler(op.name) { 4 } else { 0 };
+            out.extend(case(op, two_d, base, clamp, dmask, Coords::Texels));
         }
     }
     out
@@ -832,7 +920,7 @@ pub fn sampling_heavy(samples: u32, groups: u32) -> Case {
         out_names: &OUT_NAMES,
         dst: Dst::F32,
         lds_bytes: 0,
-        inputs: records(&args, dim, false, false, "sampling heavy")
+        inputs: records(&args, dim, false, false, Coords::Random, "sampling heavy")
             .into_iter()
             .cycle()
             .take((groups * 64) as usize * IN_WORDS)
@@ -859,7 +947,7 @@ mod tests {
     #[test]
     fn image_tests_decode_to_what_they_test() {
         let text = |n: &str, d: usize| {
-            case(by_name(n).unwrap(), DIMS[d], 0, 0, 0xF, false)
+            case(by_name(n).unwrap(), DIMS[d], 0, 0, 0xF, Coords::Random)
                 .unwrap()
                 .text
         };
