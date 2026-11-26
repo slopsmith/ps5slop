@@ -924,7 +924,7 @@ impl Printer<'_> {
             self.require(v.src[2] >= src::VGPR0);
         }
         if v.enc == VEnc::Sdwa && (name.starts_with("v_mac_") || name.starts_with("v_fmac_")) {
-            self.require(v.src[0] >= src::VGPR0 && v.src[1] >= src::VGPR0);
+            self.require(false);
         }
         if v.enc == VEnc::Sdwa && name.starts_with("v_cmp_class") {
             self.require(v.neg == 0 && v.abs == 0);
@@ -1010,7 +1010,9 @@ impl Printer<'_> {
         };
         match v.enc {
             VEnc::E64 => {
-                if is_16bit(op) && v.opsel != 0 {
+                if op.name.starts_with("v_permlane") && v.opsel != 0 {
+                    write!(self.out, " op_sel:[{}]", arr(v.opsel, 2)).unwrap();
+                } else if is_16bit(op) && v.opsel != 0 {
                     let mut parts: Vec<String> =
                         (0..nsrc).map(|i| format!("{}", v.opsel >> i & 1)).collect();
                     parts.push(format!("{}", v.opsel >> 3 & 1));

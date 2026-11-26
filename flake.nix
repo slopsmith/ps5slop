@@ -44,5 +44,21 @@
         buildInputs = [ ffmpeg ];
         LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
       };
+
+      # Only for ps5slop-hwcheck on an AMD GPU (docs/shaders.md).
+      devShells.x86_64-linux.default =
+        let
+          linux = nixpkgs.legacyPackages.x86_64-linux;
+        in
+        linux.mkShell {
+          packages = [
+            linux.cargo
+            linux.clippy
+            linux.rustc
+            linux.rustfmt
+            linux.llvm
+          ];
+          buildInputs = [ linux.libdrm ];
+        };
     };
 }

@@ -1,7 +1,7 @@
 //! Deterministic offline replay of a [`FrameCapture`] through the Metal
 //! renderer without the game or the hypervisor.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
@@ -70,6 +70,8 @@ pub struct ReplayOptions {
     pub frames: usize,
     /// Read this texel `(target, x, y)` after every draw that binds the target.
     pub history: Option<(u64, u32, u32)>,
+    /// Record this 0-based dispatch with the memory around it, and stop there.
+    pub extract: Option<usize>,
 }
 
 /// The value of the texel given by [`ReplayOptions::history`] after one draw.
@@ -102,6 +104,24 @@ pub struct ReplayResult {
     /// One entry per frame run; `draws` and `dispatches` hold the last frame's.
     pub frames: Vec<FrameTime>,
     pub history: Vec<TexelAfter>,
+    /// The dispatch [`ReplayOptions::extract`] asked for.
+    pub extracted: Option<Extracted>,
+}
+
+/// One dispatch with the guest memory before and after it.
+pub struct Extracted {
+    pub program: u64,
+    /// The SH register bank as the dispatch saw it.
+    pub sh: Vec<u32>,
+    pub groups: [u32; 3],
+    /// The grid in threads when its last groups are partial.
+    pub threads: Option<[u32; 3]>,
+    /// The guest address ranges replay holds memory for.
+    pub ranges: Vec<(u64, u64)>,
+    /// Every non-zero 16 KiB page right before the dispatch.
+    pub before: BTreeMap<u64, Vec<u8>>,
+    /// Every page the dispatch changed, as Metal left it.
+    pub after: BTreeMap<u64, Vec<u8>>,
 }
 
 struct Segment {
@@ -259,6 +279,11 @@ impl ReplayHost {
             .filter(|s| s.start <= addr && addr < s.end)
     }
 
+    /// The guest address ranges replay holds memory for.
+    pub fn ranges(&self) -> Vec<(u64, u64)> {
+        self.segments.iter().map(|s| (s.start, s.end)).collect()
+    }
+
     pub fn last_flip(&self) -> Option<Flip> {
         self.flips
             .lock()
@@ -372,6 +397,41 @@ struct ReplayState {
     open_pass: Option<(Vec<u64>, usize, f64)>,
     shown: Option<u64>,
     history: Vec<TexelAfter>,
+    ranges: Vec<(u64, u64)>,
+    extracted: Option<Extracted>,
+}
+
+/// The non-zero 16 KiB pages of `ranges`.
+fn nonzero_pages(host: &dyn Host, ranges: &[(u64, u64)]) -> BTreeMap<u64, Vec<u8>> {
+    let mut out = BTreeMap::new();
+    let mut page = vec![0u8; PAGE_SIZE as usize];
+    for &(lo, hi) in ranges {
+        for addr in (lo..hi).step_by(PAGE_SIZE as usize) {
+            if host.read(addr, &mut page) && page.iter().any(|&b| b != 0) {
+                out.insert(addr, page.clone());
+            }
+        }
+    }
+    out
+}
+
+/// The pages of `ranges` that differ from `before` (absent pages are zeros).
+fn changed_pages(
+    host: &dyn Host,
+    ranges: &[(u64, u64)],
+    before: &BTreeMap<u64, Vec<u8>>,
+) -> BTreeMap<u64, Vec<u8>> {
+    let zero = vec![0u8; PAGE_SIZE as usize];
+    let mut out = BTreeMap::new();
+    let mut page = vec![0u8; PAGE_SIZE as usize];
+    for &(lo, hi) in ranges {
+        for addr in (lo..hi).step_by(PAGE_SIZE as usize) {
+            if host.read(addr, &mut page) && page != *before.get(&addr).unwrap_or(&zero) {
+                out.insert(addr, page.clone());
+            }
+        }
+    }
+    out
 }
 
 impl ReplayState {
@@ -537,6 +597,25 @@ impl Backend for ReplayBackend {
         if s.options.time_draws {
             s.start_timing();
         }
+        if s.options.extract == Some(idx) {
+            s.metal.sync();
+            let ranges = s.ranges.clone();
+            let before = nonzero_pages(host, &ranges);
+            s.metal.dispatch(host, state, dispatch);
+            s.metal.sync();
+            let after = changed_pages(host, &ranges, &before);
+            s.extracted = Some(Extracted {
+                program: cs,
+                sh: state.sh.to_vec(),
+                groups: dispatch.groups,
+                threads: dispatch.threads,
+                ranges,
+                before,
+                after,
+            });
+            s.stopped = true;
+            return;
+        }
         let t0 = Instant::now();
         s.metal.dispatch(host, state, dispatch);
         let cpu_ms = t0.elapsed().as_secs_f64() * 1e3;
@@ -569,6 +648,9 @@ impl Backend for ReplayBackend {
         let mut s = self.lock();
         if s.stopped {
             return true;
+        }
+        if s.options.extract == Some(s.dispatches.len()) {
+            return false;
         }
         let cs = ((state.sh[sh::COMPUTE_PGM_LO] as u64)
             | (state.sh[sh::COMPUTE_PGM_LO + 1] as u64) << 32)
@@ -718,6 +800,8 @@ pub fn replay(capture: &FrameCapture, options: ReplayOptions) -> Result<ReplayRe
             open_pass: None,
             shown: None,
             history: Vec::new(),
+            ranges: host.ranges(),
+            extracted: None,
         })));
 
         let mut frames = Vec::new();
@@ -781,6 +865,7 @@ pub fn replay(capture: &FrameCapture, options: ReplayOptions) -> Result<ReplayRe
             summary,
             frames,
             history: std::mem::take(&mut s.history),
+            extracted: s.extracted.take(),
         })
     })
 }

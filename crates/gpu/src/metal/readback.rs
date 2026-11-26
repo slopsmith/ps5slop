@@ -53,6 +53,12 @@ pub fn read_rgba(texture: &SharedTexture) -> Option<(u32, u32, Vec<u8>)> {
     Some((w as u32, h as u32, px))
 }
 
+/// `texture`'s texels as stored, `(width, height, bytes)` with rows unpadded.
+pub fn read_bytes(texture: &SharedTexture) -> Option<(u32, u32, Vec<u8>)> {
+    let t = &texture.0;
+    Some((t.width() as u32, t.height() as u32, read_raw(t)?))
+}
+
 /// The texels of a 2D texture as stored, row by row with no padding.
 pub(super) fn read_raw(t: &Texture) -> Option<Vec<u8>> {
     let bpp = texel_bytes(t.pixelFormat())?;

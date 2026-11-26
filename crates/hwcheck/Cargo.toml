@@ -1,0 +1,19 @@
+[package]
+name = "hwcheck"
+description = "The hardware oracle: single-instruction GFX10 tests run through the Metal path and on a real AMD GPU, compared"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+gfx10 = { path = "../gfx10" }
+savestate = { path = "../savestate" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gpu = { path = "../gpu" }
+
+[[bin]]
+name = "ps5slop-hwcheck"
+path = "src/bin/ps5slop-hwcheck.rs"

@@ -66,8 +66,8 @@ pub use inspect::{
 use inspect::{Snap, frames, record, skipped};
 use memory::*;
 use programs::*;
+pub use readback::{read_bytes, read_depth_rgba, read_frame, read_rgba, read_texel, read_values};
 use readback::{read_depth, read_raw};
-pub use readback::{read_depth_rgba, read_frame, read_rgba, read_texel, read_values};
 use saved::*;
 use targets::*;
 

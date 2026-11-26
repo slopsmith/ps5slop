@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# The hardware oracle for GFX10 instructions (docs/shaders.md).
+# Generates the instruction tests and runs them through ps5slop's Metal path
+# here, then copies the source and the tests to HOST (Linux with an amdgpu
+# GPU and Nix), runs them there and prints the comparison. Results land in
+# target/hwcheck/results.tsv and are merged into crates/hwcheck/results/<gpu>.tsv;
+# every test's hardware result is kept in target/hwcheck/hw for `ps5slop-hwcheck check`.
+#   usage: scripts/hwcheck HOST [--filter TEXT]...
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+host=${1:?usage: scripts/hwcheck HOST [--filter TEXT]...}
+shift
+out="$root/target/hwcheck"
+remote='~/ps5slop-hw'
+
+cd "$root"
+nix develop . -c cargo build -q --release -p hwcheck
+rm -rf "$out/tests"
+mkdir -p "$out/tests"
+./target/release/ps5slop-hwcheck gen "$out/tests" "$@"
+
+jj file list > "$out/files.txt"
+ssh "$host" "rm -rf $remote/src && mkdir -p $remote/src $remote/tests"
+rsync -a --delete --files-from="$out/files.txt" . "$host:$remote/src/"
+rsync -a --delete "$out/tests/" "$host:$remote/tests/"
+ssh "$host" "cd $remote/src && CARGO_TARGET_DIR=$remote/target nix develop . -c bash -c \
+	'cargo build -q --release -p hwcheck && rm -rf $remote/images && $remote/target/release/ps5slop-hwcheck run $remote/tests --results $remote/results.tsv --images $remote/images --save $remote/hw'" \
+	| tee "$out/report.txt" || true
+scp -q "$host:$remote/results.tsv" "$out/results.tsv"
+mkdir -p "$out/hw"
+rsync -a "$host:$remote/hw/" "$out/hw/"
+rm -rf "$out/images"
+scp -q -r "$host:$remote/images" "$out/images" 2>/dev/null || true
+cpu=$(sed -n 's/^on .*(\(gfx[0-9a-f]*\))$/\1/p' "$out/report.txt")
+if [ -n "$cpu" ]; then
+	kept="$root/crates/hwcheck/results/$cpu.tsv"
+	touch "$kept"
+	awk -F'\t' 'NR == FNR { run[$1 FS $2] = 1; next } !(($1 FS $2) in run)' "$out/results.tsv" "$kept" \
+		| cat - "$out/results.tsv" | sort -t "$(printf '\t')" -k1,2 > "$kept.new"
+	mv "$kept.new" "$kept"
+	echo "merged into $kept"
+fi
+echo "results in $out/results.tsv, report in $out/report.txt"

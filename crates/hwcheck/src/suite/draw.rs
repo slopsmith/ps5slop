@@ -1,0 +1,876 @@
+//! Draw tests: a pass-through vertex program, a pixel program built for the
+//! case and a linear render target, set up register by register as a PS5
+//! command buffer would, and compared pixel by pixel. The hardware also gets
+//! what a driver sends around its command buffers (CONTEXT_CONTROL,
+//! CLEAR_STATE, compute-unit masks before; a cache flush after).
+//!
+//! Suites: every colour format and number type through both export paths,
+//! the component swaps, the interpolation modes and pixel inputs, every
+//! blend factor and function, logic ops and write masks, and raster state
+//! (culling, fill rule, viewport sign, scissors, points and lines).
+
+use gfx10::opinfo::by_name;
+
+use super::{BASE_MODE, INPUTS, OUTPUTS, PROGRAM, Rng};
+use crate::{Case, write_pages};
+
+/// The pixel program's address; the vertex program sits at [`PROGRAM`].
+const PIXEL_PROGRAM: u64 = PROGRAM + 0x1000;
+/// The render target.
+const TARGET: u64 = OUTPUTS;
+const WIDTH: u32 = 64;
+const HEIGHT: u32 = 64;
+
+// Assembled with `llvm-mc -mcpu=gfx1013 -mattr=+wavefrontsize64`.
+/// Loads vertex `v0`'s position and one attribute (8 floats at `s[0:1]`)
+/// and exports them.
+const VERTEX: [u32; 11] = [
+    0x3402_0085, // v_lshlrev_b32_e32 v1, 5, v0
+    0xDC38_8000,
+    0x0200_0001, // global_load_dwordx4 v[2:5], v1, s[0:1]
+    0xDC38_8010,
+    0x0600_0001, // global_load_dwordx4 v[6:9], v1, s[0:1] offset:16
+    0xBF8C_3F70, // s_waitcnt vmcnt(0)
+    0xF800_08CF,
+    0x0504_0302, // exp pos0 v2, v3, v4, v5 done
+    0xF800_020F,
+    0x0908_0706, // exp param0 v6, v7, v8, v9
+    0xBF81_0000, // s_endpgm
+];
+
+const CONTEXT_CONTROL: u32 = 0x28;
+const CLEAR_STATE: u32 = 0x12;
+const SET_CONTEXT_REG: u32 = 0x69;
+const SET_SH_REG: u32 = 0x76;
+const SET_UCONFIG_REG: u32 = 0x79;
+const NUM_INSTANCES: u32 = 0x2F;
+const DRAW_INDEX_AUTO: u32 = 0x2D;
+
+fn packet(op: u32, body: &[u32]) -> Vec<u32> {
+    let mut p = vec![(3 << 30) | ((body.len() as u32 - 1) << 16) | (op << 8)];
+    p.extend_from_slice(body);
+    p
+}
+
+/// A register write by the register's byte address.
+fn set(reg: u32, values: &[u32]) -> Vec<u32> {
+    let (op, base) = match reg {
+        0x2_8000..=0x2_8FFF => (SET_CONTEXT_REG, 0x2_8000),
+        0xB000..=0xBFFF => (SET_SH_REG, 0xB000),
+        _ => (SET_UCONFIG_REG, 0x3_0000),
+    };
+    let mut body = vec![(reg - base) / 4];
+    body.extend_from_slice(values);
+    packet(op, &body)
+}
+
+/// What only the hardware gets first: the state Mesa's drivers send once per
+/// command stream on GFX10 (`ac_init_graphics_preamble_state`).
+fn preamble() -> Vec<u32> {
+    const LOAD_ENABLES: u32 = 1 << 31;
+    const SHADOW_ENABLES: u32 = 1 << 31;
+    const CU_EN_ALL: u32 = 0xFFFF;
+    const WAVE_LIMIT: u32 = 0x3F << 16;
+    [
+        packet(CONTEXT_CONTROL, &[LOAD_ENABLES, SHADOW_ENABLES]),
+        packet(CLEAR_STATE, &[0]),
+        set(0xB01C, &[CU_EN_ALL | WAVE_LIMIT]),
+        set(0xB004, &[CU_EN_ALL]),
+        set(0xB118, &[CU_EN_ALL | WAVE_LIMIT]),
+        set(0xB104, &[CU_EN_ALL]),
+        set(0x2_8708, &[1]),
+    ]
+    .concat()
+}
+
+// An end-of-pipe colour cache flush with an L2 write-back; the GCR bits
+// as Linux's `nvd.h` names them.
+fn postamble() -> Vec<u32> {
+    const RELEASE_MEM: u32 = 0x49;
+    const CACHE_FLUSH_AND_INV_TS_EVENT: u32 = 20;
+    const EVENT_INDEX_EOP: u32 = 5 << 8;
+    const GLM_WB: u32 = 1 << 12;
+    const GLM_INV: u32 = 1 << 13;
+    const GLV_INV: u32 = 1 << 14;
+    const GL1_INV: u32 = 1 << 15;
+    const GL2_INV: u32 = 1 << 20;
+    const GL2_WB: u32 = 1 << 21;
+    let event = CACHE_FLUSH_AND_INV_TS_EVENT
+        | EVENT_INDEX_EOP
+        | GLM_WB
+        | GLM_INV
+        | GLV_INV
+        | GL1_INV
+        | GL2_INV
+        | GL2_WB;
+    packet(RELEASE_MEM, &[event, 0, 0, 0, 0, 0, 0])
+}
+
+/// How a pixel program gets attribute 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Interp {
+    PerspCenter,
+    PerspCentroid,
+    PerspSample,
+    LinearCenter,
+    LinearCentroid,
+    /// `SPI_PS_INPUT_CNTL` FLAT_SHADE: the provoking vertex's value.
+    Flat,
+    /// `v_interp_mov_f32` of vertex P0.
+    MovP0,
+    /// The pixel's position (`POS_X`, `POS_Y`, `POS_Z`, `POS_W` inputs).
+    FragCoord,
+    /// Front face, the ancillary word, sample coverage and the fixed-point position.
+    Misc,
+}
+
+/// How the pixel program turns its four floats into the export.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Out {
+    /// Four 32-bit floats (`SPI_SHADER_32_ABGR`).
+    F32,
+    /// Scaled to [0, 300) and converted to unsigned integers, 32 bits each.
+    U32,
+    /// Scaled to [-150, 150) and converted to signed integers, 32 bits each.
+    I32,
+    /// Packed to half floats (`FP16_ABGR`, `compr`).
+    F16,
+    /// Packed to 16-bit unorm (`UNORM16_ABGR`).
+    Unorm16,
+    /// Packed to 16-bit snorm (`SNORM16_ABGR`).
+    Snorm16,
+    /// Packed to 16-bit unsigned integers (`UINT16_ABGR`).
+    Uint16,
+    /// Packed to 16-bit signed integers (`SINT16_ABGR`).
+    Sint16,
+}
+
+impl Interp {
+    /// The opcodes a pixel program for this input uses to get its values,
+    /// and `exp`, which every draw tests.
+    fn covers(self) -> Vec<&'static str> {
+        match self {
+            Interp::FragCoord | Interp::Misc => vec!["exp"],
+            Interp::MovP0 => vec!["exp", "v_interp_mov_f32"],
+            _ => vec!["exp", "v_interp_p1_f32", "v_interp_p2_f32"],
+        }
+    }
+}
+
+impl Out {
+    /// `SPI_SHADER_COL_FORMAT` for MRT0.
+    fn export_format(self) -> u32 {
+        match self {
+            Out::F32 | Out::U32 | Out::I32 => 9,
+            Out::F16 => 4,
+            Out::Unorm16 => 5,
+            Out::Snorm16 => 6,
+            Out::Uint16 => 7,
+            Out::Sint16 => 8,
+        }
+    }
+}
+
+/// VGPRs each `SPI_PS_INPUT_ADDR` bit takes, from bit 0.
+const INPUT_VGPRS: [u32; 16] = [2, 2, 2, 3, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+
+fn input_vgpr(addr: u32, bit: u32) -> u32 {
+    (0..bit)
+        .filter(|&b| addr >> b & 1 != 0)
+        .map(|b| INPUT_VGPRS[b as usize])
+        .sum()
+}
+
+fn vop1(name: &str, vdst: u32, src0: u32) -> u32 {
+    let op = by_name(name).expect("in the opcode table").code as u32;
+    0x7E00_0000 | vdst << 17 | op << 9 | src0
+}
+
+fn vop2(name: &str, vdst: u32, src0: u32, vsrc1: u32) -> u32 {
+    let op = by_name(name).expect("in the opcode table").code as u32;
+    op << 25 | vdst << 17 | vsrc1 << 9 | src0
+}
+
+fn vop3(name: &str, vdst: u32, src0: u32, src1: u32) -> [u32; 2] {
+    let op = by_name(name).expect("in the opcode table").code as u32;
+    [0xD400_0000 | op << 16 | vdst, src1 << 9 | src0]
+}
+
+fn vintrp(op: u32, vdst: u32, vsrc: u32, chan: u32) -> u32 {
+    0xC800_0000 | vdst << 18 | op << 16 | chan << 8 | vsrc
+}
+
+/// `exp mrtN` of `srcs`, done and valid mask; packed (`compr`) exports
+/// name each register twice and carry two of them.
+fn export(target: u32, compr: bool, srcs: [u32; 4]) -> [u32; 2] {
+    let regs = if compr {
+        srcs[2] << 8 | srcs[0]
+    } else {
+        srcs[3] << 24 | srcs[2] << 16 | srcs[1] << 8 | srcs[0]
+    };
+    [
+        0xF800_0000 | 1 << 12 | 1 << 11 | (compr as u32) << 10 | target << 4 | 0xF,
+        regs,
+    ]
+}
+
+const LITERAL: u32 = 0xFF;
+const VGPR: u32 = 256;
+
+/// A pixel program: `SPI_PS_INPUT_ENA`/`ADDR`, `SPI_PS_INPUT_CNTL_0`, its code.
+pub struct Pixel {
+    pub inputs: u32,
+    pub cntl: u32,
+    pub code: Vec<u32>,
+}
+
+/// The pixel program for `interp` and `out`: four floats into v20..v23,
+/// converted, exported to MRT0.
+pub fn pixel(interp: Interp, out: Out) -> Pixel {
+    const PERSP_SAMPLE: u32 = 0;
+    const PERSP_CENTER: u32 = 1;
+    const PERSP_CENTROID: u32 = 2;
+    const LINEAR_CENTER: u32 = 5;
+    const LINEAR_CENTROID: u32 = 6;
+    let (bary, extra): (u32, &[u32]) = match interp {
+        Interp::PerspCenter | Interp::Flat | Interp::MovP0 => (PERSP_CENTER, &[]),
+        Interp::PerspCentroid => (PERSP_CENTROID, &[]),
+        Interp::PerspSample => (PERSP_SAMPLE, &[]),
+        Interp::LinearCenter => (LINEAR_CENTER, &[]),
+        Interp::LinearCentroid => (LINEAR_CENTROID, &[]),
+        Interp::FragCoord => (PERSP_CENTER, &[8, 9, 10, 11]),
+        Interp::Misc => (PERSP_CENTER, &[12, 13, 14, 15]),
+    };
+    let inputs = extra.iter().fold(1 << bary, |m, b| m | 1 << b);
+    let i = input_vgpr(inputs, bary);
+    let mut code = vec![0xBEFC_0300]; // s_mov_b32 m0, s0
+    match interp {
+        Interp::FragCoord | Interp::Misc => {
+            for (k, &b) in extra.iter().enumerate() {
+                code.push(vop1(
+                    "v_mov_b32",
+                    20 + k as u32,
+                    VGPR + input_vgpr(inputs, b),
+                ));
+            }
+        }
+        Interp::MovP0 => {
+            for c in 0..4 {
+                code.push(vintrp(2, 20 + c, 0, c));
+            }
+        }
+        _ => {
+            for c in 0..4 {
+                code.push(vintrp(0, 20 + c, i, c));
+                code.push(vintrp(1, 20 + c, i + 1, c));
+            }
+        }
+    }
+    let scale = |code: &mut Vec<u32>, k: f32, sub: f32| {
+        for c in 0..4 {
+            code.extend([
+                vop2("v_mul_f32", 20 + c, LITERAL, VGPR + 20 + c),
+                k.to_bits(),
+            ]);
+            if sub != 0.0 {
+                code.extend([
+                    vop2("v_subrev_f32", 20 + c, LITERAL, VGPR + 20 + c),
+                    sub.to_bits(),
+                ]);
+            }
+        }
+    };
+    let (compr, srcs) = match out {
+        Out::F32 => (false, [20, 21, 22, 23]),
+        Out::U32 | Out::I32 => {
+            let signed = out == Out::I32;
+            scale(&mut code, 300.0, if signed { 150.0 } else { 0.0 });
+            let cvt = if signed {
+                "v_cvt_i32_f32"
+            } else {
+                "v_cvt_u32_f32"
+            };
+            for c in 0..4 {
+                code.push(vop1(cvt, 20 + c, VGPR + 20 + c));
+            }
+            (false, [20, 21, 22, 23])
+        }
+        Out::F16 => {
+            code.push(vop2("v_cvt_pkrtz_f16_f32", 24, VGPR + 20, 21));
+            code.push(vop2("v_cvt_pkrtz_f16_f32", 25, VGPR + 22, 23));
+            (true, [24, 24, 25, 25])
+        }
+        Out::Unorm16 | Out::Snorm16 => {
+            let name = if out == Out::Unorm16 {
+                "v_cvt_pknorm_u16_f32"
+            } else {
+                "v_cvt_pknorm_i16_f32"
+            };
+            code.extend(vop3(name, 24, VGPR + 20, VGPR + 21));
+            code.extend(vop3(name, 25, VGPR + 22, VGPR + 23));
+            (true, [24, 24, 25, 25])
+        }
+        Out::Uint16 | Out::Sint16 => {
+            let signed = out == Out::Sint16;
+            scale(&mut code, 300.0, if signed { 150.0 } else { 0.0 });
+            let (cvt, pack) = if signed {
+                ("v_cvt_i32_f32", "v_cvt_pk_i16_i32")
+            } else {
+                ("v_cvt_u32_f32", "v_cvt_pk_u16_u32")
+            };
+            for c in 0..4 {
+                code.push(vop1(cvt, 20 + c, VGPR + 20 + c));
+            }
+            code.extend(vop3(pack, 24, VGPR + 20, VGPR + 21));
+            code.extend(vop3(pack, 25, VGPR + 22, VGPR + 23));
+            (true, [24, 24, 25, 25])
+        }
+    };
+    code.extend(export(0, compr, srcs));
+    code.push(0xBF81_0000);
+    const FLAT_SHADE: u32 = 1 << 10;
+    Pixel {
+        inputs,
+        cntl: if interp == Interp::Flat {
+            FLAT_SHADE
+        } else {
+            0
+        },
+        code,
+    }
+}
+
+/// One draw test's settings.
+pub struct Draw {
+    pub name: String,
+    pub variant: String,
+    pub pixel: Pixel,
+    pub out: Out,
+    /// `CB_COLOR0_INFO` FORMAT, NUMBER_TYPE and COMP_SWAP, and bytes per pixel.
+    pub format: (u32, u32, u32, u32),
+    /// `CB_BLEND0_CONTROL`.
+    pub blend: u32,
+    /// `CB_BLEND_RED`..`ALPHA`.
+    pub blend_color: [f32; 4],
+    /// `CB_COLOR_CONTROL` ROP3.
+    pub rop3: u32,
+    /// `CB_TARGET_MASK` for MRT0.
+    pub write_mask: u32,
+    /// `PA_SU_SC_MODE_CNTL`.
+    pub raster: u32,
+    /// `VGT_PRIMITIVE_TYPE`.
+    pub primitive: u32,
+    /// A negative `PA_CL_VPORT_YSCALE`, as PS5 titles set it.
+    pub flip_y: bool,
+    /// `PA_SC_GENERIC_SCISSOR` top left and bottom right.
+    pub scissor: (u32, u32, u32, u32),
+    /// Vertices: position (x, y, z, w) and attribute 0.
+    pub vertices: Vec<[f32; 8]>,
+    /// Opcodes the draw exercises: its exports and interpolation.
+    pub covers: Vec<&'static str>,
+}
+
+impl Draw {
+    fn new(name: &str, variant: String, interp: Interp, out: Out, vertices: Vec<[f32; 8]>) -> Self {
+        Draw {
+            name: name.into(),
+            variant,
+            pixel: pixel(interp, out),
+            out,
+            format: (COLOR_8_8_8_8, NUMBER_UNORM, 0, 4),
+            blend: 0,
+            blend_color: [0.25, 0.5, 0.75, 0.6],
+            rop3: 0xCC,
+            write_mask: 0xF,
+            raster: 0,
+            primitive: TRILIST,
+            flip_y: true,
+            scissor: (0, 0, WIDTH, HEIGHT),
+            vertices,
+            covers: interp.covers(),
+        }
+    }
+}
+
+const TRILIST: u32 = 4;
+const COLOR_8_8_8_8: u32 = 10;
+const NUMBER_UNORM: u32 = 0;
+
+// `SX_MRT*_BLEND_OPT` as radeonsi sets it (`si_create_blend_state`): no
+// skipping of colour or alpha work.
+fn sx_blend_opt(blend: u32) -> u32 {
+    const PRESERVE_ALL: u32 = 1;
+    const BLEND_DISABLED: u32 = 6;
+    const ENABLE: u32 = 1 << 30;
+    let comb = if blend & ENABLE != 0 {
+        0
+    } else {
+        BLEND_DISABLED
+    };
+    PRESERVE_ALL
+        | PRESERVE_ALL << 4
+        | comb << 8
+        | PRESERVE_ALL << 16
+        | PRESERVE_ALL << 20
+        | comb << 24
+}
+
+fn rsrc1(vgprs: u32) -> u32 {
+    const DX10_CLAMP: u32 = 1 << 21;
+    (vgprs / 4).saturating_sub(1) | (BASE_MODE.float_mode as u32) << 12 | DX10_CLAMP
+}
+
+/// The command buffer of `d`: every register the draw reads, then the draw.
+fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
+    let (format, number, swap, _) = d.format;
+    const CB_NORMAL: u32 = 1 << 4;
+    const WINDOW_OFFSET_DISABLE: u32 = 1 << 31;
+    const MAX_PRIMGRP_IN_WAVE: u32 = 2 << 15;
+    const AUTO_INDEX: u32 = 2;
+    const VTX_W0_FMT: u32 = 1 << 10;
+    let br = |w: u32, h: u32| w | h << 16;
+    let half = |n: u32| (n as f32 / 2.0).to_bits();
+    let yscale = if d.flip_y {
+        -(HEIGHT as f32) / 2.0
+    } else {
+        HEIGHT as f32 / 2.0
+    };
+    let (sx0, sy0, sx1, sy1) = d.scissor;
+    [
+        set(0xB120, &[(PROGRAM >> 8) as u32, (PROGRAM >> 40) as u32]),
+        set(0xB128, &[rsrc1(16), 2 << 1]),
+        set(
+            0xB130,
+            &[vertex_buffer as u32, (vertex_buffer >> 32) as u32],
+        ),
+        set(
+            0xB020,
+            &[(PIXEL_PROGRAM >> 8) as u32, (PIXEL_PROGRAM >> 40) as u32],
+        ),
+        set(0xB028, &[rsrc1(32), 0]),
+        set(0x2_8B54, &[MAX_PRIMGRP_IN_WAVE]),
+        set(0x2_8A40, &[0]),
+        set(0x3_096C, &[128 | 256 << 9]),
+        set(0x3_0908, &[d.primitive, 0]),
+        set(0x3_0924, &[0, 0, 0]),
+        set(0x3_0964, &[u32::MAX, 0]),
+        set(0x3_097C, &[0]),
+        set(0x3_0988, &[0]),
+        set(0x2_86C4, &[0]),
+        set(0x2_870C, &[4]),
+        set(0x2_881C, &[0]),
+        set(0x2_86CC, &[d.pixel.inputs, d.pixel.inputs]),
+        set(0x2_86D8, &[1]),
+        set(0x2_8644, &[d.pixel.cntl]),
+        set(0x2_8710, &[0]),
+        set(0x2_8714, &[d.out.export_format()]),
+        set(0x2_8238, &[d.write_mask, 0xF]),
+        set(0x2_8808, &[CB_NORMAL | d.rop3 << 16]),
+        set(0x2_8780, &[d.blend]),
+        set(0x2_8414, &d.blend_color.map(f32::to_bits)),
+        set(0x2_8C60, &[(TARGET >> 8) as u32]),
+        set(0x2_8E40, &[(TARGET >> 40) as u32]),
+        set(0x2_8C6C, &[0, format << 2 | number << 8 | swap << 11, 0]),
+        set(0x2_8EC0, &[(HEIGHT - 1) | (WIDTH - 1) << 14]),
+        set(0x2_8EE0, &[1 << 24 | 1 << 27]),
+        set(0x2_8C78, &[0]),
+        set(0x2_8800, &[0]),
+        set(0x2_8040, &[0, 0]),
+        set(0x2_880C, &[0]),
+        set(0x2_8204, &[WINDOW_OFFSET_DISABLE, br(WIDTH, HEIGHT)]),
+        set(
+            0x2_8240,
+            &[WINDOW_OFFSET_DISABLE | br(sx0, sy0), br(sx1, sy1)],
+        ),
+        set(0x2_8250, &[0, br(WIDTH, HEIGHT)]),
+        set(0x2_8030, &[0, br(16384, 16384)]),
+        set(0x2_82D0, &[0, 1f32.to_bits()]),
+        set(
+            0x2_843C,
+            &[
+                half(WIDTH),
+                half(WIDTH),
+                yscale.to_bits(),
+                half(HEIGHT),
+                1f32.to_bits(),
+                0,
+            ],
+        ),
+        set(0x2_8818, &[0x3F | VTX_W0_FMT]),
+        set(0x2_8810, &[1 << 19]),
+        set(0x2_8814, &[d.raster]),
+        set(0x2_8BE4, &[1 | 2 << 1 | 5 << 3]),
+        set(0x2_8BE0, &[0]),
+        set(0x2_8C38, &[u32::MAX, u32::MAX]),
+        set(0x2_8C44, &[2 | 1 << 18]),
+        set(0x2_8A00, &[8 << 16 | 8, 0xFFFF_0000]),
+        set(0x2_8A08, &[8 << 3]),
+        set(0x2_8754, &[0, 0, 0x3333_3333]),
+        set(0x2_8760, &[sx_blend_opt(d.blend); 8]),
+        packet(NUM_INSTANCES, &[1]),
+        packet(DRAW_INDEX_AUTO, &[d.vertices.len() as u32, AUTO_INDEX]),
+    ]
+    .concat()
+}
+
+/// The case for `d`, its target filled with random bytes first.
+pub fn case(d: Draw) -> Case {
+    let vertex_buffer = INPUTS;
+    let bpp = d.format.3;
+    let pitch = WIDTH * bpp;
+    let mut case = Case {
+        opcode: d.name.clone(),
+        variant: d.variant.clone(),
+        text: format!("{} vertices", d.vertices.len()),
+        graphics: true,
+        stream: stream(&d, vertex_buffer),
+        preamble: preamble(),
+        postamble: postamble(),
+        target: (TARGET, WIDTH, HEIGHT, pitch),
+        checked: (TARGET, pitch * HEIGHT),
+        covers: d.covers.iter().map(|s| s.to_string()).collect(),
+        ..Case::default()
+    };
+    let code: Vec<u8> = VERTEX.iter().flat_map(|w| w.to_le_bytes()).collect();
+    write_pages(&mut case.input, PROGRAM, &code);
+    let code: Vec<u8> = d.pixel.code.iter().flat_map(|w| w.to_le_bytes()).collect();
+    write_pages(&mut case.input, PIXEL_PROGRAM, &code);
+    let verts: Vec<u8> = d
+        .vertices
+        .iter()
+        .flatten()
+        .flat_map(|f| f.to_bits().to_le_bytes())
+        .collect();
+    write_pages(&mut case.input, vertex_buffer, &verts);
+    let mut rng = Rng::new(&format!("target {} {}", d.name, d.variant));
+    let fill: Vec<u8> = (0..pitch * HEIGHT / 4)
+        .flat_map(|_| (rng.next() as u32).to_le_bytes())
+        .collect();
+    write_pages(&mut case.input, TARGET, &fill);
+    case
+}
+
+/// `n` random triangles in clip space with random attributes in [0, 1].
+fn triangles(n: usize, seed: &str) -> Vec<[f32; 8]> {
+    let mut rng = Rng::new(seed);
+    let mut f = |lo: f32, hi: f32| lo + (rng.next() % 10_000) as f32 / 10_000.0 * (hi - lo);
+    (0..n * 3)
+        .map(|_| {
+            let w = f(0.5, 2.0);
+            [
+                f(-1.2, 1.2) * w,
+                f(-1.2, 1.2) * w,
+                f(0.0, 1.0) * w,
+                w,
+                f(0.0, 1.0),
+                f(0.0, 1.0),
+                f(0.0, 1.0),
+                f(0.0, 1.0),
+            ]
+        })
+        .collect()
+}
+
+/// Colour formats: name, `CB_COLOR0_INFO` FORMAT, bytes per pixel.
+const COLOR_FORMATS: [(&str, u32, u32); 18] = [
+    ("8", 1, 1),
+    ("16", 2, 2),
+    ("8_8", 3, 2),
+    ("32", 4, 4),
+    ("16_16", 5, 4),
+    ("10_11_11", 6, 4),
+    ("11_11_10", 7, 4),
+    ("10_10_10_2", 8, 4),
+    ("2_10_10_10", 9, 4),
+    ("8_8_8_8", 10, 4),
+    ("32_32", 11, 8),
+    ("16_16_16_16", 12, 8),
+    ("32_32_32_32", 14, 16),
+    ("5_6_5", 16, 2),
+    ("1_5_5_5", 17, 2),
+    ("5_5_5_1", 18, 2),
+    ("4_4_4_4", 19, 2),
+    ("5_9_9_9", 24, 4),
+];
+
+/// Number types: name, `NUMBER_TYPE`, whether it holds integers.
+const NUMBER_TYPES: [(&str, u32, Option<bool>); 6] = [
+    ("unorm", 0, None),
+    ("snorm", 1, None),
+    ("uint", 4, Some(false)),
+    ("sint", 5, Some(true)),
+    ("srgb", 6, None),
+    ("float", 7, None),
+];
+
+/// Blend factors by `BlendOp` number.
+const FACTORS: [&str; 21] = [
+    "zero",
+    "one",
+    "src color",
+    "one minus src color",
+    "src alpha",
+    "one minus src alpha",
+    "dst alpha",
+    "one minus dst alpha",
+    "dst color",
+    "one minus dst color",
+    "src alpha saturate",
+    "both src alpha",
+    "both inv src alpha",
+    "constant color",
+    "one minus constant color",
+    "src1 color",
+    "inv src1 color",
+    "src1 alpha",
+    "inv src1 alpha",
+    "constant alpha",
+    "one minus constant alpha",
+];
+
+const FUNCTIONS: [&str; 5] = ["add", "src minus dst", "min", "max", "dst minus src"];
+
+fn blend(src: u32, dst: u32, func: u32, alpha: Option<(u32, u32, u32)>) -> u32 {
+    const ENABLE: u32 = 1 << 30;
+    const SEPARATE_ALPHA: u32 = 1 << 29;
+    let (asrc, adst, afunc) = alpha.unwrap_or((src, dst, func));
+    src | (func << 5)
+        | (dst << 8)
+        | (asrc << 16)
+        | (afunc << 21)
+        | (adst << 24)
+        | ENABLE
+        | ((alpha.is_some() as u32) * SEPARATE_ALPHA)
+}
+
+/// Every draw test.
+pub fn cases() -> Vec<Case> {
+    let mut out = Vec::new();
+    let tris = |seed: &str| triangles(8, seed);
+    let v = |x: f32, y: f32, r: f32, g: f32| [x, y, 0.5, 1.0, r, g, 0.25, 1.0];
+
+    for (fname, format, bpp) in COLOR_FORMATS {
+        for (nname, number, int) in NUMBER_TYPES {
+            let outs: &[Out] = match int {
+                Some(false) => &[Out::U32, Out::Uint16],
+                Some(true) => &[Out::I32, Out::Sint16],
+                None if number == 1 => &[Out::F32, Out::Snorm16],
+                None if number == 7 => &[Out::F32, Out::F16],
+                None => &[Out::F32, Out::Unorm16],
+            };
+            for &o in outs {
+                let mut d = Draw::new(
+                    "draw format",
+                    format!("{fname} {nname} export {o:?}"),
+                    Interp::PerspCenter,
+                    o,
+                    tris("formats"),
+                );
+                d.format = (format, number, 0, bpp);
+                out.push(case(d));
+            }
+        }
+    }
+    for swap in 1..4 {
+        let mut d = Draw::new(
+            "draw format",
+            format!("8_8_8_8 unorm comp swap {swap}"),
+            Interp::PerspCenter,
+            Out::F32,
+            tris("formats"),
+        );
+        d.format.2 = swap;
+        out.push(case(d));
+    }
+
+    for interp in [
+        Interp::PerspCenter,
+        Interp::PerspCentroid,
+        Interp::PerspSample,
+        Interp::LinearCenter,
+        Interp::LinearCentroid,
+        Interp::Flat,
+        Interp::MovP0,
+        Interp::FragCoord,
+        Interp::Misc,
+    ] {
+        out.push(case(Draw::new(
+            "draw input",
+            format!("{interp:?}"),
+            interp,
+            Out::F32,
+            tris("inputs"),
+        )));
+        let mut d = Draw::new(
+            "draw input",
+            format!("{interp:?} to 32_32_32_32 float"),
+            interp,
+            Out::F32,
+            tris("inputs"),
+        );
+        d.format = (14, 7, 0, 16);
+        out.push(case(d));
+    }
+
+    for (fmt, number, bpp, fname) in [(10, 0, 4, "8_8_8_8 unorm"), (12, 7, 8, "16_16_16_16 float")]
+    {
+        let mut add = |variant: String, blend_state: u32| {
+            let mut d = Draw::new(
+                "draw blend",
+                format!("{fname} {variant}"),
+                Interp::PerspCenter,
+                Out::F32,
+                tris("blend"),
+            );
+            d.format = (fmt, number, 0, bpp);
+            d.blend = blend_state;
+            out.push(case(d));
+        };
+        for (f, name) in FACTORS.iter().enumerate() {
+            add(format!("src {name}"), blend(f as u32, 5, 0, None));
+            add(format!("dst {name}"), blend(4, f as u32, 0, None));
+        }
+        for (f, name) in FUNCTIONS.iter().enumerate() {
+            add(format!("function {name}"), blend(4, 5, f as u32, None));
+        }
+        add("separate alpha".into(), blend(4, 5, 0, Some((1, 1, 3))));
+    }
+    for rop3 in [0x00, 0xFF, 0x88, 0xEE, 0x66, 0x33, 0x55, 0x99] {
+        for (fmt, number, name) in [(10, 0, "8_8_8_8 unorm"), (10, 4, "8_8_8_8 uint")] {
+            let o = if number == 4 { Out::U32 } else { Out::F32 };
+            let mut d = Draw::new(
+                "draw rop3",
+                format!("{name} rop3 {rop3:#04x}"),
+                Interp::PerspCenter,
+                o,
+                tris("rop3"),
+            );
+            d.format = (fmt, number, 0, 4);
+            d.rop3 = rop3;
+            out.push(case(d));
+        }
+    }
+    for mask in [0x1, 0x6, 0x8, 0xB] {
+        let mut d = Draw::new(
+            "draw write mask",
+            format!("mask {mask:#x}"),
+            Interp::PerspCenter,
+            Out::F32,
+            tris("mask"),
+        );
+        d.write_mask = mask;
+        out.push(case(d));
+    }
+
+    const CULL_FRONT: u32 = 1;
+    const CULL_BACK: u32 = 2;
+    const FACE_CW: u32 = 4;
+    const PROVOKING_LAST: u32 = 1 << 19;
+    for (name, raster) in [
+        ("cull front", CULL_FRONT),
+        ("cull back", CULL_BACK),
+        ("cull back, clockwise front", CULL_BACK | FACE_CW),
+        ("flat shading, last vertex provokes", PROVOKING_LAST),
+    ] {
+        let interp = if raster == PROVOKING_LAST {
+            Interp::Flat
+        } else {
+            Interp::PerspCenter
+        };
+        let mut d = Draw::new("draw raster", name.into(), interp, Out::F32, tris("raster"));
+        d.raster = raster;
+        out.push(case(d));
+    }
+    let mut d = Draw::new(
+        "draw raster",
+        "positive viewport y scale".into(),
+        Interp::PerspCenter,
+        Out::F32,
+        tris("raster"),
+    );
+    d.flip_y = false;
+    out.push(case(d));
+    let mut d = Draw::new(
+        "draw raster",
+        "scissor 10,7 to 50,41".into(),
+        Interp::PerspCenter,
+        Out::F32,
+        tris("raster"),
+    );
+    d.scissor = (10, 7, 50, 41);
+    out.push(case(d));
+    let edge = |x: f32, y: f32| v(x / 32.0 - 1.0, y / 32.0 - 1.0, x / 64.0, y / 64.0);
+    out.push(case(Draw::new(
+        "draw raster",
+        "fill rule: shared edges through pixel centres".into(),
+        Interp::PerspCenter,
+        Out::F32,
+        vec![
+            edge(8.5, 8.5),
+            edge(40.5, 8.5),
+            edge(8.5, 40.5),
+            edge(40.5, 8.5),
+            edge(40.5, 40.5),
+            edge(8.5, 40.5),
+            edge(20.5, 50.5),
+            edge(60.5, 50.5),
+            edge(40.5, 20.5),
+        ],
+    )));
+    for (name, prim) in [
+        ("points", 1),
+        ("lines", 2),
+        ("line strip", 3),
+        ("triangle strip", 6),
+        ("triangle fan", 5),
+        ("rectangles", 17),
+    ] {
+        let mut d = Draw::new(
+            "draw primitive",
+            name.into(),
+            Interp::PerspCenter,
+            Out::F32,
+            tris("primitives"),
+        );
+        d.primitive = prim;
+        out.push(case(d));
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gfx10::decode::decode;
+    use gfx10::print::{Syntax, print};
+
+    fn disassemble(code: &[u32]) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut pc = 0;
+        while pc < code.len() {
+            let inst = decode(&code[pc..]).expect("pixel programs decode");
+            out.push(print(&inst, Syntax { wave64: true }));
+            pc += inst.words as usize;
+        }
+        out
+    }
+
+    #[test]
+    fn pixel_programs_read_their_inputs_where_the_addr_bits_put_them() {
+        let p = pixel(Interp::LinearCenter, Out::F32);
+        let text = disassemble(&p.code);
+        assert_eq!(text[1], "v_interp_p1_f32_e32 v20, v0, attr0.x");
+        let p = pixel(Interp::FragCoord, Out::Unorm16);
+        let text = disassemble(&p.code);
+        assert_eq!(text[1], "v_mov_b32_e32 v20, v2");
+        assert!(
+            text.iter()
+                .any(|t| t.starts_with("exp mrt0 v24, v24, v25, v25 done compr vm"))
+        );
+    }
+
+    #[test]
+    fn the_draw_suite_covers_formats_blending_and_raster_state() {
+        assert!(cases().len() > 300);
+    }
+}

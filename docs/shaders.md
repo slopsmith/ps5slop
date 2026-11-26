@@ -154,6 +154,38 @@ Other scalar loads read guest memory through the windows. A multi-dword scalar l
 - `PS5SLOP_SHADER_DUMP` saves each program a title runs with its register state (`capture.rs`); the `captures` example translates and compiles a folder of them offline, or prints one program's disassembly and MSL, and `compile_times` times Metal's compiler on them. Captures are game data and stay out of the repo.
 - Frame replay (gpu.md) is the oracle for changes to emitted code: old and new output of the same frame must render the same pixels.
 
+### Hardware oracle
+
+`crates/hwcheck` checks translated instructions against a real AMD GPU. Each test is one program around one instruction, over many lanes or waves of operands: edge cases of each operand's type paired with each other, then seeded random values. `ps5slop-hwcheck gen` builds the suites (`crates/hwcheck/src/suite/`):
+
+- Vector ALU: every VOP1, VOP2, VOPC, VOP3 and VOP3P opcode with plain operands, in its own encoding, as VOP3, with neg and abs, clamp and omod, op_sel, DPP16, DPP8, SDWA, a literal and inline constants, and float instructions under each float mode (`FLOAT_MODE` rounding and denormals, IEEE mode, DX10 clamp). Each lane stores its result and its own bit of the mask written and of EXEC, since masks are per thread outside lockstep programs.
+- Lane-crossing: `v_readlane`, `v_writelane`, `v_readfirstlane` under several EXEC masks, `v_permlane16`/`x16`, `v_swap_b32`, the `v_movrel*` family.
+- Scalar ALU (SOP1, SOP2, SOPC, SOPK) and scalar loads, including buffer loads through descriptors of varied size and out-of-bounds mode; one record per wave, with SCC.
+- LDS: every DS load, store, atomic, two-address form, swizzle and permute.
+- Vector memory: MUBUF, MTBUF, GLOBAL and FLAT loads, stores and atomics, over buffer descriptors of varied format, stride, size, swizzle, destination select and out-of-bounds mode. Stores are compared as the memory they leave.
+- Images: every MIMG load, store, atomic, sample, gather and query on every image dimension it allows, over linear textures in memory; one opcode of each family runs over every GFX10 image format (the list is generated from Mesa's register database by `tools/gen_formats.py`) and a set of samplers (filters, wrap modes, border colours, unnormalized coordinates, depth compare, mips, LOD bias). Stores are read back with `image_load`.
+- Flow and machine state: every branch under conditions a wave agrees on and ones lanes disagree on, the `s_*_saveexec` family, `s_getpc_b64`, `s_setreg` on the float mode, and instructions that must leave results alone (waits, nops, priority, prefetch, cache invalidates, `s_endpgm`).
+- Scratch: every SCRATCH load and store as a round trip through each lane's private memory, each wave with its own FLAT_SCRATCH.
+- Ray tracing: `image_bvh*_intersect_ray` on random rays at box and triangle nodes laid out as radv lays them out.
+- Draws: a pass-through vertex program, a pixel program built for the case and a linear render target, compared pixel by pixel: every colour format and number type through both export paths, component swaps, interpolation modes and pixel inputs, every blend factor and function, logic ops, write masks, culling, fill rule, viewport sign, scissors, points and lines. Draws use a negative viewport Y scale, as PS5 titles do, except where the sign is what is tested.
+
+Each test runs through our whole path (the PM4 command processor, the translator, Metal) on the Mac, and `ps5slop-hwcheck run` runs the same command buffer as raw PM4 through libdrm on a Linux machine with an amdgpu GPU, with the program and data at the same GPU addresses. `scripts/hwcheck HOST [--filter TEXT]...` does both over SSH, leaves the outcomes in `target/hwcheck/` and merges them into `crates/hwcheck/results/<gpu>.tsv`. `ps5slop-hwcheck coverage` lists which opcodes the translator refuses. On the status page an opcode whose every test the translator refused counts as not translated, and DPP, SDWA and VOP3 cells exist only for encodings LLVM accepts. A few opcodes cannot be tested in isolation: `v_illegal` and `s_trap` end the program, `s_code_end` is padding, `s_sendmsg` only signals fixed-function units. `image_msaa_load` waits for multisampled draws, since GFX10 has no linear multisampled surfaces.
+
+A draw needs state the hardware would otherwise inherit from whoever used the GPU before: the hardware alone gets `CONTEXT_CONTROL`, `CLEAR_STATE` and compute-unit masks before the draw and a colour cache flush with an L2 write-back after it. `CLEAR_STATE` resets context registers but not user-config ones, so every draw also sets `GE_INDX_OFFSET` and the other index registers itself; left alone, they made the hardware read vertices off by one in some submissions.
+
+Two kinds of behaviour are kept out of the tests on purpose:
+
+- Stores from several lanes to one address. The hardware's order is defined (the highest lane's value stays) and Metal's is not, so every store test gives each lane its own place. Atomics still collide.
+- Unaligned dword addresses. The reference machine runs in the unaligned memory mode Linux sets up and honours them, Metal rounds down, and which mode the PS5 sets is unknown.
+
+What the hardware result is evidence of:
+
+- The reference machine is a Steam Deck: RDNA2, gfx1033, GFX10.3. The PS5 is GFX10.1, so a match means "matches RDNA2", and PS5 behaviour stays unverified. llvm-mc disassembles every program for gfx1013 and for the reference GPU; a test whose program reads differently there is not run.
+- GFX10.3 dropped the unfused multiply-adds (`v_mad_f32`, `v_mac_f32`, `v_madmk_f32`, `v_madak_f32`) and runs the legacy ones fused. The runner rewrites them to their fused forms and marks those results, which may differ from the PS5 in the last bit.
+- Differences are sorted into NaN bits (both NaN), denormal or zero sign, and other values.
+
+The latest results are kept in `crates/hwcheck/results/gfx1033.tsv`, one line per test, so the status page can be built from trunk without the GPU: `ps5slop-hwcheck chart crates/hwcheck/results/gfx1033.tsv OUT.html` colours every opcode form by whether the translator takes it and whether the hardware agrees. Results describe the translator as it was when they were made; run the oracle again after changing it.
+
 ## Toward a compiler
 
 The translator emits each instruction as its own MSL snippet, with rare cases written out inline, and leaves the rest to Metal's compiler. On a GPU what that compiler cannot remove costs more than on a CPU: registers per thread set how many threads a core holds, spills go to memory, and the instruction cache is small. Heavy titles are bound by GPU time spent in code around the work, so the translator moves toward resolving what is known per draw, in steps. Each step keeps the current form as the fallback for what it cannot handle, so programs never stop translating, and each is measured by code size, spills and time per program, with the frame pixel-identical.
