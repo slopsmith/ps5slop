@@ -176,14 +176,34 @@ impl<'a> Tx<'a> {
         let mut at = offset as usize;
         let bias_operand = addr[at].clone();
         let min_lod = clamp.then(|| format!("min_lod_clamp({})", addr[addr.len() - 1]));
+        // The S#'s LOD_BIAS, and for explicit LODs its MIN_LOD and MAX_LOD,
+        // which Metal's samplers ignore there.
+        let w = binding::SAMPLER_WORDS + 4 * sm as u32;
+        let s_bias = format!("lod_bias(user[{}])", w + 2);
+        let s_level =
+            |l: &str| format!("level(sampler_lod(user[{}], user[{}], {l}))", w + 1, w + 2);
         let (mut level, bias) = match flags.as_slice() {
-            [] => (None, false),
-            ["lz"] => (Some("level(0.0f)".to_string()), false),
-            ["l"] => (Some(format!("level({})", addr[addr.len() - 1])), false),
-            ["b"] => (Some(format!("bias({})", addr[at])), true),
-            ["cl"] => (min_lod.clone(), false),
+            [] => (
+                Some(if self.req.stage == Stage::Pixel {
+                    format!("bias({s_bias})")
+                } else {
+                    s_level("0.0f")
+                }),
+                false,
+            ),
+            ["lz"] => (Some(s_level("0.0f")), false),
+            ["l"] => (Some(s_level(&addr[addr.len() - 1])), false),
+            ["b"] => (Some(format!("bias({} + {s_bias})", addr[at])), true),
+            ["cl"] => (
+                Some(format!("bias({s_bias}), {}", min_lod.clone().unwrap())),
+                false,
+            ),
             ["b", "cl"] => (
-                Some(format!("bias({}), {}", addr[at], min_lod.clone().unwrap())),
+                Some(format!(
+                    "bias({} + {s_bias}), {}",
+                    addr[at],
+                    min_lod.clone().unwrap()
+                )),
                 true,
             ),
             ["d" | "cd"] | ["d" | "cd", "cl"] => (None, false),
@@ -232,11 +252,20 @@ impl<'a> Tx<'a> {
                 shift(1, "height")
             },
         );
-        let coord = match kind {
-            TextureKind::Tex2d => format!("float2({}{dx}, {}{dy})", c[0], c[1]),
-            TextureKind::Tex2dArray => {
-                format!("float2({}{dx}, {}{dy}), uint(rint({}))", c[0], c[1], c[2])
+        // FORCE_UNNORMALIZED: coordinates in texels of the base level.
+        let xy = format!(
+            "float2({}, {}) * coord_scale(user[{w}], t{t}){}",
+            c[0],
+            c[1],
+            if offset {
+                format!(" + float2(0.0f{dx}, 0.0f{dy})")
+            } else {
+                String::new()
             }
+        );
+        let coord = match kind {
+            TextureKind::Tex2d => xy,
+            TextureKind::Tex2dArray => format!("{xy}, uint(rint({}))", c[2]),
             TextureKind::Tex3d => format!(
                 "float3({}{dx}, {}{dy}, {}{})",
                 c[0],
@@ -249,11 +278,7 @@ impl<'a> Tx<'a> {
             }
             _ => return Err(err(pc, format!("unsupported form of {name}"))),
         };
-        let level = match (level, self.req.stage) {
-            (Some(l), _) => format!(", {l}"),
-            (None, Stage::Pixel) => String::new(),
-            (None, _) => ", level(0.0f)".into(),
-        };
+        let level = level.map(|l| format!(", {l}")).unwrap_or_default();
         let (elem, conv) = self.texel(t);
         let mut s = format!("{elem}4 r = t{t}.sample(smp{sm}, {coord}{level});");
         let filtered = self.req.filter_bilinear
@@ -280,7 +305,6 @@ impl<'a> Tx<'a> {
         };
         if let Some(lod) = lod {
             self.filters = true;
-            let w = binding::SAMPLER_WORDS + 4 * sm as u32;
             s = format!(
                 "float4 r; {{ uint4 sw = uint4(user[{w}], user[{}], user[{}], user[{}]); \
                  if (filters8(sw)) r = sample8(t{t}, {coord}, {lod}, sw, user[{tw}]); \
@@ -305,10 +329,7 @@ impl<'a> Tx<'a> {
             if elem != "float" {
                 return Err(err(pc, format!("unsupported form of {name}")));
             }
-            let f = format!(
-                "(user[{}] >> 12) & 7u",
-                binding::SAMPLER_WORDS + 4 * sm as u32
-            );
+            let f = format!("(user[{w}] >> 12) & 7u");
             // A gather compares each of its texels.
             let compared = if gather { 4 } else { 1 };
             let r: Vec<String> = (0..compared)

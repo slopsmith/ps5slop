@@ -989,6 +989,24 @@ static inline uint4 image_encode(uint4 v, uint w1) {
     return raw;
 }
 
+// An S#'s LOD_BIAS (signed 6.8 fixed point in dword 2).
+static inline float lod_bias(uint w2) {
+    return float(int(w2 << 18) >> 18) / 256.0f;
+}
+
+// An explicit LOD as the S# biases and clamps it (MIN_LOD and MAX_LOD,
+// unsigned 4.8 in dword 1).
+static inline float sampler_lod(uint w1, uint w2, float l) {
+    return clamp(l + lod_bias(w2), float(w1 & 0xFFFu) / 256.0f, float((w1 >> 12) & 0xFFFu) / 256.0f);
+}
+
+// The factor that makes 2D coordinates normalized: 1 / size of the base
+// level when the S# sets FORCE_UNNORMALIZED.
+template <typename T>
+static inline float2 coord_scale(uint w0, T t) {
+    return (w0 & 0x8000u) != 0u ? 1.0f / float2(t.get_width(0), t.get_height(0)) : float2(1.0f);
+}
+
 // SQ_TEX_DEPTH_COMPARE: the reference against the fetched value.
 static inline bool depth_compare(uint f, float ref, float v) {
     switch (f) {
