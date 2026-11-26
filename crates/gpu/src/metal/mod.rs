@@ -67,7 +67,7 @@ use inspect::{Snap, frames, record, skipped};
 use memory::*;
 use programs::*;
 pub use readback::{read_bytes, read_depth_rgba, read_frame, read_rgba, read_texel, read_values};
-use readback::{read_depth, read_raw};
+use readback::{read_depth, read_level, read_raw};
 use saved::*;
 use targets::*;
 
@@ -127,6 +127,8 @@ pub struct Metal {
     /// Depth-layout images a program wrote since their depth texture was
     /// last used: the depth texture takes their contents first.
     depth_stores: std::collections::HashSet<u64>,
+    /// Images programs were given to write since the last [`Metal::write_back_images`].
+    stored_images: Vec<(Image, Retained<Texture>)>,
     /// Addresses a colour target or storage image wrote after any depth target
     /// there, so sampling them must not read the depth texture.
     color_newer: std::collections::HashSet<u64>,
@@ -296,6 +298,7 @@ impl Metal {
             depths: HashMap::new(),
             stencils: HashMap::new(),
             depth_stores: Default::default(),
+            stored_images: Vec::new(),
             color_newer: Default::default(),
             shown: HashMap::new(),
             swizzles: HashMap::new(),

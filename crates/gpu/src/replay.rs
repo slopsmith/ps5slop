@@ -602,7 +602,7 @@ impl Backend for ReplayBackend {
             let ranges = s.ranges.clone();
             let before = nonzero_pages(host, &ranges);
             s.metal.dispatch(host, state, dispatch);
-            s.metal.sync();
+            s.metal.write_back_images(host);
             let after = changed_pages(host, &ranges, &before);
             s.extracted = Some(Extracted {
                 program: cs,

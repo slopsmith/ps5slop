@@ -272,6 +272,9 @@ impl Metal {
                         );
                         return None;
                     };
+                    if access != Access::Sample {
+                        self.stored_images.push((image, tex.clone()));
+                    }
                     bound.textures.push((slot as usize, tex));
                 }
                 Resource::Constants {

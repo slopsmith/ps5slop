@@ -800,12 +800,16 @@ impl Metal {
             });
             self.targets.remove(&image.address);
         }
-        let texture = self.new_texture(format, image.width, image.height, true)?;
+        let chain = image.last_level + 1;
+        let texture =
+            self.new_texture_levels(format, image.width, image.height, true, chain)?;
         if let Some(mode) = image.tile
             && let Some(layout) = Layout::new(mode, bpe, image.width, image.height)
         {
-            let at = image.address + layout.mip0_offset(image.last_level + 1);
-            self.detile_into(host, &texture, 0, at, layout);
+            let mips = layout.mips(chain, (image.width, image.height), 1);
+            for (level, mip) in mips.into_iter().enumerate().take(texture.mipmapLevelCount()) {
+                self.detile_level_into(host, &texture, 0, level, image.address, mip);
+            }
         }
         self.targets.insert(
             image.address,
@@ -817,6 +821,52 @@ impl Metal {
         );
         record(image.address | 2, &texture, true);
         Some(texture)
+    }
+
+    /// Writes what programs stored to images since the last call into
+    /// guest memory, laid out as each descriptor says. Rendering never
+    /// writes images back (guest memory keeps what the CPU wrote); frame
+    /// extraction does, so a dispatch's stores can be compared with hardware.
+    pub fn write_back_images(&mut self, host: &dyn Host) {
+        self.sync();
+        for (image, tex) in std::mem::take(&mut self.stored_images) {
+            let Some((format, bpe)) = image_format(image.format) else {
+                continue;
+            };
+            let Some(layout) = image
+                .tile
+                .and_then(|t| Layout::new(t, bpe, image.width, image.height))
+            else {
+                continue;
+            };
+            if is_compressed(format) || tex.textureType() == MTLTextureType::Type3D {
+                continue;
+            }
+            let chain = image.last_level + 1;
+            let mips = layout.mips(chain, (image.width, image.height), 1);
+            let stride = layout
+                .chain_size(chain)
+                .next_multiple_of(layout.block_bytes());
+            let first = image.base_array as u64;
+            for slice in 0..tex.arrayLength() {
+                let at = image.address + (first + slice as u64) * stride;
+                for (level, mip) in mips.iter().enumerate().take(tex.mipmapLevelCount()) {
+                    let Some(bytes) = read_level(&tex, slice, level) else {
+                        continue;
+                    };
+                    let l = mip.layout;
+                    let row = l.width as usize * bpe as usize;
+                    for y in 0..l.height {
+                        let src = &bytes[y as usize * row..][..row];
+                        for x in 0..l.width {
+                            let o = at + mip.offset + l.offset(x + mip.origin.0, y + mip.origin.1);
+                            let b = bpe as usize;
+                            host.write(o, &src[x as usize * b..][..b]);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Fills the slices of a 2D-array `texture` from the guest memory behind

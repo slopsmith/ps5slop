@@ -304,8 +304,14 @@ impl<'a> Tx<'a> {
                     });
                 }
             }
+            // Later reads of the texture in this thread see the store.
+            let fence = if self.read_write_textures >> t & 1 != 0 {
+                format!(" t{t}.fence();")
+            } else {
+                String::new()
+            };
             self.guard(&format!(
-                "t{t}.write({elem}4({}), {coord}, {lvl});",
+                "t{t}.write({elem}4({}), {coord}, {lvl});{fence}",
                 comps.join(", ")
             ));
         } else {

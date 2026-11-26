@@ -70,8 +70,14 @@ pub fn read_bytes(texture: &SharedTexture) -> Option<(u32, u32, Vec<u8>)> {
 
 /// The texels of a 2D texture as stored, row by row with no padding.
 pub(super) fn read_raw(t: &Texture) -> Option<Vec<u8>> {
+    read_level(t, 0, 0)
+}
+
+/// The texels of one slice and mip level of a texture as stored, row by
+/// row with no padding.
+pub(super) fn read_level(t: &Texture, slice: usize, level: usize) -> Option<Vec<u8>> {
     let bpp = texel_bytes(t.pixelFormat())?;
-    let (w, h) = (t.width(), t.height());
+    let (w, h) = ((t.width() >> level).max(1), (t.height() >> level).max(1));
     let device = t.device();
     let queue = device.newCommandQueue()?;
     let buffer =
@@ -80,7 +86,7 @@ pub(super) fn read_raw(t: &Texture) -> Option<Vec<u8>> {
     let blit = cb.blitCommandEncoder()?;
     unsafe {
         blit.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toBuffer_destinationOffset_destinationBytesPerRow_destinationBytesPerImage(
-            t, 0, 0, MTLOrigin { x: 0, y: 0, z: 0 }, MTLSize { width: w, height: h, depth: 1 }, &buffer, 0, w * bpp, w * h * bpp,
+            t, slice, level, MTLOrigin { x: 0, y: 0, z: 0 }, MTLSize { width: w, height: h, depth: 1 }, &buffer, 0, w * bpp, w * h * bpp,
         );
     }
     blit.endEncoding();

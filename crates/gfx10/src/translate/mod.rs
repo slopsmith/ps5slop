@@ -346,6 +346,12 @@ pub fn translate(req: &Request) -> Result<Translated, TranslateError> {
         .enumerate()
         .filter(|(_, t)| t.3 == Access::Atomic)
         .fold(0, |m, (i, _)| m | 1 << i);
+    tx.read_write_textures = dry
+        .textures
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.3 == Access::ReadWrite)
+        .fold(0, |m, (i, _)| m | 1 << i);
     tx.run()?;
     if req.grid_bounds && tx.lockstep && req.threads[1..].iter().any(|&t| t > 1) {
         return Err(err(
@@ -447,6 +453,8 @@ struct Tx<'a> {
     quad_lane: bool,
     /// Texture slots image atomics use, from the first pass.
     atomic_textures: u32,
+    /// Texture slots both read and written, from the first pass.
+    read_write_textures: u32,
     /// The entry point declares `slane`, the thread's lane in its SIMD group.
     simd_lane: bool,
     /// The current DPP instruction leaves some lanes unwritten (`dpp_on`).
@@ -571,6 +579,7 @@ impl<'a> Tx<'a> {
             addtid_aligned128: true,
             quad_lane: false,
             atomic_textures: 0,
+            read_write_textures: 0,
             simd_lane: false,
             dpp_lane_off: false,
             movrel: false,
