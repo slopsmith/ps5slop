@@ -75,6 +75,29 @@ static inline ulong bfe_u64(ulong v, uint ctrl) {
     return (v >> o) & m;
 }
 
+static inline ulong bfe_i64(ulong v, uint ctrl) {
+    uint w = (ctrl >> 16) & 0x7fu;
+    if (w == 0u) return 0ul;
+    ulong f = ulong(long(v) >> (ctrl & 63u));
+    if (w >= 64u) return f;
+    return ulong(long(f << (64u - w)) >> (64u - w));
+}
+
+// Leading bits equal to the sign bit, or -1 when all are.
+static inline uint ffbh_i32(uint v) {
+    uint x = int(v) < 0 ? ~v : v;
+    return x == 0u ? 0xffffffffu : clz(x);
+}
+
+static inline uint ffbh_i64(ulong v) {
+    ulong x = long(v) < 0 ? ~v : v;
+    return x == 0ul ? 0xffffffffu : uint(clz(x));
+}
+
+static inline ulong brev64(ulong v) {
+    return ulong(reverse_bits(uint(v))) << 32 | ulong(reverse_bits(uint(v >> 32)));
+}
+
 static inline ulong wqm64(ulong v) {
     ulong r = 0ul;
     for (uint q = 0u; q < 16u; q++) {

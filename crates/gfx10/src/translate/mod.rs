@@ -507,7 +507,7 @@ impl<'a> Tx<'a> {
         }
         let wave32 = insts.iter().any(|(_, i)| {
             let n = i.op.name;
-            n.contains("saveexec_b32")
+            n.ends_with("exec_b32")
                 || n.ends_with("_b32")
                     && matches!(
                         i.kind,

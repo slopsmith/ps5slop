@@ -524,7 +524,9 @@ impl<'a> Tx<'a> {
                 self.end_program();
             }
             "s_code_end" | "s_nop" | "s_waitcnt" | "s_inst_prefetch" | "s_clause" | "s_sendmsg"
-            | "s_waitcnt_depctr" | "s_setprio" | "s_sleep" | "s_icache_inv" | "s_trap" => {}
+            | "s_waitcnt_depctr" | "s_setprio" | "s_sleep" | "s_icache_inv" | "s_trap"
+            | "s_wakeup" | "s_incperflevel" | "s_decperflevel" | "s_ttracedata"
+            | "s_ttracedata_imm" | "s_wait_idle" => {}
             "s_barrier" => {
                 if self.req.stage == Stage::Compute {
                     self.line(
@@ -592,6 +594,10 @@ impl<'a> Tx<'a> {
                     format!("!{any}")
                 }
             }
+            // The conditional debug flags as the reference RDNA2 machine runs
+            // programs: the system flag clear, the user flag set.
+            "s_cbranch_cdbgsys" | "s_cbranch_cdbgsys_and_user" => "false".to_string(),
+            "s_cbranch_cdbguser" | "s_cbranch_cdbgsys_or_user" => "true".to_string(),
             _ => return Err(err(pc, format!("unsupported branch {n}"))),
         };
         if cond.contains("scc") {

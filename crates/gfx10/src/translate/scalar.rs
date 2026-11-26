@@ -21,11 +21,30 @@ impl<'a> Tx<'a> {
         lit: Option<u32>,
     ) -> Result<(), TranslateError> {
         let b64 = name.ends_with("_b64");
-        if name.ends_with("saveexec_b32") {
+        if name == "s_cmov_b32" {
+            let a = self.src32(s0, lit, pc)?;
+            self.regs.insert("scc".into());
+            if let Some(d) = self.sdst(sdst) {
+                self.line(&format!("if (scc) {d} = {a};"));
+            }
+            return Ok(());
+        }
+        if name == "s_cmov_b64" {
+            let a = self.src64(s0, lit, pc)?;
+            self.regs.insert("scc".into());
+            self.line("if (scc) {");
+            self.set64(sdst, &a);
+            self.line("}");
+            return Ok(());
+        }
+        // `wrexec` writes the new EXEC to the destination, `saveexec` the old one.
+        let wrexec = name.contains("_wrexec_");
+        if name.ends_with("saveexec_b32") || name.ends_with("wrexec_b32") {
             let a = self.src32(s0, lit, pc)?;
             let op = name
                 .trim_start_matches("s_")
-                .trim_end_matches("_saveexec_b32");
+                .trim_end_matches("_saveexec_b32")
+                .trim_end_matches("_wrexec_b32");
             let new = match op {
                 "and" => format!("{a} & old"),
                 "or" => format!("{a} | old"),
@@ -45,31 +64,36 @@ impl<'a> Tx<'a> {
                 "{{ uint old = {lo}; uint n = {new}; scc = n != 0u; {lo} = n;"
             ));
             if let Some(d) = self.sdst(sdst) {
-                self.line(&format!("{d} = old;"));
+                let v = if wrexec { "n" } else { "old" };
+                self.line(&format!("{d} = {v};"));
             }
             self.line("}");
             return Ok(());
         }
-        if name.ends_with("saveexec_b64") {
+        if name.ends_with("saveexec_b64") || name.ends_with("wrexec_b64") {
             let a = self.src64(s0, lit, pc)?;
             let exec = self.src64(126, None, pc)?;
-            let new = match name {
-                "s_and_saveexec_b64" => format!("{a} & old"),
-                "s_or_saveexec_b64" => format!("{a} | old"),
-                "s_xor_saveexec_b64" => format!("{a} ^ old"),
-                "s_andn2_saveexec_b64" => format!("{a} & ~old"),
-                "s_orn2_saveexec_b64" => format!("{a} | ~old"),
-                "s_nand_saveexec_b64" => format!("~({a} & old)"),
-                "s_nor_saveexec_b64" => format!("~({a} | old)"),
-                "s_xnor_saveexec_b64" => format!("~({a} ^ old)"),
-                "s_andn1_saveexec_b64" => format!("~{a} & old"),
-                "s_orn1_saveexec_b64" => format!("~{a} | old"),
+            let op = name
+                .trim_start_matches("s_")
+                .trim_end_matches("_saveexec_b64")
+                .trim_end_matches("_wrexec_b64");
+            let new = match op {
+                "and" => format!("{a} & old"),
+                "or" => format!("{a} | old"),
+                "xor" => format!("{a} ^ old"),
+                "andn2" => format!("{a} & ~old"),
+                "orn2" => format!("{a} | ~old"),
+                "nand" => format!("~({a} & old)"),
+                "nor" => format!("~({a} | old)"),
+                "xnor" => format!("~({a} ^ old)"),
+                "andn1" => format!("~{a} & old"),
+                "orn1" => format!("~{a} | old"),
                 _ => return Err(err(pc, format!("unsupported instruction {name}"))),
             };
             self.regs.insert("scc".into());
             let (lo, hi) = (self.s(126), self.s(127));
             self.line(&format!("{{ ulong old = {exec}; ulong n = {new}; scc = n != 0ul; {lo} = uint(n); {hi} = uint(n >> 32);"));
-            self.set64(sdst, "old");
+            self.set64(sdst, if wrexec { "n" } else { "old" });
             self.line("}");
             return Ok(());
         }
@@ -86,6 +110,17 @@ impl<'a> Tx<'a> {
             self.line(&format!("{d} = {e};"));
             return Ok(());
         }
+        if name == "s_bitset0_b64" || name == "s_bitset1_b64" {
+            let a = self.src32(s0, lit, pc)?;
+            let d = self.src64(sdst, None, pc)?;
+            let e = if name == "s_bitset1_b64" {
+                format!("{d} | (1ul << ({a} & 63u))")
+            } else {
+                format!("{d} & ~(1ul << ({a} & 63u))")
+            };
+            self.set64(sdst, &e);
+            return Ok(());
+        }
         if name == "s_getpc_b64" {
             let next = self.req.address + 4 * (pc as u64 + 1);
             self.set64(sdst, &format!("{next:#x}ul"));
@@ -93,8 +128,11 @@ impl<'a> Tx<'a> {
         }
         if let Some(e) = match name {
             "s_bcnt1_i32_b64" => Some(("popcount({a})", true)),
+            "s_bcnt0_i32_b64" => Some(("64ul - popcount({a})", true)),
             "s_ff1_i32_b64" => Some(("({a} == 0ul ? 0xffffffffu : uint(ctz({a})))", false)),
+            "s_ff0_i32_b64" => Some(("(~{a} == 0ul ? 0xffffffffu : uint(ctz(~{a})))", false)),
             "s_flbit_i32_b64" => Some(("({a} == 0ul ? 0xffffffffu : uint(clz({a})))", false)),
+            "s_flbit_i32_i64" => Some(("ffbh_i64({a})", false)),
             _ => None,
         } {
             let a = self.src64(s0, lit, pc)?;
@@ -123,6 +161,7 @@ impl<'a> Tx<'a> {
             let (e, scc) = match name {
                 "s_mov_b64" => (a, false),
                 "s_not_b64" => (format!("~{a}"), true),
+                "s_brev_b64" => (format!("brev64({a})"), false),
                 "s_wqm_b64" => (format!("wqm64({a})"), true),
                 "s_quadmask_b64" => (format!("ulong(quadmask64({a}))"), true),
                 _ => return Err(err(pc, format!("unsupported instruction {name}"))),
@@ -142,8 +181,12 @@ impl<'a> Tx<'a> {
             "s_not_b32" => (format!("~{a}"), true),
             "s_brev_b32" => (format!("reverse_bits({a})"), false),
             "s_bcnt1_i32_b32" => (format!("popcount({a})"), true),
+            "s_bcnt0_i32_b32" => (format!("32u - popcount({a})"), true),
             "s_ff1_i32_b32" => (format!("({a} == 0u ? 0xffffffffu : ctz({a}))"), false),
+            "s_ff0_i32_b32" => (format!("(~{a} == 0u ? 0xffffffffu : ctz(~{a}))"), false),
             "s_flbit_i32_b32" => (format!("({a} == 0u ? 0xffffffffu : clz({a}))"), false),
+            "s_flbit_i32" => (format!("ffbh_i32({a})"), false),
+            "s_wqm_b32" => (format!("uint(wqm64(ulong({a})))"), true),
             "s_sext_i32_i8" => (format!("uint(int(char({a})))"), false),
             "s_sext_i32_i16" => (format!("uint(int(short({a})))"), false),
             "s_abs_i32" => (format!("uint(abs(int({a})))"), true),
@@ -205,6 +248,7 @@ impl<'a> Tx<'a> {
                 "s_lshr_b64" => (format!("{a} >> ({b} & 63ul)"), true),
                 "s_ashr_i64" => (format!("ulong(long({a}) >> ({b} & 63ul))"), true),
                 "s_bfe_u64" => (format!("bfe_u64({a}, uint({b}))"), true),
+                "s_bfe_i64" => (format!("bfe_i64({a}, uint({b}))"), true),
                 "s_cselect_b64" => (format!("scc ? {a} : {b}"), false),
                 _ => return Err(err(pc, format!("unsupported instruction {name}"))),
             };
@@ -353,6 +397,13 @@ impl<'a> Tx<'a> {
                     self.line(&format!("{d} = 0x{:x}u;", k as u32));
                 }
             }
+            "s_cmovk_i32" => {
+                self.regs.insert("scc".into());
+                if let Some(d) = self.sdst(sdst) {
+                    self.line(&format!("if (scc) {d} = 0x{:x}u;", k as u32));
+                }
+            }
+            "s_version" => {}
             "s_addk_i32" => {
                 self.regs.insert("scc".into());
                 let d = self.s(sdst);
