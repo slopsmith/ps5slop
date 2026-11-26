@@ -61,10 +61,10 @@ static inline uint bfe_u32(uint v, uint o, uint w) {
 }
 
 static inline uint bfe_i32(uint v, uint o, uint w) {
-    w = min(w, 32u);
     if (w == 0u) return 0u;
-    int s = int(v << (32u - min(32u, (o & 31u) + w))) >> (32u - w);
-    return uint(s);
+    uint f = uint(int(v) >> (o & 31u));
+    if (w >= 32u) return f;
+    return uint(int(f << (32u - w)) >> (32u - w));
 }
 
 static inline ulong bfe_u64(ulong v, uint ctrl) {
