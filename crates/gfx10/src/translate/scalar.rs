@@ -520,14 +520,18 @@ impl<'a> Tx<'a> {
             return Ok(());
         }
         self.mem = true;
+        let buffer = name.starts_with("s_buffer");
         let mut bases = vec![sbase, sbase + 1];
+        if buffer {
+            bases.push(sbase + 2);
+        }
         if soffset != src::NULL {
             bases.push(soffset);
         }
         self.load_bases.push((dests.collect(), bases));
         let lo = self.sreg(sbase);
         let hi = self.sreg(sbase + 1);
-        let base = if name.starts_with("s_buffer") {
+        let base = if buffer {
             format!("(ulong({hi} & 0xffffu) << 32 | ulong({lo}))")
         } else {
             format!("(ulong({hi}) << 32 | ulong({lo}))")
@@ -560,6 +564,20 @@ impl<'a> Tx<'a> {
                 write!(s, " t{i} = ld_runs(mem, o1, r1, o2, r2, {}ul);", 4 * i).unwrap();
             }
             s.push_str(" }");
+        }
+        if buffer {
+            // Dwords at or past the descriptor's range read as zero. The range
+            // with a nonzero stride (num_records strides) is unverified.
+            let records = self.sreg(sbase + 2);
+            write!(
+                s,
+                " ulong st = ulong({hi} >> 16); ulong lim = st == 0ul ? ulong({records}) : ulong({records}) * st;\
+                 ulong o0 = (ulong({so}) + ulong({offset})) & ~3ul;"
+            )
+            .unwrap();
+            for i in 0..n {
+                write!(s, " if (o0 + {}ul >= lim) t{i} = 0u;", 4 * i).unwrap();
+            }
         }
         for i in 0..n {
             if let Some(d) = self.sdst(sdata + i) {

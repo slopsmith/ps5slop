@@ -106,7 +106,7 @@ A scalar load whose base the source pass traces (a pointer or a V# at a known pl
 
 Programs that write guest memory declare these buffers `device const`, not `constant`: Metal reads a `constant` buffer as it was when the dispatch began, and a program may read back with a scalar load what it stored before.
 
-Other scalar loads read guest memory through the windows. A multi-dword scalar load looks up its window once for the whole range, with a fallback over at most two windows; per-dword 64-bit window lookups were a large share of some programs' time.
+Other scalar loads read guest memory through the windows. A multi-dword scalar load looks up its window once for the whole range, with a fallback over at most two windows; per-dword 64-bit window lookups were a large share of some programs' time. Their `s_buffer_load_dword*` read 0 for each dword at or past the V#'s range: `num_records` bytes without a stride (matches RDNA2 in the hardware oracle), `num_records` strides with one (assumed, untested). Loads read through `cbN` are not range-checked.
 
 ### Memory access
 
