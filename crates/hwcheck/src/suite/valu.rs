@@ -416,6 +416,8 @@ fn encode(op: &OpInfo, form: Form) -> Option<Vec<u32>> {
 
 /// Every lane's input words for `op`: pairs of edge cases of the first two
 /// operands, then random mixes of edge cases and random values.
+/// `v_div_scale` is defined only when its first operand equals the second
+/// or the third, so even lanes copy the second and odd ones the third.
 fn operands(op: &OpInfo, seed: &str, lanes: usize) -> Vec<u32> {
     let mut rng = Rng::new(seed);
     let srcs: Vec<Ty> = op.srcs.iter().take(3).copied().collect();
@@ -449,6 +451,10 @@ fn operands(op: &OpInfo, seed: &str, lanes: usize) -> Vec<u32> {
             };
             words[2 * i] = v as u32;
             words[2 * i + 1] = (v >> 32) as u32;
+        }
+        if op.name.starts_with("v_div_scale") {
+            let same = if lane % 2 == 0 { 1 } else { 2 };
+            words.copy_within(2 * same..2 * same + 2, 0);
         }
         words[6] = rng.next() as u32 & 1;
         let fill = random(dst, &mut rng);
