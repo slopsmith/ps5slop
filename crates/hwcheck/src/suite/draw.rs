@@ -812,13 +812,13 @@ pub fn cases() -> Vec<Case> {
                 "draw blend",
                 format!("{fname} {variant}"),
                 Interp::PerspCenter,
-                Out::F32,
+                Out::F16,
                 tris("blend"),
             );
             d.format = (fmt, number, 0, bpp);
             d.blend = blend_state;
             if reads_src1(blend_state) {
-                d.pixel = pixel(Interp::PerspCenter, Out::F32, true);
+                d.pixel = pixel(Interp::PerspCenter, Out::F16, true);
             }
             out.push(case(d));
         };
