@@ -103,7 +103,14 @@ pub struct Request<'a> {
     /// Bytes of scratch each wave owns: `WAVESIZE` of `COMPUTE_TMPRING_SIZE` or
     /// `SPI_TMPRING_SIZE`, in KiB on GFX10.
     pub scratch_wave_bytes: u32,
+    /// The stage's `PGM_RSRC1`, whose FLOAT_MODE, DX10_CLAMP and IEEE_MODE
+    /// fields set the float mode the program runs in.
+    pub rsrc1: u32,
 }
+
+/// A `PGM_RSRC1` for programs whose real one is unknown: f32 denormals
+/// flushed, f16 and f64 denormals kept, round to nearest even, DX10 clamp.
+pub const DEFAULT_RSRC1: u32 = 0xC0 << 12 | 1 << 21;
 
 /// Where a descriptor's dwords come from.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

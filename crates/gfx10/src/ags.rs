@@ -185,9 +185,15 @@ impl Ags<'_> {
             Stage::Compute => crate::translate::Stage::Compute,
             _ => crate::translate::Stage::Vertex,
         };
-        let rsrc2 = match stage {
-            crate::translate::Stage::Pixel => reg(&sh, SPI_SHADER_PGM_RSRC2_PS),
-            _ => reg(&sh, SPI_SHADER_PGM_RSRC2_GS),
+        let (rsrc1, rsrc2) = match stage {
+            crate::translate::Stage::Pixel => (
+                reg(&sh, SPI_SHADER_PGM_RSRC1_PS),
+                reg(&sh, SPI_SHADER_PGM_RSRC2_PS),
+            ),
+            _ => (
+                reg(&sh, SPI_SHADER_PGM_RSRC1_GS),
+                reg(&sh, SPI_SHADER_PGM_RSRC2_GS),
+            ),
         };
         crate::translate::Request {
             stage,
@@ -213,12 +219,15 @@ impl Ags<'_> {
             swizzles: [0; 8],
             probe_flat: false,
             scratch_wave_bytes: 0,
+            rsrc1,
         }
     }
 }
 
 /// SH registers (offsets from 0x2C00), from Mesa's register tables.
+pub const SPI_SHADER_PGM_RSRC1_PS: u32 = 0x0A;
 pub const SPI_SHADER_PGM_RSRC2_PS: u32 = 0x0B;
+pub const SPI_SHADER_PGM_RSRC1_GS: u32 = 0x8A;
 pub const SPI_SHADER_PGM_RSRC2_GS: u32 = 0x8B;
 /// Context registers (offsets from 0xA000), from Mesa's register tables.
 pub const SPI_PS_INPUT_ENA: u32 = 0x1B3;

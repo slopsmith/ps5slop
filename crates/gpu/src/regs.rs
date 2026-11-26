@@ -71,17 +71,21 @@ pub mod context {
 
 pub mod sh {
     pub const SPI_SHADER_PGM_LO_PS: usize = 0x008;
+    pub const SPI_SHADER_PGM_RSRC1_PS: usize = 0x00A;
     pub const SPI_SHADER_PGM_RSRC2_PS: usize = 0x00B;
     pub const SPI_SHADER_USER_DATA_PS_0: usize = 0x00C;
     pub const SPI_SHADER_PGM_LO_ES: usize = 0x0C8;
     pub const SPI_SHADER_PGM_LO_GS: usize = 0x088;
+    pub const SPI_SHADER_PGM_RSRC1_GS: usize = 0x08A;
     pub const SPI_SHADER_PGM_RSRC2_GS: usize = 0x08B;
     pub const SPI_SHADER_USER_DATA_GS_0: usize = 0x08C;
     pub const SPI_SHADER_PGM_LO_VS: usize = 0x048;
+    pub const SPI_SHADER_PGM_RSRC1_VS: usize = 0x04A;
     pub const SPI_SHADER_PGM_RSRC2_VS: usize = 0x04B;
     pub const SPI_SHADER_USER_DATA_VS_0: usize = 0x04C;
     pub const COMPUTE_NUM_THREAD_X: usize = 0x207;
     pub const COMPUTE_PGM_LO: usize = 0x20C;
+    pub const COMPUTE_PGM_RSRC1: usize = 0x212;
     pub const COMPUTE_PGM_RSRC2: usize = 0x213;
     pub const COMPUTE_TMPRING_SIZE: usize = 0x218;
     pub const COMPUTE_USER_DATA_0: usize = 0x240;

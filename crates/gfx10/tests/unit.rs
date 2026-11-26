@@ -1,6 +1,8 @@
 //! Self-contained checks on hand-written programs (no llvm-mc, no game files).
 
-use gfx10::translate::{Access, Request, Resource, Source, Stage, TextureKind, View};
+use gfx10::translate::{
+    Access, DEFAULT_RSRC1, Request, Resource, Source, Stage, TextureKind, View,
+};
 use gfx10::{Syntax, decode, print, translate};
 
 fn text(words: &[u32]) -> String {
@@ -65,6 +67,7 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
         swizzles: [0; 8],
         probe_flat: false,
         scratch_wave_bytes: 0,
+        rsrc1: DEFAULT_RSRC1,
     })
     .unwrap()
 }
@@ -156,6 +159,7 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
         swizzles: [0; 8],
         probe_flat: false,
         scratch_wave_bytes: 0,
+        rsrc1: DEFAULT_RSRC1,
     })
     .unwrap();
     assert_eq!(t.msl.matches("[[user(locn0)").count(), 1);
@@ -194,6 +198,7 @@ fn compute_group(code: &[u32], user_sgprs: u32, rsrc2: u32, threads: u32) -> gfx
         swizzles: [0; 8],
         probe_flat: false,
         scratch_wave_bytes: 0,
+        rsrc1: DEFAULT_RSRC1,
     })
     .unwrap()
 }
@@ -411,6 +416,7 @@ fn integer_colour_formats_export_integers() {
         swizzles: [0; 8],
         probe_flat: false,
         scratch_wave_bytes: 0,
+        rsrc1: DEFAULT_RSRC1,
     };
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("uint4 c0 [[color(0)]]"));
@@ -454,6 +460,7 @@ fn dual_source_blending_takes_mrt1_as_the_second_source() {
         probe_flat: false,
         scratch_wave_bytes: 0,
         coded_textures: 0,
+        rsrc1: DEFAULT_RSRC1,
     };
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("float4 c1 [[color(1)]]"), "{}", t.msl);
@@ -502,6 +509,7 @@ fn integer_texture_slots_read_and_write_integers() {
         swizzles: [0; 8],
         probe_flat: false,
         scratch_wave_bytes: 0,
+        rsrc1: DEFAULT_RSRC1,
     };
     let float = translate(&request(0, 0)).unwrap();
     let typed = translate(&request(1, 2)).unwrap();
@@ -567,6 +575,7 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
         swizzles: [0x1B, 0, 0, 0, 0, 0, 0, 0x93],
         probe_flat: false,
         scratch_wave_bytes: 0,
+        rsrc1: DEFAULT_RSRC1,
     };
     let bytes = gfx10::capture::Capture::new(&req).to_bytes();
     let c = gfx10::capture::Capture::from_bytes(&bytes).unwrap();
@@ -729,6 +738,7 @@ fn getpc_gives_the_address_of_the_next_instruction() {
         swizzles: [0; 8],
         probe_flat: false,
         scratch_wave_bytes: 0,
+        rsrc1: DEFAULT_RSRC1,
     };
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("0x500001004ul"));

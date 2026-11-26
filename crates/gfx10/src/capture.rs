@@ -1,12 +1,13 @@
 //! A translation request saved to a file, so programs a title runs can be
 //! translated again offline (`PS5SLOP_SHADER_DUMP`, the `captures` example).
 //! Files are little-endian dwords, written by [`Capture::to_bytes`]; files of
-//! older versions lack the fields added after them.
+//! older versions lack the fields added after them (`PGM_RSRC1` becomes
+//! [`DEFAULT_RSRC1`]).
 
-use crate::translate::{Request, Stage, program};
+use crate::translate::{DEFAULT_RSRC1, Request, Stage, program};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"g10c");
-const VERSION: u32 = 7;
+const VERSION: u32 = 8;
 const GRID_BOUNDS: u32 = 1;
 const DROP_DEPTH_EXPORT: u32 = 2;
 const DUAL_SOURCE: u32 = 4;
@@ -35,6 +36,7 @@ pub struct Capture {
     pub logic_targets: [u8; 8],
     pub swizzles: [u8; 8],
     pub scratch_wave_bytes: u32,
+    pub rsrc1: u32,
     pub code: Vec<u32>,
 }
 
@@ -67,6 +69,7 @@ impl Capture {
             logic_targets: req.logic_targets,
             swizzles: req.swizzles,
             scratch_wave_bytes: req.scratch_wave_bytes,
+            rsrc1: req.rsrc1,
             code: req.code[..len.min(req.code.len())].to_vec(),
         }
     }
@@ -96,6 +99,7 @@ impl Capture {
             swizzles: self.swizzles,
             probe_flat: false,
             scratch_wave_bytes: self.scratch_wave_bytes,
+            rsrc1: self.rsrc1,
         }
     }
 
@@ -141,6 +145,7 @@ impl Capture {
             u32::from_le_bytes([s[4], s[5], s[6], s[7]]),
             self.scratch_wave_bytes,
             self.coded_textures,
+            self.rsrc1,
         ]);
         w.extend_from_slice(&self.code);
         w.iter().flat_map(|x| x.to_le_bytes()).collect()
@@ -201,6 +206,11 @@ impl Capture {
             coded = *w.get(code_at)?;
             code_at += 1;
         }
+        let mut rsrc1 = DEFAULT_RSRC1;
+        if w[1] >= 8 {
+            rsrc1 = *w.get(code_at)?;
+            code_at += 1;
+        }
         Some(Capture {
             stage,
             user_sgprs: w[3],
@@ -223,6 +233,7 @@ impl Capture {
             logic_targets,
             swizzles,
             scratch_wave_bytes,
+            rsrc1,
             code: w[code_at..].to_vec(),
         })
     }

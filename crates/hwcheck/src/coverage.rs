@@ -3,7 +3,7 @@
 
 use gfx10::decode::decode;
 use gfx10::opinfo::{Fmt, OpInfo, all};
-use gfx10::translate::{Request, Stage, translate};
+use gfx10::translate::{DEFAULT_RSRC1, Request, Stage, translate};
 
 /// What the translator does with an opcode.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,6 +89,7 @@ pub fn coverage(op: &OpInfo) -> Coverage {
         swizzles: [0; 8],
         probe_flat: false,
         scratch_wave_bytes: 0,
+        rsrc1: DEFAULT_RSRC1,
     };
     match translate(&req) {
         Err(e) if e.message.contains("unsupported instruction") => {
