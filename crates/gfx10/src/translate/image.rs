@@ -99,7 +99,7 @@ impl<'a> Tx<'a> {
             _ if rw => {
                 return self.image_rw(pc, name, m, kind, one_d, &addr_regs);
             }
-            "image_get_resinfo" => return self.image_resinfo(pc, m, kind, &addr_regs),
+            "image_get_resinfo" => return self.image_resinfo(pc, m, kind, one_d, &addr_regs),
             n if n.starts_with("image_atomic_") => {
                 return self.image_atomic(pc, name, m, kind, one_d, &addr_regs);
             }
@@ -555,18 +555,26 @@ impl<'a> Tx<'a> {
         pc: usize,
         m: &Mimg,
         kind: TextureKind,
+        one_d: bool,
         addr: &[u16],
     ) -> Result<(), TranslateError> {
         let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Sample, View::Sampled)?;
         let lod = self.v(addr[0]);
-        let third = match kind {
-            TextureKind::Tex2dArray => format!("t{t}.get_array_size()"),
-            TextureKind::Tex3d => format!("t{t}.get_depth(l)"),
-            TextureKind::Cube => "6u".into(),
-            TextureKind::Tex2d => "1u".into(),
+        // Width, height, depth or layers, as RDNA2 returns them: a 1D
+        // array's layers in y, unused sizes 0, and all sizes 0 past the
+        // last level (measured).
+        let w = format!("t{t}.get_width(l)");
+        let h = format!("t{t}.get_height(l)");
+        let (y, z) = match kind {
+            TextureKind::Tex2dArray if one_d => (format!("t{t}.get_array_size()"), "0u".into()),
+            TextureKind::Tex2dArray => (h, format!("t{t}.get_array_size()")),
+            TextureKind::Tex3d => (h, format!("t{t}.get_depth(l)")),
+            TextureKind::Cube => (h, "6u".into()),
+            TextureKind::Tex2d if one_d => ("0u".into(), "0u".into()),
+            TextureKind::Tex2d => (h, "0u".into()),
         };
         let mut s = format!(
-            "uint l = {lod}; uint4 r = uint4(t{t}.get_width(l), t{t}.get_height(l), {third}, t{t}.get_num_mip_levels());"
+            "uint l = {lod}; uint n = t{t}.get_num_mip_levels(); uint4 r = uint4(l < n ? uint3({w}, {y}, {z}) : uint3(0u), n);"
         );
         let mut d = m.vdata as u16;
         for i in 0..4 {
