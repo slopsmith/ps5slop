@@ -11,6 +11,12 @@
 #   references/src/{SharpProspero,OpenAGC}: documentation of AGC functions
 #   (signatures, behaviour notes), read as specs only; their code is not
 #   copied (GPL-3.0, Apache-2.0).
+#   references/amd: AMD's RDNA1 and RDNA2 ISA guides (AMD Specification
+#   Agreement: review only, no copies) and the machine-readable ISA XML (MIT).
+#   references/src/{mesa,llvm-amdgpu,isa_spec_manager}: Mesa src/amd (MIT),
+#   LLVM's AMDGPU docs and target tables (Apache-2.0 with LLVM exception,
+#   read only), AMD's XML parser (MIT); facts for the hardware oracle.
+#   references/linux: amdgpu GFX10 PM4 and register headers (MIT).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,9 +33,18 @@ fetch() {
 		git -C "$dest" config core.sparseCheckout true
 		printf '%s\n' "$@" > "$dest/.git/info/sparse-checkout"
 	fi
-	git -C "$dest" fetch -q --depth 1 origin "$commit"
+	git -C "$dest" fetch -q --depth 1 --filter=blob:none origin "$commit"
 	git -C "$dest" checkout -q FETCH_HEAD
 	echo "$name at $commit in $dest"
+}
+
+# get PATH URL SHA256: a download into references/PATH, checked by hash.
+get() {
+	local dest="$root/references/$1"
+	mkdir -p "$(dirname "$dest")"
+	[ -f "$dest" ] || curl -fsSL -o "$dest" "$2"
+	echo "$3  $dest" | shasum -a 256 -c --quiet
+	echo "$1"
 }
 
 fetch FEX https://github.com/FEX-Emu/FEX.git be66e03d65217f53a7a2e5af46473cc9a79ce3f8 /unittests/ASM/ /LICENSE
@@ -38,3 +53,20 @@ fetch sharpemu-mac https://github.com/sharpemu/sharpemu-mac.git 5cb184e4e4c98e71
 fetch prosper https://github.com/mattias800/prosper.git e35a74a20f4241ceaaa9974fd35cec92e868baea /prosper/tests/data/console_oracle/ /prosper/docs/gpu/ /README*
 fetch SharpProspero https://github.com/SvenGDK/SharpProspero.git 5dfdb4b0b166e83dc9ae275001afb695f12c7174 /src/SharpProspero/Interop/Agc/ /docs/ /LICENSE* /README*
 fetch OpenAGC https://github.com/OpenAGC/OpenAGC.git 3c7e8072f0d7684e930454794fd5c02056946d73 /docs/ /LICENSE* /README*
+
+get amd/RDNA_Shader_ISA_25September2020.pdf https://gpuopen.com/download/RDNA_Shader_ISA_25September2020.pdf 4c0de2f448343fc2ced043a1485bf987f7b8b9283ac97747efbca231764adf4d
+get amd/rdna2-shader-instruction-set-architecture.pdf https://gpuopen.com/download/rdna2-shader-instruction-set-architecture.pdf 22aec03f2706dba2e148ffde1f3a25d5cdd42c71a96f95240aeb48d995d44795
+get amd/RDNA_Architecture_public.pdf https://gpuopen.com/download/RDNA_Architecture_public.pdf 3d2b726355b8cf826f59fa482d5bc2fcb2baf8dbf70cf18738e77682fbf273a0
+get amd/AMD_GPU_MR_ISA_XML_2026_08_06.zip https://gpuopen.com/download/AMD_GPU_MR_ISA_XML_2026_08_06.zip 82404f1126761b7877595b622afa7e1f311f2f41e89a3abe9aaf8ad045c082e2
+unzip -oq "$root/references/amd/AMD_GPU_MR_ISA_XML_2026_08_06.zip" amdgpu_isa_rdna1.xml amdgpu_isa_rdna2.xml -d "$root/references/amd/mr-isa"
+
+linux=https://raw.githubusercontent.com/torvalds/linux/c03c1a14507dfaf8b856c2608f9ac216021fc222/drivers/gpu/drm/amd
+get linux/nvd.h "$linux/amdgpu/nvd.h" 0a4de0b61f8be33d83e7dc1af4b96370898af36d211f296daf018e72820ea0eb
+get linux/gfx_v10_0.c "$linux/amdgpu/gfx_v10_0.c" 3b2013dcb603845c3785fe02fc9aeee848b391f10d462e9384a1e4f370a4fb1b
+get linux/gc_10_1_0_offset.h "$linux/include/asic_reg/gc/gc_10_1_0_offset.h" a0ad8bffb3c07ec3824d306aff49c77bc40057f8760aec7a76ee58a60cc8e6a2
+get linux/gc_10_1_0_sh_mask.h "$linux/include/asic_reg/gc/gc_10_1_0_sh_mask.h" cba20414ecf02e91bafdcfbff7d4ba686326f0bdaf236d1a883364f08410c167
+get linux/gc_10_3_0_offset.h "$linux/include/asic_reg/gc/gc_10_3_0_offset.h" abd09080e4b06fd2d3e14145e5ceafa580a1987da59f076d2598e8753957b614
+
+fetch mesa https://gitlab.freedesktop.org/mesa/mesa.git 98d1136247d38484796ca06dcc5610f1d9eb119e /src/amd/compiler/ /src/amd/common/ /src/amd/registers/ /src/amd/addrlib/ /src/amd/vulkan/radv_shader.c /src/amd/vulkan/radv_shader.h /src/amd/vulkan/radv_shader_info.c /docs/license.rst
+fetch llvm-amdgpu https://github.com/llvm/llvm-project.git c5edffe4a336b626aa4803127a5724b677d37a3a /llvm/LICENSE.TXT /llvm/docs/AMDGPUUsage.rst /llvm/docs/AMDGPUModifierSyntax.rst /llvm/docs/AMDGPUOperandSyntax.rst /llvm/docs/AMDGPUInstructionSyntax.rst /llvm/docs/AMDGPUInstructionNotation.rst /llvm/docs/AMDGPUExecutionSynchronization.rst '/llvm/docs/AMDGPU/AMDGPUAsmGFX10*' /llvm/docs/AMDGPU/AMDGPUAsmGFX1013.rst /llvm/docs/AMDGPU/AMDGPUAsmGFX1030.rst '/llvm/docs/AMDGPU/gfx10_*' '/llvm/docs/AMDGPU/gfx1013_*' '/llvm/docs/AMDGPU/gfx1030_*' /llvm/lib/Target/AMDGPU/AMDGPU.td /llvm/lib/Target/AMDGPU/GCNProcessors.td /llvm/lib/Target/AMDGPU/GCNSubtarget.h /llvm/lib/Target/AMDGPU/GCNHazardRecognizer.cpp /llvm/lib/Target/AMDGPU/GCNHazardRecognizer.h /llvm/lib/Target/AMDGPU/SIDefines.h /llvm/lib/Target/AMDGPU/SIModeRegister.cpp /llvm/lib/Target/AMDGPU/SIModeRegisterDefaults.cpp /llvm/lib/Target/AMDGPU/SIModeRegisterDefaults.h /llvm/lib/Target/AMDGPU/SOPInstructions.td /llvm/lib/Target/AMDGPU/SMInstructions.td /llvm/lib/Target/AMDGPU/VOP1Instructions.td /llvm/lib/Target/AMDGPU/VOP2Instructions.td /llvm/lib/Target/AMDGPU/VOP3Instructions.td /llvm/lib/Target/AMDGPU/VOP3PInstructions.td /llvm/lib/Target/AMDGPU/VOPCInstructions.td /llvm/lib/Target/AMDGPU/DSInstructions.td /llvm/lib/Target/AMDGPU/MIMGInstructions.td /llvm/lib/Target/AMDGPU/FLATInstructions.td /llvm/lib/Target/AMDGPU/BUFInstructions.td
+fetch isa_spec_manager https://github.com/GPUOpen-Tools/isa_spec_manager.git 720736542c7177de7e7970dec53d6a4a72cfef52 '/*'

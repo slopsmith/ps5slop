@@ -111,6 +111,11 @@ What exists, what it is licensed under, and what we read or took from it. Survey
 | 2026-11-23 | shadPS4 (from memory, not re-read) | `SceSaveDataMemorySetup2`, `Get2`, `Set2`, `SceSaveDataMemoryData` and the `mtime` field of `OrbisSaveDataParam` | Field offsets and the "memory not ready" error value, PS4, checked against what GTA V passes where it could be ([hle-kernel.md](hle-kernel.md)). No code |
 | 2026-11-26 | AnyPS5 at `5713f3d` (GPL-2.0-only): its progress chart tooling only (`tools/progress.py`, `tools/shader_scan.py`, `tools/isa_profiles.py`, `tools/*_isa_forms.txt`, `docs/dev/PROGRESS.md`, its Pages workflows), read by a sub-agent with vic's go-ahead for this narrow purpose; none of its emulator code | How its instruction coverage chart is made: forms from AMD's machine-readable ISA XML, status from scanning its own source, a self-drawn treemap published to GitHub Pages | Nothing copied; our chart asks our translator and the hardware oracle instead ([shaders.md](shaders.md)) |
 | 2026-11-26 | libdrm `amdgpu.h`, `amdgpu_drm.h` (MIT), read on the Steam Deck | Prototypes and structure layouts of the libdrm_amdgpu calls a raw compute submission needs | Declared in `crates/hwcheck/src/amdgpu.rs` |
+| 2026-11-26 | AMD "RDNA 1.0" ISA guide (25 September 2020) and "RDNA 2" ISA guide (30 November 2020), from GPUOpen. AMD Specification Agreement: review only, no copies | Float modes (MODE register, DX10_CLAMP, IEEE, output modifiers), min and max NaN rules, which ops always flush denormals, the RDNA1 to RDNA2 changes, wait states | Facts in our own words with section numbers. Nothing copied |
+| 2026-11-26 | AMD machine-readable ISA XML for RDNA1 and RDNA2 (MIT, release 2026-02-20, zip of 2026-08-06) and GPUOpen isa_spec_manager at `7207365` (MIT) | Opcode and encoding tables; a local diff of RDNA1 against RDNA2 | Nothing yet. Tables generated from it may go into code with AMD's MIT notice |
+| 2026-11-26 | Mesa `src/amd` at `98d1136` (MIT): `compiler/aco_insert_NOPs.cpp`, `aco_ir.h`, `aco_ir.cpp`, `aco_optimizer.cpp`, `registers/gfx10.json`, `gfx103.json`, `vulkan/radv_shader.c` | GFX10 hazards and their fixes, which MAD and MAC ops flush denormals, which GFX10 levels have the legacy MAC and FMAC ops, `COMPUTE_PGM_RSRC1` fields, radv's float mode defaults | Facts only |
+| 2026-11-26 | LLVM at `llvmorg-23.1.6` (Apache-2.0 with LLVM exception, read only): `docs/AMDGPUUsage.rst`, `docs/AMDGPU/AMDGPUAsmGFX1013.rst`, `lib/Target/AMDGPU/AMDGPU.td`, `GCNProcessors.td`, `GCNHazardRecognizer.cpp`, the VOP, SOP, SMEM, DS, MIMG, FLAT and BUF tables | Kernel descriptor float fields, what gfx1013 and gfx1033 each have, GFX10 hardware bugs and hazards | Facts only. No code |
+| 2026-11-26 | Linux `drivers/gpu/drm/amd` at `v7.3` (MIT): `amdgpu/nvd.h`, `amdgpu/gfx_v10_0.c`, `include/asic_reg/gc/gc_10_1_0_*.h`, `gc_10_3_0_offset.h` | PM4 opcodes and GFX10 register offsets for the hardware oracle | Facts only so far |
 
 Add a row whenever someone reads another project's source for this repo.
 
@@ -158,8 +163,10 @@ Low-credibility or very new Apple efforts (one or two days of commits, unverifia
 
 ## Public documentation
 
-- AMD ISA guides (RDNA1 and RDNA2), [gpuopen.com/amd-isa-documentation](https://gpuopen.com/amd-isa-documentation/). Official.
-- LLVM AMDGPU backend (`GCNFeatures.td`, the disassembler) for what gfx1013 is. Official, Apache-2.0 with LLVM exception: read, do not copy.
-- Mesa (radv, ACO, the PS5 patches above). MIT for most of it.
+- AMD ISA guides for RDNA1 and RDNA2, [gpuopen.com/amd-isa-documentation](https://gpuopen.com/amd-isa-documentation/). Official. They come with an AMD Specification Agreement that allows review only and forbids copying any part, so we restate facts in our own words and cite the section.
+- AMD machine-readable ISA, [gpuopen.com/machine-readable-isa](https://gpuopen.com/machine-readable-isa/). Official XML for every RDNA1 and RDNA2 instruction, encoding and operand, under the MIT license, so tables made from it can go into our code with AMD's notice.
+- LLVM AMDGPU backend: `AMDGPUUsage.rst` for the kernel descriptor and float mode bits, `AMDGPUAsmGFX1013.rst` for gfx1013 syntax, `AMDGPU.td` and `GCNProcessors.td` for what each GPU has, `GCNHazardRecognizer.cpp` for hardware bugs. Apache-2.0 with LLVM exception: read, do not copy. LLVM's main branch no longer has the per-GPU syntax pages; read them at a release tag.
+- Mesa `src/amd` (MIT): ACO's hazard pass and float mode tracking, the register database (`registers/gfx10.json`, `gfx103.json`), addrlib for tiling, and the PS5 port's patches noted above.
+- Linux amdgpu driver (MIT for the AMD files): `nvd.h` for GFX10 PM4 packets and the `asic_reg/gc` headers for register offsets.
 - psdevwiki (PS4 and PS5). Community wiki, blocks automated fetches; check pages by hand and note what each fact rests on.
 | 2026-11-24 | SharpEmu-mac `src/SharpEmu.ShaderCompiler.Metal/Gen5MslTranslator.Resources.cs` (GPL-2.0-or-later) | Its comment summarising the buffer range checks by `OOB_SELECT` (RDNA2 ISA 8.1.5, table 35) | Facts only; our check in `crates/gfx10/src/translate/prelude.rs` is our own code |
