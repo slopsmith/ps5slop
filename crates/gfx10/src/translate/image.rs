@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Helpers for filtering in the program (`Request::filter_bilinear`).
+pub(super) const FILTER_PRELUDE: &str = include_str!("filter_prelude.metal");
+
 impl<'a> Tx<'a> {
     // The element type of texture slot `t` and how a component of it becomes a VGPR value.
     pub(super) fn texel(&self, t: usize) -> (&'static str, &'static str) {
@@ -171,6 +174,7 @@ impl<'a> Tx<'a> {
             }
         }
         let mut at = offset as usize;
+        let bias_operand = addr[at].clone();
         let min_lod = clamp.then(|| format!("min_lod_clamp({})", addr[addr.len() - 1]));
         let (mut level, bias) = match flags.as_slice() {
             [] => (None, false),
@@ -252,6 +256,41 @@ impl<'a> Tx<'a> {
         };
         let (elem, conv) = self.texel(t);
         let mut s = format!("{elem}4 r = t{t}.sample(smp{sm}, {coord}{level});");
+        let filtered = self.req.filter_bilinear
+            && kind == TextureKind::Tex2d
+            && !one_d
+            && !gather
+            && dref.is_none()
+            && elem == "float";
+        let pixel = self.req.stage == Stage::Pixel;
+        let implicit = || {
+            if pixel {
+                format!("t{t}.calculate_unclamped_lod(smp{sm}, {coord})")
+            } else {
+                "0.0f".to_string()
+            }
+        };
+        let lod = match flags.as_slice() {
+            _ if !filtered => None,
+            [] => Some(implicit()),
+            ["lz"] => Some("0.0f".to_string()),
+            ["l"] => Some(addr[addr.len() - 1].clone()),
+            ["b"] => Some(format!("{} + {bias_operand}", implicit())),
+            _ => None,
+        };
+        if let Some(lod) = lod {
+            self.filters = true;
+            let w = binding::SAMPLER_WORDS + 4 * sm as u32;
+            s = format!(
+                "float4 r; {{ uint4 sw = uint4(user[{w}], user[{}], user[{}], user[{}]); \
+                 if (filters8(sw)) r = sample8(t{t}, {coord}, {lod}, sw, user[{tw}]); \
+                 else r = t{t}.sample(smp{sm}, {coord}{level}); }}",
+                w + 1,
+                w + 2,
+                w + 3,
+                tw = binding::TEXTURE_WORDS + 2 * t as u32,
+            );
+        }
         if gather {
             if !matches!(kind, TextureKind::Tex2d | TextureKind::Tex2dArray)
                 || !matches!(flags.as_slice(), [] | ["lz"])
@@ -266,7 +305,10 @@ impl<'a> Tx<'a> {
             if elem != "float" {
                 return Err(err(pc, format!("unsupported form of {name}")));
             }
-            let f = format!("(user[{}] >> 12) & 7u", binding::SAMPLER_WORDS + sm as u32);
+            let f = format!(
+                "(user[{}] >> 12) & 7u",
+                binding::SAMPLER_WORDS + 4 * sm as u32
+            );
             // A gather compares each of its texels.
             let compared = if gather { 4 } else { 1 };
             let r: Vec<String> = (0..compared)

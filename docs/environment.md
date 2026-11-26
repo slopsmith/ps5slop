@@ -59,6 +59,7 @@ Every environment variable ps5slop reads; this is the one list, and other docs l
 | `PS5SLOP_MSL_UNIQUE` | Makes every program's source unique, so Metal's shader cache cannot answer (measures a first run) |
 | `PS5SLOP_FLOAT_EXACT=PARTS` | Translates parts of the float semantics to follow RDNA2 exactly, as the hardware oracle checks them, instead of as plain Metal arithmetic (the default: on a GTA V frame exact semantics drew the same pixels at about 4x the GPU time): a comma-separated list of `nan` (NaN results, quieting, min/max NaN rules), `denorm` (denormal flushing and keeping, compares), `round` (round modes; f16 arithmetic computed in f32 and rounded once), `mods` (output modifier and clamp rules), or `all` |
 | `PS5SLOP_PROBE_FLAT` | Pixel programs with a flat input write its raw value to colour output 1 |
+| `PS5SLOP_FILTER_8BIT` | Prototype: 2D samples through a bilinear sampler without anisotropy or linear mip filtering filter in the program with the hardware's 8-bit weights instead of Metal's ([shaders.md](shaders.md)) |
 | `PS5SLOP_GPU_LABELS` | Labels Metal encoders and command buffers for GPU traces and reports |
 | `PS5SLOP_GPU_ENCODER_STATUS` | Failed command buffers report which encoders faulted |
 | `PS5SLOP_COMPILE_WAIT` | Draws wait for their pipelines instead of being skipped |

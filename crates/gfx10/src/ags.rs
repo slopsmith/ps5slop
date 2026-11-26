@@ -219,6 +219,7 @@ impl Ags<'_> {
             logic_targets: [0; 8],
             swizzles: [0; 8],
             probe_flat: false,
+            filter_bilinear: false,
             plain_float: 0,
             scratch_wave_bytes: 0,
             rsrc1,

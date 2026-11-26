@@ -111,6 +111,10 @@ pub struct Request<'a> {
     /// measuring what they cost: [`PLAIN_NAN`], [`PLAIN_DENORM`],
     /// [`PLAIN_ROUND`] and [`PLAIN_MODS`]. 0 follows the hardware exactly.
     pub plain_float: u8,
+    /// Prototype: plain 2D samples through a bilinear sampler (no
+    /// anisotropy, no linear mip filter) filter in the program with the
+    /// hardware's 8-bit weights instead of Metal's.
+    pub filter_bilinear: bool,
     /// Bytes of scratch each wave owns: `WAVESIZE` of `COMPUTE_TMPRING_SIZE` or
     /// `SPI_TMPRING_SIZE`, in KiB on GFX10.
     pub scratch_wave_bytes: u32,
@@ -319,12 +323,12 @@ pub mod binding {
     pub const MEM_BASE: u32 = 28;
     /// `device uchar* mem`: guest memory.
     pub const MEM: u32 = 29;
-    /// Where in `user` the renderer puts dword 0 of each sampler slot's S#,
-    /// after the 32 user SGPRs (for the depth compare function).
+    /// Where in `user` the renderer puts each sampler slot's S#, four dwords
+    /// per slot, after the 32 user SGPRs.
     pub const SAMPLER_WORDS: u32 = 32;
     /// Where in `user` the renderer puts dwords 1 and 3 of each texture
     /// slot's T# (format and channel selects), two per slot, after the samplers'.
-    pub const TEXTURE_WORDS: u32 = 64;
+    pub const TEXTURE_WORDS: u32 = SAMPLER_WORDS + 4 * 16;
     /// Words of `user` in all.
     pub const USER_WORDS: u32 = TEXTURE_WORDS + 2 * 32;
     /// `device atomic_uint* gds`: the 64 KiB global data share.
@@ -548,6 +552,8 @@ struct Tx<'a> {
     movrel: bool,
     /// The body uses float VALU helpers (`FLOAT_PRELUDE`).
     floats: bool,
+    /// The body filters samples itself (`FILTER_PRELUDE`).
+    filters: bool,
     ij_vgprs: BTreeMap<u16, Interp>,
     user_base: u16,
 }
@@ -667,6 +673,7 @@ impl<'a> Tx<'a> {
             dpp_lane_off: false,
             movrel: false,
             floats: false,
+            filters: false,
             ij_vgprs,
 
             user_base,

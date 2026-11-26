@@ -24,7 +24,7 @@ pub use draw::texture::{
     BIAS as TEXTURE_DRAW_BIAS, DESC as TEXTURE_DRAW_DESC, LOD as TEXTURE_DRAW_LOD, TextureDraw,
     draws as texture_draws,
 };
-pub use mimg::DESC as IMAGE_DESC;
+pub use mimg::{DESC as IMAGE_DESC, sampling_heavy};
 pub use valu::{Form, case as valu_case};
 
 /// Where every test puts its program, operands and results.

@@ -9,7 +9,7 @@ pub(super) struct Bound {
     memory: Option<Memory>,
     pub(super) gds: Option<Retained<Buffer>>,
     /// Dword 0 of each sampler slot's S#, by slot.
-    sampler_words: Vec<(usize, u32)>,
+    sampler_words: Vec<(usize, [u32; 4])>,
     /// Dwords 1 and 3 of each texture slot's T#, by slot.
     texture_words: Vec<(usize, [u32; 2])>,
     pub(super) textures: Vec<(usize, Retained<Texture>)>,
@@ -315,7 +315,9 @@ impl Metal {
                 }
                 Resource::Sampler { slot, ref source } => {
                     let d = self.descriptor(host, user, source, 4)?;
-                    bound.sampler_words.push((slot as usize, d[0]));
+                    bound
+                        .sampler_words
+                        .push((slot as usize, d[..4].try_into().ok()?));
                     bound
                         .samplers
                         .push((slot as usize, self.sampler(Sampler::read(&d))?));
@@ -330,9 +332,9 @@ impl Metal {
         let mut data = [0u32; binding::USER_WORDS as usize];
         let n = user.len().min(at);
         data[..n].copy_from_slice(&user[..n]);
-        for &(slot, word) in &bound.sampler_words {
-            if let Some(d) = data.get_mut(at + slot) {
-                *d = word;
+        for &(slot, words) in &bound.sampler_words {
+            if let Some(d) = data.get_mut(at + 4 * slot..at + 4 * slot + 4) {
+                d.copy_from_slice(&words);
             }
         }
         let at = binding::TEXTURE_WORDS as usize;

@@ -17,9 +17,18 @@ const MEMORY: (u64, u64) = (0, 0x100_0000);
 /// Why the translator refuses the case's program, if it does.
 pub fn untranslated(case: &Case) -> Option<String> {
     let code = case.code(case.program);
-    let req = Request {
+    translate(&request(case, &code)).err().map(|e| match e.pc {
+        Some(pc) => format!("at dword {pc}: {}", e.message),
+        None => e.message,
+    })
+}
+
+/// The translation request for a compute case's program `code`, as the
+/// renderer makes it.
+pub fn request<'a>(case: &Case, code: &'a [u32]) -> Request<'a> {
+    Request {
         stage: Stage::Compute,
-        code: &code,
+        code,
         address: case.program,
         user_sgprs: case.reg(0x213) >> 1 & 0x1F,
         ngg: false,
@@ -41,14 +50,28 @@ pub fn untranslated(case: &Case) -> Option<String> {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        filter_bilinear: false,
         plain_float: 0,
         scratch_wave_bytes: (case.reg(0x218) >> 12 & 0x1FFF) << 10,
         rsrc1: case.reg(0x212),
-    };
-    translate(&req).err().map(|e| match e.pc {
-        Some(pc) => format!("at dword {pc}: {}", e.message),
-        None => e.message,
-    })
+    }
+}
+
+/// The median GPU time in milliseconds of a compute case's dispatch over
+/// `frames` replays.
+pub fn time(case: &Case, frames: usize) -> Result<f64, String> {
+    let res = replay(
+        &capture(case),
+        ReplayOptions {
+            time_draws: true,
+            frames,
+            ..ReplayOptions::default()
+        },
+    )?;
+    res.dispatches
+        .first()
+        .and_then(|d| d.gpu_ms)
+        .ok_or_else(|| "the dispatch did not run".to_string())
 }
 
 /// Runs `case` through Metal and records what it changed in `case.output`,

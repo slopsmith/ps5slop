@@ -299,6 +299,7 @@ impl Metal {
                 logic_targets: variant.logic_targets,
                 swizzles: variant.swizzles,
                 probe_flat: diag::config().gpu.probe_flat,
+                filter_bilinear: diag::config().gpu.filter_bilinear,
                 plain_float,
                 scratch_wave_bytes,
                 rsrc1,

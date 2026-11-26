@@ -164,6 +164,9 @@ pub struct Gpu {
     /// Parts of the float semantics that follow the hardware exactly; the
     /// rest is Metal's own arithmetic.
     pub exact_float: ExactFloat,
+    /// Prototype: plain 2D bilinear samples filter in the program with the
+    /// hardware's 8-bit weights.
+    pub filter_bilinear: bool,
     /// Where hotkey captures (`.ps5frame` and `.gputrace`) are written.
     pub capture_dir: Option<PathBuf>,
     /// Folder holding local `.ps5frame` + golden pairs for `frame_replay` tests.
@@ -302,6 +305,7 @@ impl Config {
                 no_throttle: flag("PS5SLOP_GPU_NO_THROTTLE"),
                 probe_flat: flag("PS5SLOP_PROBE_FLAT"),
                 exact_float: ExactFloat::parse(&text("PS5SLOP_FLOAT_EXACT").unwrap_or_default()),
+                filter_bilinear: flag("PS5SLOP_FILTER_8BIT"),
                 capture_dir: path("PS5SLOP_CAPTURE_DIR"),
                 frame_captures: path("PS5SLOP_FRAME_CAPTURES"),
             },

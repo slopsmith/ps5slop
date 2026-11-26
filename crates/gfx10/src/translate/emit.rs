@@ -101,6 +101,9 @@ impl<'a> Tx<'a> {
             out.push_str(&float::mode_defines(self.req.rsrc1, self.req.plain_float));
             out.push_str(float::PRELUDE_HERE);
         }
+        if self.filters {
+            out.push_str(image::FILTER_PRELUDE);
+        }
 
         if self.lockstep {
             self.simd_lane = true;

@@ -791,6 +791,66 @@ fn image_cases() -> Vec<Case> {
     out
 }
 
+/// A sampling-heavy program for measuring the cost of sampling, not a
+/// hardware test: every lane of `groups` waves takes `samples` bilinear
+/// `image_sample_l`s of an RGBA8 texture, moving `u` between them, and sums
+/// them so none is dead.
+pub fn sampling_heavy(samples: u32, groups: u32) -> Case {
+    let op = gfx10::opinfo::by_name("image_sample_l").expect("in the opcode table");
+    let dim = DIMS[1];
+    let add = gfx10::opinfo::by_name("v_add_f32")
+        .expect("in the opcode table")
+        .code as u32;
+    let vop2 = |vdst: u32, src0: u32, vsrc1: u32| add << 25 | vdst << 17 | vsrc1 << 9 | src0;
+    const LITERAL: u32 = 0xFF;
+    const VGPR: u32 = 256;
+    let mut code = PROLOGUE.to_vec();
+    for _ in 0..samples {
+        code.extend(encode(op, dim, 0xF, false));
+        code.push(0xBF8C_3F70); // s_waitcnt vmcnt(0)
+        code.extend([vop2(VADDR, LITERAL, VADDR), (1.0f32 / 97.0).to_bits()]);
+        for c in 0..4 {
+            code.push(vop2(9 + c, VGPR + VDST + c, 9 + c));
+        }
+    }
+    for c in 0..4 {
+        code.push(0x7E00_0000 | (VDST + c) << 17 | 1 << 9 | (VGPR + 9 + c));
+    }
+    code.extend(EPILOGUE);
+    let rgba8 = format("8_8_8_8_UNORM");
+    let (_, fcode, bits, _) = FORMATS[rgba8];
+    let args = args(op.name, dim);
+    let mut case = build(Test {
+        opcode: op.name,
+        variant: format!("{samples} samples per lane"),
+        text: String::new(),
+        code,
+        mode: BASE_MODE,
+        groups,
+        per_wave: false,
+        in_words: IN_WORDS as u32,
+        out_names: &OUT_NAMES,
+        dst: Dst::F32,
+        lds_bytes: 0,
+        inputs: records(&args, dim, false, false, "sampling heavy")
+            .into_iter()
+            .cycle()
+            .take((groups * 64) as usize * IN_WORDS)
+            .collect(),
+    });
+    let mut table: Vec<u32> = descriptor(dim, fcode, 1).to_vec();
+    table.extend(sampler(0));
+    let table: Vec<u8> = table.iter().flat_map(|w| w.to_le_bytes()).collect();
+    write_pages(&mut case.input, DESC, &table);
+    let bytes = texture_bytes(dim, bits, false, 1);
+    write_pages(
+        &mut case.input,
+        TEXTURE,
+        &texels(bytes, false, false, &mut Rng::new("sampling heavy")),
+    );
+    case
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
