@@ -1,0 +1,94 @@
+name: Bug in a game
+description: Something ps5slop gets wrong while a game runs (graphics, sound, input, a crash, slowness), whether or not the game is playable.
+title: "<game>: <what goes wrong>"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for a problem ps5slop has while running a game, for example a title screen that flickers or faces drawn without skin. To say how far a game gets (boots, menus, ingame, playable), file a compatibility report at [slopsmith/ps5slop-compat](https://github.com/slopsmith/ps5slop-compat/issues/new/choose) instead. One problem per issue.
+  - type: input
+    id: title_id
+    attributes:
+      label: Title ID
+      description: The game's ID, for example PPSA21402. The launcher shows it.
+      placeholder: PPSA21402
+    validations:
+      required: true
+  - type: input
+    id: game
+    attributes:
+      label: Game name and version
+      description: The version of the game or patch, and the region if you know it.
+      placeholder: Balatro 01.015.000
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Graphics
+        - Sound
+        - Input or controller
+        - Crash or freeze
+        - Slowness
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What goes wrong
+      description: What you see or hear, and a screenshot or short video if you can make one.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What it should look or sound like
+      description: How the game behaves on a PS5, for example a link to a video of the same spot with its time. A reference is what lets us check a fix.
+  - type: textarea
+    id: where
+    attributes:
+      label: Where and how often
+      description: Where in the game it happens, what you did just before, and whether it happens every time.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Problem report
+      description: The problem report at the end of the game's output (launcher inspector, Output, Copy Output), from the line starting `problem report`.
+      render: text
+  - type: checkboxes
+    id: saved
+    attributes:
+      label: What you kept
+      description: Frame captures (F9) and save states hold parts of the game's data. Do not attach them; say you have them and wait until a developer asks.
+      options:
+        - label: A frame capture of the problem
+        - label: A save state just before the problem
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: Apple menu > About This Mac.
+      placeholder: "26.1"
+    validations:
+      required: true
+  - type: input
+    id: chip
+    attributes:
+      label: Chip
+      description: Apple menu > About This Mac.
+      placeholder: Apple M4 Pro
+    validations:
+      required: true
+  - type: input
+    id: ps5slop
+    attributes:
+      label: ps5slop version
+      description: The commit shown in the launcher's About window.
+      placeholder: f0d88b5
+    validations:
+      required: true

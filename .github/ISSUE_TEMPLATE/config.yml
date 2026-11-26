@@ -1,0 +1,7 @@
+contact_links:
+  - name: Compatibility report
+    url: https://github.com/slopsmith/ps5slop-compat/issues/new/choose
+    about: How far a game gets under ps5slop (boots, menus, ingame, playable).
+  - name: Compatibility list
+    url: https://slopsmith.github.io/ps5slop/compat/
+    about: What each game does under ps5slop.

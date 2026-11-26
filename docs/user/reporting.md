@@ -14,6 +14,10 @@ Report the same game again when a newer build changes how it runs. The newest re
 
 You can also file a report without the launcher, with the form at [slopsmith/ps5slop-compat](https://github.com/slopsmith/ps5slop-compat/issues/new/choose).
 
+## Report a bug in a game
+
+Some problems are about ps5slop, not about how far a game gets: a title screen that flickers, sound that crackles in one place, a slowdown in one area. Report each of those on its own with the **Bug in a game** form at [slopsmith/ps5slop](https://github.com/slopsmith/ps5slop/issues/new/choose). It asks what goes wrong, what the game does on a PS5 (a link to a video of the same spot helps most), where it happens, and the problem report from the game's output.
+
 ## Good notes
 
 The notes are the most useful part of a report. Say:
