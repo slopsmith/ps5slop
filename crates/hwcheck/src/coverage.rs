@@ -82,6 +82,7 @@ pub fn coverage(op: &OpInfo) -> Coverage {
         grid_bounds: false,
         drop_depth_export: false,
         half_targets: 0,
+        dual_source: false,
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],

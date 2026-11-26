@@ -58,6 +58,7 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
         grid_bounds: false,
         drop_depth_export: false,
         half_targets: 0,
+        dual_source: false,
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],
@@ -146,6 +147,7 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
         grid_bounds: false,
         drop_depth_export: false,
         half_targets: 0,
+        dual_source: false,
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],
@@ -182,6 +184,7 @@ fn compute_group(code: &[u32], user_sgprs: u32, rsrc2: u32, threads: u32) -> gfx
         grid_bounds: false,
         drop_depth_export: false,
         half_targets: 0,
+        dual_source: false,
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],
@@ -396,6 +399,7 @@ fn integer_colour_formats_export_integers() {
         grid_bounds: false,
         drop_depth_export: false,
         half_targets: 0,
+        dual_source: false,
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],
@@ -408,6 +412,52 @@ fn integer_colour_formats_export_integers() {
     req.col_format = 8;
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("int4 c0 [[color(0)]]"));
+    compile(&t.msl);
+}
+
+#[test]
+fn dual_source_blending_takes_mrt1_as_the_second_source() {
+    let code = [
+        0xF800_100F,
+        0x0302_0100, // exp mrt0 v0, v1, v2, v3 vm
+        0xF800_181F,
+        0x0302_0100, // exp mrt1 v0, v1, v2, v3 done vm
+        0xBF81_0000, // s_endpgm
+    ];
+    let mut req = Request {
+        stage: Stage::Pixel,
+        code: &code,
+        address: 0,
+        user_sgprs: 0,
+        ngg: false,
+        ps_input_ena: 2,
+        ps_input_addr: 2,
+        ps_input_cntl: &[],
+        col_format: 0x99,
+        compute_rsrc2: 0,
+        threads: [1, 1, 1],
+        uint_textures: 0,
+        sint_textures: 0,
+        grid_bounds: false,
+        drop_depth_export: false,
+        half_targets: 0,
+        dual_source: false,
+        logic_op: 0xCC,
+        logic_targets: [0; 8],
+        swizzles: [0; 8],
+        probe_flat: false,
+        scratch_wave_bytes: 0,
+    };
+    let t = translate(&req).unwrap();
+    assert!(t.msl.contains("float4 c1 [[color(1)]]"), "{}", t.msl);
+    req.dual_source = true;
+    let t = translate(&req).unwrap();
+    assert!(t.msl.contains("float4 c0 [[color(0)]]"), "{}", t.msl);
+    assert!(
+        t.msl.contains("float4 c1 [[color(0), index(1)]]"),
+        "{}",
+        t.msl
+    );
     compile(&t.msl);
 }
 
@@ -438,6 +488,7 @@ fn integer_texture_slots_read_and_write_integers() {
         grid_bounds: false,
         drop_depth_export: false,
         half_targets: 0,
+        dual_source: false,
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],
@@ -501,6 +552,7 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
         grid_bounds: true,
         drop_depth_export: false,
         half_targets: 5,
+        dual_source: true,
         logic_op: 0x88,
         logic_targets: [0, 0x48, 0, 0, 0, 0, 0, 8],
         swizzles: [0x1B, 0, 0, 0, 0, 0, 0, 0x93],
@@ -515,6 +567,7 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
             again.grid_bounds,
             again.drop_depth_export,
             again.half_targets,
+            again.dual_source,
             again.logic_op,
             again.logic_targets,
             again.swizzles,
@@ -525,6 +578,7 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
             true,
             false,
             5,
+            true,
             0x88,
             [0, 0x48, 0, 0, 0, 0, 0, 8],
             [0x1B, 0, 0, 0, 0, 0, 0, 0x93],
@@ -659,6 +713,7 @@ fn getpc_gives_the_address_of_the_next_instruction() {
         grid_bounds: false,
         drop_depth_export: false,
         half_targets: 0,
+        dual_source: false,
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],

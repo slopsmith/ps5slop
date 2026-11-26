@@ -337,7 +337,12 @@ impl<'a> Tx<'a> {
                             8 => "int4",
                             _ => "float4",
                         };
-                        out.push_str(&format!("    {ty} c{i} [[color({i})]];\n"));
+                        let slot = if i == 1 && self.req.dual_source {
+                            "color(0), index(1)".to_string()
+                        } else {
+                            format!("color({i})")
+                        };
+                        out.push_str(&format!("    {ty} c{i} [[{slot}]];\n"));
                     }
                 }
                 if self.depth {

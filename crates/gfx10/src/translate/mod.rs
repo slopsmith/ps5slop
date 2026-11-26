@@ -78,6 +78,9 @@ pub struct Request<'a> {
     /// and does not blend. The CB rounds 32-bit float exports to them toward
     /// zero (measured on RDNA2), so the program does that itself.
     pub half_targets: u8,
+    /// Pixel stage: MRT0 blends with a `SRC1` factor, so the MRT1 export is
+    /// its second blend source rather than a target of its own.
+    pub dual_source: bool,
     /// Pixel stage: `CB_COLOR_CONTROL.ROP3`, applied to the MRTs that
     /// `logic_targets` names; 0xCC (copy) applies nothing.
     pub logic_op: u8,

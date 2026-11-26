@@ -1,6 +1,6 @@
 //! A translation request saved to a file, so programs a title runs can be
 //! translated again offline (`PS5SLOP_SHADER_DUMP`, the `captures` example).
-//! Files are little-endian dwords, written by `Capture::to_bytes`; files of
+//! Files are little-endian dwords, written by [`Capture::to_bytes`]; files of
 //! older versions lack the fields added after them.
 
 use crate::translate::{Request, Stage, program};
@@ -9,6 +9,7 @@ const MAGIC: u32 = u32::from_le_bytes(*b"g10c");
 const VERSION: u32 = 6;
 const GRID_BOUNDS: u32 = 1;
 const DROP_DEPTH_EXPORT: u32 = 2;
+const DUAL_SOURCE: u32 = 4;
 
 /// A request with its own storage.
 #[derive(Clone, Debug)]
@@ -28,6 +29,7 @@ pub struct Capture {
     pub grid_bounds: bool,
     pub drop_depth_export: bool,
     pub half_targets: u8,
+    pub dual_source: bool,
     pub logic_op: u8,
     pub logic_targets: [u8; 8],
     pub swizzles: [u8; 8],
@@ -58,6 +60,7 @@ impl Capture {
             grid_bounds: req.grid_bounds,
             drop_depth_export: req.drop_depth_export,
             half_targets: req.half_targets,
+            dual_source: req.dual_source,
             logic_op: req.logic_op,
             logic_targets: req.logic_targets,
             swizzles: req.swizzles,
@@ -84,6 +87,7 @@ impl Capture {
             grid_bounds: self.grid_bounds,
             drop_depth_export: self.drop_depth_export,
             half_targets: self.half_targets,
+            dual_source: self.dual_source,
             logic_op: self.logic_op,
             logic_targets: self.logic_targets,
             swizzles: self.swizzles,
@@ -122,6 +126,7 @@ impl Capture {
             } else {
                 0
             }
+            | if self.dual_source { DUAL_SOURCE } else { 0 }
             | u32::from(self.half_targets) << 8;
         w.extend_from_slice(&[self.address as u32, (self.address >> 32) as u32, flags]);
         let (t, s) = (self.logic_targets, self.swizzles);
@@ -203,6 +208,7 @@ impl Capture {
             grid_bounds: flags & GRID_BOUNDS != 0,
             drop_depth_export: flags & DROP_DEPTH_EXPORT != 0,
             half_targets: (flags >> 8) as u8,
+            dual_source: flags & DUAL_SOURCE != 0,
             logic_op,
             logic_targets,
             swizzles,

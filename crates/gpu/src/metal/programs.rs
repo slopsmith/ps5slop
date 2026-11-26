@@ -50,6 +50,8 @@ pub(super) struct Variant {
     pub(super) drop_depth_export: bool,
     /// Pixel: `Request::half_targets`.
     pub(super) half_targets: u8,
+    /// Pixel: `Request::dual_source`.
+    pub(super) dual_source: bool,
     /// Pixel: `Request::logic_op` and `Request::logic_targets`.
     pub(super) logic_op: u8,
     pub(super) logic_targets: [u8; 8],
@@ -251,6 +253,7 @@ impl Metal {
                 grid_bounds: variant.grid_bounds,
                 drop_depth_export: variant.drop_depth_export,
                 half_targets: variant.half_targets,
+                dual_source: variant.dual_source,
                 logic_op: variant.logic_op,
                 logic_targets: variant.logic_targets,
                 swizzles: variant.swizzles,
@@ -685,6 +688,15 @@ fn gl_clip_space(msl: &str) -> String {
     }
     out.push_str(rest);
     out.replacen("struct VsOut {", "static inline float4 gl_z(float4 p) { p.z = (p.z + p.w) * 0.5; return p; }\n\nstruct VsOut {", 1)
+}
+
+/// Whether MRT0 blends with a `SRC1` factor (`Request::dual_source`).
+pub(super) fn dual_source(c: &[u32]) -> bool {
+    let b = Blend::read(c, 0);
+    b.enable
+        && [b.color_src, b.color_dst, b.alpha_src, b.alpha_dst]
+            .iter()
+            .any(|f| (15..=18).contains(f))
 }
 
 /// The MRTs whose target holds 16-bit floats and does not blend.
