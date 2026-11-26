@@ -26,6 +26,10 @@ enum Command {
         /// Only opcodes whose name contains this text (repeat for several).
         #[arg(long)]
         filter: Vec<String>,
+        /// Kept hardware results: only tests without a result for this very
+        /// test are written, so a hardware run covers new and changed tests.
+        #[arg(long)]
+        pending: Option<PathBuf>,
     },
     /// Runs test files on the AMD GPU and compares the results with Metal's
     /// (Linux with amdgpu only).
@@ -90,6 +94,10 @@ enum Command {
         /// The GPU the results come from, to tell which forms it cannot test.
         #[arg(long, default_value = "gfx1033")]
         cpu: String,
+        /// Results of the same tests checked with `PS5SLOP_FLOAT_EXACT=all` and
+        /// `PS5SLOP_FILTER_8BIT=1`: forms that agree there differ by choice.
+        #[arg(long)]
+        exact: Option<PathBuf>,
     },
     /// Measures Metal's texture filtering against a model of the hardware's
     /// 8-bit weights, or against kept hardware results where there are
@@ -216,6 +224,10 @@ fn check(
                     skipped += 1;
                     "unchecked\tno hardware result kept".to_string()
                 }
+                Ok(h) if h.fingerprint == fp && !h.refused.is_empty() => {
+                    skipped += 1;
+                    h.refused.clone()
+                }
                 Ok(h) if h.fingerprint != fp => {
                     skipped += 1;
                     println!(
@@ -287,12 +299,27 @@ fn file_name(case: &Case) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn generate(dir: &Path, filter: &[String]) -> Result<bool, String> {
+fn generate(dir: &Path, filter: &[String], pending: Option<&Path>) -> Result<bool, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let cases: Vec<Case> = hwcheck::suite::all_cases()
+    let kept = |case: &Case| {
+        pending.is_some_and(|hw| {
+            let path = hw.join(format!("{}.hw", file_name(case)));
+            hwcheck::hardware::Hardware::load(&path)
+                .is_ok_and(|h| h.fingerprint == hwcheck::hardware::fingerprint(case))
+        })
+    };
+    let all: Vec<Case> = hwcheck::suite::all_cases()
         .into_iter()
         .filter(|c| filter.is_empty() || filter.iter().any(|f| c.opcode.contains(f.as_str())))
         .collect();
+    let total = all.len();
+    let cases: Vec<Case> = all.into_iter().filter(|c| !kept(c)).collect();
+    if pending.is_some() {
+        println!(
+            "{} of {total} tests have no kept hardware result",
+            cases.len()
+        );
+    }
     let mut untranslated = 0;
     for (i, mut case) in cases.into_iter().enumerate() {
         hwcheck::metal::run(&mut case)?;
@@ -356,7 +383,7 @@ fn filter(_: &Path, _: Option<&Path>) -> Result<bool, String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn generate(_: &Path, _: &[String]) -> Result<bool, String> {
+fn generate(_: &Path, _: &[String], _: Option<&Path>) -> Result<bool, String> {
     Err("generating tests needs macOS and Metal".into())
 }
 
@@ -413,7 +440,7 @@ fn run(
         let kept = save
             .and_then(|dir| hwcheck::hardware::Hardware::load(&dir.join(format!("{stem}.hw"))).ok())
             .filter(|h| h.fingerprint == fingerprint);
-        let keep = |hw: &[u32], fused: bool| -> Result<(), String> {
+        let store = |hw: &[u32], fused: bool, refused: &str| -> Result<(), String> {
             let Some(dir) = save else {
                 return Ok(());
             };
@@ -421,11 +448,23 @@ fn run(
                 fingerprint,
                 gpu: cpu.clone(),
                 fused,
+                refused: refused.into(),
                 words: hw.to_vec(),
             }
             .save(&dir.join(format!("{stem}.hw")))
         };
-        let outcome = if let Some(why) = case.untranslated.clone() {
+        let keep = |hw: &[u32], fused: bool| store(hw, fused, "");
+        let refuse = |why: &str| {
+            if kept.is_none() {
+                store(&[], false, why)
+            } else {
+                Ok(())
+            }
+        };
+        let outcome = if let Some(h) = kept.as_ref().filter(|h| !h.refused.is_empty()) {
+            skipped += 1;
+            h.refused.clone()
+        } else if let Some(why) = case.untranslated.clone() {
             skipped += 1;
             if save.is_some() {
                 let mut ported = case.clone();
@@ -438,15 +477,17 @@ fn run(
                         .filter(|p| p.differences.is_empty())
                         .map(|p| p.fused)
                 };
-                if let Some(fused) = port
-                    && kept.is_none()
-                    && let Some(hw) = hwcheck::run::run(
+                match port {
+                    Some(fused) if kept.is_none() => match hwcheck::run::run(
                         &device,
                         &ported,
                         std::time::Duration::from_secs(timeout),
-                    )?
-                {
-                    keep(&hw, fused > 0)?;
+                    )? {
+                        Some(hw) => keep(&hw, fused > 0)?,
+                        None => refuse("hung")?,
+                    },
+                    Some(_) => {}
+                    None => refuse(&format!("unrunnable\tdoes not run the same on {cpu}"))?,
                 }
             }
             format!("untranslated\t{why}")
@@ -455,6 +496,7 @@ fn run(
                 None => {
                     differ += 1;
                     println!("{name}: did not finish in {timeout} s");
+                    refuse("hung")?;
                     "hung".to_string()
                 }
                 Some(hw) => {
@@ -479,13 +521,17 @@ fn run(
                 Err(e) => {
                     skipped += 1;
                     println!("{name}: cannot run on {cpu}: {e}");
-                    format!("unrunnable\t{e}")
+                    let outcome = format!("unrunnable\t{e}");
+                    refuse(&outcome)?;
+                    outcome
                 }
                 Ok(p) if !p.differences.is_empty() => {
                     skipped += 1;
                     let (ps5, other) = &p.differences[0];
                     println!("{name}: {cpu} reads it differently ({ps5} / {other})");
-                    format!("unrunnable\t{cpu} reads {ps5} as {other}")
+                    let outcome = format!("unrunnable\t{cpu} reads {ps5} as {other}");
+                    refuse(&outcome)?;
+                    outcome
                 }
                 Ok(p) => {
                     let fused = if p.fused > 0 {
@@ -497,6 +543,7 @@ fn run(
                         None => {
                             differ += 1;
                             println!("{name}: did not finish in {timeout} s");
+                            refuse("hung")?;
                             format!("hung{fused}")
                         }
                         Some(hw) => {
@@ -591,10 +638,19 @@ fn coverage() -> Result<bool, String> {
     Ok(true)
 }
 
-fn chart(results: &Path, output: &Path, source: &str, cpu: &str) -> Result<bool, String> {
-    let text = std::fs::read_to_string(results)
-        .map_err(|e| format!("cannot read {}: {e}", results.display()))?;
-    let forms = hwcheck::chart::forms(&text, cpu);
+fn chart(
+    results: &Path,
+    exact: Option<&Path>,
+    output: &Path,
+    source: &str,
+    cpu: &str,
+) -> Result<bool, String> {
+    let read = |p: &Path| {
+        std::fs::read_to_string(p).map_err(|e| format!("cannot read {}: {e}", p.display()))
+    };
+    let text = read(results)?;
+    let exact = exact.map(read).transpose()?;
+    let forms = hwcheck::chart::forms(&text, exact.as_deref(), cpu);
     std::fs::write(output, hwcheck::chart::html(&forms, source))
         .map_err(|e| format!("cannot write {}: {e}", output.display()))?;
     println!("wrote {}", output.display());
@@ -604,7 +660,11 @@ fn chart(results: &Path, output: &Path, source: &str, cpu: &str) -> Result<bool,
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::Gen { dir, filter } => generate(&dir, &filter),
+        Command::Gen {
+            dir,
+            filter,
+            pending,
+        } => generate(&dir, &filter, pending.as_deref()),
         Command::Run {
             tests,
             device,
@@ -647,7 +707,8 @@ fn main() -> ExitCode {
             output,
             source,
             cpu,
-        } => chart(&results, &output, &source, &cpu),
+            exact,
+        } => chart(&results, exact.as_deref(), &output, &source, &cpu),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

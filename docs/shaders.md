@@ -220,7 +220,7 @@ What the hardware result is evidence of:
 - GFX10.3 dropped the unfused multiply-adds (`v_mad_f32`, `v_mac_f32`, `v_madmk_f32`, `v_madak_f32`) and runs the legacy ones fused. The runner rewrites them to their fused forms and marks those results, which may differ from the PS5 in the last bit.
 - Differences are sorted into NaN bits (both NaN), denormal or zero sign, and other values.
 
-The latest results are kept in `crates/hwcheck/results/gfx1033.tsv`, one line per test, so the status page can be built from trunk without the GPU: `ps5slop-hwcheck chart crates/hwcheck/results/gfx1033.tsv OUT.html` colours every opcode form by whether the translator takes it and whether the hardware agrees. Results describe the translator as it was when they were made; run the oracle again after changing it.
+The latest results are kept in `crates/hwcheck/results/gfx1033.tsv`, one line per test, and `gfx1033.exact.tsv` holds the same tests checked with the accuracy switches on (`PS5SLOP_FLOAT_EXACT=all`, `PS5SLOP_FILTER_8BIT`), so the status page can be built from trunk without the GPU: `ps5slop-hwcheck chart crates/hwcheck/results/gfx1033.tsv OUT.html --exact crates/hwcheck/results/gfx1033.exact.tsv` colours every opcode form by whether the translator takes it and whether the hardware agrees. A form that differs by default but agrees with the switches on, or that `chart::BY_CHOICE` names (`v_readfirstlane_b32`), differs by choice, for speed, and is not counted as a bug. `scripts/hwcheck` rechecks every kept hardware result with the current build after each run and rewrites both files; results describe the translator as it was when they were made.
 
 ## Toward a compiler
 

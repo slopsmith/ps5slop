@@ -16,6 +16,9 @@ pub enum Status {
     Agrees,
     /// Translated, and some hardware test of it differs in any way.
     Fails,
+    /// Differs by default, by a choice made for speed: it matches with the
+    /// accuracy switches on, or [`BY_CHOICE`] names it.
+    ByChoice,
     /// Translated, not tested on hardware yet.
     Untested,
     /// Translated; the reference GPU lacks the form or runs it differently
@@ -30,6 +33,7 @@ impl Status {
         match self {
             Status::Agrees => "var(--agrees)",
             Status::Fails => "var(--fails)",
+            Status::ByChoice => "var(--choice)",
             Status::Untested => "var(--untested)",
             Status::Untestable => "var(--untestable)",
             Status::Missing => "var(--missing)",
@@ -40,6 +44,7 @@ impl Status {
         match self {
             Status::Agrees => "matches the reference GPU",
             Status::Fails => "differs from the reference GPU",
+            Status::ByChoice => "differs by choice, for speed",
             Status::Untested => "translated, not tested yet",
             Status::Untestable => "translated, runs differently on the reference GPU's ISA",
             Status::Missing => "not translated",
@@ -161,6 +166,12 @@ fn group(op: &OpInfo, shape: Shape) -> &'static str {
     }
 }
 
+/// Opcodes that differ by a decision rather than a bug, with the reason.
+pub const BY_CHOICE: [(&str, &str); 1] = [(
+    "v_readfirstlane_b32",
+    "outside lockstep programs each lane returns its own value, which is exact when the value is uniform and keeps waterfall loops fast",
+)];
+
 fn judge(outcomes: &[&Outcome]) -> (Status, String) {
     let ran: Vec<&&Outcome> = outcomes
         .iter()
@@ -185,9 +196,12 @@ fn judge(outcomes: &[&Outcome]) -> (Status, String) {
 }
 
 /// Every instruction form with its status, from the translator, whether
-/// `cpu` can run it, and `results` from that GPU.
-pub fn forms(results: &str, cpu: &str) -> Vec<Form> {
+/// `cpu` can run it, and `results` from that GPU. `exact` holds results of
+/// the same tests with the accuracy switches on: a form that fails in
+/// `results` but agrees there differs by choice.
+pub fn forms(results: &str, exact: Option<&str>, cpu: &str) -> Vec<Form> {
     let results = parse_results(results);
+    let exact = exact.map(parse_results).unwrap_or_default();
     let mut out = Vec::new();
     for (op, coverage) in scan() {
         let untestable = crate::coverage::untestable(op, cpu);
@@ -204,11 +218,27 @@ pub fn forms(results: &str, cpu: &str) -> Vec<Form> {
                     (Status::Untestable, untestable.clone().unwrap_or_default())
                 }
                 Coverage::Translated => {
-                    let mine: Vec<&Outcome> = outcomes
-                        .iter()
-                        .filter(|o| shape.picks(&o.variant, has_e32))
-                        .collect();
-                    judge(&mine)
+                    fn pick(all: &[Outcome], shape: Shape, has_e32: bool) -> Vec<&Outcome> {
+                        all.iter()
+                            .filter(|o| shape.picks(&o.variant, has_e32))
+                            .collect()
+                    }
+                    let judged = judge(&pick(outcomes, shape, has_e32));
+                    let exact = exact.get(op.name).map(|e| judge(&pick(e, shape, has_e32)));
+                    let chosen = BY_CHOICE.iter().find(|(name, _)| *name == op.name);
+                    match (judged.0, exact, chosen) {
+                        (Status::Fails, _, Some((_, why))) => {
+                            (Status::ByChoice, format!("{why}\n{}", judged.1))
+                        }
+                        (Status::Fails, Some((Status::Agrees, _)), _) => (
+                            Status::ByChoice,
+                            format!(
+                                "agrees with PS5SLOP_FLOAT_EXACT=all and PS5SLOP_FILTER_8BIT\n{}",
+                                judged.1
+                            ),
+                        ),
+                        _ => judged,
+                    }
                 }
             };
             out.push(Form {
@@ -375,6 +405,7 @@ pub fn html(forms: &[Form], source: &str) -> String {
     for s in [
         Status::Agrees,
         Status::Fails,
+        Status::ByChoice,
         Status::Untested,
         Status::Untestable,
         Status::Missing,
@@ -390,6 +421,7 @@ pub fn html(forms: &[Form], source: &str) -> String {
     let mut lists = String::new();
     for (title, status) in [
         ("Differs from the reference GPU", Status::Fails),
+        ("Differs by choice, for speed", Status::ByChoice),
         (
             "Runs differently on the reference GPU's ISA",
             Status::Untestable,
@@ -421,9 +453,9 @@ pub fn html(forms: &[Form], source: &str) -> String {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GPU Instruction Status</title>
 <style>
-:root {{ --bg:#f7f7f5; --fg:#1d1d1b; --muted:#6b6b66; --line:#d8d8d2; --agrees:#2f9e44; --fails:#e03131; --untested:#f2c230; --untestable:#4c6ef5; --missing:#a3a39c; }}
-@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{ --bg:#141413; --fg:#ececea; --muted:#9a9a93; --line:#2c2c29; --agrees:#37b24d; --fails:#f03e3e; --untested:#f5c84c; --untestable:#5c7cfa; --missing:#55554f; }} }}
-:root[data-theme="dark"] {{ --bg:#141413; --fg:#ececea; --muted:#9a9a93; --line:#2c2c29; --agrees:#37b24d; --fails:#f03e3e; --untested:#f5c84c; --untestable:#5c7cfa; --missing:#55554f; }}
+:root {{ --bg:#f7f7f5; --fg:#1d1d1b; --muted:#6b6b66; --line:#d8d8d2; --agrees:#2f9e44; --fails:#e03131; --untested:#f2c230; --choice:#ae3ec9; --untestable:#4c6ef5; --missing:#a3a39c; }}
+@media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{ --bg:#141413; --fg:#ececea; --muted:#9a9a93; --line:#2c2c29; --agrees:#37b24d; --fails:#f03e3e; --untested:#f5c84c; --choice:#be4bdb; --untestable:#5c7cfa; --missing:#55554f; }} }}
+:root[data-theme="dark"] {{ --bg:#141413; --fg:#ececea; --muted:#9a9a93; --line:#2c2c29; --agrees:#37b24d; --fails:#f03e3e; --untested:#f5c84c; --choice:#be4bdb; --untestable:#5c7cfa; --missing:#55554f; }}
 body {{ margin:0; padding:24px 16px; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, sans-serif; }}
 main {{ max-width:1200px; margin:0 auto; }}
 h1 {{ font-size:1.5rem; margin:0 0 4px; }} h2 {{ font-size:1.1rem; margin:28px 0 8px; }}
@@ -473,11 +505,22 @@ mod tests {
     #[test]
     fn plain_value_differences_count_against_a_form() {
         let res = "v_add_f32\te32\tdiffer\t3 of 2048 lanes: 3 value\nv_add_f32\te64\tagree\nv_add_f32\te64 neg abs\tdiffer\t9 of 2048 lanes: 9 NaN bits\n";
-        let forms = forms(res, "gfx1033");
+        let forms = forms(res, None, "gfx1033");
         let get = |n: &str| forms.iter().find(|f| f.name == n).unwrap().status;
         assert_eq!(get("v_add_f32"), Status::Fails);
         assert_eq!(get("v_add_f32_e64"), Status::Fails);
         assert_eq!(get("v_sub_f32"), Status::Untested);
         assert_eq!(get("v_mad_f32"), Status::Untestable);
+    }
+
+    #[test]
+    fn a_difference_that_the_accuracy_switches_remove_is_a_choice() {
+        let res = "v_add_f32\te32\tdiffer\t3 of 2048 lanes: 3 NaN bits\nv_mul_f32\te32\tdiffer\t1 of 2048 lanes: 1 value\nv_readfirstlane_b32\texec all lanes\tdiffer\t1 of 2048 lanes: 1 value\n";
+        let exact = "v_add_f32\te32\tagree\nv_mul_f32\te32\tdiffer\t1 of 2048 lanes: 1 value\n";
+        let forms = forms(res, Some(exact), "gfx1033");
+        let get = |n: &str| forms.iter().find(|f| f.name == n).unwrap().status;
+        assert_eq!(get("v_add_f32"), Status::ByChoice);
+        assert_eq!(get("v_mul_f32"), Status::Fails);
+        assert_eq!(get("v_readfirstlane_b32"), Status::ByChoice);
     }
 }

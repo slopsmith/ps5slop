@@ -7,7 +7,7 @@ use std::path::Path;
 use crate::Case;
 
 const HEADER: [u8; 8] = *b"PS5IHWRS";
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
 const TAG_META: [u8; 4] = *b"META";
 const TAG_WORDS: [u8; 4] = *b"WRDS";
 
@@ -20,6 +20,9 @@ pub struct Hardware {
     pub gpu: String,
     /// Whether the GPU ran multiply-adds fused that gfx1013 runs unfused.
     pub fused: bool,
+    /// Why the GPU has no result for the test (it cannot run it, or the run
+    /// did not finish); empty when it ran. A later run need not try again.
+    pub refused: String,
     pub words: Vec<u32>,
 }
 
@@ -27,9 +30,23 @@ struct Meta {
     fingerprint: u64,
     gpu: String,
     fused: bool,
+    refused: String,
 }
 
 savestate::record!(Meta {
+    fingerprint,
+    gpu,
+    fused,
+    refused
+});
+
+struct MetaV1 {
+    fingerprint: u64,
+    gpu: String,
+    fused: bool,
+}
+
+savestate::record!(MetaV1 {
     fingerprint,
     gpu,
     fused
@@ -60,6 +77,7 @@ impl Hardware {
             fingerprint: self.fingerprint,
             gpu: self.gpu.clone(),
             fused: self.fused,
+            refused: self.refused.clone(),
         };
         w.section(TAG_META, &savestate::to_bytes(&meta))
             .map_err(|e| e.to_string())?;
@@ -77,13 +95,24 @@ impl Hardware {
         if r.header.len() != 12 || r.header[..8] != HEADER {
             return Err(format!("{} is not a hardware result", path.display()));
         }
-        let meta: Meta = savestate::from_bytes(&r.expect(TAG_META).map_err(|e| e.0)?)
-            .map_err(|e| e.to_string())?;
+        let bytes = r.expect(TAG_META).map_err(|e| e.0)?;
+        let meta: Meta = if r.header[8..] == 1u32.to_le_bytes() {
+            let v1: MetaV1 = savestate::from_bytes(&bytes).map_err(|e| e.to_string())?;
+            Meta {
+                fingerprint: v1.fingerprint,
+                gpu: v1.gpu,
+                fused: v1.fused,
+                refused: String::new(),
+            }
+        } else {
+            savestate::from_bytes(&bytes).map_err(|e| e.to_string())?
+        };
         let raw = r.expect(TAG_WORDS).map_err(|e| e.0)?;
         Ok(Hardware {
             fingerprint: meta.fingerprint,
             gpu: meta.gpu,
             fused: meta.fused,
+            refused: meta.refused,
             words: crate::words(&raw),
         })
     }
@@ -102,6 +131,7 @@ mod tests {
             fingerprint: 7,
             gpu: "gfx1033".into(),
             fused: true,
+            refused: String::new(),
             words: (0..1000).collect(),
         };
         h.save(&path).unwrap();

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # The hardware oracle for GFX10 instructions (docs/shaders.md).
-# Generates the instruction tests and runs them through ps5slop's Metal path
-# here, then copies the source and the tests to HOST (Linux with an amdgpu
-# GPU and Nix), runs them there and prints the comparison. Results land in
-# target/hwcheck/results.tsv and are merged into crates/hwcheck/results/<gpu>.tsv;
-# every test's hardware result is kept in target/hwcheck/hw for `ps5slop-hwcheck check`.
+# Generates the tests that have no kept hardware result for exactly that test
+# (new or changed ones), runs them through ps5slop's Metal path here, then on
+# HOST (Linux with an amdgpu GPU and Nix), keeping each hardware result in
+# target/hwcheck/hw. With nothing new, HOST is not contacted. Afterwards every
+# kept result is checked against this build, by default and with the accuracy
+# switches on, into crates/hwcheck/results/<gpu>.tsv and <gpu>.exact.tsv, and
+# the status page is written to target/hwcheck/chart.html.
 #   usage: scripts/hwcheck HOST [--filter TEXT]...
 set -euo pipefail
 
@@ -13,32 +15,36 @@ host=${1:?usage: scripts/hwcheck HOST [--filter TEXT]...}
 shift
 out="$root/target/hwcheck"
 remote='~/ps5slop-hw'
+gpu=gfx1033
 
 cd "$root"
 nix develop . -c cargo build -q --release -p hwcheck
 rm -rf "$out/tests"
-mkdir -p "$out/tests"
-./target/release/ps5slop-hwcheck gen "$out/tests" "$@"
+mkdir -p "$out/tests" "$out/hw"
+./target/release/ps5slop-hwcheck gen "$out/tests" --pending "$out/hw" "$@"
 
-jj file list > "$out/files.txt"
-ssh "$host" "rm -rf $remote/src && mkdir -p $remote/src $remote/tests"
-rsync -a --delete --files-from="$out/files.txt" . "$host:$remote/src/"
-rsync -a --delete "$out/tests/" "$host:$remote/tests/"
-ssh "$host" "cd $remote/src && CARGO_TARGET_DIR=$remote/target nix develop . -c bash -c \
-	'cargo build -q --release -p hwcheck && rm -rf $remote/images && $remote/target/release/ps5slop-hwcheck run $remote/tests --results $remote/results.tsv --images $remote/images --save $remote/hw'" \
-	| tee "$out/report.txt" || true
-scp -q "$host:$remote/results.tsv" "$out/results.tsv"
-mkdir -p "$out/hw"
-rsync -a "$host:$remote/hw/" "$out/hw/"
-rm -rf "$out/images"
-scp -q -r "$host:$remote/images" "$out/images" 2>/dev/null || true
-cpu=$(sed -n 's/^on .*(\(gfx[0-9a-f]*\))$/\1/p' "$out/report.txt")
-if [ -n "$cpu" ]; then
-	kept="$root/crates/hwcheck/results/$cpu.tsv"
-	touch "$kept"
-	awk -F'\t' 'NR == FNR { run[$1 FS $2] = 1; next } !(($1 FS $2) in run)' "$out/results.tsv" "$kept" \
-		| cat - "$out/results.tsv" | sort -t "$(printf '\t')" -k1,2 > "$kept.new"
-	mv "$kept.new" "$kept"
-	echo "merged into $kept"
+if [ -n "$(/bin/ls -A "$out/tests")" ]; then
+	jj file list > "$out/files.txt"
+	ssh "$host" "rm -rf $remote/src && mkdir -p $remote/src $remote/tests"
+	rsync -a --delete --files-from="$out/files.txt" . "$host:$remote/src/"
+	rsync -a --delete "$out/tests/" "$host:$remote/tests/"
+	ssh "$host" "cd $remote/src && CARGO_TARGET_DIR=$remote/target nix develop . -c bash -c \
+		'cargo build -q --release -p hwcheck && rm -rf $remote/images && $remote/target/release/ps5slop-hwcheck run $remote/tests --images $remote/images --save $remote/hw'" \
+		| tee "$out/report.txt" || true
+	rsync -a "$host:$remote/hw/" "$out/hw/"
+	rm -rf "$out/images"
+	scp -q -r "$host:$remote/images" "$out/images" 2>/dev/null || true
+	ran=$(sed -n 's/^on .*(\(gfx[0-9a-f]*\))$/\1/p' "$out/report.txt")
+	gpu=${ran:-$gpu}
+else
+	echo "every test has a kept hardware result; $host not needed"
 fi
-echo "results in $out/results.tsv, report in $out/report.txt"
+
+kept="$root/crates/hwcheck/results/$gpu.tsv"
+exact="$root/crates/hwcheck/results/$gpu.exact.tsv"
+# check exits with 1 when any test differs, which is expected here.
+./target/release/ps5slop-hwcheck check --hardware "$out/hw" --show 0 --merge "$kept" "$@" || true
+PS5SLOP_FLOAT_EXACT=all PS5SLOP_FILTER_8BIT=1 ./target/release/ps5slop-hwcheck check \
+	--hardware "$out/hw" --show 0 --merge "$exact" "$@" || true
+./target/release/ps5slop-hwcheck chart "$kept" "$out/chart.html" --exact "$exact" --cpu "$gpu" \
+	--source "$gpu, $(jj log --no-pager -r @ -T 'commit_id.short()' --no-graph)"
