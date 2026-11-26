@@ -334,7 +334,6 @@ pub fn pixel(interp: Interp, out: Out, dual: bool) -> Pixel {
         code.extend(export(0, compr, true, srcs));
     }
     code.push(0xBF81_0000);
-    const FLAT_SHADE: u32 = 1 << 10;
     Pixel {
         inputs,
         cntl: if interp == Interp::Flat {
@@ -462,6 +461,8 @@ impl Draw {
 }
 
 const TRILIST: u32 = 4;
+/// `SPI_PS_INPUT_CNTL_n.FLAT_SHADE`.
+const FLAT_SHADE: u32 = 1 << 10;
 const COLOR_8_8_8_8: u32 = 10;
 const NUMBER_UNORM: u32 = 0;
 
@@ -587,6 +588,15 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
         set(0x2_86CC, &[d.pixel.inputs, d.pixel.inputs]),
         set(0x2_86D8, &[1]),
         set(0x2_8644, &[d.pixel.cntl]),
+        // SPI_INTERP_CONTROL_0.FLAT_SHADE_ENA, which radeonsi and radv
+        // always set: without it the hardware ignores FLAT_SHADE. Written
+        // only where an input is flat, which leaves the other draws as they
+        // were measured.
+        if d.pixel.cntl & FLAT_SHADE != 0 {
+            set(0x2_86D4, &[1])
+        } else {
+            Vec::new()
+        },
         set(0x2_8710, &[0]),
         set(
             0x2_8714,
@@ -963,7 +973,6 @@ pub fn cases() -> Vec<Case> {
             Out::F32,
             tris("inputs"),
         );
-        const FLAT_SHADE: u32 = 1 << 10;
         d.pixel.cntl = FLAT_SHADE;
         d.format = format;
         out.push(case(d));

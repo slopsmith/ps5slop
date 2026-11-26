@@ -22,8 +22,8 @@ impl<'a> Tx<'a> {
         if self.req.stage != Stage::Pixel {
             return Err(err(pc, "interpolation outside a pixel shader"));
         }
-        // `SPI_PS_INPUT_CNTL`'s FLAT_SHADE leaves `v_interp_p1/p2` interpolating
-        // (measured on RDNA2).
+        // `v_interp_p1/p2` interpolate whatever `SPI_PS_INPUT_CNTL`'s
+        // FLAT_SHADE says (measured on RDNA2 only with flat shading disabled).
         let mode = if name == "v_interp_mov_f32" {
             Interp::Flat
         } else {
