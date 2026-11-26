@@ -15,6 +15,21 @@ pub(super) struct VertexForm {
     pub(super) gl_clip: bool,
     /// Point lists: the points' diameter in pixels, as f32 bits.
     pub(super) point_size: Option<u32>,
+    /// Lines wider than a pixel, drawn as quads.
+    pub(super) wide_line: Option<WideLine>,
+}
+
+/// A wide line list or strip: each segment becomes two triangles, widened
+/// across its major axis in screen space as the hardware's aliased lines are
+/// (its ends stay square to that axis).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) struct WideLine {
+    /// Line strips: segments share their vertices.
+    pub(super) strip: bool,
+    /// Half the width in clip-space x and y units at w = 1, as f32 bits.
+    pub(super) half: [u32; 2],
+    /// The viewport's x and y scales (pixels per clip-space unit), as f32 bits.
+    pub(super) scale: [u32; 2],
 }
 
 /// Time per frame draws to redrawn targets may wait for their pipelines
@@ -431,6 +446,7 @@ impl Metal {
             rect,
             gl_clip,
             point_size,
+            wide_line,
         } = form;
         let locations = |msl: &str| -> Vec<u32> {
             let mut v: Vec<u32> = msl
@@ -505,6 +521,8 @@ impl Metal {
             }
             let f = if rect {
                 rect_source(&msl).and_then(|m| compile(&device, &m, "gen5_vs_rect", &label))
+            } else if let Some(line) = wide_line {
+                line_source(&msl, line).and_then(|m| compile(&device, &m, "gen5_vs_line", &label))
             } else {
                 compile(&device, &msl, &entry, &label)
             };
@@ -672,7 +690,9 @@ fn late_report(what: String) {
     }
 }
 
-fn rect_source(msl: &str) -> Option<String> {
+/// The vertex function's parameters after its ids, and the arguments it
+/// passes on to `gen5_vs_body` after `vid, iid`.
+fn body_call(msl: &str) -> Option<(&str, &str)> {
     let start = msl.find("vertex VsOut gen5_vs(")?;
     let open = start + "vertex VsOut gen5_vs(".len();
     let close = open + msl[open..].find(") {")?;
@@ -681,7 +701,25 @@ fn rect_source(msl: &str) -> Option<String> {
         + close
         + "return gen5_vs_body(vid, iid".len();
     let call_end = call + msl[call..].find(");")?;
-    let args = &msl[call..call_end];
+    Some((params, &msl[call..call_end]))
+}
+
+/// `gen5_vs_line`: six vertices per segment, both ends run through the
+/// program, offset across the segment's major axis. Attributes stay as
+/// the ends have them, so they vary along the line only.
+fn line_source(msl: &str, line: WideLine) -> Option<String> {
+    let (params, args) = body_call(msl)?;
+    let f = |bits: u32| format!("{:?}f", f32::from_bits(bits));
+    let step = if line.strip { 1 } else { 2 };
+    let (hx, hy) = (f(line.half[0]), f(line.half[1]));
+    let (sx, sy) = (f(line.scale[0]), f(line.scale[1]));
+    Some(format!(
+        "{msl}\nvertex VsOut gen5_vs_line(uint lv [[vertex_id]], uint first_iid [[instance_id]], uint line_offset [[base_instance]], {params}) {{\n    uint iid = first_iid - line_offset;\n    uint first = line_offset + lv / 6 * {step};\n    VsOut a = gen5_vs_body(first, iid{args});\n    VsOut b = gen5_vs_body(first + 1, iid{args});\n    uint k = lv % 6;\n    float2 d = (b.pos.xy / b.pos.w - a.pos.xy / a.pos.w) * float2({sx}, {sy});\n    float2 off = abs(d.x) >= abs(d.y) ? float2(0.0f, {hy}) : float2({hx}, 0.0f);\n    VsOut o = (0x2Cu >> k) & 1u ? b : a;\n    o.pos.xy += ((0x32u >> k) & 1u ? off : -off) * o.pos.w;\n    return o;\n}}\n"
+    ))
+}
+
+fn rect_source(msl: &str) -> Option<String> {
+    let (params, args) = body_call(msl)?;
     let fields: Vec<&str> = msl[msl.find("struct VsOut {")?..]
         .lines()
         .take_while(|l| !l.starts_with("};"))

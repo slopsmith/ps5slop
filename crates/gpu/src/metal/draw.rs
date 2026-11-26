@@ -315,10 +315,26 @@ impl Metal {
         let point_size = (prim == 1)
             .then(|| (f32::from((c[context::PA_SU_POINT_SIZE] & 0xFFFF) as u16) / 8.0).to_bits());
         let gl_clip = c[context::PA_CL_CLIP_CNTL] & (1 << 19) == 0;
+        // PA_SU_LINE_CNTL WIDTH: half the width in 12.4 fixed point.
+        let half_width = f32::from((c[context::PA_SU_LINE_CNTL] & 0xFFFF) as u16) / 16.0;
+        let indexed = matches!(draw, Draw::Indexed { .. });
+        let wide_line = (matches!(prim, 2 | 3) && half_width > 0.5 && !indexed).then(|| {
+            let vp = Viewport::read(c);
+            let (sx, sy) = (
+                vp.x_scale.abs().max(f32::MIN_POSITIVE),
+                vp.y_scale.abs().max(f32::MIN_POSITIVE),
+            );
+            WideLine {
+                strip: prim == 3,
+                half: [(half_width / sx).to_bits(), (half_width / sy).to_bits()],
+                scale: [sx.to_bits(), sy.to_bits()],
+            }
+        });
         let form = VertexForm {
             rect,
             gl_clip,
             point_size,
+            wide_line,
         };
         let vertex_function = self.vertex_function(&vertex, &pixel, form);
 
@@ -740,6 +756,26 @@ impl Metal {
                 );
             },
             Draw::Indexed { .. } if rect => return Err("indexed rectangle list"),
+            // gen5_vs_line, like gen5_vs_rect, takes the index offset as its base instance.
+            Draw::Auto { count, instances } if let Some(line) = wide_line => {
+                let segments = if line.strip {
+                    count.saturating_sub(1)
+                } else {
+                    count / 2
+                };
+                if segments == 0 {
+                    return Ok(());
+                }
+                unsafe {
+                    enc.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(
+                        MTLPrimitiveType::Triangle,
+                        0,
+                        (segments * 6) as usize,
+                        instances.max(1) as usize,
+                        start as usize,
+                    );
+                }
+            }
             Draw::Auto { count, instances } if fan => {
                 if count < 3 {
                     return Ok(());

@@ -52,6 +52,7 @@ pub mod context {
     pub const PA_CL_CLIP_CNTL: usize = 0x204;
     pub const PA_SU_SC_MODE_CNTL: usize = 0x205;
     pub const PA_SU_POINT_SIZE: usize = 0x280;
+    pub const PA_SU_LINE_CNTL: usize = 0x282;
     pub const PA_CL_VTE_CNTL: usize = 0x206;
     pub const VGT_SHADER_STAGES_EN: usize = 0x2D5;
     pub const CB_COLOR0_BASE: usize = 0x318;
