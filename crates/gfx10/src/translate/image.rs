@@ -71,9 +71,11 @@ impl<'a> Tx<'a> {
         if name.starts_with("image_bvh") {
             return self.bvh(m, name.starts_with("image_bvh64"));
         }
+        // 1D images are 2D ones of height 1 (Metal's 1D textures have no mips).
+        let one_d = matches!(m.dim, 0 | 4);
         let kind = match m.dim {
-            1 => TextureKind::Tex2d,
-            5 => TextureKind::Tex2dArray,
+            0 | 1 => TextureKind::Tex2d,
+            4 | 5 => TextureKind::Tex2dArray,
             2 => TextureKind::Tex3d,
             3 => TextureKind::Cube,
             d => {
@@ -95,11 +97,11 @@ impl<'a> Tx<'a> {
             .collect();
         match name {
             _ if rw => {
-                return self.image_rw(pc, name, m, kind, &addr_regs);
+                return self.image_rw(pc, name, m, kind, one_d, &addr_regs);
             }
             "image_get_resinfo" => return self.image_resinfo(pc, m, kind, &addr_regs),
             n if n.starts_with("image_atomic_") => {
-                return self.image_atomic(pc, name, m, kind, &addr_regs);
+                return self.image_atomic(pc, name, m, kind, one_d, &addr_regs);
             }
             _ => {}
         }
@@ -117,7 +119,7 @@ impl<'a> Tx<'a> {
                 self.samplers.len() - 1
             }
         };
-        let addr: Vec<String> = addr_regs
+        let mut addr: Vec<String> = addr_regs
             .iter()
             .map(|&r| format!("F({})", self.v(r)))
             .collect();
@@ -132,8 +134,18 @@ impl<'a> Tx<'a> {
         if compare {
             flags.remove(0);
         }
-        let mut at = offset as usize;
         let derivs = matches!(flags.as_slice(), ["d"] | ["d", "cl"]);
+        if one_d {
+            // A 1D address as a 2D one: zero y derivatives, y at the middle of the row.
+            let first = offset as usize + (flags.first() == Some(&"b")) as usize + compare as usize;
+            let x = first + if derivs { 2 } else { 0 };
+            addr.insert(x + 1, "0.5f".into());
+            if derivs {
+                addr.insert(first + 2, "0.0f".into());
+                addr.insert(first + 1, "0.0f".into());
+            }
+        }
+        let mut at = offset as usize;
         let (mut level, bias) = match flags.as_slice() {
             [] => (None, false),
             ["lz"] => (Some("level(0.0f)".to_string()), false),
@@ -178,7 +190,14 @@ impl<'a> Tx<'a> {
                 String::new()
             }
         };
-        let (dx, dy) = (shift(0, "width"), shift(1, "height"));
+        let (dx, dy) = (
+            shift(0, "width"),
+            if one_d {
+                String::new()
+            } else {
+                shift(1, "height")
+            },
+        );
         let coord = match kind {
             TextureKind::Tex2d => format!("float2({}{dx}, {}{dy})", c[0], c[1]),
             TextureKind::Tex2dArray => {
@@ -257,6 +276,7 @@ impl<'a> Tx<'a> {
         name: &str,
         m: &Mimg,
         kind: TextureKind,
+        one_d: bool,
         addr: &[u16],
     ) -> Result<(), TranslateError> {
         let store = name.starts_with("image_store");
@@ -265,13 +285,16 @@ impl<'a> Tx<'a> {
         let view = if pck { View::Bits } else { View::Raw };
         let t = self.texture_slot(pc, m.srsrc as u16, kind, access, view)?;
         let regs: Vec<String> = addr.iter().map(|&r| self.v(r)).collect();
-        let a: Vec<String> = if m.a16 {
+        let mut a: Vec<String> = if m.a16 {
             (0..2 * regs.len())
                 .map(|k| format!("(({} >> {}u) & 0xffffu)", regs[k / 2], 16 * (k % 2)))
                 .collect()
         } else {
             regs
         };
+        if one_d {
+            a.insert(1, "0u".into());
+        }
         let mip = name.contains("_mip");
         let level = |i: usize| if mip { a[i].clone() } else { "0u".into() };
         let coord = match kind {
@@ -377,6 +400,7 @@ impl<'a> Tx<'a> {
         name: &str,
         m: &Mimg,
         kind: TextureKind,
+        one_d: bool,
         addr: &[u16],
     ) -> Result<(), TranslateError> {
         let op = &name["image_atomic_".len()..];
@@ -389,18 +413,22 @@ impl<'a> Tx<'a> {
             "and" => "atomic_fetch_and",
             "or" => "atomic_fetch_or",
             "xor" => "atomic_fetch_xor",
-            "cmpswap" => "",
+            "cmpswap" | "inc" | "dec" => "",
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
         if m.dmask != 1 && !(op == "cmpswap" && m.dmask == 3) || m.d16 {
             return Err(err(pc, format!("unsupported form of {name}")));
         }
         let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Atomic, View::Raw)?;
-        let a: Vec<String> = addr.iter().map(|&r| self.v(r)).collect();
+        let mut a: Vec<String> = addr.iter().map(|&r| self.v(r)).collect();
+        if one_d {
+            a.insert(1, "0u".into());
+        }
         let coord = match kind {
             TextureKind::Tex2d => format!("uint2({}, {})", a[0], a[1]),
             TextureKind::Tex2dArray => format!("uint2({}, {}), {}", a[0], a[1], a[2]),
-            _ => return Err(err(pc, format!("unsupported form of {name}"))),
+            TextureKind::Tex3d => format!("uint3({}, {}, {})", a[0], a[1], a[2]),
+            TextureKind::Cube => return Err(err(pc, format!("unsupported form of {name}"))),
         };
         // The first pass does not know the atomic slots yet.
         let (elem, conv) = match self.texel(t) {
@@ -422,6 +450,22 @@ impl<'a> Tx<'a> {
             };
             format!(
                 "{elem}4 r = {elem}4({cmp}); for (;;) {{ if (t{t}.atomic_compare_exchange_weak({coord}, &r, {elem}4({value}))) {{ r = {elem}4({cmp}); break; }} if (r.x != {cmp}) break; }}"
+            )
+        } else if let Some(new) = match (op, elem) {
+            // The texel's type decides the signedness of Metal's min and max.
+            ("smin", "uint") => Some(format!("uint(min(int(r.x), int({d})))")),
+            ("smax", "uint") => Some(format!("uint(max(int(r.x), int({d})))")),
+            ("umin", "int") => Some(format!("int(min(uint(r.x), {d}))")),
+            ("umax", "int") => Some(format!("int(max(uint(r.x), {d}))")),
+            ("inc", _) => Some(format!("{elem}(uint(r.x) >= {d} ? 0u : uint(r.x) + 1u)")),
+            ("dec", _) => Some(format!(
+                "{elem}(uint(r.x) == 0u || uint(r.x) > {d} ? {d} : uint(r.x) - 1u)"
+            )),
+            _ => None,
+        } {
+            // Compare and exchange until no other thread changed the texel in between.
+            format!(
+                "{elem}4 r = t{t}.atomic_load({coord}); for (;;) {{ if (t{t}.atomic_compare_exchange_weak({coord}, &r, {elem}4({new}))) break; }}"
             )
         } else {
             format!("{elem}4 r = t{t}.{f}({coord}, {elem}4({value}));")
