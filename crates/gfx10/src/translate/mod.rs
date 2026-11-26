@@ -71,7 +71,8 @@ pub struct Request<'a> {
     /// Slot numbers do not depend on these masks.
     pub uint_textures: u32,
     pub sint_textures: u32,
-    /// Texture slots read or written raw whose format Metal lacks: bound as
+    /// Texture slots read or written raw whose format Metal lacks, or whose
+    /// conversion Metal does differently (16-bit float stores): bound as
     /// unsigned integers of the element's size, declared `<uint>`, and
     /// converted by the program from the format in the T#.
     pub coded_textures: u32,

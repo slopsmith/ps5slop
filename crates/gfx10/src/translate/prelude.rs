@@ -1008,6 +1008,29 @@ static inline int image_sext(uint u, uint w) {
     return w >= 32u ? int(u) : int(u << (32u - w)) >> (32u - w);
 }
 
+// Half float bits as float bits, NaN payloads kept.
+static inline uint image_from_half(uint h) {
+    uint s = (h & 0x8000u) << 16, e = (h >> 10) & 0x1fu, m = h & 0x3ffu;
+    if (e == 31u) return s | 0x7f800000u | m << 13;
+    if (e != 0u) return s | (e + 112u) << 23 | m << 13;
+    if (m == 0u) return s;
+    uint k = 31u - clz(m);
+    return s | (k + 103u) << 23 | ((m << (23u - k)) & 0x7fffffu);
+}
+
+// Float bits as half float bits, rounded toward zero as image stores do:
+// finite values past the largest half become 65504. A NaN keeps its sign
+// and top payload bits, not quieted; one whose kept payload is 0 becomes
+// quiet (assumed). Measured on RDNA2.
+static inline uint image_to_half(uint b) {
+    uint s = (b >> 16) & 0x8000u, e = (b >> 23) & 0xffu, m = b & 0x7fffffu;
+    if (e == 255u) return s | 0x7c00u | (m != 0u && (m >> 13) == 0u ? 0x200u : m >> 13);
+    if (e >= 143u) return s | 0x7bffu;
+    if (e >= 113u) return s | (e - 112u) << 10 | m >> 13;
+    if (e >= 103u) return s | (m | 0x800000u) >> (126u - e);
+    return s;
+}
+
 // An unsigned float of `m` mantissa bits and a 5-bit exponent (the 10- and
 // 11-bit channels), as float bits.
 static inline uint image_small_float(uint u, uint m) {
@@ -1037,8 +1060,7 @@ static inline uint4 image_decode(uint4 raw, uint w1, uint w3) {
         case 3u: c[i] = as_type<uint>(float(image_sext(u, w))); break;
         case 5u: c[i] = uint(image_sext(u, w)); break;
         case 6u:
-            c[i] = w == 32u ? u : w == 16u ? as_type<uint>(float(as_type<half>(ushort(u))))
-                : image_small_float(u, w - 5u);
+            c[i] = w == 32u ? u : w == 16u ? image_from_half(u) : image_small_float(u, w - 5u);
             break;
         case 7u: {
             float x = precise::divide(float(u), float(image_mask(w)));
@@ -1151,8 +1173,7 @@ static inline uint4 image_encode(uint4 v, uint w1) {
             break;
         }
         default:
-            u = w == 32u ? v[i] : w == 16u ? uint(as_type<ushort>(half(x)))
-                : image_to_small_float(v[i], w - 5u);
+            u = w == 32u ? v[i] : w == 16u ? image_to_half(v[i]) : image_to_small_float(v[i], w - 5u);
             break;
         }
         raw[at / 32u] |= (u & image_mask(w)) << (at % 32u);

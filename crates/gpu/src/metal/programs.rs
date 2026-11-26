@@ -48,6 +48,8 @@ pub(super) struct Program {
     flat: Vec<u32>,
     /// Texture slots declared `<int>`.
     pub(super) sint_textures: u32,
+    /// Raw texture slots the program converts (`Request::coded_textures`).
+    pub(super) coded_textures: u32,
     /// The frame it was translated in.
     pub(super) frame: u64,
 }
@@ -59,7 +61,8 @@ pub(super) struct Variant {
     pub(super) col_format: u32,
     pub(super) uint_textures: u32,
     pub(super) sint_textures: u32,
-    /// Raw texture slots whose format Metal lacks (see `Request::coded_textures`).
+    /// Raw texture slots whose format Metal lacks or that store 16-bit
+    /// floats (see `Request::coded_textures`).
     pub(super) coded_textures: u32,
     /// Compute: threads past a grid size read from a buffer do nothing.
     pub(super) grid_bounds: bool,
@@ -178,6 +181,7 @@ impl Metal {
                 slot,
                 ref source,
                 view,
+                access,
                 ..
             } = *r
                 && let Some(d) = self.descriptor(host, user, source, 8)
@@ -190,6 +194,15 @@ impl Metal {
                 match image_format(image.format).map(|f| number(f.0)) {
                     Some(Number::Uint) => variant.uint_textures |= 1 << slot,
                     Some(Number::Sint) => variant.sint_textures |= 1 << slot,
+                    // Metal writes every NaN as one value into 16-bit
+                    // floats; the program keeps the hardware's bits.
+                    Some(Number::Float)
+                        if view == View::Raw
+                            && matches!(access, Access::Write | Access::ReadWrite)
+                            && matches!(image.format, 13 | 29 | 71) =>
+                    {
+                        variant.coded_textures |= 1 << slot
+                    }
                     Some(Number::Float) => {}
                     None if view == View::Raw && coded_format(image.format).is_some() => {
                         variant.coded_textures |= 1 << slot
@@ -409,6 +422,7 @@ impl Metal {
                         compute,
                         flat: flat_locations(&translated.msl),
                         sint_textures: variant.sint_textures,
+                        coded_textures: variant.coded_textures,
                         frame: self.epoch,
                         translated,
                     }))

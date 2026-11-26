@@ -230,7 +230,7 @@ impl Metal {
                             None
                         } else {
                             let t = self.storage_image(host, image, kind);
-                            if view == View::Bits {
+                            if view == View::Bits || program.coded_textures >> slot & 1 != 0 {
                                 t.and_then(|t| bits_view(t, image.format))
                             } else {
                                 t.and_then(|t| store_swizzled(t, image.swizzle))
