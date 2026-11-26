@@ -46,6 +46,10 @@ pub(super) fn crosses_lanes(inst: &Inst, insts: &[(usize, Inst)]) -> bool {
                     && matches!(w.kind, Kind::Valu(x) if x.vdst as u16 + 256 == v.src[0])
             })
         }
+        Kind::Valu(v) if name == "v_writelane_b32" => !insts.iter().any(|(_, r)| {
+            r.op.name == "v_readlane_b32"
+                && matches!(r.kind, Kind::Valu(x) if x.src[0] == v.vdst as u16 + 256)
+        }),
         Kind::Valu(v) if matches!(name, "v_lshrrev_b64" | "v_lshlrev_b64") => mask(v.src[1]),
         Kind::Valu(_) => name.starts_with("v_mbcnt_"),
         Kind::Sopc { .. } => name.ends_with("_u64"),

@@ -125,6 +125,13 @@ impl<'a> Tx<'a> {
         // Lanes are not modelled: a register is one value per thread. A
         // constant lane gets its own variable, which covers SGPR spills.
         let lane = |src: u16| (128..=192).contains(&src).then(|| src - 128);
+        if name == "v_writelane_b32" && self.lockstep {
+            let s = self.usrc(pc, inst, v, 0)?;
+            let k = self.src32(v.src[1], inst.literal, pc)?;
+            let d = self.v(v.vdst as u16);
+            self.line(&format!("if (wl == ({k} & 63u)) {d} = {s};"));
+            return Ok(());
+        }
         if name == "v_writelane_b32" {
             let s = self.usrc(pc, inst, v, 0)?;
             let target = match lane(v.src[1]) {
