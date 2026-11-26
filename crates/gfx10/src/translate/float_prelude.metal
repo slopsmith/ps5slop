@@ -516,7 +516,14 @@ static inline uint flush16(uint x) { return den16(x) ? x & 0x8000u : x; }
 static inline uint in16(uint x) { x &= 0xffffu; return (FM_DN16 & 1) == 0 ? flush16(x) : x; }
 static inline uint out16(uint x) { return (FM_DN16 & 2) == 0 ? flush16(x) : x; }
 static inline uint quiet16(uint x) { return FM_IEEE ? x | 0x200u : x; }
-static inline float hf(uint x) { return float(as_type<half>(ushort(x))); }
+// f16 bits widened to f32 by integer operations: Metal was seen to keep a
+// widened half at half precision in later arithmetic.
+static inline float hf(uint x) {
+    uint s = (x & 0x8000u) << 16, e = (x >> 10) & 0x1fu, m = x & 0x3ffu;
+    if (e == 0x1fu) return as_type<float>(s | 0x7f800000u | m << 13);
+    if (e == 0u) return as_type<float>(s | as_type<uint>(float(m) * 0x1p-24f));
+    return as_type<float>(s | (e + 112u) << 23 | m << 13);
+}
 static inline int key16(uint x) { return (x & 0x8000u) != 0u ? -int(x & 0x7fffu) : int(x); }
 
 static inline uint nan_of16(uint a, uint b, uint c) {
@@ -773,4 +780,194 @@ static inline uint fma_mix16(uint a, uint b, uint c) {
     float e = fma_err(x, y, z, r);
     return h16(zero_sign(r, e, pos0(prod0(a, b), z), FM_RND16), e, FM_RND16, (FM_DN16 & 2) != 0);
 
+}
+
+// frexp: the exponent and significand of x = significand * 2^exponent,
+// significand in [0.5, 1); infinities and NaNs give exponent 0 and
+// themselves.
+static inline uint frexp_exp32(uint a) {
+    a = in32(a);
+    uint e = (a >> 23) & 0xffu, m = a & 0x7fffffu;
+    if (e == 0xffu || zero32(a)) return 0u;
+    if (e == 0u) return uint(int(31u - clz(m)) - 148);
+    return uint(int(e) - 126);
+}
+
+static inline uint frexp_mant32(uint a) {
+    a = in32(a);
+    uint e = (a >> 23) & 0xffu, m = a & 0x7fffffu;
+    if (e == 0xffu) return nan32(a) ? quiet32(a) : a;
+    if (zero32(a)) return a;
+    if (e == 0u) m = (m << (clz(m) - 8u)) & 0x7fffffu;
+    return (a & 0x80000000u) | 0x3f000000u | m;
+}
+
+static inline uint frexp_exp16(uint a) {
+    a = in16(a);
+    uint e = (a >> 10) & 0x1fu, m = a & 0x3ffu;
+    if (e == 0x1fu || zero16(a)) return 0u;
+    if (e == 0u) return uint(int(31u - clz(m)) - 23) & 0xffffu;
+    return uint(int(e) - 14) & 0xffffu;
+}
+
+static inline uint frexp_mant16(uint a) {
+    a = in16(a);
+    uint e = (a >> 10) & 0x1fu, m = a & 0x3ffu;
+    if (e == 0x1fu) return nan16(a) ? quiet16(a) : a;
+    if (zero16(a)) return a;
+    if (e == 0u) m = (m << (clz(m) - 21u)) & 0x3ffu;
+    return (a & 0x8000u) | 0x3800u | m;
+}
+
+// v_div_scale_f32: s0 (the denominator s1 or the numerator s2) scaled so
+// that the division's Newton-Raphson steps meet no denormals; vcc says
+// v_div_fmas_f32 must scale the quotient back.
+static inline uint div_scale32(uint s0, uint s1, uint s2, thread bool& vcc) {
+    s0 = in32(s0); s1 = in32(s1); s2 = in32(s2);
+    // As RDNA2 hardware does it, which differs from the ISA guide: the steps
+    // look only at exponent fields, so NaNs are scaled like other values and
+    // a zero source changes only the result, a huge denominator is scaled
+    // down, and a quotient counts as denormal when the exponents differ by
+    // 96 or more (seen at 99, not at 94; 96 mirrors the overflow test).
+
+    int e1 = int((s1 >> 23) & 0xffu), e2 = int((s2 >> 23) & 0xffu);
+    bool rcp_den = e1 >= 253, quot_den = e2 - e1 <= -96;
+    uint r = s0;
+    vcc = false;
+    if (e2 - e1 >= 96) {
+        vcc = true;
+        if (s0 == s1) r = ldexp32(s0, 64);
+    } else if (den32(s1)) {
+        r = ldexp32(s0, 64);
+    } else if (rcp_den && quot_den) {
+        vcc = true;
+        if (s0 == s1) r = ldexp32(s0, -64);
+    } else if (rcp_den) {
+        r = ldexp32(s0, -64);
+    } else if (quot_den) {
+        vcc = true;
+        if (s0 != s1) r = ldexp32(s0, 64);
+    } else if (e2 <= 23) {
+        r = ldexp32(s0, 64);
+    }
+    return zero32(s1) || zero32(s2) ? 0xffc00000u : r;
+}
+
+// v_div_fmas_f32: an fma, scaled when vcc is set by 2^64 if c is 2 or more
+// in magnitude, else by 2^-64 (RDNA2 hardware; the ISA guide says 2^32).
+static inline uint div_fmas32(uint a, uint b, uint c, bool vcc) {
+    float x = F(a), y = F(b), z = F(c);
+    int k = vcc ? (((c >> 23) & 0xffu) >= 128u ? 64 : -64) : 0;
+    if (!isfinite(x) || !isfinite(y) || !isfinite(z)) {
+        uint r = fma32(den32(a) ? (a & 0x80000000u) | 0x800000u : a, den32(b) ? (b & 0x80000000u) | 0x800000u : b, den32(c) ? (c & 0x80000000u) | 0x800000u : c);
+
+        return vcc && !nan32(r) && !zero32(r) ? ldexp32(r, k) : r;
+    }
+    bool na, nb, nc; int ea, eb, ec; ulong ma, mb, mc;
+    unpack32(a, na, ea, ma); unpack32(b, nb, eb, mb); unpack32(c, nc, ec, mc);
+    return soft_sum(na != nb, ea + eb + k, ma * mb, nc, ec + k, mc, FM_RND32, (FM_DN32 & 2) != 0);
+}
+
+// v_div_fixup_f32: s0 the quotient, s1 the denominator, s2 the numerator.
+// The quotient s0 is not flushed; an infinite or NaN one is an overflow.
+static inline uint div_fixup32(uint s0, uint s1, uint s2) {
+    s1 = in32(s1); s2 = in32(s2);
+    uint sign = (s1 ^ s2) & 0x80000000u;
+    uint a1 = s1 & 0x7fffffffu, a2 = s2 & 0x7fffffffu;
+    if (nan32(s2)) return quiet32(s2);
+    if (nan32(s1)) return quiet32(s1);
+    if (a1 == 0u && a2 == 0u) return 0xffc00000u;
+    if (a1 == 0x7f800000u && a2 == 0x7f800000u) return 0xffc00000u;
+    if (a1 == 0u || a2 == 0x7f800000u) return sign | 0x7f800000u;
+    if (a1 == 0x7f800000u || a2 == 0u) return sign;
+    if (int(a2 >> 23) - int(a1 >> 23) < -150) return sign;
+    if ((s0 & 0x7f800000u) == 0x7f800000u) return as_type<uint>(round_ovf(as_type<float>(sign | 0x7f800000u), FM_RND32));
+    return sign | (s0 & 0x7fffffffu);
+}
+
+static inline uint div_fixup16(uint s0, uint s1, uint s2) {
+    s0 &= 0xffffu; s1 = in16(s1); s2 = in16(s2);
+    uint sign = (s1 ^ s2) & 0x8000u;
+    uint a1 = s1 & 0x7fffu, a2 = s2 & 0x7fffu;
+    if (nan16(s2)) return quiet16(s2);
+    if (nan16(s1)) return quiet16(s1);
+    if (a1 == 0u && a2 == 0u) return 0xfe00u;
+    if (a1 == 0x7c00u && a2 == 0x7c00u) return 0xfe00u;
+    if (a1 == 0u || a2 == 0x7c00u) return sign | 0x7c00u;
+    if (a1 == 0x7c00u || a2 == 0u) return sign;
+    if ((s0 & 0x7c00u) == 0x7c00u) {
+        bool toward = FM_RND16 == 3u || (FM_RND16 == 1u && sign != 0u) || (FM_RND16 == 2u && sign == 0u);
+        return sign | (toward ? 0x7bffu : 0x7c00u);
+    }
+    return sign | (s0 & 0x7fffu);
+}
+
+// x rounded to an integer under mode m.
+static inline float round_int(float x, uint m) {
+    return m == 0u ? rint(x) : m == 1u ? ceil(x) : m == 2u ? floor(x) : trunc(x);
+}
+
+// s0 to an unsigned byte (rounded under the mode, saturated, NaN 0) into
+// byte s1 of s2.
+static inline uint cvt_pk_u8_f32(uint s0, uint s1, uint s2) {
+    s0 = in32(s0);
+    float x = F(s0);
+    uint b = nan32(s0) ? 0u : uint(round_int(clamp(x, 0.0f, 255.0f), FM_RND32));
+
+    uint sh = 8u * (s1 & 3u);
+    return (s2 & ~(0xffu << sh)) | (b << sh);
+}
+
+static inline uint cvt_i16_f16(uint a) {
+    a = in16(a);
+    if (nan16(a)) return 0u;
+    return uint(int(clamp(trunc(hf(a)), -32768.0f, 32767.0f))) & 0xffffu;
+}
+
+static inline uint cvt_u16_f16(uint a) {
+    a = in16(a);
+    if (nan16(a)) return 0u;
+    return uint(clamp(trunc(hf(a)), 0.0f, 65535.0f));
+}
+
+// x * k rounded to the nearest integer, ties to even, from the exact product.
+static inline float rint_mul(float x, float k) {
+    float p = x * k, e = fma(x, k, -p), r = rint(p);
+    if (abs(p - trunc(p)) == 0.5f && e != 0.0f) r = e > 0.0f ? ceil(p) : floor(p);
+    return r;
+}
+
+static inline uint cvt_snorm16_f16(uint a) {
+    a = in16(a);
+    if (nan16(a)) return 0u;
+    return uint(int(rint_mul(clamp(hf(a), -1.0f, 1.0f), 32767.0f))) & 0xffffu;
+}
+
+static inline uint cvt_unorm16_f16(uint a) {
+    a = in16(a);
+    if (nan16(a)) return 0u;
+    return uint(rint_mul(clamp(hf(a), 0.0f, 1.0f), 65535.0f));
+}
+
+
+// v_pack_b32_f16 moves each half as a float: flushed and quieted by the
+// mode.
+static inline uint pack16(uint a) {
+    a = in16(a);
+    return nan16(a) ? quiet16(a) : out16(a);
+}
+
+// v_mullit_f32, for LIT (RDNA2 hardware): -FLT_MAX (whose exp is 0) unless
+// c is above zero and b is a number above -FLT_MAX, else a * b by the
+// legacy rules.
+
+
+
+
+static inline uint mullit32(uint a, uint b, uint c) {
+    a = in32(a); b = in32(b); c = in32(c);
+    bool c_pos = (c >> 31) == 0u && !zero32(c) && !nan32(c);
+    if (!c_pos || b >= 0xff7fffffu || nan32(b)) return 0xff7fffffu;
+
+    return mul_legacy32(a, b);
 }

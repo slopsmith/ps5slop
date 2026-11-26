@@ -1,6 +1,7 @@
 //! 16-bit and packed half-precision VALU ops, mixed FMA and indexed VGPR moves.
 
 use super::*;
+use crate::opinfo::Ty;
 
 /// The float inline constants 240 to 248 as halves.
 const F16_CONSTANTS: [u32; 9] = [
@@ -180,7 +181,9 @@ impl<'a> Tx<'a> {
     }
 
     /// A 16-bit source as a `uint` with the value in its low half: float
-    /// inline constants are halves, and a VOP3 `op_sel` bit picks the high half.
+    /// inline constants are halves for f16 operands (integer operands get
+    /// the f32 constant's bits, as RDNA2 does), and a VOP3 `op_sel` bit
+    /// picks the high half.
     pub(super) fn src16(
         &mut self,
         pc: usize,
@@ -189,7 +192,8 @@ impl<'a> Tx<'a> {
         i: usize,
     ) -> Result<String, TranslateError> {
         let code = v.src[i];
-        let e = if (240..=248).contains(&code) && v.enc != VEnc::Sdwa {
+        let half = matches!(inst.op.srcs.get(i), Some(Ty::F16 | Ty::PkF16));
+        let e = if (240..=248).contains(&code) && v.enc != VEnc::Sdwa && half {
             format!("0x{:x}u", F16_CONSTANTS[code as usize - 240])
         } else {
             self.usrc(pc, inst, v, i)?

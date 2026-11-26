@@ -77,6 +77,8 @@ Float VALU instructions follow the float mode of the stage's `PGM_RSRC1` (FLOAT_
 - Output modifiers are ignored in IEEE mode and when output denormals are kept; clamp turns NaN into 0 under DX10_CLAMP.
 - `v_mad_f32` and its legacy, `mac`, `madmk` and `madak` forms round the product, as GFX10.1 does; GFX10.3 runs them fused, so the oracle's results for them differ in the last bit by design.
 - `v_rcp`, `v_rsq`, `v_sqrt`, `v_exp`, `v_log`, `v_sin` and `v_cos` take Metal's functions with the hardware's special cases. AMD's approximations are not documented, and their f32 results differ from hardware's in the last bit or so for many inputs.
+- Where RDNA2 hardware differs from the ISA guide's pseudo-code (`v_div_scale_f32`, `v_div_fmas_f32`, `v_mullit_f32`, `v_div_fixup_*`), the hardware's results are followed; the helpers' comments say how. f16 values are widened by integer operations, because Metal was seen to keep a widened half at half precision.
+
 
 ### Control flow
 

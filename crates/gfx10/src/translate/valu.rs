@@ -94,7 +94,7 @@ impl<'a> Tx<'a> {
     }
 
     // This thread's bit of VCC as a `uint`.
-    fn vcc_bit(&mut self) -> String {
+    pub(super) fn vcc_bit(&mut self) -> String {
         format!("uint({})", self.mask_on(106))
     }
 

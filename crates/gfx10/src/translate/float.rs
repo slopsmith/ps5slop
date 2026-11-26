@@ -2,6 +2,7 @@
 //! program's float mode, through the helpers of `float_prelude.metal`.
 
 use super::*;
+use crate::opinfo::Ty;
 
 pub(super) const FLOAT_PRELUDE: &str = include_str!("float_prelude.metal");
 
@@ -74,11 +75,33 @@ const F16_OPS: &[(&str, &str)] = &[
     ("v_fract_f16", "fract16"),
 ];
 
+/// f16 ops with a 16-bit integer result and their helper.
+const F16_TO_INT: &[(&str, &str)] = &[
+    ("v_frexp_exp_i16_f16", "frexp_exp16"),
+    ("v_cvt_i16_f16", "cvt_i16_f16"),
+    ("v_cvt_u16_f16", "cvt_u16_f16"),
+    ("v_cvt_norm_i16_f16", "cvt_snorm16_f16"),
+    ("v_cvt_norm_u16_f16", "cvt_unorm16_f16"),
+];
+
 pub(super) fn is_float16(name: &str) -> bool {
-    F16_OPS.iter().any(|(n, _)| *n == name)
+    F16_OPS.iter().chain(F16_TO_INT).any(|(n, _)| *n == name)
         || matches!(
             name,
-            "v_subrev_f16" | "v_fmac_f16" | "v_min3_f16" | "v_max3_f16" | "v_ldexp_f16"
+            "v_subrev_f16"
+                | "v_fmac_f16"
+                | "v_min3_f16"
+                | "v_max3_f16"
+                | "v_ldexp_f16"
+                | "v_frexp_mant_f16"
+                | "v_div_fixup_f16"
+                | "v_fmaak_f16"
+                | "v_fmamk_f16"
+                | "v_cvt_f16_i16"
+                | "v_cvt_f16_u16"
+                | "v_cvt_pknorm_i16_f16"
+                | "v_cvt_pknorm_u16_f16"
+                | "v_pack_b32_f16"
         )
 }
 
@@ -197,12 +220,51 @@ impl<'a> Tx<'a> {
                     format!("U(float(int({} << 28) >> 28) / 16.0f)", u(self, 0)?)
                 }
                 "v_cvt_f32_f16" => format!("cvt_f32_f16({})", self.hbits(pc, inst, v, 0)?),
+                "v_frexp_mant_f32" => format!("frexp_mant32({})", f(self, 0)?),
+                "v_mullit_f32" => {
+                    let (a, b, c) = (f(self, 0)?, f(self, 1)?, f(self, 2)?);
+                    format!("mullit32({a}, {b}, {c})")
+                }
+
+                "v_div_fixup_f32" => {
+                    let (a, b, c) = (f(self, 0)?, f(self, 1)?, f(self, 2)?);
+                    format!("div_fixup32({a}, {b}, {c})")
+                }
+                "v_div_fmas_f32" => {
+                    let (a, b, c) = (f(self, 0)?, f(self, 1)?, f(self, 2)?);
+                    let vcc = self.vcc_bit();
+                    format!("div_fmas32({a}, {b}, {c}, {vcc} != 0u)")
+                }
+                "v_div_scale_f32" => {
+                    let (a, b, c) = (f(self, 0)?, f(self, 1)?, f(self, 2)?);
+                    let d = self.v(vdst);
+                    let dst = v.sdst.map_or(106, |s| s as u16);
+                    let set = if dst == src::NULL {
+                        String::new()
+                    } else {
+                        self.set_mask(dst, "k")
+                    };
+                    let exec = self.mask_on(126);
+                    self.line(&format!(
+                        "{{ bool k = false; uint r = div_scale32({a}, {b}, {c}, k); bool on = {exec}; k = k && on; if (on) {d} = {};{set} }}",
+                        self.mods32(v, "r".into())
+                    ));
+                    return Ok(true);
+                }
                 _ => String::new(),
             }
         };
         let value = if float.is_empty() {
             match name {
                 "v_cvt_i32_f32" => format!("cvt_i32_f32({})", f(self, 0)?),
+                "v_frexp_exp_i32_f32" => format!("frexp_exp32({})", f(self, 0)?),
+                "v_cvt_pk_u8_f32" => format!(
+                    "cvt_pk_u8_f32({}, {}, {})",
+                    f(self, 0)?,
+                    u(self, 1)?,
+                    u(self, 2)?
+                ),
+
                 "v_cvt_u32_f32" => format!("cvt_u32_f32({})", f(self, 0)?),
                 "v_cvt_flr_i32_f32" => format!("cvt_flr_i32_f32({})", f(self, 0)?),
                 "v_cvt_rpi_i32_f32" => format!("cvt_rpi_i32_f32({})", f(self, 0)?),
@@ -249,7 +311,38 @@ impl<'a> Tx<'a> {
         let n = inst.op.srcs.len().min(3);
         let mut s = Vec::new();
         for i in 0..n {
-            s.push(self.hbits(pc, inst, v, i)?);
+            s.push(match inst.op.srcs[i] {
+                Ty::F16 | Ty::PkF16 => self.hbits(pc, inst, v, i)?,
+                _ => String::new(),
+            });
+        }
+        let k = format!("0x{:x}u", inst.literal.unwrap_or(0) & 0xFFFF);
+        if let Some((_, helper)) = F16_TO_INT.iter().find(|(o, _)| *o == name) {
+            let e = format!("{helper}({})", s[0]);
+            self.write16(v, &e);
+            return Ok(());
+        }
+        let dword = match name {
+            "v_cvt_pknorm_i16_f16" => Some(format!(
+                "cvt_snorm16_f16({}) | cvt_snorm16_f16({}) << 16",
+                s[0], s[1]
+            )),
+            "v_cvt_pknorm_u16_f16" => Some(format!(
+                "cvt_unorm16_f16({}) | cvt_unorm16_f16({}) << 16",
+                s[0], s[1]
+            )),
+            "v_pack_b32_f16" => Some(format!(
+                "{} | {} << 16",
+                self.mods16(v, format!("pack16({})", s[0])),
+                self.mods16(v, format!("pack16({})", s[1]))
+            )),
+
+            _ => None,
+        };
+        if let Some(e) = dword {
+            let d = self.v(v.vdst as u16);
+            self.guard(&format!("{d} = {e};"));
+            return Ok(());
         }
         let e = if let Some((_, helper)) = F16_OPS.iter().find(|(o, _)| *o == name) {
             format!("{helper}({})", s.join(", "))
@@ -266,6 +359,19 @@ impl<'a> Tx<'a> {
                 "v_ldexp_f16" => {
                     let b = self.src16(pc, inst, v, 1)?;
                     format!("ldexp16({}, int(short({b})))", s[0])
+                }
+                "v_frexp_mant_f16" => format!("frexp_mant16({})", s[0]),
+                "v_div_fixup_f16" => format!("div_fixup16({}, {}, {})", s[0], s[1], s[2]),
+                "v_fmaak_f16" => format!("fma16({}, {}, {k})", s[0], s[1]),
+                "v_fmamk_f16" => format!("fma16({}, {k}, {})", s[0], s[1]),
+                "v_cvt_f16_i16" | "v_cvt_f16_u16" => {
+                    let a = self.src16(pc, inst, v, 0)?;
+                    let x = if name == "v_cvt_f16_i16" {
+                        format!("float(short({a}))")
+                    } else {
+                        format!("float({a} & 0xffffu)")
+                    };
+                    format!("h16({x}, 0.0f, FM_RND16, (FM_DN16 & 2) != 0)")
                 }
                 _ => return Err(err(pc, format!("unsupported instruction {name}"))),
             }
