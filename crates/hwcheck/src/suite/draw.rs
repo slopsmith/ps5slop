@@ -854,6 +854,23 @@ fn reads_src1(blend: u32) -> bool {
         .any(|&at| (15..=18).contains(&(blend >> at & 0x1F)))
 }
 
+// Pairings a driver would set up; the CB's results for others are not modelled.
+fn offered(format: u32, number: u32, out: Out) -> bool {
+    const UNORM: u32 = 0;
+    const SNORM: u32 = 1;
+    const SINT: u32 = 5;
+    const SRGB: u32 = 6;
+    const FLOAT: u32 = 7;
+    let wide = matches!(out, Out::F32 | Out::U32 | Out::I32);
+    match format {
+        4 | 11 | 14 => wide && !matches!(number, UNORM | SNORM | SRGB),
+        24 => number == FLOAT,
+        16 | 19 => number != FLOAT,
+        17 | 18 => !matches!(number, SNORM | SINT | FLOAT),
+        _ => !(number == SRGB && out == Out::Unorm16),
+    }
+}
+
 /// Every draw test.
 pub fn cases() -> Vec<Case> {
     let mut out = Vec::new();
@@ -869,7 +886,7 @@ pub fn cases() -> Vec<Case> {
                 None if number == 1 => &[Out::F32, Out::Snorm16],
                 None => &[Out::F32, Out::Unorm16],
             };
-            for &o in outs {
+            for &o in outs.iter().filter(|&&o| offered(format, number, o)) {
                 let mut d = Draw::new(
                     "draw format",
                     format!("{fname} {nname} export {o:?}"),
