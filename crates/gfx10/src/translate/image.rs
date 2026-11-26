@@ -348,6 +348,17 @@ impl<'a> Tx<'a> {
             TextureKind::Tex2d => level(2),
             _ => level(3),
         };
+        // Reads outside the image return zero and writes there are dropped.
+        let mut inside = format!(
+            "{lvl} < t{t}.get_num_mip_levels() && {} < t{t}.get_width({lvl}) && {} < t{t}.get_height({lvl})",
+            a[0], a[1]
+        );
+        match kind {
+            TextureKind::Tex2dArray => write!(inside, " && {} < t{t}.get_array_size()", a[2]),
+            TextureKind::Tex3d => write!(inside, " && {} < t{t}.get_depth({lvl})", a[2]),
+            _ => Ok(()),
+        }
+        .unwrap();
         let d = m.vdata as u16;
         let (elem, conv) = self.texel(t);
         let coded = self.req.coded_textures >> t & 1 != 0 || self.textures[t].4 == View::Bits;
@@ -397,20 +408,22 @@ impl<'a> Tx<'a> {
             } else {
                 String::new()
             };
-            let storable = format!("if (image_storable((user[{w}] >> 20) & 0x1ffu)) ");
+            let storable = format!("image_storable((user[{w}] >> 20) & 0x1ffu) && ");
             let (encode, when) = if pck {
-                ("image_pack", storable)
+                ("image_pack", String::new())
             } else if coded {
                 ("image_encode", storable)
             } else {
                 ("image_store_channels", String::new())
             };
+            let when = format!("if ({when}{inside}) ");
             self.guard(&format!(
                 "{when}t{t}.write({encode}({elem}4({}), user[{w}]), {coord}, {lvl});{fence}",
                 comps.join(", ")
             ));
         } else {
-            let mut s = format!("{elem}4 r = t{t}.read({coord}, {lvl});");
+            let mut s =
+                format!("{elem}4 r = {elem}4(0); if ({inside}) r = t{t}.read({coord}, {lvl});");
             if pck {
                 let sgn = name.ends_with("_sgn");
                 write!(s, " r = image_unpack(r, user[{w}], {sgn});").unwrap();

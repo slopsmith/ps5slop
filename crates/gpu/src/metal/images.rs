@@ -373,9 +373,7 @@ impl Metal {
         Some(volume)
     }
 
-    /// A linear 3D image, level 0, copied from guest memory once a frame.
-    /// Rows are padded to 256 bytes and slices follow each other unpadded,
-    /// as for linear 2D surfaces (assumed, not checked against a console).
+    /// A linear 3D image with its mip levels, copied from guest memory once a frame.
     fn linear_volume(
         &mut self,
         host: &dyn Host,
@@ -388,11 +386,6 @@ impl Metal {
         {
             return Some(tex.clone());
         }
-        let layout = Layout::new(TileMode::Linear, bpe, image.width, image.height)?;
-        let row = (layout.pitch * bpe) as usize;
-        let slice = layout.size() as usize;
-        let len = slice * image.depth as usize;
-        let (buffer, offset) = self.window(host, image.address, len as u64)?;
         let tex = match self.images.get(&(image, TextureKind::Tex3d)) {
             Some((_, t)) => t.clone(),
             None => {
@@ -412,38 +405,62 @@ impl Metal {
                     desc.setWidth(image.width as usize);
                     desc.setHeight(image.height as usize);
                     desc.setDepth(image.depth as usize);
+                    desc.setMipmapLevelCount(volume_levels(image) as usize);
                 }
                 desc.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::PixelFormatView);
                 desc.setStorageMode(MTLStorageMode::Private);
                 self.device.newTextureWithDescriptor(&desc)?
             }
         };
-        self.end_pass();
-        let command = self.command();
-        let blit = command.blitCommandEncoder()?;
-        unsafe {
-            blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
-                &buffer,
-                offset,
-                row,
-                slice,
-                MTLSize {
-                    width: image.width as usize,
-                    height: image.height as usize,
-                    depth: image.depth as usize,
-                },
-                &tex,
-                0,
-                0,
-                MTLOrigin { x: 0, y: 0, z: 0 },
-            );
-        }
-        blit.endEncoding();
+        self.fill_linear_volume(host, &tex, image, bpe)?;
         self.note(|| format!("      {:#x} a linear 3D image", image.address));
         self.images
             .insert((image, TextureKind::Tex3d), (self.epoch, tex.clone()));
         record(image.address | 1, &tex, false);
         Some(tex)
+    }
+
+    /// Copies a linear 3D image's levels from guest memory into `tex`. Each
+    /// depth slice holds a whole mip chain laid out as a linear 2D one, as
+    /// for a 2D array (measured on RDNA2).
+    fn fill_linear_volume(
+        &mut self,
+        host: &dyn Host,
+        tex: &Texture,
+        image: Image,
+        bpe: u32,
+    ) -> Option<()> {
+        let layout = Layout::new(TileMode::Linear, bpe, image.width, image.height)?;
+        let chain = image.last_level + 1;
+        let stride = layout.chain_size(chain);
+        let len = stride * image.depth as u64;
+        let (buffer, offset) = self.window(host, image.address, len)?;
+        let mips = layout.mips(chain, (image.width, image.height), 1);
+        self.end_pass();
+        let command = self.command();
+        let blit = command.blitCommandEncoder()?;
+        for (level, mip) in mips.iter().enumerate().take(tex.mipmapLevelCount()) {
+            let l = mip.layout;
+            unsafe {
+                blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
+                    &buffer,
+                    offset + mip.offset as usize,
+                    (l.pitch * bpe) as usize,
+                    stride as usize,
+                    MTLSize {
+                        width: l.width as usize,
+                        height: l.height as usize,
+                        depth: (image.depth >> level).max(1) as usize,
+                    },
+                    tex,
+                    0,
+                    level,
+                    MTLOrigin { x: 0, y: 0, z: 0 },
+                );
+            }
+        }
+        blit.endEncoding();
+        Some(())
     }
 
     /// A 3D image in `SW_4KB_S` with the levels before its mip tail, or of
@@ -737,10 +754,13 @@ impl Metal {
                     },
                     slices,
                 )?;
-                let source = if kind == TextureKind::Tex3d {
-                    None
-                } else {
+                let source = if kind != TextureKind::Tex3d {
                     self.fill_volume(host, &texture, image, bpe, slices)
+                } else {
+                    if image.tile == Some(TileMode::Linear) {
+                        self.fill_linear_volume(host, &texture, image, bpe);
+                    }
+                    None
                 };
                 if let Some(old) = old
                     && old.textureType() == MTLTextureType::Type2DArray
@@ -842,7 +862,8 @@ impl Metal {
             else {
                 continue;
             };
-            if is_compressed(format) || tex.textureType() == MTLTextureType::Type3D {
+            let volume = tex.textureType() == MTLTextureType::Type3D;
+            if is_compressed(format) || volume && image.tile != Some(TileMode::Linear) {
                 continue;
             }
             let chain = image.last_level + 1;
@@ -850,10 +871,18 @@ impl Metal {
             let stride = layout
                 .chain_size(chain)
                 .next_multiple_of(layout.block_bytes());
-            let first = image.base_array as u64;
-            for slice in 0..tex.arrayLength() {
+            // A linear 3D image's depth slices are laid out as array slices.
+            let (first, slices) = if volume {
+                (0, image.depth as usize)
+            } else {
+                (image.base_array as u64, tex.arrayLength())
+            };
+            for slice in 0..slices {
                 let at = image.address + (first + slice as u64) * stride;
                 for (level, mip) in mips.iter().enumerate().take(tex.mipmapLevelCount()) {
+                    if volume && slice >= (image.depth >> level).max(1) as usize {
+                        continue;
+                    }
                     let Some(bytes) = read_level(&tex, slice, level) else {
                         continue;
                     };
@@ -1007,7 +1036,7 @@ impl Metal {
             v.newTextureViewWithPixelFormat_textureType_levels_slices(
                 format,
                 ty,
-                objc2_foundation::NSRange::new(0, 1),
+                objc2_foundation::NSRange::new(0, v.mipmapLevelCount()),
                 objc2_foundation::NSRange::new(first, count),
             )
         }
@@ -1047,6 +1076,9 @@ impl Metal {
         }
         desc.setUsage(usage);
         desc.setStorageMode(MTLStorageMode::Shared);
+        if kind == TextureKind::Tex3d {
+            unsafe { desc.setMipmapLevelCount(volume_levels(image) as usize) };
+        }
         let t = self.device.newTextureWithDescriptor(&desc)?;
         let row = w * texel_bytes(format)?;
         let zero = vec![0u8; row * h * if kind == TextureKind::Tex3d { d } else { 1 }];

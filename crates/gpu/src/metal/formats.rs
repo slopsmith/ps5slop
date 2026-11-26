@@ -106,6 +106,18 @@ pub(super) fn sampled_levels(image: Image) -> u32 {
     (image.last_level + 1).clamp(1, full)
 }
 
+/// The mip levels of a 3D image's texture: its chain, as far as Metal
+/// allows for its size.
+pub(super) fn volume_levels(image: Image) -> u32 {
+    let full = 32
+        - image
+            .width
+            .max(image.height)
+            .max(image.depth)
+            .leading_zeros();
+    (image.last_level + 1).clamp(1, full)
+}
+
 /// A 3D image of one texel, whose layout cannot differ from a 2D one.
 pub(super) fn one_texel_volume(image: Image) -> bool {
     image.width == 1 && image.height == 1 && image.depth == 1
