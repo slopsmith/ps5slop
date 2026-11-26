@@ -17,7 +17,7 @@ const GROUPS: u32 = 16;
 const IN_WORDS: usize = 16;
 const OUT_NAMES: [&str; 8] = ["d0", "d1", "d2", "d3", "-", "-", "-", "-"];
 /// The texture's texels.
-const TEXTURE: u64 = 0x60_0000;
+pub(super) const TEXTURE: u64 = 0x60_0000;
 /// The image descriptor (32 bytes), then the sampler (16 bytes).
 const DESC: u64 = INPUTS + 0x8_0000;
 
@@ -63,9 +63,9 @@ const EPILOGUE: [u32; 10] = [
 
 const VADDR: u32 = 1;
 const VDATA_STORE: u32 = 9;
-const VDST: u32 = 20;
-const SRSRC: u32 = 40;
-const SSAMP: u32 = 48;
+pub(super) const VDST: u32 = 20;
+pub(super) const SRSRC: u32 = 40;
+pub(super) const SSAMP: u32 = 48;
 
 /// Image dimensions: name, MIMG DIM, descriptor TYPE, size (width, height,
 /// depth or layers), coordinates, whether it is an array (last coordinate a slice).
@@ -193,7 +193,7 @@ pub const SAMPLERS: [Sampler; 14] = [
 
 /// What one address operand holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Arg {
+pub(super) enum Arg {
     Offset,
     Bias,
     Compare,
@@ -208,7 +208,7 @@ enum Arg {
 }
 
 /// The address operands of `name` on `dim`, in the order the ISA lays them out.
-fn args(name: &str, dim: Dim) -> Vec<Arg> {
+pub(super) fn args(name: &str, dim: Dim) -> Vec<Arg> {
     let sample = name.starts_with("image_sample") || name.starts_with("image_gather");
     let mut out = Vec::new();
     if name.ends_with("_o") || name.contains("_o_") {
@@ -285,6 +285,12 @@ fn dims(name: &str) -> Vec<Dim> {
 }
 
 fn encode(op: &OpInfo, dim: Dim, dmask: u32, unorm: bool) -> [u32; 2] {
+    encode_at(op, dim, dmask, unorm, VADDR)
+}
+
+/// The instruction with its address operands from `vaddr` on; it reads
+/// [`SRSRC`] and [`SSAMP`] and writes from [`VDST`] on.
+pub(super) fn encode_at(op: &OpInfo, dim: Dim, dmask: u32, unorm: bool, vaddr: u32) -> [u32; 2] {
     let c = op.code as u32;
     let glc = is_atomic(op.name) as u32;
     let vdata = if is_store(op.name) || is_atomic(op.name) {
@@ -303,7 +309,7 @@ fn encode(op: &OpInfo, dim: Dim, dmask: u32, unorm: bool) -> [u32; 2] {
         (uses_sampler(op.name) as u32 * (SSAMP >> 2)) << 21
             | (SRSRC >> 2) << 16
             | vdata << 8
-            | VADDR,
+            | vaddr,
     ]
 }
 
@@ -339,6 +345,11 @@ fn texture_bytes(dim: Dim, bits: u32, block: bool, levels: u32) -> u32 {
 }
 
 fn descriptor(dim: Dim, format: u32, levels: u32) -> [u32; 8] {
+    descriptor_at(TEXTURE, dim, format, levels)
+}
+
+/// The image descriptor of a linear texture at `address`.
+pub(super) fn descriptor_at(address: u64, dim: Dim, format: u32, levels: u32) -> [u32; 8] {
     let (w, h, d) = dim.size;
     let depth = match dim.dim {
         2 => d - 1,
@@ -348,8 +359,8 @@ fn descriptor(dim: Dim, format: u32, levels: u32) -> [u32; 8] {
     const RESOURCE_LEVEL: u32 = 1 << 31;
     const XYZW: u32 = 4 | 5 << 3 | 6 << 6 | 7 << 9;
     [
-        (TEXTURE >> 8) as u32,
-        (TEXTURE >> 40) as u32 & 0xFF | format << 20 | ((w - 1) & 3) << 30,
+        (address >> 8) as u32,
+        (address >> 40) as u32 & 0xFF | format << 20 | ((w - 1) & 3) << 30,
         (w - 1) >> 2 | (h - 1) << 14 | RESOURCE_LEVEL,
         XYZW | (levels - 1) << 16 | dim.kind << 28,
         depth,
@@ -360,10 +371,30 @@ fn descriptor(dim: Dim, format: u32, levels: u32) -> [u32; 8] {
 }
 
 fn sampler(s: usize) -> [u32; 4] {
-    let (_, clamp, mag, min, mip, compare, border, unnormalized, bias) = SAMPLERS[s];
+    sampler_words(SAMPLERS[s], 0)
+}
+
+/// The sampler descriptor of `s` with `MAX_ANISO_RATIO` `aniso` (0 for
+/// 1x, up to 4 for 16x); an anisotropic sampler filters as Mesa's
+/// `ac_build_sampler_descriptor` sets it up.
+pub(super) fn sampler_words(s: Sampler, aniso: u32) -> [u32; 4] {
+    let (_, clamp, mag, min, mip, compare, border, unnormalized, bias) = s;
+    const ANISO_FILTER: u32 = 2;
+    let (mag, min, perf_mip) = if aniso > 0 {
+        (mag | ANISO_FILTER, min | ANISO_FILTER, aniso + 6)
+    } else {
+        (mag, min, 0)
+    };
     [
-        clamp | clamp << 3 | clamp << 6 | compare << 12 | (unnormalized as u32) << 15,
-        15 << 8 << 12,
+        clamp
+            | clamp << 3
+            | clamp << 6
+            | aniso << 9
+            | compare << 12
+            | (unnormalized as u32) << 15
+            | aniso >> 1 << 16
+            | aniso << 21,
+        15 << 8 << 12 | perf_mip << 24,
         bias & 0x3FFF | mag << 20 | min << 22 | mip << 26,
         border << 30,
     ]
@@ -394,7 +425,7 @@ fn texels(bytes: u32, float: bool, half: bool, rng: &mut Rng) -> Vec<u8> {
     out
 }
 
-fn f16_bits(v: f32) -> u16 {
+pub(super) fn f16_bits(v: f32) -> u16 {
     let b = v.to_bits();
     let sign = (b >> 16 & 0x8000) as u16;
     if v.is_nan() {

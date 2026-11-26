@@ -7,12 +7,15 @@
 //! Suites: every colour format and number type through both export paths,
 //! the component swaps, the interpolation modes and pixel inputs, every
 //! blend factor and function, logic ops and write masks, and raster state
-//! (culling, fill rule, viewport sign, scissors, points and lines).
+//! (culling, fill rule, viewport sign, scissors, points and lines), and
+//! texture sampling (see [`texture`]).
 
 use gfx10::opinfo::by_name;
 
 use super::{BASE_MODE, INPUTS, OUTPUTS, PROGRAM, Rng};
 use crate::{Case, write_pages};
+
+mod texture;
 
 /// The pixel program's address; the vertex program sits at [`PROGRAM`].
 const PIXEL_PROGRAM: u64 = PROGRAM + 0x1000;
@@ -378,6 +381,10 @@ pub struct Draw {
     pub vertices: Vec<[f32; 8]>,
     /// Opcodes the draw exercises: its exports and interpolation.
     pub covers: Vec<&'static str>,
+    /// The pixel program's user SGPRs (`SPI_SHADER_USER_DATA_PS_*`).
+    pub user_data: Vec<u32>,
+    /// Memory the draw reads besides its programs and vertices.
+    pub memory: Vec<(u64, Vec<u8>)>,
 }
 
 impl Draw {
@@ -398,6 +405,8 @@ impl Draw {
             scissor: (0, 0, WIDTH, HEIGHT),
             vertices,
             covers: interp.covers(),
+            user_data: Vec::new(),
+            memory: Vec::new(),
         }
     }
 }
@@ -508,7 +517,12 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
             0xB020,
             &[(PIXEL_PROGRAM >> 8) as u32, (PIXEL_PROGRAM >> 40) as u32],
         ),
-        set(0xB028, &[rsrc1(32), 0]),
+        set(0xB028, &[rsrc1(32), (d.user_data.len() as u32) << 1]),
+        if d.user_data.is_empty() {
+            Vec::new()
+        } else {
+            set(0xB030, &d.user_data)
+        },
         set(0x2_8B54, &[MAX_PRIMGRP_IN_WAVE]),
         set(0x2_8A40, &[0]),
         set(0x3_096C, &[128 | 256 << 9]),
@@ -613,6 +627,9 @@ pub fn case(d: Draw) -> Case {
         .flat_map(|f| f.to_bits().to_le_bytes())
         .collect();
     write_pages(&mut case.input, vertex_buffer, &verts);
+    for (addr, bytes) in &d.memory {
+        write_pages(&mut case.input, *addr, bytes);
+    }
     let mut rng = Rng::new(&format!("target {} {}", d.name, d.variant));
     let fill: Vec<u8> = (0..pitch * HEIGHT / 4)
         .flat_map(|_| (rng.next() as u32).to_le_bytes())
@@ -931,6 +948,7 @@ pub fn cases() -> Vec<Case> {
         d.primitive = prim;
         out.push(case(d));
     }
+    out.extend(texture::cases());
     out
 }
 
