@@ -107,8 +107,13 @@ fn program(op: &'static str, scene: &Scene, dmask: u32) -> Pixel {
     let inputs = 1 << PERSP_CENTER | 1 << POS_X | 1 << POS_Y;
     let x = input_vgpr(inputs, POS_X);
     let y = input_vgpr(inputs, POS_Y);
+    // Helper lanes start with EXEC clear and compute the coordinates the
+    // texture unit takes derivatives of only in whole quad mode, which
+    // compilers enter at the start (Mesa's aco_insert_exec_mask).
     let mut code = vec![
         0xBEFC_0302, // s_mov_b32 m0, s2
+        0xBEBC_047E, // s_mov_b64 s[60:61], exec
+        0xBEFE_0A7E, // s_wqm_b64 exec, exec
         0xF40C_0000 | SRSRC << 6,
         0xFA00_0000, // s_load_dwordx8 s[40:47], s[0:1], null
         0xF408_0000 | SSAMP << 6,
@@ -144,6 +149,7 @@ fn program(op: &'static str, scene: &Scene, dmask: u32) -> Pixel {
         VADDR,
     ));
     code.push(0xBF8C_3F70); // s_waitcnt vmcnt(0)
+    code.push(0xBEFE_043C); // s_mov_b64 exec, s[60:61]
     code.extend(export(0, false, true, [VDST, VDST + 1, VDST + 2, VDST + 3]));
     code.push(0xBF81_0000); // s_endpgm
     Pixel {
@@ -329,13 +335,19 @@ mod tests {
             pc += inst.words as usize;
         }
         assert_eq!(text[0], "s_mov_b32 m0, s2");
-        assert_eq!(text[1], "s_load_dwordx8 s[40:47], s[0:1], null");
-        assert_eq!(text[2], "s_load_dwordx4 s[48:51], s[0:1], 0x20");
-        assert!(text[4].starts_with("v_mul_f32_e32 v5, 0x3d533333, v2"));
-        assert!(text[5].starts_with("v_fmac_f32_e32 v5, 0x3bcccccd, v3"));
-        assert!(text[9].starts_with("v_add_f32_e32 v6, 0x3d4ccccd, v6"));
-        assert!(text.iter().any(|t| t
-            == "image_sample_b v[20:23], v[4:6], s[40:47], s[48:51] dmask:0xf dim:SQ_RSRC_IMG_2D"));
+        assert_eq!(text[2], "s_wqm_b64 exec, exec");
+        assert_eq!(text[3], "s_load_dwordx8 s[40:47], s[0:1], null");
+        assert_eq!(text[4], "s_load_dwordx4 s[48:51], s[0:1], 0x20");
+        assert!(text[6].starts_with("v_mul_f32_e32 v5, 0x3d533333, v2"));
+        assert!(text[7].starts_with("v_fmac_f32_e32 v5, 0x3bcccccd, v3"));
+        assert!(text[11].starts_with("v_add_f32_e32 v6, 0x3d4ccccd, v6"));
+        let sample = text
+            .iter()
+            .position(|t| {
+                t == "image_sample_b v[20:23], v[4:6], s[40:47], s[48:51] dmask:0xf dim:SQ_RSRC_IMG_2D"
+            })
+            .expect("the program samples");
+        assert_eq!(text[sample + 2], "s_mov_b64 exec, s[60:61]");
         assert_eq!(text.last().unwrap(), "s_endpgm");
     }
 
