@@ -123,6 +123,20 @@ Other scalar loads read guest memory through the windows. A multi-dword scalar l
 - **Atomics Metal lacks**: float min and max, wrapping increment and decrement and float compare-and-swap are compare-and-swap loops. Float min and max follow the hardware: denormals flush to signed zero, a signalling NaN comes back quieted, a quiet NaN loses to a number, -0 is below +0. Metal has no 64-bit atomics on every Apple GPU, so 64-bit and, or, xor and swap are two 32-bit atomics (bitwise ones high dword first, `swap_x2` low dword first, so a reader polling the high dword of a record also sees the low one, assuming one thread's relaxed atomics reach memory in order); add and sub carry into the high dword, which keeps concurrent sums exact; the rest read both dwords and write them back, which can tear when lanes update one place at once. Returned old values can tear. Image atomics use a 32-bit integer view made with atomic usage (Metal refuses that usage for `R32Float`).
 - **Scratch**: each lane's scratch is a private array of `WAVESIZE` (from `COMPUTE_TMPRING_SIZE` or `SPI_TMPRING_SIZE`, in KiB per wave on GFX10) over the wave's lanes, zeroed at the start, read and written at any byte; accesses past its end read 0 and are dropped. Loads in a program that never stores to scratch read 0 without one (some ray-tracing programs read scratch only on an overflow path). A program that stores to scratch with no scratch size does not translate.
 
+### Images
+
+Image loads and stores follow the hardware's conversions, measured with the hardware oracle on RDNA2 (gfx1033; unverified on the PS5's GFX10.1). Where the ISA guide is silent, the rules below are what the reference GPU did.
+
+- **Three views of a T#**, one texture slot each: sampled (Metal applies the channel selects through a swizzled view, decodes sRGB and filters), raw (`image_load`/`image_store`: bound as memory holds it; the program applies `DST_SEL` and converts), and bits (the `_pck` forms). T# dwords 1 and 3 reach the program in the user buffer (`binding::TEXTURE_WORDS`), because the translator drops descriptor loads.
+- **Channel selects** that pick a channel the format lacks give channel `c mod n` of its `n` channels (an `X` format reads `xxxx`, `XY` reads `xyxy`), for loads, samples and gathers alike.
+- **sRGB loads** decode to the exact value rounded to bfloat16. Stores to sRGB images do not encode: they write the value as UNORM.
+- **Stores**: a two-channel format takes the first and the last component (x and w), others take theirs in order. SCALED formats are stored as NORM (clamped to [0, 1] or [-1, 1], then scaled). Stores to `4_4`, the depth and stencil formats (`8_24`, `24_8`, `X24_8_32`) and the 96-bit formats leave memory unchanged; the `_pck` forms do write them.
+- **Formats Metal lacks** (SCALED, the integer and normalized `10_11_11`/`11_11_10`/`10_10_10_2` forms, `5_6_5`, `4_4`, shared exponent, depth and stencil) are bound as unsigned integers of the element's size for raw access, and the program converts each texel by the format in the T# (`image_decode`, `image_encode` in the prelude). The renderer asks for this per slot (`Request::coded_textures`). Sampling them is not supported.
+- **`_pck`** moves the element's dwords unconverted, one VGPR per `DMASK` bit (zero past the element), 8- and 16-bit elements zero- or sign-extended. Other raw accesses to a T# a program also reads or writes as bits share that slot and convert in the program, so they see its stores within the thread.
+- Out-of-range loads return 0 and out-of-range stores are dropped (ISA guide 8.2). `image_get_resinfo` returns 0 sizes past the last level and for dimensions an image lacks, and a 1D array's layer count in y.
+- 1D and 1D-array images are 2D ones of height 1: Metal's 1D textures have no mip levels.
+- **Filtering**: the hardware rounds the sample position (after the half-texel shift) to 8 fractional bits and blends with those weights. The exact blend of those weights matches about half of its bilinear results bit for bit and the rest within 4 / (255 * 65536); the hardware's blend arithmetic is not known. Metal's weights are coarser (errors around 4e-4 on RGBA8), so filtered samples differ from the hardware in the low bits.
+
 ### Stages
 
 - **Vertex, NGG** (the program in the ES slot, run as the merged ES/GS program): user SGPRs from s8, the merged wave info in s3 set so the prologue's EXEC arithmetic leaves this lane active, vertex index in v5, instance index in v8. `GS_ALLOC_REQ` and the primitive export are dropped: one vertex per thread, primitives assembled by Metal. `pos0` becomes the position, `paramN` user outputs. Programs that emit their own geometry need mesh shaders (gaps, below).
@@ -143,13 +157,13 @@ Other scalar loads read guest memory through the windows. A multi-dword scalar l
 ## Known approximations and gaps
 
 - Ballots, `ds_swizzle`, and cross-lane operations that span all 64 lanes outside lockstep programs are not translated.
-- Depth-compare samples compare one filtered sample instead of filtering four compared ones (no PCF). Integer textures are sampled through the sampler like float ones, which Metal allows only unfiltered.
-- `image_sample_d` on cubes, `a16` sampling and the `a16` form of `image_bvh_intersect_ray` do not translate. Texel offsets on samples shift the coordinates by offset / size, 2D and 2D arrays only.
+- Depth-compare samples compare one filtered sample instead of filtering four compared ones (no PCF); `image_gather4_c` compares each gathered texel. Integer textures are sampled through the sampler like float ones, which Metal allows only unfiltered.
+- `image_sample_d` on cubes, `a16` sampling, gathers with a LOD, bias or clamp, `image_gather4h`, `image_get_lod`, float image atomics and the `a16` form of `image_bvh_intersect_ray` do not translate. Texel offsets on samples shift the coordinates by offset / size.
 - `image_store` writes 0 to components `dmask` leaves out.
 - Unaligned dword buffer accesses round down to a dword (Metal's behaviour), and typed accesses are read where they fall. The reference GPU honours unaligned dwords, and gave 0 to a whole wave of indexed typed loads through a stride-2 buffer with a wider format.
 - GDS ordered counts do not translate. Scratch through buffer instructions (a V# with `ADD_TID_ENABLE`) is not handled.
 - NGG programs that use LDS, barriers and `exp prim` to build their own geometry need a mesh-shader path (a threadgroup per wave, LDS as threadgroup memory, vertex and primitive exports as mesh outputs). Not started.
-- `image_bvh_intersect_ray` is software traversal over the game's BVH nodes. It stays while no title needs more; ray tracing is to move to Metal's ray tracing ([gpu.md](gpu.md)).
+- `image_bvh_intersect_ray` is software traversal over the game's BVH nodes. It stays while no title needs more; ray tracing is to move to Metal's ray tracing ([gpu.md](gpu.md)). On a triangle the ray misses, the hardware still returns its numerators and denominator with an infinite t; we return (inf, 1, 0, 0) as radv's emulation does.
 
 ## Testing
 
