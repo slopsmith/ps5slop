@@ -588,6 +588,9 @@ impl<'a> Tx<'a> {
                 // Metal's position w is 1/w; the hardware's POS_W is w.
                 11 => Some("U(1.0f / in.pos.w)"),
                 12 => Some("(in.front ? 0x3f800000u : 0xbf800000u)"),
+                // ANCILLARY: the Deck gives 2 in bits 0 and 1 for triangles
+                // (other primitive types not measured), sample 0 in bits 8 to 11.
+                13 => Some("2u"),
                 // Single-sampled targets: the one sample is covered.
                 14 => Some("1u"),
                 15 => Some("(uint(in.pos.x) | uint(in.pos.y) << 16)"),
