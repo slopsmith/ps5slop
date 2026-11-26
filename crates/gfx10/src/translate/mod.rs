@@ -696,6 +696,20 @@ impl<'a> Tx<'a> {
             125 => "0ul".into(),
             128..=192 => format!("{}ul", code - 128),
             193..=208 => format!("0x{:x}ul", (192 - code as i64) as u64),
+            240..=248 => format!(
+                "0x{:x}ul",
+                [
+                    0x3FE0_0000_0000_0000u64,
+                    0xBFE0_0000_0000_0000,
+                    0x3FF0_0000_0000_0000,
+                    0xBFF0_0000_0000_0000,
+                    0x4000_0000_0000_0000,
+                    0xC000_0000_0000_0000,
+                    0x4010_0000_0000_0000,
+                    0xC010_0000_0000_0000,
+                    0x3FC4_5F30_6DC9_C882
+                ][code as usize - 240]
+            ),
             src::LITERAL => format!(
                 "0x{:x}ul",
                 literal.ok_or_else(|| err(pc, "missing literal"))?
