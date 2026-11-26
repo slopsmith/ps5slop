@@ -126,6 +126,10 @@ impl<'a> Tx<'a> {
         let raw: Vec<String> = addr_regs.iter().map(|&r| self.v(r)).collect();
         // Address order: offset, bias, depth reference, coordinates, LOD.
         let mut flags: Vec<&str> = variant.split('_').filter(|p| !p.is_empty()).collect();
+        let g16 = flags.last() == Some(&"g16");
+        if g16 {
+            flags.pop();
+        }
         let offset = flags.last() == Some(&"o");
         if offset {
             flags.pop();
@@ -134,7 +138,28 @@ impl<'a> Tx<'a> {
         if compare {
             flags.remove(0);
         }
-        let derivs = matches!(flags.as_slice(), ["d"] | ["d", "cl"]);
+        // Coarse derivatives (`_cd`) are given ones too.
+        let derivs = matches!(flags.first(), Some(&"d" | &"cd"));
+        let clamp = flags.last() == Some(&"cl");
+        let first = offset as usize + (flags.first() == Some(&"b")) as usize + compare as usize;
+        if g16 {
+            // Two 16-bit derivatives per dword, each direction's set padded to whole dwords.
+            let per = match kind {
+                TextureKind::Tex3d => 3,
+                _ if one_d => 1,
+                _ => 2,
+            };
+            let dwords = (per as usize).div_ceil(2);
+            let half = |k: usize| {
+                let r = &raw[first + k / 2];
+                format!("float(as_type<half>(ushort({r} >> {}u)))", 16 * (k % 2))
+            };
+            let unpacked: Vec<String> = (0..2)
+                .flat_map(|dir| (0..per).map(move |i| 2 * dwords * dir + i))
+                .map(half)
+                .collect();
+            addr.splice(first..first + 2 * dwords, unpacked);
+        }
         if one_d {
             // A 1D address as a 2D one: zero y derivatives, y at the middle of the row.
             let first = offset as usize + (flags.first() == Some(&"b")) as usize + compare as usize;
@@ -146,12 +171,18 @@ impl<'a> Tx<'a> {
             }
         }
         let mut at = offset as usize;
+        let min_lod = clamp.then(|| format!("min_lod_clamp({})", addr[addr.len() - 1]));
         let (mut level, bias) = match flags.as_slice() {
             [] => (None, false),
             ["lz"] => (Some("level(0.0f)".to_string()), false),
             ["l"] => (Some(format!("level({})", addr[addr.len() - 1])), false),
             ["b"] => (Some(format!("bias({})", addr[at])), true),
-            ["d"] | ["d", "cl"] => (None, false),
+            ["cl"] => (min_lod.clone(), false),
+            ["b", "cl"] => (
+                Some(format!("bias({}), {}", addr[at], min_lod.clone().unwrap())),
+                true,
+            ),
+            ["d" | "cd"] | ["d" | "cd", "cl"] => (None, false),
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
         at += bias as usize;
@@ -172,10 +203,9 @@ impl<'a> Tx<'a> {
                 TextureKind::Cube => return Err(err(pc, format!("unsupported form of {name}"))),
             };
             at += if kind == TextureKind::Tex3d { 6 } else { 4 };
-            level = Some(if flags.len() == 2 {
-                format!("{grad}, min_lod_clamp({})", addr[addr.len() - 1])
-            } else {
-                grad
+            level = Some(match &min_lod {
+                Some(c) => format!("{grad}, {c}"),
+                None => grad,
             });
         }
         let c = &addr[at..];
@@ -203,7 +233,13 @@ impl<'a> Tx<'a> {
             TextureKind::Tex2dArray => {
                 format!("float2({}{dx}, {}{dy}), uint(rint({}))", c[0], c[1], c[2])
             }
-            TextureKind::Tex3d if !offset => format!("float3({}, {}, {})", c[0], c[1], c[2]),
+            TextureKind::Tex3d => format!(
+                "float3({}{dx}, {}{dy}, {}{})",
+                c[0],
+                c[1],
+                c[2],
+                shift(2, "depth")
+            ),
             TextureKind::Cube if !offset => {
                 format!("cube_dir(float3({}, {}, {}))", c[0], c[1], c[2])
             }
