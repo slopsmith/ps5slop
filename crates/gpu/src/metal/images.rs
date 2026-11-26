@@ -288,7 +288,7 @@ impl Metal {
                 self.epoch, image.address, image.width, image.height
             );
         }
-        let levels = sampled_levels(image, layout);
+        let levels = sampled_levels(image);
         let tex = match self.images.get(&(image, kind)) {
             Some((_, t)) => t.clone(),
             None => {

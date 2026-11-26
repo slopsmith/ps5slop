@@ -606,7 +606,8 @@ impl Layout {
     /// first, then the other levels from the smallest up, each padded to
     /// whole blocks. `texels` is level 0's size in texels and `block` the
     /// texels per element side (4 for block-compressed formats). Linear
-    /// surfaces get level 0 only.
+    /// surfaces have no tail: their levels go from the smallest up, rows
+    /// padded to 256 bytes (measured on RDNA2).
     pub fn mips(&self, levels: u32, texels: (u32, u32), block: u32) -> Vec<Mip> {
         self.mip_chain(levels, texels, block).0
     }
@@ -617,7 +618,7 @@ impl Layout {
     }
 
     fn mip_chain(&self, levels: u32, texels: (u32, u32), block: u32) -> (Vec<Mip>, u64) {
-        if self.mode == TileMode::Linear || levels <= 1 {
+        if levels <= 1 {
             let mip = Mip {
                 offset: 0,
                 layout: *self,
@@ -629,7 +630,7 @@ impl Layout {
         let i = self.bpe.trailing_zeros() as usize;
         // 256-byte blocks have no mip tail.
         let tail: &[(u32, u32)] = match self.mode {
-            TileMode::Standard256 => &[],
+            TileMode::Linear | TileMode::Standard256 => &[],
             TileMode::Standard4K => &TAIL_4K[i],
             _ => &TAIL_64K[i],
         };
@@ -710,7 +711,7 @@ impl Layout {
 
     pub fn block_bytes(&self) -> u64 {
         match self.mode {
-            TileMode::Standard256 => 0x100,
+            TileMode::Linear | TileMode::Standard256 => 0x100,
             TileMode::Standard4K => 0x1000,
             _ => 0x10000,
         }
@@ -937,6 +938,16 @@ mod tests {
         let l = Layout::new(TileMode::Standard64K, 4, 300, 200).unwrap();
         assert_eq!(l.mips(1, (300, 200), 1)[0].offset, 0);
         assert_eq!(l.chain_size(1), l.size());
+    }
+
+    #[test]
+    fn linear_levels_go_from_the_smallest_up() {
+        let l = Layout::new(TileMode::Linear, 4, 64, 64).unwrap();
+        let mips = l.mips(3, (64, 64), 1);
+        assert_eq!(mips[2].offset, 0);
+        assert_eq!(mips[1].offset, 16 * 256);
+        assert_eq!(mips[0].offset, 16 * 256 + 32 * 256);
+        assert_eq!(mips[1].layout.pitch, 64);
     }
 
     #[test]

@@ -96,10 +96,10 @@ pub(super) fn color_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
     })
 }
 
-/// The mip levels read of a sampled image: its whole chain in tiled
-/// layouts, as far as Metal allows for its size; level 0 alone otherwise.
-pub(super) fn sampled_levels(image: Image, layout: Layout) -> u32 {
-    if layout.mode == TileMode::Linear || image.base_level != 0 {
+/// The mip levels read of a sampled image: its whole chain, as far as
+/// Metal allows for its size; level 0 alone for views from a later level.
+pub(super) fn sampled_levels(image: Image) -> u32 {
+    if image.base_level != 0 {
         return 1;
     }
     let full = 32 - image.width.max(image.height).leading_zeros();
