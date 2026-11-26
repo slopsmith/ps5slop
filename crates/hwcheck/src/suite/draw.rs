@@ -670,6 +670,13 @@ const COLOR_FORMATS: [(&str, u32, u32); 18] = [
     ("5_9_9_9", 24, 4),
 ];
 
+/// Whether RB+ takes 16-bit exports into `format` only as FP16 (or 16-bit
+/// integers for integer number types), as Mesa's `ac_choose_spi_color_formats`
+/// requires: UNORM16 and SNORM16 exports into these are invalid there.
+fn needs_fp16_export(format: u32) -> bool {
+    matches!(format, 1 | 3 | 6..=10 | 16..=19 | 24)
+}
+
 /// Number types: name, `NUMBER_TYPE`, whether it holds integers.
 const NUMBER_TYPES: [(&str, u32, Option<bool>); 6] = [
     ("unorm", 0, None),
@@ -738,8 +745,8 @@ pub fn cases() -> Vec<Case> {
             let outs: &[Out] = match int {
                 Some(false) => &[Out::U32, Out::Uint16],
                 Some(true) => &[Out::I32, Out::Sint16],
+                None if number == 7 || needs_fp16_export(format) => &[Out::F32, Out::F16],
                 None if number == 1 => &[Out::F32, Out::Snorm16],
-                None if number == 7 => &[Out::F32, Out::F16],
                 None => &[Out::F32, Out::Unorm16],
             };
             for &o in outs {
