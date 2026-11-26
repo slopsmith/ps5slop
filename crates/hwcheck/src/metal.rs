@@ -79,9 +79,7 @@ pub fn run(case: &mut Case) -> Result<(), String> {
     Ok(())
 }
 
-/// Runs a draw case and lays the render target Metal drew out in
-/// `case.output` at the target's address, in the linear layout the
-/// hardware uses (rows padded to 256 bytes).
+// Lays the target out as the hardware's linear layout: rows padded to 256 bytes.
 fn draw(case: &mut Case) -> Result<(), String> {
     let res = replay(&capture(case), ReplayOptions::default())?;
     let (addr, _, height, pitch) = case.target;

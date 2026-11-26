@@ -200,7 +200,7 @@ pub enum TextureKind {
 pub enum Access {
     /// Sampled or read (`access::sample`).
     Sample,
-    /// Only written (`access::write`).
+    /// Written, never read (`access::write`).
     Write,
     /// Read and written (`access::read_write`).
     ReadWrite,
@@ -445,9 +445,8 @@ pub fn translate(req: &Request) -> Result<Translated, TranslateError> {
 /// whose origin is known.
 type Syms = Vec<Option<Source>>;
 
-/// The value of a scalar source that is an integer inline constant or a
-/// literal. A 32-bit literal in a 64-bit move is zero-extended (our reading
-/// of the ISA guide); inline constants are sign-extended.
+// A literal in a 64-bit move is zero-extended (our reading of the ISA guide);
+// inline constants are sign-extended.
 fn constant(inst: &Inst, code: u16) -> Option<u32> {
     match code {
         src::LITERAL => inst.literal,
@@ -501,8 +500,6 @@ struct Tx<'a> {
     pc: usize,
     /// SGPR origins before each instruction, from a first pass; `None` in that pass.
     syms: Option<BTreeMap<usize, Syms>>,
-    /// Descriptor register, dimension, source and access, as of the first
-    /// instruction using it.
     /// T# register, dimension, origin, access, view.
     textures: Vec<(u16, TextureKind, Source, Access, View)>,
     samplers: Vec<Source>,
@@ -535,9 +532,8 @@ struct Tx<'a> {
     atomic_textures: u32,
     /// Texture slots both read and written, from the first pass.
     read_write_textures: u32,
-    /// T# registers and dimensions some instruction reads or writes as
-    /// bits, from the first pass (which does not know descriptor origins
-    /// yet): other raw accesses there share that slot, so they see its stores.
+    /// T# registers some instruction accesses as bits (first pass); other raw
+    /// accesses share their slot so they see its stores.
     bits_textures: Vec<(u16, TextureKind)>,
     /// The entry point declares `slane`, the thread's lane in its SIMD group.
     simd_lane: bool,
