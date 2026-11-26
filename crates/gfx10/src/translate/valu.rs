@@ -30,7 +30,7 @@ impl<'a> Tx<'a> {
         v: &Valu,
         i: usize,
     ) -> Result<String, TranslateError> {
-        if i == 0 && matches!(v.enc, VEnc::Dpp16 | VEnc::Dpp8) {
+        if i == dpp_operand(inst) && matches!(v.enc, VEnc::Dpp16 | VEnc::Dpp8) {
             return Ok("dpp0".into());
         }
         let e = self.src32(v.src[i], inst.literal, pc)?;
@@ -569,12 +569,12 @@ impl<'a> Tx<'a> {
             && v.dpp.bank_mask == 0xF
             && self.req.stage != Stage::Vertex;
         if !broadcast && !permute && self.req.stage != Stage::Vertex {
-            return self.dpp_general(pc, v);
+            return self.dpp_general(pc, inst, v);
         }
         if !broadcast && !permute {
             return Err(err(pc, format!("unsupported DPP form of {}", inst.op.name)));
         }
-        let a = self.src32(v.src[0], None, pc)?;
+        let a = self.src32(v.src[dpp_operand(inst)], None, pc)?;
         self.regs.insert("dpp0".into());
         if broadcast {
             self.line(&format!("dpp0 = quad_broadcast({a}, {lane}u);"));
@@ -589,7 +589,7 @@ impl<'a> Tx<'a> {
 
     /// DPP forms other than full-mask quad permutations, as `simd_shuffle`
     /// within 32-lane Metal SIMD groups.
-    fn dpp_general(&mut self, pc: usize, v: &Valu) -> Result<(), TranslateError> {
+    fn dpp_general(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
         let ctrl = v.dpp.ctrl as u32;
         let (src, inside) = if v.enc == VEnc::Dpp8 {
             (
@@ -616,7 +616,7 @@ impl<'a> Tx<'a> {
                 _ => return Err(err(pc, format!("unsupported DPP control {ctrl:#x}"))),
             }
         };
-        let a = self.src32(v.src[0], None, pc)?;
+        let a = self.src32(v.src[dpp_operand(inst)], None, pc)?;
         self.simd_lane = true;
         self.regs.insert("dpp0".into());
         let (rows, banks) = if v.enc == VEnc::Dpp8 {
@@ -668,7 +668,10 @@ impl<'a> Tx<'a> {
         } else {
             106
         };
-        let exec = self.mask_on(126);
+        let mut exec = self.mask_on(126);
+        if self.dpp_lane_off {
+            exec = format!("{exec} && dpp_on");
+        }
         let d = self.v(v.vdst as u16);
         let mut s = format!(
             "{{ uint a = {a}; uint b = {b}; uint c = {cin}; ulong r = {value}; bool on = {exec}; bool k = ({carry}) && on;"
@@ -842,4 +845,15 @@ impl<'a> Tx<'a> {
 /// A 64-bit signed expression saturated to a 32-bit signed result.
 fn sat_i32(e: &str) -> String {
     format!("uint(int(clamp({e}, long(-2147483648), long(2147483647))))")
+}
+
+/// The source DPP takes from other lanes: src0, except in the integer
+/// opcodes with reversed operands, where RDNA2 was measured to apply it to
+/// the second source (`v_subrev_f32` and `v_subrev_f16` keep src0).
+fn dpp_operand(inst: &Inst) -> usize {
+    match inst.op.name {
+        "v_subrev_nc_u32" | "v_subrev_co_ci_u32" | "v_lshlrev_b32" | "v_lshrrev_b32"
+        | "v_ashrrev_i32" => 1,
+        _ => 0,
+    }
 }
