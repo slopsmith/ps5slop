@@ -517,8 +517,8 @@ draw format	10_10_10_2 sint export Sint16	agree
 draw format	10_10_10_2 snorm export F16	differ	0 of 0: ; 1 stored dwords value
 draw format	10_10_10_2 snorm export F32	agree
 draw format	10_10_10_2 snorm export Snorm16	differ	1127 target dwords value
-draw format	10_10_10_2 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-draw format	10_10_10_2 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+draw format	10_10_10_2 srgb export F16	agree
+draw format	10_10_10_2 srgb export F32	agree
 draw format	10_10_10_2 srgb export Unorm16	differ	1127 target dwords value
 draw format	10_10_10_2 uint export U32	agree
 draw format	10_10_10_2 uint export Uint16	agree
@@ -532,8 +532,8 @@ draw format	10_11_11 sint export Sint16	agree
 draw format	10_11_11 snorm export F16	agree
 draw format	10_11_11 snorm export F32	agree
 draw format	10_11_11 snorm export Snorm16	differ	1420 target dwords value
-draw format	10_11_11 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-draw format	10_11_11 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+draw format	10_11_11 srgb export F16	agree
+draw format	10_11_11 srgb export F32	agree
 draw format	10_11_11 srgb export Unorm16	differ	1419 target dwords value
 draw format	10_11_11 uint export U32	agree
 draw format	10_11_11 uint export Uint16	agree
@@ -547,8 +547,8 @@ draw format	11_11_10 sint export Sint16	agree
 draw format	11_11_10 snorm export F16	agree
 draw format	11_11_10 snorm export F32	agree
 draw format	11_11_10 snorm export Snorm16	differ	1386 target dwords value
-draw format	11_11_10 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-draw format	11_11_10 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+draw format	11_11_10 srgb export F16	agree
+draw format	11_11_10 srgb export F32	agree
 draw format	11_11_10 srgb export Unorm16	differ	1396 target dwords value
 draw format	11_11_10 uint export U32	agree
 draw format	11_11_10 uint export Uint16	agree
@@ -561,7 +561,7 @@ draw format	16 sint export I32	agree
 draw format	16 sint export Sint16	agree
 draw format	16 snorm export F32	differ	0 of 0: ; 2 stored dwords value
 draw format	16 snorm export Snorm16	differ	0 of 0: ; 2 stored dwords value
-draw format	16 srgb export F32	differ	0 of 0: ; 40 stored dwords value
+draw format	16 srgb export F32	agree
 draw format	16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	16 uint export U32	agree
 draw format	16 uint export Uint16	agree
@@ -573,7 +573,7 @@ draw format	16_16 sint export I32	agree
 draw format	16_16 sint export Sint16	agree
 draw format	16_16 snorm export F32	differ	0 of 0: ; 6 stored dwords value
 draw format	16_16 snorm export Snorm16	differ	0 of 0: ; 6 stored dwords value
-draw format	16_16 srgb export F32	differ	0 of 0: ; 81 stored dwords value
+draw format	16_16 srgb export F32	agree
 draw format	16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	16_16 uint export U32	agree
 draw format	16_16 uint export Uint16	agree
@@ -585,7 +585,7 @@ draw format	16_16_16_16 sint export I32	agree
 draw format	16_16_16_16 sint export Sint16	agree
 draw format	16_16_16_16 snorm export F32	differ	0 of 0: ; 10 stored dwords value
 draw format	16_16_16_16 snorm export Snorm16	differ	0 of 0: ; 10 stored dwords value
-draw format	16_16_16_16 srgb export F32	differ	0 of 0: ; 130 stored dwords value
+draw format	16_16_16_16 srgb export F32	differ	0 of 0: ; 3 stored dwords value
 draw format	16_16_16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	16_16_16_16 uint export U32	agree
 draw format	16_16_16_16 uint export Uint16	agree
@@ -598,8 +598,8 @@ draw format	1_5_5_5 sint export Sint16	untranslated	Metal drew nothing (0 drawn,
 draw format	1_5_5_5 snorm export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	1_5_5_5 snorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	1_5_5_5 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-draw format	1_5_5_5 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-draw format	1_5_5_5 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+draw format	1_5_5_5 srgb export F16	agree
+draw format	1_5_5_5 srgb export F32	agree
 draw format	1_5_5_5 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	1_5_5_5 uint export U32	agree
 draw format	1_5_5_5 uint export Uint16	agree
@@ -613,8 +613,8 @@ draw format	2_10_10_10 sint export Sint16	agree
 draw format	2_10_10_10 snorm export F16	agree
 draw format	2_10_10_10 snorm export F32	agree
 draw format	2_10_10_10 snorm export Snorm16	differ	1127 target dwords value
-draw format	2_10_10_10 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-draw format	2_10_10_10 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+draw format	2_10_10_10 srgb export F16	agree
+draw format	2_10_10_10 srgb export F32	agree
 draw format	2_10_10_10 srgb export Unorm16	differ	1127 target dwords value
 draw format	2_10_10_10 uint export U32	agree
 draw format	2_10_10_10 uint export Uint16	agree
@@ -664,8 +664,8 @@ draw format	4_4_4_4 sint export Sint16	agree
 draw format	4_4_4_4 snorm export F16	agree
 draw format	4_4_4_4 snorm export F32	agree
 draw format	4_4_4_4 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-draw format	4_4_4_4 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-draw format	4_4_4_4 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+draw format	4_4_4_4 srgb export F16	agree
+draw format	4_4_4_4 srgb export F32	agree
 draw format	4_4_4_4 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 2 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	4_4_4_4 uint export U32	agree
 draw format	4_4_4_4 uint export Uint16	agree
@@ -679,8 +679,8 @@ draw format	5_5_5_1 sint export Sint16	untranslated	Metal drew nothing (0 drawn,
 draw format	5_5_5_1 snorm export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	5_5_5_1 snorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	5_5_5_1 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-draw format	5_5_5_1 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-draw format	5_5_5_1 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+draw format	5_5_5_1 srgb export F16	agree
+draw format	5_5_5_1 srgb export F32	agree
 draw format	5_5_5_1 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	5_5_5_1 uint export U32	agree
 draw format	5_5_5_1 uint export Uint16	agree
@@ -694,8 +694,8 @@ draw format	5_6_5 sint export Sint16	agree
 draw format	5_6_5 snorm export F16	agree
 draw format	5_6_5 snorm export F32	agree
 draw format	5_6_5 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-draw format	5_6_5 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-draw format	5_6_5 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+draw format	5_6_5 srgb export F16	agree
+draw format	5_6_5 srgb export F32	agree
 draw format	5_6_5 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 1 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	5_6_5 uint export U32	agree
 draw format	5_6_5 uint export Uint16	agree
@@ -724,8 +724,8 @@ draw format	8 sint export Sint16	agree
 draw format	8 snorm export F16	agree
 draw format	8 snorm export F32	agree
 draw format	8 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-draw format	8 srgb export F16	differ	0 of 0: ; 40 stored dwords value
-draw format	8 srgb export F32	differ	0 of 0: ; 40 stored dwords value
+draw format	8 srgb export F16	agree
+draw format	8 srgb export F32	agree
 draw format	8 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	8 uint export U32	agree
 draw format	8 uint export Uint16	agree
@@ -739,8 +739,8 @@ draw format	8_8 sint export Sint16	agree
 draw format	8_8 snorm export F16	agree
 draw format	8_8 snorm export F32	agree
 draw format	8_8 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-draw format	8_8 srgb export F16	differ	0 of 0: ; 88 stored dwords value
-draw format	8_8 srgb export F32	differ	0 of 0: ; 79 stored dwords value
+draw format	8_8 srgb export F16	agree
+draw format	8_8 srgb export F32	agree
 draw format	8_8 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	8_8 uint export U32	agree
 draw format	8_8 uint export Uint16	agree
@@ -754,11 +754,11 @@ draw format	8_8_8_8 sint export Sint16	agree
 draw format	8_8_8_8 snorm export F16	agree
 draw format	8_8_8_8 snorm export F32	agree
 draw format	8_8_8_8 snorm export Snorm16	differ	1183 target dwords value
-draw format	8_8_8_8 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-draw format	8_8_8_8 srgb export F32	differ	0 of 0: ; 120 stored dwords value
+draw format	8_8_8_8 srgb export F16	agree
+draw format	8_8_8_8 srgb export F32	agree
 draw format	8_8_8_8 srgb export Unorm16	differ	1127 target dwords value
-draw format	8_8_8_8 srgb ramp	differ	0 of 0: ; 1367 stored dwords value
-draw format	8_8_8_8 srgb ramp, half a step up	differ	0 of 0: ; 1365 stored dwords value
+draw format	8_8_8_8 srgb ramp	agree
+draw format	8_8_8_8 srgb ramp, half a step up	agree
 draw format	8_8_8_8 uint export U32	agree
 draw format	8_8_8_8 uint export Uint16	agree
 draw format	8_8_8_8 unorm comp swap 1	agree
@@ -768,7 +768,7 @@ draw format	8_8_8_8 unorm export F16	agree
 draw format	8_8_8_8 unorm export F32	agree
 draw format	8_8_8_8 unorm export Unorm16	differ	1127 target dwords value
 draw input	Flat	agree
-draw input	Flat to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
+draw input	Flat to 32_32_32_32 float	agree
 draw input	FragCoord	agree
 draw input	FragCoord to 32_32_32_32 float	differ	0 of 0: ; 1977 stored dwords value
 draw input	LinearCenter	agree
@@ -778,8 +778,8 @@ draw input	LinearCentroid to 32_32_32_32 float	differ	0 of 0: ; 5564 stored dwor
 draw input	Misc	agree
 draw input	Misc to 32_32_32_32 float	agree
 draw input	MovP0	differ	0 of 0: ; 1273 stored dwords value
-draw input	MovP0 flat shaded	differ	0 of 0: ; 1273 stored dwords value
-draw input	MovP0 flat shaded to 32_32_32_32 float	differ	0 of 0: ; 5092 stored dwords value
+draw input	MovP0 flat shaded	agree
+draw input	MovP0 flat shaded to 32_32_32_32 float	agree
 draw input	MovP0 to 32_32_32_32 float	differ	0 of 0: ; 5092 stored dwords value
 draw input	PerspCenter	agree
 draw input	PerspCenter to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
@@ -792,14 +792,14 @@ draw interpolate	one triangle inside the edges	differ	752 target dwords value
 draw interpolate	one triangle past the edges	differ	3040 target dwords value
 draw interpolate	one triangle, upper left half	differ	3040 target dwords value
 draw interpolate	persp center 8_8_8_8 unorm	differ	3326 target dwords value
-draw primitive	line strip	differ	0 of 0: ; 35 stored dwords value
-draw primitive	lines	differ	0 of 0: ; 40 stored dwords value
+draw primitive	line strip	differ	0 of 0: ; 3 stored dwords value
+draw primitive	lines	differ	0 of 0: ; 3 stored dwords value
 draw primitive	points	agree
 draw primitive	rectangles	differ	0 of 0: ; 3335 stored dwords value
 draw primitive	triangle fan	agree
 draw primitive	triangle strip	agree
-draw primitive	wide line ends, x-major	differ	0 of 0: ; 44 stored dwords value
-draw primitive	wide line ends, y-major	differ	0 of 0: ; 48 stored dwords value
+draw primitive	wide line ends, x-major	agree
+draw primitive	wide line ends, y-major	agree
 draw raster	cull back	agree
 draw raster	cull back, clockwise front	agree
 draw raster	cull front	agree
@@ -1404,8 +1404,8 @@ exp	draw format: 10_10_10_2 sint export Sint16	agree
 exp	draw format: 10_10_10_2 snorm export F16	differ	0 of 0: ; 1 stored dwords value
 exp	draw format: 10_10_10_2 snorm export F32	agree
 exp	draw format: 10_10_10_2 snorm export Snorm16	differ	1127 target dwords value
-exp	draw format: 10_10_10_2 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-exp	draw format: 10_10_10_2 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+exp	draw format: 10_10_10_2 srgb export F16	agree
+exp	draw format: 10_10_10_2 srgb export F32	agree
 exp	draw format: 10_10_10_2 srgb export Unorm16	differ	1127 target dwords value
 exp	draw format: 10_10_10_2 uint export U32	agree
 exp	draw format: 10_10_10_2 uint export Uint16	agree
@@ -1419,8 +1419,8 @@ exp	draw format: 10_11_11 sint export Sint16	agree
 exp	draw format: 10_11_11 snorm export F16	agree
 exp	draw format: 10_11_11 snorm export F32	agree
 exp	draw format: 10_11_11 snorm export Snorm16	differ	1420 target dwords value
-exp	draw format: 10_11_11 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-exp	draw format: 10_11_11 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+exp	draw format: 10_11_11 srgb export F16	agree
+exp	draw format: 10_11_11 srgb export F32	agree
 exp	draw format: 10_11_11 srgb export Unorm16	differ	1419 target dwords value
 exp	draw format: 10_11_11 uint export U32	agree
 exp	draw format: 10_11_11 uint export Uint16	agree
@@ -1434,8 +1434,8 @@ exp	draw format: 11_11_10 sint export Sint16	agree
 exp	draw format: 11_11_10 snorm export F16	agree
 exp	draw format: 11_11_10 snorm export F32	agree
 exp	draw format: 11_11_10 snorm export Snorm16	differ	1386 target dwords value
-exp	draw format: 11_11_10 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-exp	draw format: 11_11_10 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+exp	draw format: 11_11_10 srgb export F16	agree
+exp	draw format: 11_11_10 srgb export F32	agree
 exp	draw format: 11_11_10 srgb export Unorm16	differ	1396 target dwords value
 exp	draw format: 11_11_10 uint export U32	agree
 exp	draw format: 11_11_10 uint export Uint16	agree
@@ -1448,7 +1448,7 @@ exp	draw format: 16 sint export I32	agree
 exp	draw format: 16 sint export Sint16	agree
 exp	draw format: 16 snorm export F32	differ	0 of 0: ; 2 stored dwords value
 exp	draw format: 16 snorm export Snorm16	differ	0 of 0: ; 2 stored dwords value
-exp	draw format: 16 srgb export F32	differ	0 of 0: ; 40 stored dwords value
+exp	draw format: 16 srgb export F32	agree
 exp	draw format: 16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 16 uint export U32	agree
 exp	draw format: 16 uint export Uint16	agree
@@ -1460,7 +1460,7 @@ exp	draw format: 16_16 sint export I32	agree
 exp	draw format: 16_16 sint export Sint16	agree
 exp	draw format: 16_16 snorm export F32	differ	0 of 0: ; 6 stored dwords value
 exp	draw format: 16_16 snorm export Snorm16	differ	0 of 0: ; 6 stored dwords value
-exp	draw format: 16_16 srgb export F32	differ	0 of 0: ; 81 stored dwords value
+exp	draw format: 16_16 srgb export F32	agree
 exp	draw format: 16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 16_16 uint export U32	agree
 exp	draw format: 16_16 uint export Uint16	agree
@@ -1472,7 +1472,7 @@ exp	draw format: 16_16_16_16 sint export I32	agree
 exp	draw format: 16_16_16_16 sint export Sint16	agree
 exp	draw format: 16_16_16_16 snorm export F32	differ	0 of 0: ; 10 stored dwords value
 exp	draw format: 16_16_16_16 snorm export Snorm16	differ	0 of 0: ; 10 stored dwords value
-exp	draw format: 16_16_16_16 srgb export F32	differ	0 of 0: ; 130 stored dwords value
+exp	draw format: 16_16_16_16 srgb export F32	differ	0 of 0: ; 3 stored dwords value
 exp	draw format: 16_16_16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 16_16_16_16 uint export U32	agree
 exp	draw format: 16_16_16_16 uint export Uint16	agree
@@ -1485,8 +1485,8 @@ exp	draw format: 1_5_5_5 sint export Sint16	untranslated	Metal drew nothing (0 d
 exp	draw format: 1_5_5_5 snorm export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 1_5_5_5 snorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 1_5_5_5 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-exp	draw format: 1_5_5_5 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-exp	draw format: 1_5_5_5 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+exp	draw format: 1_5_5_5 srgb export F16	agree
+exp	draw format: 1_5_5_5 srgb export F32	agree
 exp	draw format: 1_5_5_5 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 1_5_5_5 uint export U32	agree
 exp	draw format: 1_5_5_5 uint export Uint16	agree
@@ -1500,8 +1500,8 @@ exp	draw format: 2_10_10_10 sint export Sint16	agree
 exp	draw format: 2_10_10_10 snorm export F16	agree
 exp	draw format: 2_10_10_10 snorm export F32	agree
 exp	draw format: 2_10_10_10 snorm export Snorm16	differ	1127 target dwords value
-exp	draw format: 2_10_10_10 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-exp	draw format: 2_10_10_10 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+exp	draw format: 2_10_10_10 srgb export F16	agree
+exp	draw format: 2_10_10_10 srgb export F32	agree
 exp	draw format: 2_10_10_10 srgb export Unorm16	differ	1127 target dwords value
 exp	draw format: 2_10_10_10 uint export U32	agree
 exp	draw format: 2_10_10_10 uint export Uint16	agree
@@ -1551,8 +1551,8 @@ exp	draw format: 4_4_4_4 sint export Sint16	agree
 exp	draw format: 4_4_4_4 snorm export F16	agree
 exp	draw format: 4_4_4_4 snorm export F32	agree
 exp	draw format: 4_4_4_4 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-exp	draw format: 4_4_4_4 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-exp	draw format: 4_4_4_4 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+exp	draw format: 4_4_4_4 srgb export F16	agree
+exp	draw format: 4_4_4_4 srgb export F32	agree
 exp	draw format: 4_4_4_4 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 2 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 4_4_4_4 uint export U32	agree
 exp	draw format: 4_4_4_4 uint export Uint16	agree
@@ -1566,8 +1566,8 @@ exp	draw format: 5_5_5_1 sint export Sint16	untranslated	Metal drew nothing (0 d
 exp	draw format: 5_5_5_1 snorm export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 5_5_5_1 snorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 5_5_5_1 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-exp	draw format: 5_5_5_1 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-exp	draw format: 5_5_5_1 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+exp	draw format: 5_5_5_1 srgb export F16	agree
+exp	draw format: 5_5_5_1 srgb export F32	agree
 exp	draw format: 5_5_5_1 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 5_5_5_1 uint export U32	agree
 exp	draw format: 5_5_5_1 uint export Uint16	agree
@@ -1581,8 +1581,8 @@ exp	draw format: 5_6_5 sint export Sint16	agree
 exp	draw format: 5_6_5 snorm export F16	agree
 exp	draw format: 5_6_5 snorm export F32	agree
 exp	draw format: 5_6_5 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-exp	draw format: 5_6_5 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-exp	draw format: 5_6_5 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+exp	draw format: 5_6_5 srgb export F16	agree
+exp	draw format: 5_6_5 srgb export F32	agree
 exp	draw format: 5_6_5 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 1 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 5_6_5 uint export U32	agree
 exp	draw format: 5_6_5 uint export Uint16	agree
@@ -1611,8 +1611,8 @@ exp	draw format: 8 sint export Sint16	agree
 exp	draw format: 8 snorm export F16	agree
 exp	draw format: 8 snorm export F32	agree
 exp	draw format: 8 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-exp	draw format: 8 srgb export F16	differ	0 of 0: ; 40 stored dwords value
-exp	draw format: 8 srgb export F32	differ	0 of 0: ; 40 stored dwords value
+exp	draw format: 8 srgb export F16	agree
+exp	draw format: 8 srgb export F32	agree
 exp	draw format: 8 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 8 uint export U32	agree
 exp	draw format: 8 uint export Uint16	agree
@@ -1626,8 +1626,8 @@ exp	draw format: 8_8 sint export Sint16	agree
 exp	draw format: 8_8 snorm export F16	agree
 exp	draw format: 8_8 snorm export F32	agree
 exp	draw format: 8_8 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-exp	draw format: 8_8 srgb export F16	differ	0 of 0: ; 88 stored dwords value
-exp	draw format: 8_8 srgb export F32	differ	0 of 0: ; 79 stored dwords value
+exp	draw format: 8_8 srgb export F16	agree
+exp	draw format: 8_8 srgb export F32	agree
 exp	draw format: 8_8 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 8_8 uint export U32	agree
 exp	draw format: 8_8 uint export Uint16	agree
@@ -1641,11 +1641,11 @@ exp	draw format: 8_8_8_8 sint export Sint16	agree
 exp	draw format: 8_8_8_8 snorm export F16	agree
 exp	draw format: 8_8_8_8 snorm export F32	agree
 exp	draw format: 8_8_8_8 snorm export Snorm16	differ	1183 target dwords value
-exp	draw format: 8_8_8_8 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-exp	draw format: 8_8_8_8 srgb export F32	differ	0 of 0: ; 120 stored dwords value
+exp	draw format: 8_8_8_8 srgb export F16	agree
+exp	draw format: 8_8_8_8 srgb export F32	agree
 exp	draw format: 8_8_8_8 srgb export Unorm16	differ	1127 target dwords value
-exp	draw format: 8_8_8_8 srgb ramp	differ	0 of 0: ; 1367 stored dwords value
-exp	draw format: 8_8_8_8 srgb ramp, half a step up	differ	0 of 0: ; 1365 stored dwords value
+exp	draw format: 8_8_8_8 srgb ramp	agree
+exp	draw format: 8_8_8_8 srgb ramp, half a step up	agree
 exp	draw format: 8_8_8_8 uint export U32	agree
 exp	draw format: 8_8_8_8 uint export Uint16	agree
 exp	draw format: 8_8_8_8 unorm comp swap 1	agree
@@ -1655,7 +1655,7 @@ exp	draw format: 8_8_8_8 unorm export F16	agree
 exp	draw format: 8_8_8_8 unorm export F32	agree
 exp	draw format: 8_8_8_8 unorm export Unorm16	differ	1127 target dwords value
 exp	draw input: Flat	agree
-exp	draw input: Flat to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
+exp	draw input: Flat to 32_32_32_32 float	agree
 exp	draw input: FragCoord	agree
 exp	draw input: FragCoord to 32_32_32_32 float	differ	0 of 0: ; 1977 stored dwords value
 exp	draw input: LinearCenter	agree
@@ -1665,8 +1665,8 @@ exp	draw input: LinearCentroid to 32_32_32_32 float	differ	0 of 0: ; 5564 stored
 exp	draw input: Misc	agree
 exp	draw input: Misc to 32_32_32_32 float	agree
 exp	draw input: MovP0	differ	0 of 0: ; 1273 stored dwords value
-exp	draw input: MovP0 flat shaded	differ	0 of 0: ; 1273 stored dwords value
-exp	draw input: MovP0 flat shaded to 32_32_32_32 float	differ	0 of 0: ; 5092 stored dwords value
+exp	draw input: MovP0 flat shaded	agree
+exp	draw input: MovP0 flat shaded to 32_32_32_32 float	agree
 exp	draw input: MovP0 to 32_32_32_32 float	differ	0 of 0: ; 5092 stored dwords value
 exp	draw input: PerspCenter	agree
 exp	draw input: PerspCenter to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
@@ -1674,14 +1674,14 @@ exp	draw input: PerspCentroid	agree
 exp	draw input: PerspCentroid to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
 exp	draw input: PerspSample	agree
 exp	draw input: PerspSample to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
-exp	draw primitive: line strip	differ	0 of 0: ; 35 stored dwords value
-exp	draw primitive: lines	differ	0 of 0: ; 40 stored dwords value
+exp	draw primitive: line strip	differ	0 of 0: ; 3 stored dwords value
+exp	draw primitive: lines	differ	0 of 0: ; 3 stored dwords value
 exp	draw primitive: points	agree
 exp	draw primitive: rectangles	differ	0 of 0: ; 3335 stored dwords value
 exp	draw primitive: triangle fan	agree
 exp	draw primitive: triangle strip	agree
-exp	draw primitive: wide line ends, x-major	differ	0 of 0: ; 44 stored dwords value
-exp	draw primitive: wide line ends, y-major	differ	0 of 0: ; 48 stored dwords value
+exp	draw primitive: wide line ends, x-major	agree
+exp	draw primitive: wide line ends, y-major	agree
 exp	draw raster: cull back	agree
 exp	draw raster: cull back, clockwise front	agree
 exp	draw raster: cull front	agree
@@ -8786,8 +8786,8 @@ v_frexp_mant_f64	e64, round toward +inf	untranslated	at dword 17: unsupported in
 v_frexp_mant_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
 v_frexp_mant_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
 v_interp_mov_f32	draw input: MovP0	differ	0 of 0: ; 1273 stored dwords value
-v_interp_mov_f32	draw input: MovP0 flat shaded	differ	0 of 0: ; 1273 stored dwords value
-v_interp_mov_f32	draw input: MovP0 flat shaded to 32_32_32_32 float	differ	0 of 0: ; 5092 stored dwords value
+v_interp_mov_f32	draw input: MovP0 flat shaded	agree
+v_interp_mov_f32	draw input: MovP0 flat shaded to 32_32_32_32 float	agree
 v_interp_mov_f32	draw input: MovP0 to 32_32_32_32 float	differ	0 of 0: ; 5092 stored dwords value
 v_interp_p1_f32	draw blend: 16_16_16_16 float dst both inv src alpha	agree
 v_interp_p1_f32	draw blend: 16_16_16_16 float dst both inv src alpha export F16	differ	3256 target dwords value
@@ -9018,8 +9018,8 @@ v_interp_p1_f32	draw format: 10_10_10_2 sint export Sint16	agree
 v_interp_p1_f32	draw format: 10_10_10_2 snorm export F16	differ	0 of 0: ; 1 stored dwords value
 v_interp_p1_f32	draw format: 10_10_10_2 snorm export F32	agree
 v_interp_p1_f32	draw format: 10_10_10_2 snorm export Snorm16	differ	1127 target dwords value
-v_interp_p1_f32	draw format: 10_10_10_2 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-v_interp_p1_f32	draw format: 10_10_10_2 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+v_interp_p1_f32	draw format: 10_10_10_2 srgb export F16	agree
+v_interp_p1_f32	draw format: 10_10_10_2 srgb export F32	agree
 v_interp_p1_f32	draw format: 10_10_10_2 srgb export Unorm16	differ	1127 target dwords value
 v_interp_p1_f32	draw format: 10_10_10_2 uint export U32	agree
 v_interp_p1_f32	draw format: 10_10_10_2 uint export Uint16	agree
@@ -9033,8 +9033,8 @@ v_interp_p1_f32	draw format: 10_11_11 sint export Sint16	agree
 v_interp_p1_f32	draw format: 10_11_11 snorm export F16	agree
 v_interp_p1_f32	draw format: 10_11_11 snorm export F32	agree
 v_interp_p1_f32	draw format: 10_11_11 snorm export Snorm16	differ	1420 target dwords value
-v_interp_p1_f32	draw format: 10_11_11 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-v_interp_p1_f32	draw format: 10_11_11 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+v_interp_p1_f32	draw format: 10_11_11 srgb export F16	agree
+v_interp_p1_f32	draw format: 10_11_11 srgb export F32	agree
 v_interp_p1_f32	draw format: 10_11_11 srgb export Unorm16	differ	1419 target dwords value
 v_interp_p1_f32	draw format: 10_11_11 uint export U32	agree
 v_interp_p1_f32	draw format: 10_11_11 uint export Uint16	agree
@@ -9048,8 +9048,8 @@ v_interp_p1_f32	draw format: 11_11_10 sint export Sint16	agree
 v_interp_p1_f32	draw format: 11_11_10 snorm export F16	agree
 v_interp_p1_f32	draw format: 11_11_10 snorm export F32	agree
 v_interp_p1_f32	draw format: 11_11_10 snorm export Snorm16	differ	1386 target dwords value
-v_interp_p1_f32	draw format: 11_11_10 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-v_interp_p1_f32	draw format: 11_11_10 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+v_interp_p1_f32	draw format: 11_11_10 srgb export F16	agree
+v_interp_p1_f32	draw format: 11_11_10 srgb export F32	agree
 v_interp_p1_f32	draw format: 11_11_10 srgb export Unorm16	differ	1396 target dwords value
 v_interp_p1_f32	draw format: 11_11_10 uint export U32	agree
 v_interp_p1_f32	draw format: 11_11_10 uint export Uint16	agree
@@ -9062,7 +9062,7 @@ v_interp_p1_f32	draw format: 16 sint export I32	agree
 v_interp_p1_f32	draw format: 16 sint export Sint16	agree
 v_interp_p1_f32	draw format: 16 snorm export F32	differ	0 of 0: ; 2 stored dwords value
 v_interp_p1_f32	draw format: 16 snorm export Snorm16	differ	0 of 0: ; 2 stored dwords value
-v_interp_p1_f32	draw format: 16 srgb export F32	differ	0 of 0: ; 40 stored dwords value
+v_interp_p1_f32	draw format: 16 srgb export F32	agree
 v_interp_p1_f32	draw format: 16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 16 uint export U32	agree
 v_interp_p1_f32	draw format: 16 uint export Uint16	agree
@@ -9074,7 +9074,7 @@ v_interp_p1_f32	draw format: 16_16 sint export I32	agree
 v_interp_p1_f32	draw format: 16_16 sint export Sint16	agree
 v_interp_p1_f32	draw format: 16_16 snorm export F32	differ	0 of 0: ; 6 stored dwords value
 v_interp_p1_f32	draw format: 16_16 snorm export Snorm16	differ	0 of 0: ; 6 stored dwords value
-v_interp_p1_f32	draw format: 16_16 srgb export F32	differ	0 of 0: ; 81 stored dwords value
+v_interp_p1_f32	draw format: 16_16 srgb export F32	agree
 v_interp_p1_f32	draw format: 16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 16_16 uint export U32	agree
 v_interp_p1_f32	draw format: 16_16 uint export Uint16	agree
@@ -9086,7 +9086,7 @@ v_interp_p1_f32	draw format: 16_16_16_16 sint export I32	agree
 v_interp_p1_f32	draw format: 16_16_16_16 sint export Sint16	agree
 v_interp_p1_f32	draw format: 16_16_16_16 snorm export F32	differ	0 of 0: ; 10 stored dwords value
 v_interp_p1_f32	draw format: 16_16_16_16 snorm export Snorm16	differ	0 of 0: ; 10 stored dwords value
-v_interp_p1_f32	draw format: 16_16_16_16 srgb export F32	differ	0 of 0: ; 130 stored dwords value
+v_interp_p1_f32	draw format: 16_16_16_16 srgb export F32	differ	0 of 0: ; 3 stored dwords value
 v_interp_p1_f32	draw format: 16_16_16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 16_16_16_16 uint export U32	agree
 v_interp_p1_f32	draw format: 16_16_16_16 uint export Uint16	agree
@@ -9099,8 +9099,8 @@ v_interp_p1_f32	draw format: 1_5_5_5 sint export Sint16	untranslated	Metal drew 
 v_interp_p1_f32	draw format: 1_5_5_5 snorm export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 1_5_5_5 snorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 1_5_5_5 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p1_f32	draw format: 1_5_5_5 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-v_interp_p1_f32	draw format: 1_5_5_5 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+v_interp_p1_f32	draw format: 1_5_5_5 srgb export F16	agree
+v_interp_p1_f32	draw format: 1_5_5_5 srgb export F32	agree
 v_interp_p1_f32	draw format: 1_5_5_5 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 1_5_5_5 uint export U32	agree
 v_interp_p1_f32	draw format: 1_5_5_5 uint export Uint16	agree
@@ -9114,8 +9114,8 @@ v_interp_p1_f32	draw format: 2_10_10_10 sint export Sint16	agree
 v_interp_p1_f32	draw format: 2_10_10_10 snorm export F16	agree
 v_interp_p1_f32	draw format: 2_10_10_10 snorm export F32	agree
 v_interp_p1_f32	draw format: 2_10_10_10 snorm export Snorm16	differ	1127 target dwords value
-v_interp_p1_f32	draw format: 2_10_10_10 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-v_interp_p1_f32	draw format: 2_10_10_10 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+v_interp_p1_f32	draw format: 2_10_10_10 srgb export F16	agree
+v_interp_p1_f32	draw format: 2_10_10_10 srgb export F32	agree
 v_interp_p1_f32	draw format: 2_10_10_10 srgb export Unorm16	differ	1127 target dwords value
 v_interp_p1_f32	draw format: 2_10_10_10 uint export U32	agree
 v_interp_p1_f32	draw format: 2_10_10_10 uint export Uint16	agree
@@ -9165,8 +9165,8 @@ v_interp_p1_f32	draw format: 4_4_4_4 sint export Sint16	agree
 v_interp_p1_f32	draw format: 4_4_4_4 snorm export F16	agree
 v_interp_p1_f32	draw format: 4_4_4_4 snorm export F32	agree
 v_interp_p1_f32	draw format: 4_4_4_4 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p1_f32	draw format: 4_4_4_4 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-v_interp_p1_f32	draw format: 4_4_4_4 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+v_interp_p1_f32	draw format: 4_4_4_4 srgb export F16	agree
+v_interp_p1_f32	draw format: 4_4_4_4 srgb export F32	agree
 v_interp_p1_f32	draw format: 4_4_4_4 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 2 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 4_4_4_4 uint export U32	agree
 v_interp_p1_f32	draw format: 4_4_4_4 uint export Uint16	agree
@@ -9180,8 +9180,8 @@ v_interp_p1_f32	draw format: 5_5_5_1 sint export Sint16	untranslated	Metal drew 
 v_interp_p1_f32	draw format: 5_5_5_1 snorm export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 5_5_5_1 snorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 5_5_5_1 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p1_f32	draw format: 5_5_5_1 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-v_interp_p1_f32	draw format: 5_5_5_1 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+v_interp_p1_f32	draw format: 5_5_5_1 srgb export F16	agree
+v_interp_p1_f32	draw format: 5_5_5_1 srgb export F32	agree
 v_interp_p1_f32	draw format: 5_5_5_1 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 5_5_5_1 uint export U32	agree
 v_interp_p1_f32	draw format: 5_5_5_1 uint export Uint16	agree
@@ -9195,8 +9195,8 @@ v_interp_p1_f32	draw format: 5_6_5 sint export Sint16	agree
 v_interp_p1_f32	draw format: 5_6_5 snorm export F16	agree
 v_interp_p1_f32	draw format: 5_6_5 snorm export F32	agree
 v_interp_p1_f32	draw format: 5_6_5 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p1_f32	draw format: 5_6_5 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-v_interp_p1_f32	draw format: 5_6_5 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+v_interp_p1_f32	draw format: 5_6_5 srgb export F16	agree
+v_interp_p1_f32	draw format: 5_6_5 srgb export F32	agree
 v_interp_p1_f32	draw format: 5_6_5 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 1 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 5_6_5 uint export U32	agree
 v_interp_p1_f32	draw format: 5_6_5 uint export Uint16	agree
@@ -9225,8 +9225,8 @@ v_interp_p1_f32	draw format: 8 sint export Sint16	agree
 v_interp_p1_f32	draw format: 8 snorm export F16	agree
 v_interp_p1_f32	draw format: 8 snorm export F32	agree
 v_interp_p1_f32	draw format: 8 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p1_f32	draw format: 8 srgb export F16	differ	0 of 0: ; 40 stored dwords value
-v_interp_p1_f32	draw format: 8 srgb export F32	differ	0 of 0: ; 40 stored dwords value
+v_interp_p1_f32	draw format: 8 srgb export F16	agree
+v_interp_p1_f32	draw format: 8 srgb export F32	agree
 v_interp_p1_f32	draw format: 8 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 8 uint export U32	agree
 v_interp_p1_f32	draw format: 8 uint export Uint16	agree
@@ -9240,8 +9240,8 @@ v_interp_p1_f32	draw format: 8_8 sint export Sint16	agree
 v_interp_p1_f32	draw format: 8_8 snorm export F16	agree
 v_interp_p1_f32	draw format: 8_8 snorm export F32	agree
 v_interp_p1_f32	draw format: 8_8 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p1_f32	draw format: 8_8 srgb export F16	differ	0 of 0: ; 88 stored dwords value
-v_interp_p1_f32	draw format: 8_8 srgb export F32	differ	0 of 0: ; 79 stored dwords value
+v_interp_p1_f32	draw format: 8_8 srgb export F16	agree
+v_interp_p1_f32	draw format: 8_8 srgb export F32	agree
 v_interp_p1_f32	draw format: 8_8 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 8_8 uint export U32	agree
 v_interp_p1_f32	draw format: 8_8 uint export Uint16	agree
@@ -9255,8 +9255,8 @@ v_interp_p1_f32	draw format: 8_8_8_8 sint export Sint16	agree
 v_interp_p1_f32	draw format: 8_8_8_8 snorm export F16	agree
 v_interp_p1_f32	draw format: 8_8_8_8 snorm export F32	agree
 v_interp_p1_f32	draw format: 8_8_8_8 snorm export Snorm16	differ	1183 target dwords value
-v_interp_p1_f32	draw format: 8_8_8_8 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-v_interp_p1_f32	draw format: 8_8_8_8 srgb export F32	differ	0 of 0: ; 120 stored dwords value
+v_interp_p1_f32	draw format: 8_8_8_8 srgb export F16	agree
+v_interp_p1_f32	draw format: 8_8_8_8 srgb export F32	agree
 v_interp_p1_f32	draw format: 8_8_8_8 srgb export Unorm16	differ	1127 target dwords value
 v_interp_p1_f32	draw format: 8_8_8_8 uint export U32	agree
 v_interp_p1_f32	draw format: 8_8_8_8 uint export Uint16	agree
@@ -9267,7 +9267,7 @@ v_interp_p1_f32	draw format: 8_8_8_8 unorm export F16	agree
 v_interp_p1_f32	draw format: 8_8_8_8 unorm export F32	agree
 v_interp_p1_f32	draw format: 8_8_8_8 unorm export Unorm16	differ	1127 target dwords value
 v_interp_p1_f32	draw input: Flat	agree
-v_interp_p1_f32	draw input: Flat to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
+v_interp_p1_f32	draw input: Flat to 32_32_32_32 float	agree
 v_interp_p1_f32	draw input: LinearCenter	agree
 v_interp_p1_f32	draw input: LinearCenter to 32_32_32_32 float	differ	0 of 0: ; 5564 stored dwords value
 v_interp_p1_f32	draw input: LinearCentroid	agree
@@ -9278,14 +9278,14 @@ v_interp_p1_f32	draw input: PerspCentroid	agree
 v_interp_p1_f32	draw input: PerspCentroid to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
 v_interp_p1_f32	draw input: PerspSample	agree
 v_interp_p1_f32	draw input: PerspSample to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
-v_interp_p1_f32	draw primitive: line strip	differ	0 of 0: ; 35 stored dwords value
-v_interp_p1_f32	draw primitive: lines	differ	0 of 0: ; 40 stored dwords value
+v_interp_p1_f32	draw primitive: line strip	differ	0 of 0: ; 3 stored dwords value
+v_interp_p1_f32	draw primitive: lines	differ	0 of 0: ; 3 stored dwords value
 v_interp_p1_f32	draw primitive: points	agree
 v_interp_p1_f32	draw primitive: rectangles	differ	0 of 0: ; 3335 stored dwords value
 v_interp_p1_f32	draw primitive: triangle fan	agree
 v_interp_p1_f32	draw primitive: triangle strip	agree
-v_interp_p1_f32	draw primitive: wide line ends, x-major	differ	0 of 0: ; 44 stored dwords value
-v_interp_p1_f32	draw primitive: wide line ends, y-major	differ	0 of 0: ; 48 stored dwords value
+v_interp_p1_f32	draw primitive: wide line ends, x-major	agree
+v_interp_p1_f32	draw primitive: wide line ends, y-major	agree
 v_interp_p1_f32	draw raster: cull back	agree
 v_interp_p1_f32	draw raster: cull back, clockwise front	agree
 v_interp_p1_f32	draw raster: cull front	agree
@@ -9542,8 +9542,8 @@ v_interp_p2_f32	draw format: 10_10_10_2 sint export Sint16	agree
 v_interp_p2_f32	draw format: 10_10_10_2 snorm export F16	differ	0 of 0: ; 1 stored dwords value
 v_interp_p2_f32	draw format: 10_10_10_2 snorm export F32	agree
 v_interp_p2_f32	draw format: 10_10_10_2 snorm export Snorm16	differ	1127 target dwords value
-v_interp_p2_f32	draw format: 10_10_10_2 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-v_interp_p2_f32	draw format: 10_10_10_2 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+v_interp_p2_f32	draw format: 10_10_10_2 srgb export F16	agree
+v_interp_p2_f32	draw format: 10_10_10_2 srgb export F32	agree
 v_interp_p2_f32	draw format: 10_10_10_2 srgb export Unorm16	differ	1127 target dwords value
 v_interp_p2_f32	draw format: 10_10_10_2 uint export U32	agree
 v_interp_p2_f32	draw format: 10_10_10_2 uint export Uint16	agree
@@ -9557,8 +9557,8 @@ v_interp_p2_f32	draw format: 10_11_11 sint export Sint16	agree
 v_interp_p2_f32	draw format: 10_11_11 snorm export F16	agree
 v_interp_p2_f32	draw format: 10_11_11 snorm export F32	agree
 v_interp_p2_f32	draw format: 10_11_11 snorm export Snorm16	differ	1420 target dwords value
-v_interp_p2_f32	draw format: 10_11_11 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-v_interp_p2_f32	draw format: 10_11_11 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+v_interp_p2_f32	draw format: 10_11_11 srgb export F16	agree
+v_interp_p2_f32	draw format: 10_11_11 srgb export F32	agree
 v_interp_p2_f32	draw format: 10_11_11 srgb export Unorm16	differ	1419 target dwords value
 v_interp_p2_f32	draw format: 10_11_11 uint export U32	agree
 v_interp_p2_f32	draw format: 10_11_11 uint export Uint16	agree
@@ -9572,8 +9572,8 @@ v_interp_p2_f32	draw format: 11_11_10 sint export Sint16	agree
 v_interp_p2_f32	draw format: 11_11_10 snorm export F16	agree
 v_interp_p2_f32	draw format: 11_11_10 snorm export F32	agree
 v_interp_p2_f32	draw format: 11_11_10 snorm export Snorm16	differ	1386 target dwords value
-v_interp_p2_f32	draw format: 11_11_10 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-v_interp_p2_f32	draw format: 11_11_10 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+v_interp_p2_f32	draw format: 11_11_10 srgb export F16	agree
+v_interp_p2_f32	draw format: 11_11_10 srgb export F32	agree
 v_interp_p2_f32	draw format: 11_11_10 srgb export Unorm16	differ	1396 target dwords value
 v_interp_p2_f32	draw format: 11_11_10 uint export U32	agree
 v_interp_p2_f32	draw format: 11_11_10 uint export Uint16	agree
@@ -9586,7 +9586,7 @@ v_interp_p2_f32	draw format: 16 sint export I32	agree
 v_interp_p2_f32	draw format: 16 sint export Sint16	agree
 v_interp_p2_f32	draw format: 16 snorm export F32	differ	0 of 0: ; 2 stored dwords value
 v_interp_p2_f32	draw format: 16 snorm export Snorm16	differ	0 of 0: ; 2 stored dwords value
-v_interp_p2_f32	draw format: 16 srgb export F32	differ	0 of 0: ; 40 stored dwords value
+v_interp_p2_f32	draw format: 16 srgb export F32	agree
 v_interp_p2_f32	draw format: 16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 16 uint export U32	agree
 v_interp_p2_f32	draw format: 16 uint export Uint16	agree
@@ -9598,7 +9598,7 @@ v_interp_p2_f32	draw format: 16_16 sint export I32	agree
 v_interp_p2_f32	draw format: 16_16 sint export Sint16	agree
 v_interp_p2_f32	draw format: 16_16 snorm export F32	differ	0 of 0: ; 6 stored dwords value
 v_interp_p2_f32	draw format: 16_16 snorm export Snorm16	differ	0 of 0: ; 6 stored dwords value
-v_interp_p2_f32	draw format: 16_16 srgb export F32	differ	0 of 0: ; 81 stored dwords value
+v_interp_p2_f32	draw format: 16_16 srgb export F32	agree
 v_interp_p2_f32	draw format: 16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 16_16 uint export U32	agree
 v_interp_p2_f32	draw format: 16_16 uint export Uint16	agree
@@ -9610,7 +9610,7 @@ v_interp_p2_f32	draw format: 16_16_16_16 sint export I32	agree
 v_interp_p2_f32	draw format: 16_16_16_16 sint export Sint16	agree
 v_interp_p2_f32	draw format: 16_16_16_16 snorm export F32	differ	0 of 0: ; 10 stored dwords value
 v_interp_p2_f32	draw format: 16_16_16_16 snorm export Snorm16	differ	0 of 0: ; 10 stored dwords value
-v_interp_p2_f32	draw format: 16_16_16_16 srgb export F32	differ	0 of 0: ; 130 stored dwords value
+v_interp_p2_f32	draw format: 16_16_16_16 srgb export F32	differ	0 of 0: ; 3 stored dwords value
 v_interp_p2_f32	draw format: 16_16_16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 16_16_16_16 uint export U32	agree
 v_interp_p2_f32	draw format: 16_16_16_16 uint export Uint16	agree
@@ -9623,8 +9623,8 @@ v_interp_p2_f32	draw format: 1_5_5_5 sint export Sint16	untranslated	Metal drew 
 v_interp_p2_f32	draw format: 1_5_5_5 snorm export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 1_5_5_5 snorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 1_5_5_5 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p2_f32	draw format: 1_5_5_5 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-v_interp_p2_f32	draw format: 1_5_5_5 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+v_interp_p2_f32	draw format: 1_5_5_5 srgb export F16	agree
+v_interp_p2_f32	draw format: 1_5_5_5 srgb export F32	agree
 v_interp_p2_f32	draw format: 1_5_5_5 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 1_5_5_5 uint export U32	agree
 v_interp_p2_f32	draw format: 1_5_5_5 uint export Uint16	agree
@@ -9638,8 +9638,8 @@ v_interp_p2_f32	draw format: 2_10_10_10 sint export Sint16	agree
 v_interp_p2_f32	draw format: 2_10_10_10 snorm export F16	agree
 v_interp_p2_f32	draw format: 2_10_10_10 snorm export F32	agree
 v_interp_p2_f32	draw format: 2_10_10_10 snorm export Snorm16	differ	1127 target dwords value
-v_interp_p2_f32	draw format: 2_10_10_10 srgb export F16	differ	0 of 0: ; 142 stored dwords value
-v_interp_p2_f32	draw format: 2_10_10_10 srgb export F32	differ	0 of 0: ; 124 stored dwords value
+v_interp_p2_f32	draw format: 2_10_10_10 srgb export F16	agree
+v_interp_p2_f32	draw format: 2_10_10_10 srgb export F32	agree
 v_interp_p2_f32	draw format: 2_10_10_10 srgb export Unorm16	differ	1127 target dwords value
 v_interp_p2_f32	draw format: 2_10_10_10 uint export U32	agree
 v_interp_p2_f32	draw format: 2_10_10_10 uint export Uint16	agree
@@ -9689,8 +9689,8 @@ v_interp_p2_f32	draw format: 4_4_4_4 sint export Sint16	agree
 v_interp_p2_f32	draw format: 4_4_4_4 snorm export F16	agree
 v_interp_p2_f32	draw format: 4_4_4_4 snorm export F32	agree
 v_interp_p2_f32	draw format: 4_4_4_4 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p2_f32	draw format: 4_4_4_4 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-v_interp_p2_f32	draw format: 4_4_4_4 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+v_interp_p2_f32	draw format: 4_4_4_4 srgb export F16	agree
+v_interp_p2_f32	draw format: 4_4_4_4 srgb export F32	agree
 v_interp_p2_f32	draw format: 4_4_4_4 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 2 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 4_4_4_4 uint export U32	agree
 v_interp_p2_f32	draw format: 4_4_4_4 uint export Uint16	agree
@@ -9704,8 +9704,8 @@ v_interp_p2_f32	draw format: 5_5_5_1 sint export Sint16	untranslated	Metal drew 
 v_interp_p2_f32	draw format: 5_5_5_1 snorm export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 5_5_5_1 snorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 5_5_5_1 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p2_f32	draw format: 5_5_5_1 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-v_interp_p2_f32	draw format: 5_5_5_1 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+v_interp_p2_f32	draw format: 5_5_5_1 srgb export F16	agree
+v_interp_p2_f32	draw format: 5_5_5_1 srgb export F32	agree
 v_interp_p2_f32	draw format: 5_5_5_1 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 5_5_5_1 uint export U32	agree
 v_interp_p2_f32	draw format: 5_5_5_1 uint export Uint16	agree
@@ -9719,8 +9719,8 @@ v_interp_p2_f32	draw format: 5_6_5 sint export Sint16	agree
 v_interp_p2_f32	draw format: 5_6_5 snorm export F16	agree
 v_interp_p2_f32	draw format: 5_6_5 snorm export F32	agree
 v_interp_p2_f32	draw format: 5_6_5 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p2_f32	draw format: 5_6_5 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-v_interp_p2_f32	draw format: 5_6_5 srgb export F32	differ	0 of 0: ; 119 stored dwords value
+v_interp_p2_f32	draw format: 5_6_5 srgb export F16	agree
+v_interp_p2_f32	draw format: 5_6_5 srgb export F32	agree
 v_interp_p2_f32	draw format: 5_6_5 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 1 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 5_6_5 uint export U32	agree
 v_interp_p2_f32	draw format: 5_6_5 uint export Uint16	agree
@@ -9749,8 +9749,8 @@ v_interp_p2_f32	draw format: 8 sint export Sint16	agree
 v_interp_p2_f32	draw format: 8 snorm export F16	agree
 v_interp_p2_f32	draw format: 8 snorm export F32	agree
 v_interp_p2_f32	draw format: 8 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p2_f32	draw format: 8 srgb export F16	differ	0 of 0: ; 40 stored dwords value
-v_interp_p2_f32	draw format: 8 srgb export F32	differ	0 of 0: ; 40 stored dwords value
+v_interp_p2_f32	draw format: 8 srgb export F16	agree
+v_interp_p2_f32	draw format: 8 srgb export F32	agree
 v_interp_p2_f32	draw format: 8 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 8 uint export U32	agree
 v_interp_p2_f32	draw format: 8 uint export Uint16	agree
@@ -9764,8 +9764,8 @@ v_interp_p2_f32	draw format: 8_8 sint export Sint16	agree
 v_interp_p2_f32	draw format: 8_8 snorm export F16	agree
 v_interp_p2_f32	draw format: 8_8 snorm export F32	agree
 v_interp_p2_f32	draw format: 8_8 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p2_f32	draw format: 8_8 srgb export F16	differ	0 of 0: ; 88 stored dwords value
-v_interp_p2_f32	draw format: 8_8 srgb export F32	differ	0 of 0: ; 79 stored dwords value
+v_interp_p2_f32	draw format: 8_8 srgb export F16	agree
+v_interp_p2_f32	draw format: 8_8 srgb export F32	agree
 v_interp_p2_f32	draw format: 8_8 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 8_8 uint export U32	agree
 v_interp_p2_f32	draw format: 8_8 uint export Uint16	agree
@@ -9779,8 +9779,8 @@ v_interp_p2_f32	draw format: 8_8_8_8 sint export Sint16	agree
 v_interp_p2_f32	draw format: 8_8_8_8 snorm export F16	agree
 v_interp_p2_f32	draw format: 8_8_8_8 snorm export F32	agree
 v_interp_p2_f32	draw format: 8_8_8_8 snorm export Snorm16	differ	1183 target dwords value
-v_interp_p2_f32	draw format: 8_8_8_8 srgb export F16	differ	0 of 0: ; 136 stored dwords value
-v_interp_p2_f32	draw format: 8_8_8_8 srgb export F32	differ	0 of 0: ; 120 stored dwords value
+v_interp_p2_f32	draw format: 8_8_8_8 srgb export F16	agree
+v_interp_p2_f32	draw format: 8_8_8_8 srgb export F32	agree
 v_interp_p2_f32	draw format: 8_8_8_8 srgb export Unorm16	differ	1127 target dwords value
 v_interp_p2_f32	draw format: 8_8_8_8 uint export U32	agree
 v_interp_p2_f32	draw format: 8_8_8_8 uint export Uint16	agree
@@ -9791,7 +9791,7 @@ v_interp_p2_f32	draw format: 8_8_8_8 unorm export F16	agree
 v_interp_p2_f32	draw format: 8_8_8_8 unorm export F32	agree
 v_interp_p2_f32	draw format: 8_8_8_8 unorm export Unorm16	differ	1127 target dwords value
 v_interp_p2_f32	draw input: Flat	agree
-v_interp_p2_f32	draw input: Flat to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
+v_interp_p2_f32	draw input: Flat to 32_32_32_32 float	agree
 v_interp_p2_f32	draw input: LinearCenter	agree
 v_interp_p2_f32	draw input: LinearCenter to 32_32_32_32 float	differ	0 of 0: ; 5564 stored dwords value
 v_interp_p2_f32	draw input: LinearCentroid	agree
@@ -9802,14 +9802,14 @@ v_interp_p2_f32	draw input: PerspCentroid	agree
 v_interp_p2_f32	draw input: PerspCentroid to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
 v_interp_p2_f32	draw input: PerspSample	agree
 v_interp_p2_f32	draw input: PerspSample to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
-v_interp_p2_f32	draw primitive: line strip	differ	0 of 0: ; 35 stored dwords value
-v_interp_p2_f32	draw primitive: lines	differ	0 of 0: ; 40 stored dwords value
+v_interp_p2_f32	draw primitive: line strip	differ	0 of 0: ; 3 stored dwords value
+v_interp_p2_f32	draw primitive: lines	differ	0 of 0: ; 3 stored dwords value
 v_interp_p2_f32	draw primitive: points	agree
 v_interp_p2_f32	draw primitive: rectangles	differ	0 of 0: ; 3335 stored dwords value
 v_interp_p2_f32	draw primitive: triangle fan	agree
 v_interp_p2_f32	draw primitive: triangle strip	agree
-v_interp_p2_f32	draw primitive: wide line ends, x-major	differ	0 of 0: ; 44 stored dwords value
-v_interp_p2_f32	draw primitive: wide line ends, y-major	differ	0 of 0: ; 48 stored dwords value
+v_interp_p2_f32	draw primitive: wide line ends, x-major	agree
+v_interp_p2_f32	draw primitive: wide line ends, y-major	agree
 v_interp_p2_f32	draw raster: cull back	agree
 v_interp_p2_f32	draw raster: cull back, clockwise front	agree
 v_interp_p2_f32	draw raster: cull front	agree
