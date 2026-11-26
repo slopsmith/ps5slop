@@ -410,6 +410,13 @@ fn f16_bits(v: f32) -> u16 {
     sign | (exp as u16) << 10 | (b >> 13 & 0x3FF) as u16
 }
 
+/// `dim`, widened until every lane can write a texel of its own.
+fn room_for_every_lane(mut dim: Dim) -> Dim {
+    let (w, h, d) = dim.size;
+    dim.size.0 = w.max((GROUPS * 64).div_ceil(h * d));
+    dim
+}
+
 /// Every lane's record: its address operands, store data, the destination's start.
 fn records(args: &[Arg], dim: Dim, unique: bool, integer: bool, seed: &str) -> Vec<u32> {
     let mut rng = Rng::new(seed);
@@ -431,15 +438,15 @@ fn records(args: &[Arg], dim: Dim, unique: bool, integer: bool, seed: &str) -> V
                     h(rng.next()) | h(rng.next()) << 16
                 }
                 Arg::Coord(c) if unique => match c {
-                    0 => (i % 64) as u32,
-                    1 => (i / 64) as u32 % extent[1].max(1),
-                    _ => (i / 64) as u32 % extent[2].max(1),
+                    0 => (i as u32) % w,
+                    1 => (i as u32 / w) % h,
+                    _ => (i as u32 / w) % d,
                 },
                 Arg::Coord(c) if integer => {
                     (rng.below(extent[c].max(1) as usize + 4) as i32 - 2) as u32
                 }
                 Arg::Coord(_) => f((rng.next() % 1501) as f32 / 1000.0 - 0.25),
-                Arg::Slice if unique => (i / 64) as u32 % d,
+                Arg::Slice if unique => (i as u32 / w) % d,
                 Arg::Slice if integer => rng.below(d as usize + 1) as u32,
                 Arg::Slice => f(rng.below(d as usize + 1) as f32 + 0.3),
                 Arg::Lod => f((rng.next() % 801) as f32 / 100.0 - 1.0),
@@ -485,6 +492,11 @@ fn case(
     };
     let store = is_store(op.name);
     let writes = store || is_atomic(op.name);
+    let dim = if writes {
+        room_for_every_lane(dim)
+    } else {
+        dim
+    };
     let mut code = PROLOGUE.to_vec();
     code.extend(inst);
     if store {
