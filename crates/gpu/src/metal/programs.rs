@@ -918,6 +918,9 @@ pub(super) fn logic_targets(c: &[u32]) -> (u8, [u8; 8]) {
         let Some(ct) = ColorTarget::read(c, n).filter(|_| attached(c, n)) else {
             continue;
         };
+        if packed_target(ct.format) {
+            continue;
+        }
         if Blend::read(c, n).enable || c[context::CB_BLEND0_CONTROL + n] >> 31 != 0 {
             continue;
         }

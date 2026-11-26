@@ -387,7 +387,7 @@ impl Metal {
             };
             // A packed target's program keeps the channels not written itself.
             let write = if packed_target(t.format) && write != 0 {
-                1
+                0xF
             } else {
                 write
             };

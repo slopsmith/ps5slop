@@ -386,8 +386,8 @@ impl Metal {
     /// Clears `tex` to `colour` with a render pass of its own.
     fn fill_colour(&mut self, t: &ColorTarget, tex: &Texture, colour: [f64; 4]) {
         if packed_target(t.format) {
-            let word = packed_word(t.format, colour);
-            self.fill_raw(tex, Self::target_slice(t, tex), [word, 0]);
+            let words = packed_word(t.format, colour);
+            self.fill_raw(tex, Self::target_slice(t, tex), words);
             return;
         }
         self.end_pass();

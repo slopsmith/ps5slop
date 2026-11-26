@@ -245,20 +245,39 @@ static inline half4 cb_half(float4 x) {
     return r;
 }
 
-// Targets whose bit layout Metal lacks (Request::packed_targets), packed as
+// Targets Metal has no format for (Request::packed_targets), packed as
 // RDNA2's CB writes them (measured on the Deck): channel widths from bit 0
 // up; unorm and snorm round to nearest even, uint and sint saturate; sRGB
 // stores each colour channel's 8-bit sRGB value in the low bits of its field
 // and alpha as unorm; float fields of 10 and 11 bits are unsigned floats with
-// a 5-bit exponent, rounded toward zero. What a 2-bit float field holds for
-// values of 1 and up is not known (below 1 it is 0).
+// a 5-bit exponent, rounded toward zero, 16-bit ones halves rounded toward
+// zero. What a 2-bit float field holds for values of 1 and up is not known
+// (below 1 it is 0).
 static inline uint4 cb_widths(uint layout) {
     switch (layout) {
+    case 1u: return uint4(8u, 0u, 0u, 0u);
+    case 2u: return uint4(16u, 0u, 0u, 0u);
+    case 3u: return uint4(8u, 8u, 0u, 0u);
+    case 4u: return uint4(32u, 0u, 0u, 0u);
+    case 5u: return uint4(16u, 16u, 0u, 0u);
     case 6u: return uint4(11u, 11u, 10u, 0u);
     case 7u: return uint4(10u, 11u, 11u, 0u);
     case 8u: return uint4(2u, 10u, 10u, 10u);
-    default: return uint4(10u, 10u, 10u, 2u);
+    case 9u: return uint4(10u, 10u, 10u, 2u);
+    case 10u: return uint4(8u, 8u, 8u, 8u);
+    case 11u: return uint4(32u, 32u, 0u, 0u);
+    case 12u: return uint4(16u, 16u, 16u, 16u);
+    case 16u: return uint4(5u, 6u, 5u, 0u);
+    case 17u: return uint4(5u, 5u, 5u, 1u);
+    case 18u: return uint4(1u, 5u, 5u, 5u);
+    case 19u: return uint4(4u, 4u, 4u, 4u);
+    case 24u: return uint4(9u, 9u, 9u, 5u);
+    default: return uint4(32u, 32u, 32u, 32u);
     }
+}
+
+static inline uint cb_mask(uint n) {
+    return n >= 32u ? 0xFFFFFFFFu : (1u << n) - 1u;
 }
 
 static inline uint cb_ufloat(float x, uint b) {
@@ -286,70 +305,110 @@ static inline uint cb_srgb8(float x) {
     return uint(rint(y * 255.0f));
 }
 
-static inline uint cb_pack(float4 v, uint layout, uint number) {
-    uint4 b = cb_widths(layout);
-    uint w = 0u, at = 0u;
-    for (uint c = 0u; c < 4u; c++) {
-        uint n = b[c];
-        if (n == 0u) continue;
-        uint mask = (1u << n) - 1u;
-        float x = v[c];
-        uint f;
-        switch (number) {
-        case 1u: f = uint(int(rint(clamp(x, -1.0f, 1.0f) * float(mask >> 1)))) & mask; break;
-        case 6u: f = c < 3u ? cb_srgb8(x) & mask : uint(rint(clamp(x, 0.0f, 1.0f) * float(mask))); break;
-        case 7u: f = n >= 10u ? cb_ufloat(x, n) : uint(clamp(x, 0.0f, float(mask))); break;
-        default: f = uint(rint(clamp(x, 0.0f, 1.0f) * float(mask))); break;
-        }
-        w |= f << at;
-        at += n;
-    }
-    return w;
+static inline uint cb_unorm(float x, uint n) {
+    x = clamp(x, 0.0f, 1.0f);
+    return n >= 32u ? (x >= 1.0f ? 0xFFFFFFFFu : uint(rint(x * 4294967296.0f))) : uint(rint(x * float(cb_mask(n))));
 }
 
-static inline uint cb_pack_u(uint4 v, uint layout) {
-    uint4 b = cb_widths(layout);
-    uint w = 0u, at = 0u;
+static inline uint cb_field(float x, uint n, uint number, uint c) {
+    switch (number) {
+    case 1u: {
+        float h = n >= 32u ? 2147483647.0f : float(cb_mask(n) >> 1);
+        return uint(int(rint(clamp(x, -1.0f, 1.0f) * h))) & cb_mask(n);
+    }
+    case 6u: return c < 3u ? cb_srgb8(x) & cb_mask(n) : cb_unorm(x, n);
+    case 7u:
+        if (n == 32u) return as_type<uint>(x);
+        if (n == 16u) return f16_rtz_bits(x);
+        if (n >= 10u) return cb_ufloat(x, n);
+        return uint(clamp(x, 0.0f, float(cb_mask(n))));
+    default: return cb_unorm(x, n);
+    }
+}
+
+static inline float cb_field_value(uint f, uint n, uint number, uint c) {
+    switch (number) {
+    case 1u: {
+        int s = n >= 32u ? int(f) : int(f << (32u - n)) >> (32u - n);
+        return max(float(s) / (n >= 32u ? 2147483647.0f : float(cb_mask(n) >> 1)), -1.0f);
+    }
+    case 6u: {
+        if (c == 3u) return float(f) / float(cb_mask(n));
+        float y = float(f & 0xFFu) / 255.0f;
+        return y <= 0.04045f ? y / 12.92f : powr((y + 0.055f) / 1.055f, 2.4f);
+    }
+    case 7u:
+        if (n == 32u) return as_type<float>(f);
+        if (n == 16u) return f16_float(f);
+        if (n >= 10u) return cb_ufloat_value(f, n);
+        return float(f);
+    default: return float(f) / float(cb_mask(n));
+    }
+}
+
+// RGB9E5: three 9-bit mantissas sharing a 5-bit exponent (bias 15), rounded
+// half up (measured on the Deck: halves exported at a tie round up).
+static inline uint4 cb_pack_9e5(float4 v) {
+    float3 c = clamp(v.xyz, 0.0f, 65408.0f);
+    c = select(c, float3(0.0f), isnan(v.xyz));
+    float m = max(max(c.x, c.y), c.z);
+    int e = max(-16, int(floor(log2(max(m, 1e-30f))))) + 16;
+    float scale = exp2(float(e - 24));
+    if (uint(floor(m / scale + 0.5f)) == 512u) { e += 1; scale *= 2.0f; }
+    uint3 q = uint3(floor(c / scale + 0.5f));
+    return uint4(q.x | q.y << 9 | q.z << 18 | uint(e) << 27, 0u, 0u, 0u);
+}
+
+static inline float4 cb_unpack_9e5(uint w) {
+    float scale = exp2(float(int(w >> 27) - 24));
+    return float4(float(w & 0x1FFu) * scale, float((w >> 9) & 0x1FFu) * scale, float((w >> 18) & 0x1FFu) * scale, 1.0f);
+}
+
+static inline uint4 cb_pack(float4 v, uint layout, uint number) {
+    if (layout == 24u && number == 7u) return cb_pack_9e5(v);
+    uint4 b = cb_widths(layout), w = uint4(0u);
+    uint at = 0u;
     for (uint c = 0u; c < 4u; c++) {
         if (b[c] == 0u) continue;
-        w |= min(v[c], (1u << b[c]) - 1u) << at;
+        w[at >> 5] |= cb_field(v[c], b[c], number, c) << (at & 31u);
         at += b[c];
     }
     return w;
 }
 
-static inline uint cb_pack_s(int4 v, uint layout) {
-    uint4 b = cb_widths(layout);
-    uint w = 0u, at = 0u;
+static inline uint4 cb_pack_u(uint4 v, uint layout) {
+    uint4 b = cb_widths(layout), w = uint4(0u);
+    uint at = 0u;
     for (uint c = 0u; c < 4u; c++) {
         if (b[c] == 0u) continue;
-        int hi = (1 << (b[c] - 1u)) - 1;
-        w |= (uint(clamp(v[c], -hi - 1, hi)) & ((1u << b[c]) - 1u)) << at;
+        w[at >> 5] |= min(v[c], cb_mask(b[c])) << (at & 31u);
+        at += b[c];
+    }
+    return w;
+}
+
+static inline uint4 cb_pack_s(int4 v, uint layout) {
+    uint4 b = cb_widths(layout), w = uint4(0u);
+    uint at = 0u;
+    for (uint c = 0u; c < 4u; c++) {
+        if (b[c] == 0u) continue;
+        int hi = int(cb_mask(b[c]) >> 1);
+        w[at >> 5] |= (uint(clamp(v[c], -hi - 1, hi)) & cb_mask(b[c])) << (at & 31u);
         at += b[c];
     }
     return w;
 }
 
 // What a blend reads of a packed target: the inverse of cb_pack.
-static inline float4 cb_unpack(uint w, uint layout, uint number) {
+static inline float4 cb_unpack(uint4 w, uint layout, uint number) {
+    if (layout == 24u && number == 7u) return cb_unpack_9e5(w.x);
     uint4 b = cb_widths(layout);
     float4 r = float4(0.0f, 0.0f, 0.0f, 1.0f);
     uint at = 0u;
     for (uint c = 0u; c < 4u; c++) {
-        uint n = b[c];
-        if (n == 0u) continue;
-        uint mask = (1u << n) - 1u, f = (w >> at) & mask;
-        at += n;
-        switch (number) {
-        case 1u: r[c] = max(float(int(f << (32u - n)) >> (32u - n)) / float(mask >> 1), -1.0f); break;
-        case 6u: {
-            float y = float(f & 0xFFu) / 255.0f;
-            r[c] = c == 3u ? float(f) / float(mask) : y <= 0.04045f ? y / 12.92f : powr((y + 0.055f) / 1.055f, 2.4f);
-            break;
-        }
-        case 7u: r[c] = n >= 10u ? cb_ufloat_value(f, n) : float(f); break;
-        default: r[c] = float(f) / float(mask); break;
-        }
+        if (b[c] == 0u) continue;
+        r[c] = cb_field_value((w[at >> 5] >> (at & 31u)) & cb_mask(b[c]), b[c], number, c);
+        at += b[c];
     }
     return r;
 }

@@ -104,11 +104,12 @@ pub struct Request<'a> {
     /// stores, two bits per channel from channel 0 up (`CB_COLOR_INFO`'s
     /// COMP_SWAP); 0 stores them as exported.
     pub swizzles: [u8; 8],
-    /// Pixel stage, per MRT: 0, or a target whose bit layout Metal has no
-    /// format for, bound as one 32-bit unsigned integer per pixel:
-    /// `CB_COLOR_INFO` FORMAT (6 to 9) in bits 0 to 4, NUMBER_TYPE in bits
-    /// 5 to 7 and the channels written, in channel order, in bits 8 to 11.
-    /// The program packs the export as the CB lays out its bits.
+    /// Pixel stage, per MRT: 0, or a target Metal has no format for (or
+    /// one whose Metal format stores other bits), bound as unsigned
+    /// integers of its pixel's size: `CB_COLOR_INFO` FORMAT in bits 0 to 4,
+    /// NUMBER_TYPE in bits 5 to 7 and the channels written, in channel
+    /// order, in bits 8 to 11. The program packs the export as the CB lays
+    /// out its bits ([`packed_widths`]).
     pub packed_targets: [u16; 8],
     /// Pixel stage, for debugging: the first flat input's raw value goes to
     /// colour output 1 in place of what the program computes.
@@ -358,6 +359,32 @@ pub const BLEND_CLAMP_SNORM: u32 = 2 << 13;
 /// For a [`Request::blends`] word: the CB reads the target's value as a float
 /// of 12 significant bits, rounded to nearest even, before blending it.
 pub const BLEND_DST_12_BITS: u32 = 1 << 15;
+
+/// The channel widths of a `CB_COLOR_INFO` FORMAT, channel 0 in the low
+/// bits: AMD names list them from the top bit down.
+pub fn packed_widths(layout: u32) -> Option<[u32; 4]> {
+    Some(match layout {
+        1 => [8, 0, 0, 0],
+        2 => [16, 0, 0, 0],
+        3 => [8, 8, 0, 0],
+        4 => [32, 0, 0, 0],
+        5 => [16, 16, 0, 0],
+        6 => [11, 11, 10, 0],
+        7 => [10, 11, 11, 0],
+        8 => [2, 10, 10, 10],
+        9 => [10, 10, 10, 2],
+        10 => [8, 8, 8, 8],
+        11 => [32, 32, 0, 0],
+        12 => [16, 16, 16, 16],
+        14 => [32, 32, 32, 32],
+        16 => [5, 6, 5, 0],
+        17 => [5, 5, 5, 1],
+        18 => [1, 5, 5, 5],
+        19 => [4, 4, 4, 4],
+        24 => [9, 9, 9, 5],
+        _ => return None,
+    })
+}
 
 /// Constant buffers a program may bind; scalar loads through more bases read
 /// guest memory instead.

@@ -403,7 +403,8 @@ impl<'a> Tx<'a> {
                     let logic = self.req.logic_targets[n];
                     let packed = self.req.packed_targets[n];
                     if packed != 0
-                        && (self.req.blends[n] != 0 || !mem::packed_write_bits(packed) != 0)
+                        && (self.req.blends[n] != 0
+                            || mem::packed_write_bits(packed) != [u32::MAX; 4])
                     {
                         entry_params.push(format!("uint4 d{n} [[color({n})]]"));
                     } else if self.req.logic_op != 0xCC && logic != 0 {
@@ -552,7 +553,7 @@ impl<'a> Tx<'a> {
             if packed != 0 {
                 let (layout, number) = (packed & 0x1F, packed >> 5 & 7);
                 let word = format!(
-                    "cb_pack(cb_blend(blend_src{n}, cb_unpack(d{n}.x, {layout}u, {number}u), {src1}, blend_color, {w:#x}u), {layout}u, {number}u)"
+                    "cb_pack(cb_blend(blend_src{n}, cb_unpack(d{n}, {layout}u, {number}u), {src1}, blend_color, {w:#x}u), {layout}u, {number}u)"
                 );
                 out.push_str(&format!(
                     "o.c{n} = {}; ",

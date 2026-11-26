@@ -117,7 +117,7 @@ impl ColorFormat {
         Some(match self.layout {
             1 => 1,
             2 | 3 | 16..=19 => 2,
-            4..=10 | 20..=22 => 4,
+            4..=10 | 20..=22 | 24 => 4,
             11 | 12 => 8,
             14 => 16,
             _ => return None,

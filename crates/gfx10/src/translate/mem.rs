@@ -1110,35 +1110,32 @@ impl<'a> Tx<'a> {
 /// stores it (integers saturated to the channel, measured) and the target's
 /// current bits (`dN`, read through the attachment). The pattern operand is
 /// taken as 0.
-/// The `uint4` a packed target (`Request::packed_targets`) takes for `word`,
+/// The `uint4` a packed target (`Request::packed_targets`) takes for `words`,
 /// keeping the bits of the channels not written from `d{target}`.
-pub(super) fn packed_store(target: impl std::fmt::Display, word: &str, packed: u16) -> String {
-    let keep = !packed_write_bits(packed);
-    if keep == 0 {
-        format!("uint4({word}, 0u, 0u, 0u)")
-    } else {
-        format!(
-            "uint4(({word}) & {:#x}u | d{target}.x & {keep:#x}u, 0u, 0u, 0u)",
-            !keep
-        )
+pub(super) fn packed_store(target: impl std::fmt::Display, words: &str, packed: u16) -> String {
+    let write = packed_write_bits(packed);
+    if write == [u32::MAX; 4] {
+        return words.to_string();
     }
+    let [a, b, c, d] = write;
+    let [ka, kb, kc, kd] = write.map(|w| !w);
+    format!(
+        "(({words}) & uint4({a:#x}u, {b:#x}u, {c:#x}u, {d:#x}u) | d{target} & uint4({ka:#x}u, {kb:#x}u, {kc:#x}u, {kd:#x}u))"
+    )
 }
 
-/// The bits of a packed target's word that its written channels hold.
-pub(super) fn packed_write_bits(packed: u16) -> u32 {
-    let widths: [u32; 4] = match packed & 0x1F {
-        6 => [11, 11, 10, 0],
-        7 => [10, 11, 11, 0],
-        8 => [2, 10, 10, 10],
-        _ => [10, 10, 10, 2],
-    };
+/// The bits of each dword of a packed target's pixel that its written
+/// channels hold; bits past the pixel count as written.
+pub(super) fn packed_write_bits(packed: u16) -> [u32; 4] {
+    let widths = packed_widths(u32::from(packed & 0x1F)).unwrap_or([32; 4]);
+    let mut bits = [u32::MAX; 4];
     let mut at = 0;
-    let mut bits = 0u32;
     for (c, w) in widths.into_iter().enumerate() {
-        if packed >> (8 + c) & 1 != 0 {
-            bits |= (((1u64 << w) - 1) as u32) << at;
+        if w != 0 && packed >> (8 + c) & 1 == 0 {
+            let field = (((1u64 << w) - 1) << (at % 32)) as u32;
+            bits[at / 32] &= !field;
         }
-        at += w;
+        at += w as usize;
     }
     bits
 }

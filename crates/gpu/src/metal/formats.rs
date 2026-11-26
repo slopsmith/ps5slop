@@ -55,50 +55,73 @@ pub(super) fn write_mask(bits: u32) -> usize {
         | m(a, MTLColorWriteMask::Alpha)
 }
 
-/// Whether a color target's bits have no Metal format: AMD names list the
-/// channels from the top bit down, so of the packed 32-bit layouts only
-/// 10_11_11 floats and 2_10_10_10 unorm are Metal's (Metal's RGB10A2Uint
-/// cannot be read back). The others are bound as `R32Uint` and packed by the
-/// pixel program (`Request::packed_targets`).
+/// Whether a color target is drawn through unsigned integers of its pixel's
+/// size, packed by the pixel program (`Request::packed_targets`): formats
+/// Metal lacks, and ones whose Metal format stores other bits. AMD names list
+/// the channels from the top bit down, so of the packed 32-bit layouts only
+/// 10_11_11 floats and 2_10_10_10 unorm are Metal's (Metal's RGB10A2Uint and
+/// B5G6R5Unorm cannot be read back), and Metal's snorm formats store -1 as
+/// -127 where the CB keeps the -128 already in memory.
 pub(super) fn packed_target(f: regs::ColorFormat) -> bool {
-    matches!(f.layout, 6..=9) && !matches!((f.layout, f.number), (6, 7) | (9, 0))
+    gfx10::translate::packed_widths(f.layout).is_some()
+        && (direct_color_format(f).is_none()
+            || f.number == 1
+            || matches!(f.layout, 6..=9) && !matches!((f.layout, f.number), (6, 7) | (9, 0)))
 }
 
-/// A packed target's word for a clear colour of 0s and 1s, as the pixel
-/// program's `cb_pack` makes it.
-pub(super) fn packed_word(f: regs::ColorFormat, colour: [f64; 4]) -> u32 {
-    let widths: [u32; 4] = match f.layout {
-        6 => [11, 11, 10, 0],
-        7 => [10, 11, 11, 0],
-        8 => [2, 10, 10, 10],
-        _ => [10, 10, 10, 2],
-    };
+/// The unsigned integer format a packed target is drawn through.
+fn packed_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
+    use MTLPixelFormat as P;
+    let bits: u32 = gfx10::translate::packed_widths(f.layout)?.iter().sum();
+    Some(match bits {
+        8 => P::R8Uint,
+        16 => P::R16Uint,
+        32 => P::R32Uint,
+        64 => P::RG32Uint,
+        _ => P::RGBA32Uint,
+    })
+}
+
+/// A packed target's first two dwords for a clear colour of 0s and 1s, as
+/// the pixel program's `cb_pack` makes them.
+pub(super) fn packed_word(f: regs::ColorFormat, colour: [f64; 4]) -> [u32; 2] {
+    let widths = gfx10::translate::packed_widths(f.layout).unwrap_or([0; 4]);
     let swizzle = export_swizzle(f);
     let mut at = 0;
-    let mut word = 0u32;
+    let mut words = [0u64; 2];
     for (c, w) in widths.into_iter().enumerate() {
         let x = colour[(swizzle >> (2 * c) & 3) as usize].clamp(0.0, 1.0);
         let max = ((1u64 << w) - 1) as f64;
         let field = match f.number {
-            1 => (x * (max / 2.0).floor()).round_ties_even(),
-            6 if c < 3 => (x * 255.0).round_ties_even(),
-            7 if w >= 10 && x > 0.0 => (15u64 << (w - 5)) as f64,
-            4 | 5 | 7 => x.floor(),
-            _ => (x * max).round_ties_even(),
+            1 => (x * (max / 2.0).floor()).round_ties_even() as u64,
+            6 if c < 3 => (x * 255.0).round_ties_even() as u64,
+            7 if w == 32 => u64::from((x as f32).to_bits()),
+            7 if w == 16 && x > 0.0 => 0x3C00,
+            7 if w >= 10 && x > 0.0 => 15 << (w - 5),
+            4 | 5 | 7 => x as u64,
+            _ => (x * max).round_ties_even() as u64,
         };
-        word |= (field as u32 & max as u32) << at;
-        at += w;
+        if at < 64 {
+            words[at / 32] |= (field & max as u64) << (at % 32);
+        }
+        at += w as usize;
     }
-    word
+    [words[0] as u32, words[1] as u32]
 }
 
-/// The Metal format of a color target, for the layouts titles render to.
+/// The Metal format of a color target.
 pub(super) fn color_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
+    if packed_target(f) {
+        packed_format(f)
+    } else {
+        direct_color_format(f)
+    }
+}
+
+/// The Metal format that holds a color target's bits as the CB writes them.
+fn direct_color_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
     use MTLPixelFormat as P;
     let bgr = f.swap == 1;
-    if packed_target(f) {
-        return Some(P::R32Uint);
-    }
     Some(match (f.layout, f.number) {
         (10, 6) if bgr => P::BGRA8Unorm_sRGB,
         (10, 6) => P::RGBA8Unorm_sRGB,
@@ -130,7 +153,6 @@ pub(super) fn color_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
         (12, 7) => P::RGBA16Float,
         (14, 4) => P::RGBA32Uint,
         (14, 7) => P::RGBA32Float,
-        (16, 0) => P::B5G6R5Unorm,
         _ => return None,
     })
 }
