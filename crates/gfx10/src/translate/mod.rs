@@ -185,6 +185,9 @@ pub enum Resource {
         source: Source,
         kind: TextureKind,
         access: Access,
+        /// Bound as the image's memory holds it, without its channel
+        /// selects or sRGB conversion: the program applies them.
+        raw: bool,
     },
     /// An S#, bound at `[[sampler(slot)]]`.
     Sampler { slot: u8, source: Source },
@@ -268,6 +271,11 @@ pub mod binding {
     /// Where in `user` the renderer puts dword 0 of each sampler slot's S#,
     /// after the 32 user SGPRs (for the depth compare function).
     pub const SAMPLER_WORDS: u32 = 32;
+    /// Where in `user` the renderer puts dwords 1 and 3 of each texture
+    /// slot's T# (format and channel selects), two per slot, after the samplers'.
+    pub const TEXTURE_WORDS: u32 = 64;
+    /// Words of `user` in all.
+    pub const USER_WORDS: u32 = TEXTURE_WORDS + 2 * 32;
     /// `device atomic_uint* gds`: the 64 KiB global data share.
     pub const GDS: u32 = 27;
     /// `device atomic_uint* guard`: two words per dispatch for the loop guard
@@ -424,7 +432,8 @@ struct Tx<'a> {
     syms: Option<BTreeMap<usize, Syms>>,
     /// Descriptor register, dimension, source and access, as of the first
     /// instruction using it.
-    textures: Vec<(u16, TextureKind, Source, Access)>,
+    /// T# register, dimension, origin, access, whether bound raw.
+    textures: Vec<(u16, TextureKind, Source, Access, bool)>,
     samplers: Vec<Source>,
     /// Constant buffers by base, with the bytes the program reads from them.
     constants: Vec<(Base, u32)>,

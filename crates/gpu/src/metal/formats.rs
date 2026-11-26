@@ -126,19 +126,39 @@ pub(super) fn store_swizzled(tex: Retained<Texture>, sel: [u8; 4]) -> Option<Ret
     tex.newTextureViewWithPixelFormat(swapped).or(Some(tex))
 }
 
+/// A texture with its sRGB conversion dropped, for raw access: image
+/// stores write the value as UNORM (measured on RDNA2), and loads decode it
+/// themselves.
+pub(super) fn without_srgb(tex: Retained<Texture>) -> Option<Retained<Texture>> {
+    use MTLPixelFormat as P;
+    let linear = match tex.pixelFormat() {
+        P::R8Unorm_sRGB => P::R8Unorm,
+        P::RG8Unorm_sRGB => P::RG8Unorm,
+        P::RGBA8Unorm_sRGB => P::RGBA8Unorm,
+        P::BGRA8Unorm_sRGB => P::BGRA8Unorm,
+        P::BC1_RGBA_sRGB => P::BC1_RGBA,
+        P::BC2_RGBA_sRGB => P::BC2_RGBA,
+        P::BC3_RGBA_sRGB => P::BC3_RGBA,
+        P::BC7_RGBAUnorm_sRGB => P::BC7_RGBAUnorm,
+        _ => return Some(tex),
+    };
+    tex.newTextureViewWithPixelFormat(linear)
+}
+
 // Metal allows views of the same bytes per pixel; packed float formats
 // only as 32-bit integers.
 pub(super) fn view_compatible(from: MTLPixelFormat, to: MTLPixelFormat) -> bool {
     use MTLPixelFormat as P;
     let bytes = |f: MTLPixelFormat| -> Option<u32> {
         Some(match f {
-            P::R8Unorm | P::R8Snorm | P::R8Uint | P::R8Sint => 1,
+            P::R8Unorm | P::R8Unorm_sRGB | P::R8Snorm | P::R8Uint | P::R8Sint => 1,
             P::R16Unorm
             | P::R16Snorm
             | P::R16Uint
             | P::R16Sint
             | P::R16Float
             | P::RG8Unorm
+            | P::RG8Unorm_sRGB
             | P::RG8Snorm
             | P::RG8Uint
             | P::RG8Sint => 2,
@@ -230,6 +250,7 @@ pub(super) fn image_format(format: u32) -> Option<(MTLPixelFormat, u32)> {
         76 => (P::RGBA32Sint, 16),
         77 => (P::RGBA32Float, 16),
         128 => (P::R8Unorm_sRGB, 1),
+        129 => (P::RG8Unorm_sRGB, 2),
         130 => (P::RGBA8Unorm_sRGB, 4),
         169 => (P::BC1_RGBA, 8),
         170 => (P::BC1_RGBA_sRGB, 8),

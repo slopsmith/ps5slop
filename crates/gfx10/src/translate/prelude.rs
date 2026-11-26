@@ -697,6 +697,53 @@ static inline float3 cube_dir(float3 c) {
     }
 }
 
+// How many channels GFX10 image format `f` stores.
+static inline uint image_channels(uint f) {
+    if ((f >= 1u && f <= 13u) || (f >= 20u && f <= 22u) || f == 128u || f == 131u
+        || f == 140u || f == 175u || f == 176u || f == 285u) return 1u;
+    if ((f >= 14u && f <= 19u) || (f >= 23u && f <= 29u) || (f >= 62u && f <= 64u)
+        || f == 129u || f == 137u || (f >= 141u && f <= 146u) || f == 177u || f == 178u) return 2u;
+    if ((f >= 30u && f <= 43u) || (f >= 72u && f <= 74u) || f == 132u || f == 133u
+        || f == 179u || f == 180u) return 3u;
+    return 4u;
+}
+
+// A T#'s DST_SEL (dwords 1 and 3) on a fetched texel. Selecting a channel
+// the format lacks gives channel c mod n (measured on RDNA2).
+template <typename T>
+static inline vec<T, 4> image_sel(vec<T, 4> v, uint w1, uint w3) {
+    uint n = image_channels((w1 >> 20) & 0x1ffu);
+    vec<T, 4> r;
+    for (uint i = 0u; i < 4u; i++) {
+        uint s = (w3 >> (3u * i)) & 7u;
+        r[i] = s >= 4u ? v[(s - 4u) % n] : T(s == 1u ? 1 : 0);
+    }
+    return r;
+}
+
+// A texel read raw from an SRGB image (format in T# dword `w1`) as the
+// hardware returns it: colour channels decoded and rounded to bfloat16
+// (measured on RDNA2).
+static inline float4 image_srgb(float4 v, uint w1) {
+    uint f = (w1 >> 20) & 0x1ffu;
+    if (!(f >= 128u && f <= 130u) && f != 170u && f != 172u && f != 174u && f != 182u) return v;
+    for (uint i = 0u; i < min(image_channels(f), 3u); i++) {
+        float c = v[i];
+        c = c <= 0.04045f ? c / 12.92f : precise::pow((c + 0.055f) / 1.055f, 2.4f);
+        uint b = as_type<uint>(c);
+        v[i] = as_type<float>((b + 0x7fffu + ((b >> 16) & 1u)) & 0xffff0000u);
+    }
+    return v;
+}
+
+// The channels a store writes into an image of `n` channels: a format of
+// two takes the first and the last component (measured on RDNA2).
+template <typename T>
+static inline vec<T, 4> image_store_channels(vec<T, 4> v, uint w1) {
+    if (image_channels((w1 >> 20) & 0x1ffu) == 2u) v.y = v.w;
+    return v;
+}
+
 // SQ_TEX_DEPTH_COMPARE: the reference against the fetched value.
 static inline bool depth_compare(uint f, float ref, float v) {
     switch (f) {

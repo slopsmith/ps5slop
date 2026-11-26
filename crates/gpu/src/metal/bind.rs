@@ -10,6 +10,8 @@ pub(super) struct Bound {
     pub(super) gds: Option<Retained<Buffer>>,
     /// Dword 0 of each sampler slot's S#, by slot.
     sampler_words: Vec<(usize, u32)>,
+    /// Dwords 1 and 3 of each texture slot's T#, by slot.
+    texture_words: Vec<(usize, [u32; 2])>,
     pub(super) textures: Vec<(usize, Retained<Texture>)>,
     pub(super) samplers: Vec<(usize, Retained<ProtocolObject<dyn MTLSamplerState>>)>,
     /// Constant buffers: binding index, buffer and offset.
@@ -146,6 +148,7 @@ impl Metal {
             memory: None,
             gds: None,
             sampler_words: Vec::new(),
+            texture_words: Vec::new(),
             textures: Vec::new(),
             samplers: Vec::new(),
             constants: Vec::new(),
@@ -180,6 +183,7 @@ impl Metal {
                     ref source,
                     kind,
                     access,
+                    raw,
                 } => {
                     let d = self.descriptor(host, user, source, 8)?;
                     let image = Image::read(&d);
@@ -227,9 +231,12 @@ impl Metal {
                         } else {
                             self.storage_image(host, image, kind)
                                 .and_then(|t| store_swizzled(t, image.swizzle))
+                                .and_then(without_srgb)
                         }
                     } else if image.address == 0 || image.kind < 8 {
                         self.null_texture(kind)
+                    } else if raw {
+                        self.image(host, image, kind).and_then(without_srgb)
                     } else {
                         self.image(host, image, kind)
                             .and_then(|t| self.swizzled(t, channel_selects(&image)))
@@ -275,6 +282,7 @@ impl Metal {
                     if access != Access::Sample {
                         self.stored_images.push((image, tex.clone()));
                     }
+                    bound.texture_words.push((slot as usize, [d[1], d[3]]));
                     bound.textures.push((slot as usize, tex));
                 }
                 Resource::Constants {
@@ -310,12 +318,18 @@ impl Metal {
 
     pub(super) fn apply(enc: Slot, bound: &Bound, user: &[u32]) {
         let at = binding::SAMPLER_WORDS as usize;
-        let mut data = [0u32; 2 * binding::SAMPLER_WORDS as usize];
+        let mut data = [0u32; binding::USER_WORDS as usize];
         let n = user.len().min(at);
         data[..n].copy_from_slice(&user[..n]);
         for &(slot, word) in &bound.sampler_words {
             if let Some(d) = data.get_mut(at + slot) {
                 *d = word;
+            }
+        }
+        let at = binding::TEXTURE_WORDS as usize;
+        for &(slot, words) in &bound.texture_words {
+            if let Some(d) = data.get_mut(at + 2 * slot..at + 2 * slot + 2) {
+                d.copy_from_slice(&words);
             }
         }
         enc.bytes(data.as_ptr().cast(), data.len() * 4, binding::USER as usize);

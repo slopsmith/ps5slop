@@ -108,7 +108,8 @@ fn textured_pixel_shader_binds_user_sgpr_descriptors() {
                 slot: 0,
                 source: Source::UserSgpr(0),
                 kind: TextureKind::Tex2d,
-                access: Access::Sample
+                access: Access::Sample,
+                raw: false,
             },
             Resource::Sampler {
                 slot: 0,
@@ -290,6 +291,7 @@ fn descriptors_loaded_through_user_pointers_become_memory_sources() {
                 },
                 kind: TextureKind::Tex2d,
                 access: Access::Sample,
+                raw: false,
             },
             Resource::Sampler {
                 slot: 0,

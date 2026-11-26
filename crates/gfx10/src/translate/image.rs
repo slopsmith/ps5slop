@@ -21,22 +21,24 @@ impl<'a> Tx<'a> {
     }
 
     // The texture slot for the T# at `srsrc`, merging how it is accessed.
+    // Filtered and unfiltered (raw) reads of one T# get separate slots.
     fn texture_slot(
         &mut self,
         pc: usize,
         srsrc: u16,
         kind: TextureKind,
         access: Access,
+        raw: bool,
     ) -> Result<usize, TranslateError> {
         let source = self.descriptor_source(pc, srsrc, 8)?;
         let t = match self
             .textures
             .iter()
-            .position(|x| x.0 == srsrc && x.1 == kind && x.2 == source)
+            .position(|x| x.0 == srsrc && x.1 == kind && x.2 == source && x.4 == raw)
         {
             Some(t) => t,
             None => {
-                self.textures.push((srsrc, kind, source, access));
+                self.textures.push((srsrc, kind, source, access, raw));
                 self.textures.len() - 1
             }
         };
@@ -101,7 +103,7 @@ impl<'a> Tx<'a> {
             .strip_prefix("image_sample")
             .or_else(|| name.strip_prefix("image_gather4"))
             .ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?;
-        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Sample)?;
+        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Sample, false)?;
         let s_source = self.descriptor_source(pc, m.ssamp as u16, 4)?;
         let sm = match self.samplers.iter().position(|x| *x == s_source) {
             Some(i) => i,
@@ -253,7 +255,7 @@ impl<'a> Tx<'a> {
     ) -> Result<(), TranslateError> {
         let store = name.starts_with("image_store");
         let access = if store { Access::Write } else { Access::Sample };
-        let t = self.texture_slot(pc, m.srsrc as u16, kind, access)?;
+        let t = self.texture_slot(pc, m.srsrc as u16, kind, access, true)?;
         let regs: Vec<String> = addr.iter().map(|&r| self.v(r)).collect();
         let a: Vec<String> = if m.a16 {
             (0..2 * regs.len())
@@ -310,12 +312,18 @@ impl<'a> Tx<'a> {
             } else {
                 String::new()
             };
+            let w = binding::TEXTURE_WORDS + 2 * t as u32;
             self.guard(&format!(
-                "t{t}.write({elem}4({}), {coord}, {lvl});{fence}",
+                "t{t}.write(image_store_channels({elem}4({}), user[{w}]), {coord}, {lvl});{fence}",
                 comps.join(", ")
             ));
         } else {
             let mut s = format!("{elem}4 r = t{t}.read({coord}, {lvl});");
+            let w = binding::TEXTURE_WORDS + 2 * t as u32;
+            if elem == "float" {
+                write!(s, " r = image_srgb(r, user[{w}]);").unwrap();
+            }
+            write!(s, " r = image_sel(r, user[{w}], user[{}]);", w + 1).unwrap();
             let comps: Vec<usize> = (0..4).filter(|&i| m.dmask >> i & 1 != 0).collect();
             self.write_results(&mut s, m, elem, conv, &comps);
             self.guard(&s);
@@ -349,7 +357,7 @@ impl<'a> Tx<'a> {
         if m.dmask != 1 && !(op == "cmpswap" && m.dmask == 3) || m.d16 {
             return Err(err(pc, format!("unsupported form of {name}")));
         }
-        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Atomic)?;
+        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Atomic, true)?;
         let a: Vec<String> = addr.iter().map(|&r| self.v(r)).collect();
         let coord = match kind {
             TextureKind::Tex2d => format!("uint2({}, {})", a[0], a[1]),
@@ -426,7 +434,7 @@ impl<'a> Tx<'a> {
         kind: TextureKind,
         addr: &[u16],
     ) -> Result<(), TranslateError> {
-        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Sample)?;
+        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Sample, false)?;
         let lod = self.v(addr[0]);
         let third = match kind {
             TextureKind::Tex2dArray => format!("t{t}.get_array_size()"),
