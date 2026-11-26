@@ -24,3 +24,4 @@
 *.gputrace
 eboot.bin
 experiments/*/vmmap.txt
+.direnv/
