@@ -109,8 +109,11 @@ impl<'a> Tx<'a> {
             _ => {}
         }
         let gather = name.starts_with("image_gather4");
+        let get_lod = name == "image_get_lod";
         let variant = name
-            .strip_prefix("image_sample")
+            .strip_prefix("image_get_lod")
+            .or_else(|| name.strip_prefix("image_sample"))
+            .or_else(|| name.strip_prefix("image_gather4h"))
             .or_else(|| name.strip_prefix("image_gather4"))
             .ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?;
         let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Sample, View::Sampled)?;
@@ -224,12 +227,28 @@ impl<'a> Tx<'a> {
                     "gradient3d(float3({}, {}, {}), float3({}, {}, {}))",
                     g[0], g[1], g[2], g[3], g[4], g[5]
                 ),
-                TextureKind::Cube => return Err(err(pc, format!("unsupported form of {name}"))),
+                // Metal's cube gradients are of the direction; the hardware's
+                // are of the face coordinates, so the program picks the level.
+                TextureKind::Cube => {
+                    let lod = format!(
+                        "sampler_lod(user[{}], user[{}], lod_2d(float2({}, {}) * float(t{t}.get_width(0)), float2({}, {}) * float(t{t}.get_width(0))))",
+                        w + 1,
+                        w + 2,
+                        g[0],
+                        g[1],
+                        g[2],
+                        g[3]
+                    );
+                    match clamp.then(|| &addr[addr.len() - 1]) {
+                        Some(c) => format!("level(max({lod}, {c}))"),
+                        None => format!("level({lod})"),
+                    }
+                }
             };
             at += if kind == TextureKind::Tex3d { 6 } else { 4 };
             level = Some(match &min_lod {
-                Some(c) => format!("{grad}, {c}"),
-                None => grad,
+                Some(c) if kind != TextureKind::Cube => format!("{grad}, {c}"),
+                _ => grad,
             });
         }
         let c = &addr[at..];
@@ -252,9 +271,11 @@ impl<'a> Tx<'a> {
                 shift(1, "height")
             },
         );
-        // FORCE_UNNORMALIZED: coordinates in texels of the base level.
+        // FORCE_UNNORMALIZED or the instruction's UNORM: coordinates in
+        // texels of the base level.
+        let unorm = if m.unorm { " | 0x8000u" } else { "" };
         let xy = format!(
-            "float2({}, {}) * coord_scale(user[{w}], t{t}){}",
+            "float2({}, {}) * coord_scale(user[{w}]{unorm}, t{t}){}",
             c[0],
             c[1],
             if offset {
@@ -273,11 +294,42 @@ impl<'a> Tx<'a> {
                 c[2],
                 shift(2, "depth")
             ),
-            TextureKind::Cube if !offset => {
+            TextureKind::Cube => {
                 format!("cube_dir(float3({}, {}, {}))", c[0], c[1], c[2])
             }
-            _ => return Err(err(pc, format!("unsupported form of {name}"))),
         };
+        let implicit_lod = matches!(flags.as_slice(), [] | ["b"] | ["cl"] | ["b", "cl"]);
+        let compute = self.req.stage == Stage::Compute;
+        let pixel = self.req.stage == Stage::Pixel;
+        let scaled = format!("coord_scale(user[{w}]{unorm}, t{t})");
+        // The LOD the hardware computes, before the sampler's bias and clamps.
+        let lambda = if !implicit_lod {
+            None
+        } else if compute {
+            Some(self.quad_lod(pc, kind, t, c, &scaled))
+        } else if pixel && gather {
+            Some(format!("t{t}.calculate_unclamped_lod(smp{sm}, {coord})"))
+        } else {
+            None
+        };
+        let s_clamped = |l: &str| format!("sampler_lod(user[{}], user[{}], {l})", w + 1, w + 2);
+        // The LOD after the sampler's bias and clamps, where the program picks it.
+        let lod = match (flags.as_slice(), &lambda) {
+            (["lz"], _) => Some(s_clamped("0.0f")),
+            (["l"], _) => Some(s_clamped(&addr[addr.len() - 1])),
+            ([], Some(l)) => Some(s_clamped(l)),
+            (["b"], Some(l)) => Some(s_clamped(&format!("{l} + {bias_operand}"))),
+            (["cl"], Some(l)) => Some(format!("max({}, {})", s_clamped(l), addr[addr.len() - 1])),
+            (["b", "cl"], Some(l)) => Some(format!(
+                "max({}, {})",
+                s_clamped(&format!("{l} + {bias_operand}")),
+                addr[addr.len() - 1]
+            )),
+            _ => None,
+        };
+        if compute && implicit_lod && !gather {
+            level = lod.as_ref().map(|l| format!("level({l})"));
+        }
         let level = level.map(|l| format!(", {l}")).unwrap_or_default();
         let (elem, conv) = self.texel(t);
         let mut s = format!("{elem}4 r = t{t}.sample(smp{sm}, {coord}{level});");
@@ -287,23 +339,19 @@ impl<'a> Tx<'a> {
             && !gather
             && dref.is_none()
             && elem == "float";
-        let pixel = self.req.stage == Stage::Pixel;
-        let implicit = || {
-            if pixel {
-                format!("t{t}.calculate_unclamped_lod(smp{sm}, {coord})")
-            } else {
-                "0.0f".to_string()
-            }
-        };
-        let lod = match flags.as_slice() {
+        let filter_lod = match flags.as_slice() {
             _ if !filtered => None,
-            [] => Some(implicit()),
+            [] if pixel => Some(format!("t{t}.calculate_unclamped_lod(smp{sm}, {coord})")),
+            ["b"] if pixel => Some(format!(
+                "t{t}.calculate_unclamped_lod(smp{sm}, {coord}) + {bias_operand}"
+            )),
+            [] if compute => lambda.clone(),
+            ["b"] if compute => lambda.as_ref().map(|l| format!("{l} + {bias_operand}")),
             ["lz"] => Some("0.0f".to_string()),
             ["l"] => Some(addr[addr.len() - 1].clone()),
-            ["b"] => Some(format!("{} + {bias_operand}", implicit())),
             _ => None,
         };
-        if let Some(lod) = lod {
+        if let Some(lod) = filter_lod {
             self.filters = true;
             s = format!(
                 "float4 r; {{ uint4 sw = uint4(user[{w}], user[{}], user[{}], user[{}]); \
@@ -316,14 +364,22 @@ impl<'a> Tx<'a> {
             );
         }
         if gather {
-            if !matches!(kind, TextureKind::Tex2d | TextureKind::Tex2dArray)
-                || !matches!(flags.as_slice(), [] | ["lz"])
-                || m.dmask.count_ones() != 1
-            {
-                return Err(err(pc, format!("unsupported form of {name}")));
-            }
-            let c = ["x", "y", "z", "w"][m.dmask.trailing_zeros() as usize];
-            s = format!("{elem}4 r = t{t}.gather(smp{sm}, {coord}, int2(0), component::{c});");
+            s = self.gather(pc, name, m, kind, t, sm, &coord, c, &raw, offset, lod)?;
+        } else if get_lod {
+            // The LOD clamped to the sampler's range and the levels, then as
+            // computed; the S#'s bias is assumed to count in both.
+            let (clamped, unclamped) = match (&lambda, &lod) {
+                (Some(l), Some(c)) => (
+                    format!("clamp({c}, 0.0f, float(t{t}.get_num_mip_levels() - 1))"),
+                    format!("{l} + {s_bias}"),
+                ),
+                _ if pixel => (
+                    format!("t{t}.calculate_clamped_lod(smp{sm}, {coord})"),
+                    format!("t{t}.calculate_unclamped_lod(smp{sm}, {coord})"),
+                ),
+                _ => ("0.0f".into(), "0.0f".into()),
+            };
+            s = format!("float4 r = float4({clamped}, {unclamped}, 0.0f, 0.0f);");
         }
         if let Some(dref) = &dref {
             if elem != "float" {
@@ -344,9 +400,123 @@ impl<'a> Tx<'a> {
         let comps: Vec<usize> = (0..4)
             .filter(|&i| gather || m.dmask >> i & 1 != 0)
             .collect();
+        let (elem, conv) = if get_lod {
+            ("float", "U")
+        } else {
+            (elem, conv)
+        };
         self.write_results(&mut s, m, elem, conv, &comps);
         self.guard(&s);
         Ok(())
+    }
+
+    // `image_gather4` and `image_gather4h` of one component. Gathers on
+    // level 0 go to Metal's gather, which reads the base level only; other
+    // levels, and the row that gather4h reads, are read texel by texel.
+    #[allow(clippy::too_many_arguments)]
+    fn gather(
+        &mut self,
+        pc: usize,
+        name: &str,
+        m: &Mimg,
+        kind: TextureKind,
+        t: usize,
+        sm: usize,
+        coord: &str,
+        c: &[String],
+        raw: &[String],
+        offset: bool,
+        lod: Option<String>,
+    ) -> Result<String, TranslateError> {
+        let row = name.starts_with("image_gather4h");
+        if m.dmask.count_ones() != 1 || (row && kind == TextureKind::Cube) {
+            return Err(err(pc, format!("unsupported form of {name}")));
+        }
+        let (elem, _) = self.texel(t);
+        let comp = m.dmask.trailing_zeros();
+        let cc = ["x", "y", "z", "w"][comp as usize];
+        let metal = format!("t{t}.gather(smp{sm}, {coord}, int2(0), component::{cc})");
+        if kind == TextureKind::Cube {
+            return Ok(format!(
+                "{elem}4 r = t{t}.gather(smp{sm}, {coord}, component::{cc});"
+            ));
+        }
+        let lod = lod.unwrap_or_else(|| "0.0f".into());
+        let w = binding::SAMPLER_WORDS + 4 * sm as u32;
+        let unorm = if m.unorm { " | 0x8000u" } else { "" };
+        let off = if offset {
+            format!(
+                "int2(int({o} << 26) >> 26, int(({o} >> 8u) << 26) >> 26)",
+                o = raw[0]
+            )
+        } else {
+            "int2(0)".into()
+        };
+        let slice = if kind == TextureKind::Tex2dArray {
+            format!(
+                "uint(clamp(rint({}), 0.0f, float(t{t}.get_array_size() - 1))), ",
+                c[2]
+            )
+        } else {
+            String::new()
+        };
+        let texels = format!(
+            "int4 gx, gy; gather_texels(float2({}, {}) * coord_scale(user[{w}]{unorm}, t{t}), \
+             int2(t{t}.get_width(gl), t{t}.get_height(gl)), {off}, user[{w}], {row}, gx, gy); \
+             r = gather_read(t{t}, {slice}gl, gx, gy, user[{}], {comp}u);",
+            c[0],
+            c[1],
+            w + 3
+        );
+        let level = format!(
+            "uint gl = (user[{w}]{unorm}) & 0x8000u ? 0u : gather_level({lod}, t{t}.get_num_mip_levels());"
+        );
+        Ok(if row {
+            format!("{elem}4 r; {{ {level} {texels} }}")
+        } else {
+            format!("{elem}4 r; {{ {level} if (gl == 0u) r = {metal}; else {{ {texels} }} }}")
+        })
+    }
+
+    // Lanes 4n to 4n+3 form a 2x2 quad in compute programs too, and the
+    // hardware takes one LOD per quad; inactive lanes still take part.
+    fn quad_lod(
+        &mut self,
+        pc: usize,
+        kind: TextureKind,
+        t: usize,
+        c: &[String],
+        scaled: &str,
+    ) -> String {
+        let size2 = format!("float2(t{t}.get_width(0), t{t}.get_height(0))");
+        let (ty, p, f) = match kind {
+            TextureKind::Tex2d | TextureKind::Tex2dArray => (
+                "float2",
+                format!("float2({}, {}) * {scaled} * {size2}", c[0], c[1]),
+                "lod_2d",
+            ),
+            TextureKind::Tex3d => (
+                "float3",
+                format!(
+                    "float3({}, {}, {}) * float3(t{t}.get_width(0), t{t}.get_height(0), t{t}.get_depth(0))",
+                    c[0], c[1], c[2]
+                ),
+                "lod_3d",
+            ),
+            TextureKind::Cube => (
+                "float2",
+                format!(
+                    "clamp(float2({}, {}), 1.0f, 2.0f) * float2(t{t}.get_width(0))",
+                    c[0], c[1]
+                ),
+                "lod_2d",
+            ),
+        };
+        self.line(&format!(
+            "{ty} q{pc} = {p}; float lod{pc} = {f}(quad_broadcast(q{pc}, 1u) - quad_broadcast(q{pc}, 0u), \
+             quad_broadcast(q{pc}, 2u) - quad_broadcast(q{pc}, 0u));"
+        ));
+        format!("lod{pc}")
     }
 
     // Moves the components `comps` of `r` into the destination VGPRs; with

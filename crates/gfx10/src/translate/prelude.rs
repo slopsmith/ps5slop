@@ -903,9 +903,9 @@ static inline float cube_tc(float x, float y, float z) {
 // The direction for cube coordinates as image_sample takes them: face
 // coordinates in [1, 2] (v_cubesc / |ma| + 1.5) and the face id.
 static inline float3 cube_dir(float3 c) {
-    float s = (c.x - 1.5f) * 2.0f;
-    float t = (c.y - 1.5f) * 2.0f;
-    switch (uint(rint(c.z))) {
+    float s = (clamp(c.x, 1.0f, 2.0f) - 1.5f) * 2.0f;
+    float t = (clamp(c.y, 1.0f, 2.0f) - 1.5f) * 2.0f;
+    switch (uint(clamp(floor(c.z), 0.0f, 5.0f))) {
     case 0u: return float3(1.0f, -t, -s);
     case 1u: return float3(-1.0f, -t, s);
     case 2u: return float3(s, 1.0f, t);
@@ -1177,6 +1177,90 @@ static inline float sampler_lod(uint w1, uint w2, float l) {
 template <typename T>
 static inline float2 coord_scale(uint w0, T t) {
     return (w0 & 0x8000u) != 0u ? 1.0f / float2(t.get_width(0), t.get_height(0)) : float2(1.0f);
+}
+
+// The LOD RDNA2 takes from derivatives in texels (measured with
+// image_get_lod): log2 of the Jacobian's larger singular value in 1D and
+// 2D, of the longer gradient in 3D, in steps of 1/256; zero derivatives
+// give -120.50390625.
+static inline float hw_lod(float squared) {
+    return max(rint(0.5f * log2(squared) * 256.0f) / 256.0f, -120.50390625f);
+}
+
+static inline float lod_2d(float2 dx, float2 dy) {
+    float s = dot(dx, dx) + dot(dy, dy);
+    float det = dx.x * dy.y - dy.x * dx.y;
+    return hw_lod(0.5f * (s + sqrt(max(s * s - 4.0f * det * det, 0.0f))));
+}
+
+static inline float lod_3d(float3 dx, float3 dy) {
+    return hw_lod(max(dot(dx, dx), dot(dy, dy)));
+}
+
+// The level a gather reads at `lod`: the nearest one, as a sample with a
+// point mip filter picks it (assumed).
+static inline uint gather_level(float lod, uint levels) {
+    return uint(clamp(ceil(lod + 0.5f) - 1.0f, 0.0f, float(levels - 1u)));
+}
+
+// Texel `i` of a row of `n` under SQ_TEX_CLAMP mode `m`, -1 for the border.
+static inline int tex_wrap(int i, int n, uint m) {
+    switch (m) {
+    case 0u: return ((i % n) + n) % n;
+    case 1u: {
+        int p = ((i % (2 * n)) + 2 * n) % (2 * n);
+        return p < n ? p : 2 * n - 1 - p;
+    }
+    case 3u: case 5u: case 7u: return clamp(i < 0 ? -1 - i : i, 0, n - 1);
+    case 6u: return i < 0 || i >= n ? -1 : i;
+    default: return clamp(i, 0, n - 1);
+    }
+}
+
+// The texels a gather reads at normalized `uv` on a level of `size`, in the
+// ISA's order: the bilinear footprint for image_gather4 (positions keep 8
+// fraction bits), and for image_gather4h (`row`) the four texels of the row
+// around it, clamped to the edge under any address mode (measured).
+static inline void gather_texels(float2 uv, int2 size, int2 off, uint w0, bool row,
+                                 thread int4& xs, thread int4& ys) {
+    float2 p = floor(rint((uv * float2(size) - float2(0.5f, row ? 0.0f : 0.5f)) * 256.0f) / 256.0f);
+    int2 b = int2(p) + off;
+    if (row) {
+        xs = clamp(int4(b.x - 1, b.x, b.x + 1, b.x + 2), 0, size.x - 1);
+        ys = int4(clamp(b.y, 0, size.y - 1));
+        return;
+    }
+    xs = int4(b.x, b.x + 1, b.x + 1, b.x);
+    ys = int4(b.y + 1, b.y + 1, b.y, b.y);
+    for (int i = 0; i < 4; i++) {
+        xs[i] = tex_wrap(xs[i], size.x, w0 & 7u);
+        ys[i] = tex_wrap(ys[i], size.y, (w0 >> 3) & 7u);
+    }
+}
+
+// Component `c` of an S#'s BORDER_COLOR_TYPE (register colours read as
+// transparent black).
+static inline float border_component(uint w3, uint c) {
+    uint b = w3 >> 30;
+    return b == 2u || (b == 1u && c == 3u) ? 1.0f : 0.0f;
+}
+
+template <typename E>
+static inline vec<E, 4> gather_read(texture2d<E> t, uint l, int4 xs, int4 ys, uint w3, uint c) {
+    vec<E, 4> r;
+    for (int i = 0; i < 4; i++) {
+        r[i] = xs[i] < 0 || ys[i] < 0 ? E(border_component(w3, c)) : t.read(uint2(xs[i], ys[i]), l)[c];
+    }
+    return r;
+}
+
+template <typename E>
+static inline vec<E, 4> gather_read(texture2d_array<E> t, uint slice, uint l, int4 xs, int4 ys, uint w3, uint c) {
+    vec<E, 4> r;
+    for (int i = 0; i < 4; i++) {
+        r[i] = xs[i] < 0 || ys[i] < 0 ? E(border_component(w3, c)) : t.read(uint2(xs[i], ys[i]), slice, l)[c];
+    }
+    return r;
 }
 
 // SQ_TEX_DEPTH_COMPARE: the reference against the fetched value.
