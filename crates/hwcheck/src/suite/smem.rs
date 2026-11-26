@@ -53,6 +53,9 @@ const NO_SOFFSET: u32 = 0x7D;
 /// Immediate offsets tested, each its own test; negative ones only for `s_load`.
 const OFFSETS: [i32; 4] = [0, 0x10, 0x1004, -16];
 
+/// Descriptor strides the buffer loads also run with.
+const STRIDES: [u32; 3] = [4, 16, 0x3FFF];
+
 /// Why an opcode has no generated scalar memory test, or `None` if it has.
 pub fn unsupported(op: &OpInfo) -> Option<&'static str> {
     if op.fmt != Fmt::Smem {
@@ -79,7 +82,7 @@ fn encode(op: &OpInfo, offset: i32, soffset: bool) -> [u32; 2] {
 
 // The address is 256 bytes into the data so negative offsets stay in it:
 // past mapped memory, a fault and Metal's zeros cannot be compared.
-fn records(seed: &str) -> Vec<u32> {
+fn records(seed: &str, stride: u32) -> Vec<u32> {
     let mut rng = Rng::new(seed);
     const SIZES: [u32; 7] = [0, 4, 60, 64, 0x100, 0x8000, 0xFFFF_FFFF];
     let mut out = Vec::with_capacity(GROUPS as usize * IN_WORDS);
@@ -105,7 +108,7 @@ fn records(seed: &str) -> Vec<u32> {
             (DATA + 0x100) as u32,
             ((DATA + 0x100) >> 32) as u32,
             DATA as u32,
-            (DATA >> 32) as u32,
+            (DATA >> 32) as u32 | stride << 16,
             size,
             DST_SEL_XYZW | FORMAT_32_FLOAT | RESOURCE_LEVEL | oob << 28,
         ]);
@@ -113,7 +116,9 @@ fn records(seed: &str) -> Vec<u32> {
     out
 }
 
-fn case(op: &OpInfo, offset: i32, soffset: bool) -> Option<Case> {
+/// The test of `op` with immediate `offset`, `soffset` from the record or
+/// none, through descriptors of `stride` bytes.
+fn case(op: &OpInfo, offset: i32, soffset: bool, stride: u32) -> Option<Case> {
     let inst = encode(op, offset, soffset);
     let decoded = decode(&inst).ok()?;
     if decoded.op.name != op.name {
@@ -130,10 +135,13 @@ fn case(op: &OpInfo, offset: i32, soffset: bool) -> Option<Case> {
     code.extend(vgprs.zip(SDATA..).map(|(v, s)| V_MOV_B32 | v << 17 | s));
     code.extend(STORES);
     code.push(S_ENDPGM);
-    let variant = format!(
+    let mut variant = format!(
         "offset {offset:#x}{}",
         if soffset { " + soffset" } else { "" }
     );
+    if stride != 0 {
+        variant += &format!(", stride {stride:#x}");
+    }
     let seed = format!("{} {variant}", op.name);
     let mut case = build(Test {
         opcode: op.name,
@@ -147,7 +155,7 @@ fn case(op: &OpInfo, offset: i32, soffset: bool) -> Option<Case> {
         out_names: &OUT_NAMES,
         dst: Dst::Bits,
         lds_bytes: 0,
-        inputs: records(&seed),
+        inputs: records(&seed, stride),
     });
     let mut rng = Rng::new("smem data");
     let data: Vec<u8> = (0..DATA_BYTES / 4)
@@ -165,9 +173,14 @@ pub fn cases() -> Vec<Case> {
             if offset < 0 && op.name.starts_with("s_buffer") {
                 continue;
             }
-            out.extend(case(op, offset, true));
+            out.extend(case(op, offset, true, 0));
         }
-        out.extend(case(op, 0x40, false));
+        out.extend(case(op, 0x40, false, 0));
+        if op.name.starts_with("s_buffer") {
+            for stride in STRIDES {
+                out.extend(case(op, 0x10, true, stride));
+            }
+        }
     }
     out
 }
@@ -179,7 +192,7 @@ mod tests {
 
     #[test]
     fn scalar_loads_decode_to_the_opcode_they_test() {
-        let text = |n: &str, o, s| case(by_name(n).unwrap(), o, s).unwrap().text;
+        let text = |n: &str, o, s| case(by_name(n).unwrap(), o, s, 0).unwrap().text;
         assert_eq!(
             text("s_load_dwordx16", 0x10, true),
             "s_load_dwordx16 s[40:55], s[26:27], s24 offset:0x10"

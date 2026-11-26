@@ -193,7 +193,7 @@ Image loads and stores follow the hardware's conversions, measured with the hard
 
 - Vector ALU: every VOP1, VOP2, VOPC, VOP3 and VOP3P opcode with plain operands, in its own encoding, as VOP3, with neg and abs, clamp and omod, op_sel, DPP16, DPP8, SDWA, a literal and inline constants, and float instructions under each float mode (`FLOAT_MODE` rounding and denormals, IEEE mode, DX10 clamp). Each lane stores its result and its own bit of the mask written and of EXEC, since masks are per thread outside lockstep programs.
 - Lane-crossing: `v_readlane`, `v_writelane`, `v_readfirstlane` under several EXEC masks, `v_permlane16`/`x16`, `v_swap_b32`, the `v_movrel*` family.
-- Scalar ALU (SOP1, SOP2, SOPC, SOPK) and scalar loads, including buffer loads through descriptors of varied size and out-of-bounds mode; one record per wave, with SCC.
+- Scalar ALU (SOP1, SOP2, SOPC, SOPK) and scalar loads, including buffer loads through descriptors of varied size, stride and out-of-bounds mode; one record per wave, with SCC.
 - LDS: every DS load, store, atomic, two-address form, swizzle and permute.
 - Vector memory: MUBUF, MTBUF, GLOBAL and FLAT loads, stores and atomics, over buffer descriptors of varied format, stride, size, swizzle, destination select and out-of-bounds mode. Stores are compared as the memory they leave.
 - Images: every MIMG load, store, atomic, sample, gather and query on every image dimension it allows, over linear textures in memory; one opcode of each family runs over every GFX10 image format (the list is generated from Mesa's register database by `tools/gen_formats.py`) and a set of samplers (filters, wrap modes, border colours, unnormalized coordinates, depth compare, mips, LOD bias). Stores are read back with `image_load`.
