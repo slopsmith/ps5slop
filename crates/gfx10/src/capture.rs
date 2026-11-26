@@ -7,7 +7,7 @@
 use crate::translate::{DEFAULT_RSRC1, Request, Stage, program};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"g10c");
-const VERSION: u32 = 9;
+const VERSION: u32 = 10;
 const GRID_BOUNDS: u32 = 1;
 const DROP_DEPTH_EXPORT: u32 = 2;
 const DUAL_SOURCE: u32 = 4;
@@ -36,6 +36,7 @@ pub struct Capture {
     pub logic_op: u8,
     pub logic_targets: [u8; 8],
     pub swizzles: [u8; 8],
+    pub packed_targets: [u16; 8],
     pub scratch_wave_bytes: u32,
     pub rsrc1: u32,
     pub code: Vec<u32>,
@@ -70,6 +71,7 @@ impl Capture {
             logic_op: req.logic_op,
             logic_targets: req.logic_targets,
             swizzles: req.swizzles,
+            packed_targets: req.packed_targets,
             scratch_wave_bytes: req.scratch_wave_bytes,
             rsrc1: req.rsrc1,
             code: req.code[..len.min(req.code.len())].to_vec(),
@@ -100,6 +102,7 @@ impl Capture {
             logic_op: self.logic_op,
             logic_targets: self.logic_targets,
             swizzles: self.swizzles,
+            packed_targets: self.packed_targets,
             probe_flat: false,
             filter_bilinear: false,
             plain_float: 0,
@@ -153,6 +156,8 @@ impl Capture {
             self.rsrc1,
         ]);
         w.extend_from_slice(&self.blends);
+        let p = self.packed_targets;
+        w.extend((0..4).map(|i| u32::from(p[2 * i]) | u32::from(p[2 * i + 1]) << 16));
         w.extend_from_slice(&self.code);
         w.iter().flat_map(|x| x.to_le_bytes()).collect()
     }
@@ -222,6 +227,14 @@ impl Capture {
             blends.copy_from_slice(w.get(code_at..code_at + 8)?);
             code_at += 8;
         }
+        let mut packed_targets = [0; 8];
+        if w[1] >= 10 {
+            for (i, &x) in w.get(code_at..code_at + 4)?.iter().enumerate() {
+                packed_targets[2 * i] = x as u16;
+                packed_targets[2 * i + 1] = (x >> 16) as u16;
+            }
+            code_at += 4;
+        }
         Some(Capture {
             stage,
             user_sgprs: w[3],
@@ -244,6 +257,7 @@ impl Capture {
             logic_op,
             logic_targets,
             swizzles,
+            packed_targets,
             scratch_wave_bytes,
             rsrc1,
             code: w[code_at..].to_vec(),

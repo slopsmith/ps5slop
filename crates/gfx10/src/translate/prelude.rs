@@ -245,6 +245,115 @@ static inline half4 cb_half(float4 x) {
     return r;
 }
 
+// Targets whose bit layout Metal lacks (Request::packed_targets), packed as
+// RDNA2's CB writes them (measured on the Deck): channel widths from bit 0
+// up; unorm and snorm round to nearest even, uint and sint saturate; sRGB
+// stores each colour channel's 8-bit sRGB value in the low bits of its field
+// and alpha as unorm; float fields of 10 and 11 bits are unsigned floats with
+// a 5-bit exponent, rounded toward zero. What a 2-bit float field holds for
+// values of 1 and up is not known (below 1 it is 0).
+static inline uint4 cb_widths(uint layout) {
+    switch (layout) {
+    case 6u: return uint4(11u, 11u, 10u, 0u);
+    case 7u: return uint4(10u, 11u, 11u, 0u);
+    case 8u: return uint4(2u, 10u, 10u, 10u);
+    default: return uint4(10u, 10u, 10u, 2u);
+    }
+}
+
+static inline uint cb_ufloat(float x, uint b) {
+    uint m = b - 5u;
+    if (isnan(x)) return (1u << b) - 1u;
+    if (!(x > 0.0f)) return 0u;
+    if (isinf(x)) return 31u << m;
+    uint u = as_type<uint>(x);
+    int e = int(u >> 23) - 112;
+    if (e >= 31) return (30u << m) | ((1u << m) - 1u);
+    if (e <= 0) return uint(x * float(1u << (14u + m)));
+    return uint(e) << m | (u & 0x7FFFFFu) >> (23u - m);
+}
+
+static inline float cb_ufloat_value(uint f, uint b) {
+    uint m = b - 5u, e = f >> m, man = f & ((1u << m) - 1u);
+    if (e == 31u) return man == 0u ? INFINITY : NAN;
+    if (e == 0u) return float(man) / float(1u << (14u + m));
+    return as_type<float>((e + 112u) << 23 | man << (23u - m));
+}
+
+static inline uint cb_srgb8(float x) {
+    x = clamp(x, 0.0f, 1.0f);
+    float y = x <= 0.0031308f ? 12.92f * x : 1.055f * powr(x, 1.0f / 2.4f) - 0.055f;
+    return uint(rint(y * 255.0f));
+}
+
+static inline uint cb_pack(float4 v, uint layout, uint number) {
+    uint4 b = cb_widths(layout);
+    uint w = 0u, at = 0u;
+    for (uint c = 0u; c < 4u; c++) {
+        uint n = b[c];
+        if (n == 0u) continue;
+        uint mask = (1u << n) - 1u;
+        float x = v[c];
+        uint f;
+        switch (number) {
+        case 1u: f = uint(int(rint(clamp(x, -1.0f, 1.0f) * float(mask >> 1)))) & mask; break;
+        case 6u: f = c < 3u ? cb_srgb8(x) & mask : uint(rint(clamp(x, 0.0f, 1.0f) * float(mask))); break;
+        case 7u: f = n >= 10u ? cb_ufloat(x, n) : uint(clamp(x, 0.0f, float(mask))); break;
+        default: f = uint(rint(clamp(x, 0.0f, 1.0f) * float(mask))); break;
+        }
+        w |= f << at;
+        at += n;
+    }
+    return w;
+}
+
+static inline uint cb_pack_u(uint4 v, uint layout) {
+    uint4 b = cb_widths(layout);
+    uint w = 0u, at = 0u;
+    for (uint c = 0u; c < 4u; c++) {
+        if (b[c] == 0u) continue;
+        w |= min(v[c], (1u << b[c]) - 1u) << at;
+        at += b[c];
+    }
+    return w;
+}
+
+static inline uint cb_pack_s(int4 v, uint layout) {
+    uint4 b = cb_widths(layout);
+    uint w = 0u, at = 0u;
+    for (uint c = 0u; c < 4u; c++) {
+        if (b[c] == 0u) continue;
+        int hi = (1 << (b[c] - 1u)) - 1;
+        w |= (uint(clamp(v[c], -hi - 1, hi)) & ((1u << b[c]) - 1u)) << at;
+        at += b[c];
+    }
+    return w;
+}
+
+// What a blend reads of a packed target: the inverse of cb_pack.
+static inline float4 cb_unpack(uint w, uint layout, uint number) {
+    uint4 b = cb_widths(layout);
+    float4 r = float4(0.0f, 0.0f, 0.0f, 1.0f);
+    uint at = 0u;
+    for (uint c = 0u; c < 4u; c++) {
+        uint n = b[c];
+        if (n == 0u) continue;
+        uint mask = (1u << n) - 1u, f = (w >> at) & mask;
+        at += n;
+        switch (number) {
+        case 1u: r[c] = max(float(int(f << (32u - n)) >> (32u - n)) / float(mask >> 1), -1.0f); break;
+        case 6u: {
+            float y = float(f & 0xFFu) / 255.0f;
+            r[c] = c == 3u ? float(f) / float(mask) : y <= 0.04045f ? y / 12.92f : powr((y + 0.055f) / 1.055f, 2.4f);
+            break;
+        }
+        case 7u: r[c] = n >= 10u ? cb_ufloat_value(f, n) : float(f); break;
+        default: r[c] = float(f) / float(mask); break;
+        }
+    }
+    return r;
+}
+
 // `mem` covers [base, end); windows over [base2, end2) and [base3, end3) lie `delta`
 // and `delta3` bytes from `mem` in the GPU's address space. Stores skip [ro, ro_end).
 struct Win { ulong base; ulong end; ulong base2; ulong end2; long delta; ulong ro; ulong ro_end; ulong base3; ulong end3; long delta3; };

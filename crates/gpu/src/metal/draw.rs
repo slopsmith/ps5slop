@@ -275,6 +275,7 @@ impl Metal {
                     logic_op,
                     logic_targets,
                     swizzles,
+                    packed_targets: packed_targets(c),
                     ..Variant::default()
                 },
             )
@@ -367,6 +368,12 @@ impl Metal {
                 write
             } else {
                 (0..4).fold(0, |m, i| m | (write >> (swizzle >> (2 * i) & 3) & 1) << i)
+            };
+            // A packed target's program keeps the channels not written itself.
+            let write = if packed_target(t.format) && write != 0 {
+                1
+            } else {
+                write
             };
             key.write_masks[targets.len()] = write_mask(write) as u8;
             let slice = if tex.textureType() == MTLTextureType::Type2DArray {

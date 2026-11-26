@@ -104,6 +104,12 @@ pub struct Request<'a> {
     /// stores, two bits per channel from channel 0 up (`CB_COLOR_INFO`'s
     /// COMP_SWAP); 0 stores them as exported.
     pub swizzles: [u8; 8],
+    /// Pixel stage, per MRT: 0, or a target whose bit layout Metal has no
+    /// format for, bound as one 32-bit unsigned integer per pixel:
+    /// `CB_COLOR_INFO` FORMAT (6 to 9) in bits 0 to 4, NUMBER_TYPE in bits
+    /// 5 to 7 and the channels written, in channel order, in bits 8 to 11.
+    /// The program packs the export as the CB lays out its bits.
+    pub packed_targets: [u16; 8],
     /// Pixel stage, for debugging: the first flat input's raw value goes to
     /// colour output 1 in place of what the program computes.
     pub probe_flat: bool,

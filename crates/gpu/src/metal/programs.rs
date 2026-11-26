@@ -61,6 +61,8 @@ pub(super) struct Variant {
     pub(super) logic_targets: [u8; 8],
     /// Pixel: `Request::swizzles`.
     pub(super) swizzles: [u8; 8],
+    /// Pixel: `Request::packed_targets`.
+    pub(super) packed_targets: [u16; 8],
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -298,6 +300,7 @@ impl Metal {
                 logic_op: variant.logic_op,
                 logic_targets: variant.logic_targets,
                 swizzles: variant.swizzles,
+                packed_targets: variant.packed_targets,
                 probe_flat: diag::config().gpu.probe_flat,
                 filter_bilinear: diag::config().gpu.filter_bilinear,
                 plain_float,
@@ -741,6 +744,21 @@ pub(super) fn half_targets(c: &[u32]) -> u8 {
                 .is_some_and(|t| t.format.number == 7 && matches!(t.format.layout, 2 | 5 | 12))
         })
         .fold(0, |m, n| m | 1 << n)
+}
+
+/// `Request::packed_targets`: each attached MRT whose target has no Metal
+/// format, with the channels `CB_TARGET_MASK` writes in channel order.
+pub(super) fn packed_targets(c: &[u32]) -> [u16; 8] {
+    std::array::from_fn(|n| {
+        let Some(t) = ColorTarget::read(c, n).filter(|t| packed_target(t.format) && attached(c, n))
+        else {
+            return 0;
+        };
+        let write = c[context::CB_TARGET_MASK] >> (4 * n) & 0xF;
+        let swizzle = export_swizzle(t.format);
+        let write = (0..4).fold(0, |m, i| m | (write >> (swizzle >> (2 * i) & 3) & 1) << i);
+        (t.format.layout | t.format.number << 5 | write << 8) as u16
+    })
 }
 
 /// Whether MRT `n` is attached to the draw's pass: a program may read only

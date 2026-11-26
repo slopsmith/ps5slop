@@ -55,10 +55,50 @@ pub(super) fn write_mask(bits: u32) -> usize {
         | m(a, MTLColorWriteMask::Alpha)
 }
 
+/// Whether a color target's bits have no Metal format: AMD names list the
+/// channels from the top bit down, so of the packed 32-bit layouts only
+/// 10_11_11 floats and 2_10_10_10 unorm are Metal's (Metal's RGB10A2Uint
+/// cannot be read back). The others are bound as `R32Uint` and packed by the
+/// pixel program (`Request::packed_targets`).
+pub(super) fn packed_target(f: regs::ColorFormat) -> bool {
+    matches!(f.layout, 6..=9) && !matches!((f.layout, f.number), (6, 7) | (9, 0))
+}
+
+/// A packed target's word for a clear colour of 0s and 1s, as the pixel
+/// program's `cb_pack` makes it.
+pub(super) fn packed_word(f: regs::ColorFormat, colour: [f64; 4]) -> u32 {
+    let widths: [u32; 4] = match f.layout {
+        6 => [11, 11, 10, 0],
+        7 => [10, 11, 11, 0],
+        8 => [2, 10, 10, 10],
+        _ => [10, 10, 10, 2],
+    };
+    let swizzle = export_swizzle(f);
+    let mut at = 0;
+    let mut word = 0u32;
+    for (c, w) in widths.into_iter().enumerate() {
+        let x = colour[(swizzle >> (2 * c) & 3) as usize].clamp(0.0, 1.0);
+        let max = ((1u64 << w) - 1) as f64;
+        let field = match f.number {
+            1 => (x * (max / 2.0).floor()).round_ties_even(),
+            6 if c < 3 => (x * 255.0).round_ties_even(),
+            7 if w >= 10 && x > 0.0 => (15u64 << (w - 5)) as f64,
+            4 | 5 | 7 => x.floor(),
+            _ => (x * max).round_ties_even(),
+        };
+        word |= (field as u32 & max as u32) << at;
+        at += w;
+    }
+    word
+}
+
 /// The Metal format of a color target, for the layouts titles render to.
 pub(super) fn color_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
     use MTLPixelFormat as P;
     let bgr = f.swap == 1;
+    if packed_target(f) {
+        return Some(P::R32Uint);
+    }
     Some(match (f.layout, f.number) {
         (10, 6) if bgr => P::BGRA8Unorm_sRGB,
         (10, 6) => P::RGBA8Unorm_sRGB,
@@ -80,10 +120,9 @@ pub(super) fn color_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
         (5, 0) => P::RG16Unorm,
         (5, 4) => P::RG16Uint,
         (5, 7) => P::RG16Float,
-        (6 | 7, _) => P::RG11B10Float,
-        (8 | 9, 4) => P::RGB10A2Uint,
-        (8 | 9, _) if bgr => P::BGR10A2Unorm,
-        (8 | 9, _) => P::RGB10A2Unorm,
+        (6, _) => P::RG11B10Float,
+        (9, _) if bgr => P::BGR10A2Unorm,
+        (9, _) => P::RGB10A2Unorm,
         (11, 4) => P::RG32Uint,
         (11, 7) => P::RG32Float,
         (12, 0) => P::RGBA16Unorm,

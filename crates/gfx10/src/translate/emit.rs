@@ -346,6 +346,7 @@ impl<'a> Tx<'a> {
                     if self.mrts >> i & 1 != 0 && !(i == 1 && src1) {
                         let blended = self.req.blends[i] != 0;
                         let ty = match self.req.col_format >> (4 * i) & 0xF {
+                            _ if self.req.packed_targets[i] != 0 => "uint4",
                             7 => "uint4",
                             8 => "int4",
                             _ if blended && self.req.half_targets >> i & 1 != 0 => "half4",
@@ -400,7 +401,12 @@ impl<'a> Tx<'a> {
                         continue;
                     }
                     let logic = self.req.logic_targets[n];
-                    if self.req.logic_op != 0xCC && logic != 0 {
+                    let packed = self.req.packed_targets[n];
+                    if packed != 0
+                        && (self.req.blends[n] != 0 || !mem::packed_write_bits(packed) != 0)
+                    {
+                        entry_params.push(format!("uint4 d{n} [[color({n})]]"));
+                    } else if self.req.logic_op != 0xCC && logic != 0 {
                         let ty = ["float4", "uint4", "int4"][(logic >> 6).min(2) as usize];
                         entry_params.push(format!("{ty} d{n} [[color({n})]]"));
                     } else if self.req.blends[n] != 0 {
@@ -540,6 +546,18 @@ impl<'a> Tx<'a> {
         for n in 0..8 {
             let w = self.req.blends[n];
             if w == 0 || self.mrts >> n & 1 == 0 || n == 1 && src1 == "src1" {
+                continue;
+            }
+            let packed = self.req.packed_targets[n];
+            if packed != 0 {
+                let (layout, number) = (packed & 0x1F, packed >> 5 & 7);
+                let word = format!(
+                    "cb_pack(cb_blend(blend_src{n}, cb_unpack(d{n}.x, {layout}u, {number}u), {src1}, blend_color, {w:#x}u), {layout}u, {number}u)"
+                );
+                out.push_str(&format!(
+                    "o.c{n} = {}; ",
+                    mem::packed_store(n, &word, packed)
+                ));
                 continue;
             }
             let blend =

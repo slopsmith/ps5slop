@@ -156,12 +156,20 @@ impl<'a> Tx<'a> {
                     format!("({value}).{sel}")
                 };
                 let logic = self.req.logic_targets[target as usize];
+                let packed = self.req.packed_targets[target as usize];
                 if self.req.logic_op != 0xCC && logic != 0 {
                     logic_op(target, &value, self.req.logic_op, logic)
                 } else if target == 1 && self.req.dual_source {
                     format!("src1 = {value};")
                 } else if self.req.blends[target as usize] != 0 {
                     format!("blend_src{target} = {value};")
+                } else if packed != 0 {
+                    let word = match packed >> 5 & 7 {
+                        4 => format!("cb_pack_u(uint4({value}), {}u)", packed & 0x1F),
+                        5 => format!("cb_pack_s(int4({value}), {}u)", packed & 0x1F),
+                        n => format!("cb_pack(float4({value}), {}u, {n}u)", packed & 0x1F),
+                    };
+                    format!("o.c{target} = {};", packed_store(target, &word, packed))
                 } else {
                     format!("o.c{target} = {value};")
                 }
@@ -1102,6 +1110,39 @@ impl<'a> Tx<'a> {
 /// stores it (integers saturated to the channel, measured) and the target's
 /// current bits (`dN`, read through the attachment). The pattern operand is
 /// taken as 0.
+/// The `uint4` a packed target (`Request::packed_targets`) takes for `word`,
+/// keeping the bits of the channels not written from `d{target}`.
+pub(super) fn packed_store(target: impl std::fmt::Display, word: &str, packed: u16) -> String {
+    let keep = !packed_write_bits(packed);
+    if keep == 0 {
+        format!("uint4({word}, 0u, 0u, 0u)")
+    } else {
+        format!(
+            "uint4(({word}) & {:#x}u | d{target}.x & {keep:#x}u, 0u, 0u, 0u)",
+            !keep
+        )
+    }
+}
+
+/// The bits of a packed target's word that its written channels hold.
+pub(super) fn packed_write_bits(packed: u16) -> u32 {
+    let widths: [u32; 4] = match packed & 0x1F {
+        6 => [11, 11, 10, 0],
+        7 => [10, 11, 11, 0],
+        8 => [2, 10, 10, 10],
+        _ => [10, 10, 10, 2],
+    };
+    let mut at = 0;
+    let mut bits = 0u32;
+    for (c, w) in widths.into_iter().enumerate() {
+        if packed >> (8 + c) & 1 != 0 {
+            bits |= (((1u64 << w) - 1) as u32) << at;
+        }
+        at += w;
+    }
+    bits
+}
+
 fn logic_op(target: u8, value: &str, rop: u8, logic: u8) -> String {
     let bits = u32::from(logic & 0x3F).min(32);
     let mask = if bits == 32 {
