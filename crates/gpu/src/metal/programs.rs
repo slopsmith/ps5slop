@@ -28,8 +28,10 @@ pub(super) struct WideLine {
     pub(super) strip: bool,
     /// Half the width in clip-space x and y units at w = 1, as f32 bits.
     pub(super) half: [u32; 2],
-    /// The viewport's x and y scales (pixels per clip-space unit), as f32 bits.
+    /// The viewport's x and y scales (pixels per clip-space unit, signed)
+    /// and offsets, as f32 bits.
     pub(super) scale: [u32; 2],
+    pub(super) offset: [u32; 2],
 }
 
 /// Time per frame draws to redrawn targets may wait for their pipelines
@@ -722,26 +724,72 @@ fn body_call(msl: &str) -> Option<(&str, &str)> {
 }
 
 /// `gen5_vs_line`: six vertices per segment, both ends run through the
-/// program, offset across the segment's major axis. Attributes stay as
-/// the ends have them, so they vary along the line only.
+/// program, offset across the segment's major axis. The ends move along
+/// the line to the pixel edges the hardware's rule gives
+/// (`line_end_prelude`), with every float output moved with them in clip
+/// space, so attributes vary along the line as the original ends have them.
 fn line_source(msl: &str, line: WideLine) -> Option<String> {
     let (params, args) = body_call(msl)?;
     let f = |bits: u32| format!("{:?}f", f32::from_bits(bits));
     let step = if line.strip { 1 } else { 2 };
     let (hx, hy) = (f(line.half[0]), f(line.half[1]));
     let (sx, sy) = (f(line.scale[0]), f(line.scale[1]));
+    let (ox, oy) = (f(line.offset[0]), f(line.offset[1]));
+    let moved: String = float4_outputs(msl)?
+        .iter()
+        .map(|o| format!("    o.{o} = mix(a.{o}, b.{o}, mu);\n"))
+        .collect();
     Some(format!(
-        "{msl}\nvertex VsOut gen5_vs_line(uint lv [[vertex_id]], uint first_iid [[instance_id]], uint line_offset [[base_instance]], {params}) {{\n    uint iid = first_iid - line_offset;\n    uint first = line_offset + lv / 6 * {step};\n    VsOut a = gen5_vs_body(first, iid{args});\n    VsOut b = gen5_vs_body(first + 1, iid{args});\n    uint k = lv % 6;\n    float2 d = (b.pos.xy / b.pos.w - a.pos.xy / a.pos.w) * float2({sx}, {sy});\n    float2 off = abs(d.x) >= abs(d.y) ? float2(0.0f, {hy}) : float2({hx}, 0.0f);\n    VsOut o = (0x2Cu >> k) & 1u ? b : a;\n    o.pos.xy += ((0x32u >> k) & 1u ? off : -off) * o.pos.w;\n    return o;\n}}\n"
+        "{msl}\n{LINE_END_PRELUDE}\nvertex VsOut gen5_vs_line(uint lv [[vertex_id]], uint first_iid [[instance_id]], uint line_offset [[base_instance]], {params}) {{\n    uint iid = first_iid - line_offset;\n    uint first = line_offset + lv / 6 * {step};\n    VsOut a = gen5_vs_body(first, iid{args});\n    VsOut b = gen5_vs_body(first + 1, iid{args});\n    uint k = lv % 6;\n    float2 scale = float2({sx}, {sy}), offset = float2({ox}, {oy});\n    float2 pa = a.pos.xy / a.pos.w * scale + offset, pb = b.pos.xy / b.pos.w * scale + offset;\n    bool xmajor = abs(pb.x - pa.x) >= abs(pb.y - pa.y);\n    float2 off = xmajor ? float2(0.0f, {hy}) : float2({hx}, 0.0f);\n    bool at_b = (0x2Cu >> k) & 1u;\n    float edge = line_end(pa, pb, xmajor, at_b);\n    uint c = xmajor ? 0u : 1u;\n    float x = (edge - offset[c]) / scale[c];\n    float den = (b.pos[c] - a.pos[c]) - x * (b.pos.w - a.pos.w);\n    float mu = den != 0.0f ? (x * a.pos.w - a.pos[c]) / den : (at_b ? 1.0f : 0.0f);\n    VsOut o = at_b ? b : a;\n{moved}    o.pos.xy += ((0x32u >> k) & 1u ? off : -off) * o.pos.w;\n    return o;\n}}\n"
     ))
+}
+
+/// Where the hardware ends a wide line, measured on the Deck with the
+/// `draw primitive (wide line ends)` draws: as a one-pixel line widened
+/// across its major axis, whose pixels follow the diamond exit rule (a
+/// column is drawn when the line leaves the diamond of the pixel it crosses
+/// there after its start and no later than its end). Exact ties go as if y
+/// were a little smaller. `line_end` gives the pixel edge along the major
+/// axis that the end `at_b` (else the start) moves to.
+const LINE_END_PRELUDE: &str = "static inline float line_exit(float2 s, float m, float cx) {
+    float y = s.y + m * (cx - s.x);
+    float t = y - (floor(y) + 0.5f);
+    float u = (0.5f - t) / max(1.0f + m, 1e-6f);
+    if (t + m * u < 0.0f) u = (0.5f + t) / max(1.0f - m, 1e-6f);
+    return cx + u;
+}
+
+static inline float line_end(float2 pa, float2 pb, bool xmajor, bool at_b) {
+    pa.y -= 1.0f / 512.0f;
+    pb.y -= 1.0f / 512.0f;
+    float2 s = xmajor ? pa : pa.yx, e = xmajor ? pb : pb.yx;
+    float dir = e.x >= s.x ? 1.0f : -1.0f;
+    s.x *= dir;
+    e.x *= dir;
+    float len = e.x - s.x;
+    if (len == 0.0f) return (at_b ? e.x : s.x) * dir;
+    float m = (e.y - s.y) / len;
+    float c0 = floor(s.x) + 0.5f, c1 = floor(e.x) + 0.5f;
+    float first = s.x < line_exit(s, m, c0) ? c0 - 0.5f : c0 + 0.5f;
+    float last = e.x >= line_exit(s, m, c1) ? c1 + 0.5f : c1 - 0.5f;
+    return (at_b ? max(last, first) : first) * dir;
+}
+";
+
+/// The `float4` fields of a vertex program's `VsOut`, position included.
+fn float4_outputs(msl: &str) -> Option<Vec<&str>> {
+    Some(
+        msl[msl.find("struct VsOut {")?..]
+            .lines()
+            .take_while(|l| !l.starts_with("};"))
+            .filter_map(|l| l.trim().strip_prefix("float4 ")?.split_whitespace().next())
+            .collect(),
+    )
 }
 
 fn rect_source(msl: &str) -> Option<String> {
     let (params, args) = body_call(msl)?;
-    let fields: Vec<&str> = msl[msl.find("struct VsOut {")?..]
-        .lines()
-        .take_while(|l| !l.starts_with("};"))
-        .filter_map(|l| l.trim().strip_prefix("float4 ")?.split_whitespace().next())
-        .collect();
+    let fields = float4_outputs(msl)?;
     let combine: String = fields
         .iter()
         .map(|f| format!("    o.{f} = b.{f} + c.{f} - a.{f};\n"))

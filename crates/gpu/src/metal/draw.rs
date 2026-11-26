@@ -321,14 +321,16 @@ impl Metal {
         let indexed = matches!(draw, Draw::Indexed { .. });
         let wide_line = (matches!(prim, 2 | 3) && half_width > 0.5 && !indexed).then(|| {
             let vp = Viewport::read(c);
-            let (sx, sy) = (
-                vp.x_scale.abs().max(f32::MIN_POSITIVE),
-                vp.y_scale.abs().max(f32::MIN_POSITIVE),
-            );
+            let nonzero = |s: f32| if s == 0.0 { f32::MIN_POSITIVE } else { s };
+            let (sx, sy) = (nonzero(vp.x_scale), nonzero(vp.y_scale));
             WideLine {
                 strip: prim == 3,
-                half: [(half_width / sx).to_bits(), (half_width / sy).to_bits()],
+                half: [
+                    (half_width / sx.abs()).to_bits(),
+                    (half_width / sy.abs()).to_bits(),
+                ],
                 scale: [sx.to_bits(), sy.to_bits()],
+                offset: [vp.x_offset.to_bits(), vp.y_offset.to_bits()],
             }
         });
         let form = VertexForm {
