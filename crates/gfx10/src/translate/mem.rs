@@ -189,7 +189,7 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
-    /// FLAT and GLOBAL loads and stores, through the memory window.
+    /// FLAT and GLOBAL loads, stores and atomics, through the memory window.
     pub(super) fn flat(
         &mut self,
         pc: usize,
@@ -200,22 +200,30 @@ impl<'a> Tx<'a> {
         let store = match op {
             "store_byte" => Some((1u16, "8")),
             "store_short" => Some((1, "16")),
+            "store_byte_d16_hi" => Some((1, "8hi")),
+            "store_short_d16_hi" => Some((1, "16hi")),
             "store_dword" => Some((1, "")),
             "store_dwordx2" => Some((2, "")),
             "store_dwordx3" => Some((3, "")),
             "store_dwordx4" => Some((4, "")),
             _ => None,
         };
-        let (n, call): (u16, &str) = match op {
-            _ if store.is_some() => (0, ""),
-            "load_ubyte" => (1, "flat_load_ubyte"),
-            "load_sbyte" => (1, "flat_load_sbyte"),
-            "load_ushort" => (1, "flat_load_ushort"),
-            "load_sshort" => (1, "flat_load_sshort"),
-            "load_dword" => (1, "flat_load_raw"),
-            "load_dwordx2" => (2, "flat_load_raw"),
-            "load_dwordx3" => (3, "flat_load_raw"),
-            "load_dwordx4" => (4, "flat_load_raw"),
+        let (n, call, d16): (u16, &str, Option<bool>) = match op {
+            _ if store.is_some() || op.starts_with("atomic_") => (0, "", None),
+            "load_ubyte" => (1, "flat_load_ubyte", None),
+            "load_sbyte" => (1, "flat_load_sbyte", None),
+            "load_ushort" => (1, "flat_load_ushort", None),
+            "load_sshort" => (1, "flat_load_sshort", None),
+            "load_ubyte_d16" => (1, "flat_load_ubyte", Some(false)),
+            "load_ubyte_d16_hi" => (1, "flat_load_ubyte", Some(true)),
+            "load_sbyte_d16" => (1, "flat_load_sbyte", Some(false)),
+            "load_sbyte_d16_hi" => (1, "flat_load_sbyte", Some(true)),
+            "load_short_d16" => (1, "flat_load_ushort", Some(false)),
+            "load_short_d16_hi" => (1, "flat_load_ushort", Some(true)),
+            "load_dword" => (1, "flat_load_raw", None),
+            "load_dwordx2" => (2, "flat_load_raw", None),
+            "load_dwordx3" => (3, "flat_load_raw", None),
+            "load_dwordx4" => (4, "flat_load_raw", None),
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
         if name.starts_with("scratch_load") && !self.scratch_stores && !f.lds {
@@ -239,18 +247,29 @@ impl<'a> Tx<'a> {
             let hi = self.v(f.addr as u16 + 1);
             format!("(ulong({lo}) | (ulong({hi}) << 32))")
         };
+        let at = format!("{addr} + ulong(long({}))", f.offset);
+        if let Some(atom) = op.strip_prefix("atomic_") {
+            self.mem_write = true;
+            self.stores = None;
+            let off = |_: u32| format!("flat_store_offset(mem_base, {at})");
+            let ret = f.glc.then_some(f.vdst as u16);
+            let stmt = self.atomic(pc, name, atom, &off, f.data as u16, ret)?;
+            self.guard(&stmt);
+            return Ok(());
+        }
         if let Some((n, width)) = store {
             self.mem_write = true;
             self.stores = None;
-            let mut s = format!(
-                "long o = flat_store_offset(mem_base, {addr} + ulong(long({}))); if (o != OOB_OFF) {{",
-                f.offset
-            );
+            let mut s = format!("long o = flat_store_offset(mem_base, {at}); if (o != OOB_OFF) {{");
             for i in 0..n {
                 let v = self.v(f.data as u16 + i);
                 match width {
                     "8" => write!(s, " mem[o] = uchar({v});").unwrap(),
+                    "8hi" => write!(s, " mem[o] = uchar({v} >> 16);").unwrap(),
                     "16" => write!(s, " *(device ushort*)(mem + o) = ushort({v});").unwrap(),
+                    "16hi" => {
+                        write!(s, " *(device ushort*)(mem + o) = ushort({v} >> 16);").unwrap()
+                    }
                     _ if f.glc => write!(s, " store_atomic(mem, o + {}, {v});", 4 * i).unwrap(),
                     _ => write!(s, " *(device uint*)(mem + o + {}) = {v};", 4 * i).unwrap(),
                 }
@@ -259,13 +278,17 @@ impl<'a> Tx<'a> {
             self.guard(&s);
             return Ok(());
         }
-        let mut s = format!(
-            "uint4 r = {call}(mem, goff(mem_base, {addr} + ulong(long({}))));",
-            f.offset
-        );
-        for i in 0..n {
-            let d = self.v(f.vdst as u16 + i);
-            write!(s, " {d} = r[{i}];").unwrap();
+        let mut s = format!("uint4 r = {call}(mem, goff(mem_base, {at}));");
+        let d = self.v(f.vdst as u16);
+        match d16 {
+            Some(true) => write!(s, " {d} = ({d} & 0xffffu) | (r.x << 16);").unwrap(),
+            Some(false) => write!(s, " {d} = ({d} & 0xffff0000u) | (r.x & 0xffffu);").unwrap(),
+            None => {
+                for i in 0..n {
+                    let d = self.v(f.vdst as u16 + i);
+                    write!(s, " {d} = r[{i}];").unwrap();
+                }
+            }
         }
         self.guard(&s);
         Ok(())
@@ -312,14 +335,8 @@ impl<'a> Tx<'a> {
         if let Some(op) = name.strip_prefix("buffer_atomic_") {
             self.mem_write = true;
             self.note_store(pc, r, b.idxen);
-            let stmt = self.atomic(
-                pc,
-                name,
-                op,
-                &format!("buffer_store_offset({args}"),
-                vd,
-                b.glc,
-            )?;
+            let off = |bytes: u32| format!("buffer_store_offset({args}, {bytes}u)");
+            let stmt = self.atomic(pc, name, op, &off, vd, b.glc.then_some(vd))?;
             self.guard(&stmt);
             return Ok(());
         }
@@ -495,16 +512,16 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
-    /// A buffer, global or flat atomic: `off` is the offset call without its
-    /// closing payload-size argument and parenthesis.
+    /// A buffer, global or flat atomic: `off` gives the offset of an access
+    /// of so many bytes, `vd` holds the data and `ret` takes the old value.
     fn atomic(
         &mut self,
         pc: usize,
         name: &str,
         op: &str,
-        off: &str,
+        off: &dyn Fn(u32) -> String,
         vd: u16,
-        glc: bool,
+        ret: Option<u16>,
     ) -> Result<String, TranslateError> {
         let data = self.v(vd);
         if let Some(f) = op.strip_suffix("_x2") {
@@ -552,17 +569,19 @@ impl<'a> Tx<'a> {
                 }
                 _ => return Err(err(pc, format!("unsupported instruction {name}"))),
             };
-            let ret = if glc {
-                format!(" {data} = uint(old); {hi} = uint(old >> 32);")
-            } else {
-                String::new()
+            let ret = match ret {
+                Some(r) => {
+                    let (lo, hi) = (self.v(r), self.v(r + 1));
+                    format!(" {lo} = uint(old); {hi} = uint(old >> 32);")
+                }
+                None => String::new(),
             };
-            return Ok(format!("{{ long o = {off}, 8u); {call}{ret} }}"));
+            return Ok(format!("{{ long o = {}; {call}{ret} }}", off(8)));
         }
         let call = match op {
             "add" | "sub" | "and" | "or" | "xor" | "umin" | "umax" | "smin" | "smax" | "swap"
             | "fmin" | "fmax" | "inc" | "dec" => {
-                format!("atomic_rmw_{op}(mem, {off}, 4u), {data})")
+                format!("atomic_rmw_{op}(mem, {}, {data})", off(4))
             }
             "cmpswap" | "fcmpswap" => {
                 let cmp = self.v(vd + 1);
@@ -571,14 +590,13 @@ impl<'a> Tx<'a> {
                 } else {
                     "atomic_cas"
                 };
-                format!("{f}(mem, {off}, 4u), {data}, {cmp})")
+                format!("{f}(mem, {}, {data}, {cmp})", off(4))
             }
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
-        Ok(if glc {
-            format!("{data} = {call};")
-        } else {
-            format!("(void){call};")
+        Ok(match ret {
+            Some(r) => format!("{} = {call};", self.v(r)),
+            None => format!("(void){call};"),
         })
     }
 

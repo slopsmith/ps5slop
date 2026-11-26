@@ -146,7 +146,7 @@ Other scalar loads read guest memory through the windows. A multi-dword scalar l
 - `image_sample_d` on cubes, `a16` sampling and the `a16` form of `image_bvh_intersect_ray` do not translate. Texel offsets on samples shift the coordinates by offset / size, 2D and 2D arrays only.
 - `image_store` writes 0 to components `dmask` leaves out.
 - Unaligned dword buffer accesses round down to a dword (Metal's behaviour), and typed accesses are read where they fall. The reference GPU honours unaligned dwords, and gave 0 to a whole wave of indexed typed loads through a stride-2 buffer with a wider format.
-- FLAT and GLOBAL atomics, GDS ordered counts and scratch stores do not translate.
+- GDS ordered counts and scratch stores do not translate.
 - NGG programs that use LDS, barriers and `exp prim` to build their own geometry need a mesh-shader path (a threadgroup per wave, LDS as threadgroup memory, vertex and primitive exports as mesh outputs). Not started.
 - `image_bvh_intersect_ray` is software traversal over the game's BVH nodes. It stays while no title needs more; ray tracing is to move to Metal's ray tracing ([gpu.md](gpu.md)).
 
