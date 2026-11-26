@@ -817,10 +817,10 @@ fn packed_sixteen_bit_adds_pick_halves_by_op_sel() {
     let t = compute(&code, 0, 0);
     assert!(
         t.msl
-            .contains("((0x40100u & 0xffffu) + (v1 & 0xffffu)) & 0xffffu")
+            .contains("(((0x40100u & 0xffffu) + (v1 & 0xffffu)) & 0xffffu)")
     );
     assert!(t.msl.contains(
-        "v2 = (((v3 >> 16) - (v4 & 0xffffu)) & 0xffffu) | (((v3 & 0xffffu) - (v4 >> 16)) << 16);"
+        "v2 = (((v3 >> 16) - (v4 & 0xffffu)) & 0xffffu) | ((((v3 & 0xffffu) - (v4 >> 16)) & 0xffffu) << 16);"
     ));
     compile(&t.msl);
 }

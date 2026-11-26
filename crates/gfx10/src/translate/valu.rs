@@ -192,6 +192,12 @@ impl<'a> Tx<'a> {
         if name == "v_mad_u64_u32" || name == "v_mad_i64_i32" {
             return self.mad64(pc, inst, v);
         }
+        if matches!(
+            name,
+            "v_qsad_pk_u16_u8" | "v_mqsad_pk_u16_u8" | "v_mqsad_u32_u8"
+        ) {
+            return self.qsad(pc, inst, v);
+        }
         if matches!(name, "v_lshlrev_b64" | "v_lshrrev_b64" | "v_ashrrev_i64") {
             let shift = self.usrc(pc, inst, v, 0)?;
             let x = self.vsrc64(pc, inst, v.src[1])?;
@@ -213,11 +219,8 @@ impl<'a> Tx<'a> {
         ) {
             return self.fma_mix(pc, inst, v);
         }
-        if matches!(
-            name,
-            "v_pk_add_i16" | "v_pk_add_u16" | "v_pk_sub_i16" | "v_pk_sub_u16"
-        ) {
-            return self.pk_add16(pc, inst, v);
+        if name.starts_with("v_pk_") && (name.ends_with("16") && !name.ends_with("_f16")) {
+            return self.pk_int16(pc, inst, v);
         }
         if PACKED_F16.contains(&name) {
             return self.pk_f16(pc, inst, v);
@@ -538,6 +541,41 @@ impl<'a> Tx<'a> {
                 let a = u(self, 0)?;
                 format!("({a} == 0u ? 0xffffffffu : clz({a}))")
             }
+            "v_ffbh_i32" => format!("ffbh_i32({})", u(self, 0)?),
+            "v_cvt_pk_i16_i32" => {
+                let (a, b) = (u(self, 0)?, u(self, 1)?);
+                let s16 = |x: &str| format!("(uint(clamp(int({x}), -32768, 32767)) & 0xffffu)");
+                format!("{} | ({} << 16)", s16(&a), s16(&b))
+            }
+            "v_sat_pk_u8_i16" => {
+                let a = u(self, 0)?;
+                let u8 = |x: String| format!("uint(clamp(int(short({x})), 0, 255))");
+                format!("{} | ({} << 8)", u8(a.clone()), u8(format!("({a} >> 16)")))
+            }
+            "v_lerp_u8" => format!("lerp_u8({}, {}, {})", u(self, 0)?, u(self, 1)?, u(self, 2)?),
+            "v_sad_u8" | "v_sad_hi_u8" | "v_sad_u16" | "v_sad_u32" | "v_msad_u8" => {
+                let (a, b, c) = (u(self, 0)?, u(self, 1)?, u(self, 2)?);
+                let e = match name {
+                    "v_sad_u8" => format!("ulong(sad_u8({a}, {b}, false)) + ulong({c})"),
+                    "v_msad_u8" => format!("ulong(sad_u8({a}, {b}, true)) + ulong({c})"),
+                    "v_sad_hi_u8" => format!("(ulong(sad_u8({a}, {b}, false)) << 16) + ulong({c})"),
+                    "v_sad_u16" => format!(
+                        "ulong(absdiff({a} >> 16, {b} >> 16) + absdiff({a} & 0xffffu, {b} & 0xffffu)) + ulong({c})"
+                    ),
+                    _ => format!("ulong(absdiff({a}, {b})) + ulong({c})"),
+                };
+                if v.clamp {
+                    format!("uint(min({e}, 0xfffffffful))")
+                } else {
+                    format!("uint({e})")
+                }
+            }
+            "v_perm_b32" => format!(
+                "perm_b32({}, {}, {})",
+                u(self, 0)?,
+                u(self, 1)?,
+                u(self, 2)?
+            ),
             "v_ffbl_b32" => {
                 let a = u(self, 0)?;
                 format!("({a} == 0u ? 0xffffffffu : ctz({a}))")
@@ -741,6 +779,57 @@ impl<'a> Tx<'a> {
         let dst = v.sdst.map_or(src::NULL, |s| s as u16);
         if dst != src::NULL {
             s.push_str(&self.set_mask(dst, "k"));
+        }
+        s.push_str(" }");
+        self.line(&s);
+        Ok(())
+    }
+
+    /// The quad-byte SADs: four SADs of `src1` against the byte windows of
+    /// `src0` that start at bytes 0 to 3, each added to its part of `src2`.
+    fn qsad(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
+        let name = inst.op.name;
+        let a = self.vsrc64(pc, inst, v.src[0])?;
+        let b = self.usrc(pc, inst, v, 1)?;
+        let masked = name.starts_with("v_mqsad");
+        let exec = self.mask_on(126);
+        let mut s = format!("{{ ulong a = {a}; uint b = {b}; bool on = {exec};");
+        if name == "v_mqsad_u32_u8" {
+            let c = v.src[2];
+            if c < 256 {
+                return Err(err(pc, format!("{name} with a scalar accumulator")));
+            }
+            for k in 0..4u16 {
+                let acc = self.v(c - 256 + k);
+                let d = self.v(v.vdst as u16 + k);
+                let sum = format!(
+                    "ulong(sad_u8(uint(a >> {}), b, true)) + ulong({acc})",
+                    8 * k
+                );
+                let r = if v.clamp {
+                    format!("uint(min({sum}, 0xfffffffful))")
+                } else {
+                    format!("uint({sum})")
+                };
+                write!(s, " uint r{k} = {r};").unwrap();
+                write!(s, " if (on) {d} = r{k};").unwrap();
+            }
+        } else {
+            let c = self.vsrc64(pc, inst, v.src[2])?;
+            write!(s, " ulong c = {c}; ulong r = 0ul;").unwrap();
+            let limit = if v.clamp { "0xffffu" } else { "0xffffffffu" };
+            for k in 0..4 {
+                write!(
+                    s,
+                    " r |= ulong(min(sad_u8(uint(a >> {}), b, {masked}) + ((uint(c >> {}) & 0xffffu)), {limit}) & 0xffffu) << {};",
+                    8 * k,
+                    16 * k,
+                    16 * k
+                )
+                .unwrap();
+            }
+            let (lo, hi) = (self.v(v.vdst as u16), self.v(v.vdst as u16 + 1));
+            write!(s, " if (on) {{ {lo} = uint(r); {hi} = uint(r >> 32); }}").unwrap();
         }
         s.push_str(" }");
         self.line(&s);

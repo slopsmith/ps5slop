@@ -94,6 +94,41 @@ static inline uint ffbh_i64(ulong v) {
     return x == 0ul ? 0xffffffffu : uint(clz(x));
 }
 
+// Sum of the bytes' absolute differences; masked, bytes where `b` is zero count nothing.
+static inline uint sad_u8(uint a, uint b, bool masked) {
+    uint r = 0u;
+    for (uint i = 0u; i < 32u; i += 8u) {
+        uint x = (a >> i) & 0xffu, y = (b >> i) & 0xffu;
+        if (!masked || y != 0u) r += absdiff(x, y);
+    }
+    return r;
+}
+
+static inline uint lerp_u8(uint a, uint b, uint c) {
+    uint r = 0u;
+    for (uint i = 0u; i < 32u; i += 8u) {
+        r |= ((((a >> i) & 0xffu) + ((b >> i) & 0xffu) + ((c >> i) & 1u)) >> 1) << i;
+    }
+    return r;
+}
+
+// Bytes of {a, b} (b low) by selectors: 8 to 11 replicate a sign bit, 12 is
+// zero, 13 and up are 0xff.
+static inline uint perm_b32(uint a, uint b, uint sel) {
+    ulong w = ulong(a) << 32 | ulong(b);
+    uint r = 0u;
+    for (uint i = 0u; i < 32u; i += 8u) {
+        uint s = (sel >> i) & 0xffu;
+        uint byte;
+        if (s >= 13u) byte = 0xffu;
+        else if (s == 12u) byte = 0u;
+        else if (s >= 8u) byte = uint((w >> (16u * (s - 8u) + 15u)) & 1ul) * 0xffu;
+        else byte = uint((w >> (8u * s)) & 0xfful);
+        r |= byte << i;
+    }
+    return r;
+}
+
 static inline ulong brev64(ulong v) {
     return ulong(reverse_bits(uint(v))) << 32 | ulong(reverse_bits(uint(v >> 32)));
 }

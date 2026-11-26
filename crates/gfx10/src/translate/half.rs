@@ -41,6 +41,16 @@ pub(super) const HALF_OPS: &[&str] = &[
     "v_min_u16",
     "v_max_i16",
     "v_min_i16",
+    "v_mad_u16",
+    "v_mad_i16",
+    "v_mad_u32_u16",
+    "v_mad_i32_i16",
+    "v_min3_u16",
+    "v_min3_i16",
+    "v_max3_u16",
+    "v_max3_i16",
+    "v_med3_u16",
+    "v_med3_i16",
 ];
 pub(super) const PACKED_F16: &[&str] = &[
     "v_pk_add_f16",
@@ -96,43 +106,92 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
-    /// Packed 16-bit integer adds and subtracts: `op_sel` picks each source's
-    /// half for the low result, `op_sel_hi` for the high one; wrapping.
-    pub(super) fn pk_add16(
+    /// Packed 16-bit integer operations: `op_sel` picks each source's half
+    /// for the low result, `op_sel_hi` for the high one. Clamp saturates the
+    /// arithmetic ones.
+    pub(super) fn pk_int16(
         &mut self,
         pc: usize,
         inst: &Inst,
         v: &Valu,
     ) -> Result<(), TranslateError> {
-        if v.clamp {
-            return Err(err(pc, format!("unsupported form of {}", inst.op.name)));
+        let name = inst.op.name;
+        let n = inst.op.srcs.len().min(3);
+        let mut srcs = Vec::new();
+        for i in 0..n {
+            srcs.push(self.usrc(pc, inst, v, i)?);
         }
-        let half = |u: &str, hi: bool| {
-            if hi {
-                format!("({u} >> 16)")
+        let signed = name.ends_with("_i16");
+        let saturates = v.clamp
+            && matches!(
+                name,
+                "v_pk_add_u16"
+                    | "v_pk_add_i16"
+                    | "v_pk_sub_u16"
+                    | "v_pk_sub_i16"
+                    | "v_pk_mad_u16"
+                    | "v_pk_mad_i16"
+            );
+        // `neg_lo`/`neg_hi` flip bit 15 of the half, as for a half float.
+        let lane = |hi_sel: u8, neg: u8| -> Option<String> {
+            let x: Vec<String> = (0..n)
+                .map(|i| {
+                    let half = if hi_sel >> i & 1 != 0 {
+                        format!("({} >> 16)", srcs[i])
+                    } else {
+                        format!("({} & 0xffffu)", srcs[i])
+                    };
+                    if neg >> i & 1 != 0 {
+                        format!("({half} ^ 0x8000u)")
+                    } else {
+                        half
+                    }
+                })
+                .collect();
+            let int = |e: &str| format!("int(short({e}))");
+            let wide = |e: &str| {
+                if signed {
+                    format!("long(short({e}))")
+                } else {
+                    format!("long({e})")
+                }
+            };
+            let r = match name {
+                "v_pk_add_u16" | "v_pk_add_i16" if saturates => {
+                    format!("{} + {}", wide(&x[0]), wide(&x[1]))
+                }
+                "v_pk_sub_u16" | "v_pk_sub_i16" if saturates => {
+                    format!("{} - {}", wide(&x[0]), wide(&x[1]))
+                }
+                "v_pk_mad_u16" | "v_pk_mad_i16" if saturates => {
+                    format!("{} * {} + {}", wide(&x[0]), wide(&x[1]), wide(&x[2]))
+                }
+                "v_pk_add_u16" | "v_pk_add_i16" => format!("{} + {}", x[0], x[1]),
+                "v_pk_sub_u16" | "v_pk_sub_i16" => format!("{} - {}", x[0], x[1]),
+                "v_pk_mad_u16" | "v_pk_mad_i16" => format!("{} * {} + {}", x[0], x[1], x[2]),
+                "v_pk_mul_lo_u16" => format!("{} * {}", x[0], x[1]),
+                "v_pk_lshlrev_b16" => format!("{} << ({} & 15u)", x[1], x[0]),
+                "v_pk_lshrrev_b16" => format!("{} >> ({} & 15u)", x[1], x[0]),
+                "v_pk_ashrrev_i16" => format!("uint({} >> ({} & 15u))", int(&x[1]), x[0]),
+                "v_pk_max_i16" => format!("uint(max({}, {}))", int(&x[0]), int(&x[1])),
+                "v_pk_min_i16" => format!("uint(min({}, {}))", int(&x[0]), int(&x[1])),
+                "v_pk_max_u16" => format!("max({}, {})", x[0], x[1]),
+                "v_pk_min_u16" => format!("min({}, {})", x[0], x[1]),
+                _ => return None,
+            };
+            let (lo, hi) = if signed { (-32768, 32767) } else { (0, 65535) };
+            Some(if saturates {
+                format!("(uint(clamp({r}, long({lo}), long({hi}))) & 0xffffu)")
             } else {
-                format!("({u} & 0xffffu)")
-            }
+                format!("(({r}) & 0xffffu)")
+            })
         };
-        let (a, b) = (self.usrc(pc, inst, v, 0)?, self.usrc(pc, inst, v, 1)?);
-        let op = if inst.op.name.starts_with("v_pk_add") {
-            "+"
-        } else {
-            "-"
+        let (Some(lo), Some(hi)) = (lane(v.opsel, v.neg), lane(v.opsel_hi, v.neg_hi)) else {
+            return Err(err(pc, format!("unsupported instruction {name}")));
         };
-        let lo = format!(
-            "(({} {op} {}) & 0xffffu)",
-            half(&a, v.opsel & 1 != 0),
-            half(&b, v.opsel & 2 != 0)
-        );
-        let hi = format!(
-            "(({} {op} {}) << 16)",
-            half(&a, v.opsel_hi & 1 != 0),
-            half(&b, v.opsel_hi & 2 != 0)
-        );
         let d = self.v(v.vdst as u16);
         self.regs.insert(format!("v{}", v.vdst));
-        self.guard(&format!("{d} = {lo} | {hi};"));
+        self.guard(&format!("{d} = {lo} | ({hi} << 16);"));
         Ok(())
     }
 
@@ -255,7 +314,69 @@ impl<'a> Tx<'a> {
         let b = self.src16(pc, inst, v, 1)?;
         let (ua, ub) = (format!("({a} & 0xffffu)"), format!("({b} & 0xffffu)"));
         let (ia, ib) = (format!("int(short({a}))"), format!("int(short({b}))"));
+        // The 32-bit addend's `op_sel` bit takes its high half; the
+        // destination's shifts the result's low half into the high one.
+        if matches!(name, "v_mad_u32_u16" | "v_mad_i32_i16") {
+            let unsigned = name == "v_mad_u32_u16";
+            let c = self.usrc(pc, inst, v, 2)?;
+            let opsel = |i: u8| v.enc == VEnc::E64 && v.opsel >> i & 1 != 0;
+            let c = match (opsel(2), unsigned) {
+                (false, true) => format!("long({c})"),
+                (false, false) => format!("long(int({c}))"),
+                (true, true) => format!("long({c} >> 16)"),
+                (true, false) => format!("long(int({c}) >> 16)"),
+            };
+            let e = if unsigned {
+                format!("long({ua} * {ub}) + {c}")
+            } else {
+                format!("long({ia} * {ib}) + {c}")
+            };
+            let mut r = match (v.clamp, unsigned) {
+                (false, _) => format!("uint({e})"),
+                (true, true) => format!("uint(clamp({e}, long(0), long(0xffffffffu)))"),
+                (true, false) => {
+                    format!("uint(int(clamp({e}, long(-2147483648), long(2147483647))))")
+                }
+            };
+            if opsel(3) {
+                r = format!("({r} << 16)");
+            }
+            let d = self.v(v.vdst as u16);
+            self.regs.insert(format!("v{}", v.vdst));
+            self.guard(&format!("{d} = {r};"));
+            return Ok(());
+        }
+        if n == 3 {
+            let c = self.src16(pc, inst, v, 2)?;
+            let (uc, ic) = (format!("({c} & 0xffffu)"), format!("int(short({c}))"));
+            let signed = name.ends_with("_i16");
+            let (x, y, z) = if signed {
+                (ia.clone(), ib.clone(), ic)
+            } else {
+                (ua.clone(), ub.clone(), uc)
+            };
+            let r = match name {
+                "v_mad_u16" | "v_mad_i16" => {
+                    let e = format!("long({x}) * long({y}) + long({z})");
+                    let (lo, hi) = if signed { (-32768, 32767) } else { (0, 65535) };
+                    if v.clamp {
+                        format!("uint(clamp({e}, long({lo}), long({hi})))")
+                    } else {
+                        format!("uint({e})")
+                    }
+                }
+                "v_min3_u16" | "v_min3_i16" => format!("uint(min(min({x}, {y}), {z}))"),
+                "v_max3_u16" | "v_max3_i16" => format!("uint(max(max({x}, {y}), {z}))"),
+                _ => format!("uint(max(min({x}, {y}), min(max({x}, {y}), {z})))"),
+            };
+            self.write16(v, &format!("({r})"));
+            return Ok(());
+        }
         let r = match name {
+            "v_add_nc_u16" if v.clamp => format!("min({ua} + {ub}, 0xffffu)"),
+            "v_sub_nc_u16" if v.clamp => format!("({ua} - min({ua}, {ub}))"),
+            "v_add_nc_i16" if v.clamp => format!("uint(clamp({ia} + {ib}, -32768, 32767))"),
+            "v_sub_nc_i16" if v.clamp => format!("uint(clamp({ia} - {ib}, -32768, 32767))"),
             "v_add_nc_u16" | "v_add_nc_i16" => format!("{ua} + {ub}"),
             "v_sub_nc_u16" | "v_sub_nc_i16" => format!("{ua} - {ub}"),
             "v_mul_lo_u16" => format!("{ua} * {ub}"),
@@ -268,7 +389,7 @@ impl<'a> Tx<'a> {
             "v_min_i16" => format!("uint(min({ia}, {ib}))"),
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
-        if v.clamp {
+        if v.clamp && !name.contains("_nc_") {
             return Err(err(pc, format!("unsupported form of {name}")));
         }
         self.write16(v, &format!("({r})"));
