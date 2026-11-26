@@ -347,6 +347,53 @@ pub fn pixel(interp: Interp, out: Out, dual: bool) -> Pixel {
     }
 }
 
+/// A pixel program that exports `t * scale[c] + offset[c]` in channel `c`,
+/// where `t` is the pixel's index (x + 64 y) in the target: exact values
+/// that step through a conversion's whole curve.
+fn ramp_pixel(scale: [f32; 4], offset: [f32; 4]) -> Pixel {
+    const PERSP_CENTER: u32 = 1;
+    let inputs = 1 << PERSP_CENTER | 1 << 8 | 1 << 9;
+    let (x, y) = (input_vgpr(inputs, 8), input_vgpr(inputs, 9));
+    let mut code = vec![
+        vop2("v_mul_f32", 24, LITERAL, y),
+        (WIDTH as f32).to_bits(),
+        vop2("v_add_f32", 24, VGPR + x, 24),
+        vop2("v_subrev_f32", 24, LITERAL, 24),
+        (WIDTH as f32 / 2.0 + 0.5).to_bits(),
+    ];
+    for c in 0..4 {
+        code.extend([
+            vop2("v_mul_f32", 20 + c, LITERAL, 24),
+            scale[c as usize].to_bits(),
+        ]);
+        code.extend([
+            vop2("v_add_f32", 20 + c, LITERAL, 20 + c),
+            offset[c as usize].to_bits(),
+        ]);
+    }
+    code.extend(export(0, false, true, [20, 21, 22, 23]));
+    code.push(0xBF81_0000);
+    Pixel {
+        inputs,
+        cntl: 0,
+        code,
+        dual: false,
+    }
+}
+
+/// Two triangles over the whole target.
+fn full_screen() -> Vec<[f32; 8]> {
+    let v = |x: f32, y: f32| [x, y, 0.5, 1.0, 0.0, 0.0, 0.0, 0.0];
+    vec![
+        v(-1.0, -1.0),
+        v(1.0, -1.0),
+        v(-1.0, 1.0),
+        v(1.0, -1.0),
+        v(1.0, 1.0),
+        v(-1.0, 1.0),
+    ]
+}
+
 /// One draw test's settings.
 pub struct Draw {
     pub name: String,
@@ -870,6 +917,19 @@ pub fn cases() -> Vec<Case> {
             tris("inputs"),
         );
         d.format = (14, 7, 0, 16);
+        out.push(case(d));
+    }
+    for (name, half) in [("ramp", 0.0), ("ramp, half a step up", 0.5)] {
+        let scale = [12, 16, 20, 12].map(|e: i32| 2f32.powi(-e));
+        let mut d = Draw::new(
+            "draw format",
+            format!("8_8_8_8 srgb {name}"),
+            Interp::FragCoord,
+            Out::F32,
+            full_screen(),
+        );
+        d.pixel = ramp_pixel(scale, scale.map(|k| k * half));
+        d.format = (COLOR_8_8_8_8, 6, 0, 4);
         out.push(case(d));
     }
     for interp in [Interp::PerspCenter, Interp::LinearCenter] {
