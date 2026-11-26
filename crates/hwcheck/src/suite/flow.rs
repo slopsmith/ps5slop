@@ -9,8 +9,8 @@ use gfx10::opinfo::{Fmt, OpInfo, all, by_name};
 
 use super::valu::{Body, GROUPS, around};
 use super::{BASE_MODE, Rng};
-use crate::Case;
 use crate::coverage::instance;
+use crate::{COMPUTE_DISPATCH_INITIATOR, COMPUTE_FIRST, CS_W32_EN, Case};
 
 const IN_WORDS: usize = 8;
 const V1: u32 = 257;
@@ -156,7 +156,7 @@ fn saveexec() -> Vec<Case> {
         let inst = vec![0xBE80_0000 | 20 << 16 | (o.code as u32) << 8 | 24];
         let seed = format!("{} saveexec", o.name);
         let setup = [setup, vec![set_exec]].concat();
-        let body = Body {
+        let body = || Body {
             setup: &setup,
             inst: &inst,
             after: &[],
@@ -164,11 +164,26 @@ fn saveexec() -> Vec<Case> {
         out.extend(around(
             o,
             "lane masks".into(),
-            body,
+            body(),
             true,
             BASE_MODE,
             Some(inputs(&seed)),
         ));
+        if !wide {
+            let seed = format!("{} saveexec wave32", o.name);
+            let mut case = around(
+                o,
+                "lane masks, wave32".into(),
+                body(),
+                true,
+                BASE_MODE,
+                Some(inputs(&seed)),
+            );
+            if let Some(c) = &mut case {
+                c.compute[COMPUTE_DISPATCH_INITIATOR - COMPUTE_FIRST] = CS_W32_EN;
+            }
+            out.extend(case);
+        }
     }
     out
 }

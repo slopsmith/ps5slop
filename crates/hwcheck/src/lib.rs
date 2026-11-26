@@ -32,6 +32,10 @@ pub const COMPUTE_FIRST: usize = 0x200;
 /// Number of SH registers a case keeps, through `COMPUTE_USER_DATA_15`.
 pub const COMPUTE_COUNT: usize = 0x50;
 
+/// `COMPUTE_DISPATCH_INITIATOR`'s `CS_W32_EN`: the dispatch runs wave32.
+pub const CS_W32_EN: u32 = 1 << 15;
+
+pub const COMPUTE_DISPATCH_INITIATOR: usize = 0x200;
 const COMPUTE_START_X: usize = 0x204;
 const COMPUTE_PGM_LO: usize = 0x20C;
 const COMPUTE_PGM_RSRC1: usize = 0x212;
@@ -332,9 +336,10 @@ impl Case {
     }
 
     /// The command buffer that runs the case: its compute registers, then
-    /// its dispatch as wave64 groups. The same packets go to ps5slop's
-    /// command processor and to the hardware; registers that pick compute
-    /// units or scratch are set for whatever GPU runs them.
+    /// its dispatch as wave64 groups, or wave32 ones when the case's
+    /// `COMPUTE_DISPATCH_INITIATOR` sets [`CS_W32_EN`]. The same packets go
+    /// to ps5slop's command processor and to the hardware; registers that
+    /// pick compute units or scratch are set for whatever GPU runs them.
     pub fn commands(&self) -> Vec<u32> {
         if !self.stream.is_empty() {
             return self.stream.clone();
@@ -364,7 +369,8 @@ impl Case {
         set(COMPUTE_PGM_RSRC3, &regs(COMPUTE_PGM_RSRC3, 1));
         set(COMPUTE_USER_DATA_0, &regs(COMPUTE_USER_DATA_0, 16));
         ib.push(header(DISPATCH_DIRECT, 4));
-        ib.extend_from_slice(&[self.groups, 1, 1, COMPUTE_SHADER_EN]);
+        let initiator = COMPUTE_SHADER_EN | self.reg(COMPUTE_DISPATCH_INITIATOR);
+        ib.extend_from_slice(&[self.groups, 1, 1, initiator]);
         while ib.len() % 8 != 0 {
             ib.push((3 << 30) | (0x3FFF << 16) | (NOP << 8));
         }
