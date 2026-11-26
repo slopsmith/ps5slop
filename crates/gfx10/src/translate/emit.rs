@@ -114,6 +114,12 @@ impl<'a> Tx<'a> {
                 "#define ADDTID_SHIFT {shift}u\n#define ADDTID_SLOTS {slots}u\n"
             ));
         }
+        if self.scratch_stores {
+            out.push_str(&format!(
+                "#define SCRATCH_BYTES {}u\n{SCRATCH_PRELUDE}",
+                self.scratch_bytes()
+            ));
+        }
         if self.guarded {
             out.push_str(&format!(
                 "#define GUARD_LIMIT {MAX_COMPUTE_BACK_BRANCHES}u\n#define GUARD_BUDGET {GUARD_BUDGET}u\n#define GUARD_UNIT {GUARD_UNIT}u\n{GUARD_PRELUDE}"
@@ -220,6 +226,9 @@ impl<'a> Tx<'a> {
         }
         if self.addtid_local {
             init.push_str("    uint addtid_lds[ADDTID_SLOTS] = {};\n");
+        }
+        if self.scratch_stores {
+            init.push_str("    uint scratch_mem[SCRATCH_BYTES / 4u] = {};\n");
         }
         if self.lockstep {
             init.push_str("    uint wl = (uint(sgi) & 1u) * 32u + uint(slane);\n    Wave wv = { lockstep_vote, lockstep_seq, sgi, 0u };\n");

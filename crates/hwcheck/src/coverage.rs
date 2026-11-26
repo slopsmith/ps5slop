@@ -86,6 +86,7 @@ pub fn coverage(op: &OpInfo) -> Coverage {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        scratch_wave_bytes: 0,
     };
     match translate(&req) {
         Err(e) if e.message.contains("unsupported instruction") => {

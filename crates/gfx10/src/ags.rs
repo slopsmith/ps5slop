@@ -210,6 +210,7 @@ impl Ags<'_> {
             logic_targets: [0; 8],
             swizzles: [0; 8],
             probe_flat: false,
+            scratch_wave_bytes: 0,
         }
     }
 }

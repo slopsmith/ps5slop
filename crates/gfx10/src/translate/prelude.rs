@@ -1043,3 +1043,24 @@ static inline ulong lds_rmw64(threadgroup uint* lds, uint a, ulong v, ulong w, u
     return e;
 }
 "#;
+
+/// A lane's scratch memory, `SCRATCH_BYTES` of it as a private array, read and
+/// written little-endian at any byte. Accesses past its end read 0 and are dropped.
+pub(super) const SCRATCH_PRELUDE: &str = r#"
+static inline uint scratch_ld(thread uint* s, uint a, uint bytes) {
+    if (a >= SCRATCH_BYTES || SCRATCH_BYTES - a < bytes) return 0u;
+    if ((a & 3u) == 0u && bytes == 4u) return s[a >> 2];
+    uint v = 0u;
+    for (uint i = 0u; i < bytes; i++) v |= (s[(a + i) >> 2] >> (8u * ((a + i) & 3u)) & 0xffu) << (8u * i);
+    return v;
+}
+
+static inline void scratch_st(thread uint* s, uint a, uint bytes, uint v) {
+    if (a >= SCRATCH_BYTES || SCRATCH_BYTES - a < bytes) return;
+    if ((a & 3u) == 0u && bytes == 4u) { s[a >> 2] = v; return; }
+    for (uint i = 0u; i < bytes; i++) {
+        uint k = (a + i) >> 2, sh = 8u * ((a + i) & 3u);
+        s[k] = (s[k] & ~(0xffu << sh)) | ((v >> (8u * i) & 0xffu) << sh);
+    }
+}
+"#;

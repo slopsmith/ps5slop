@@ -62,6 +62,7 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        scratch_wave_bytes: 0,
     })
     .unwrap()
 }
@@ -149,6 +150,7 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        scratch_wave_bytes: 0,
     })
     .unwrap();
     assert_eq!(t.msl.matches("[[user(locn0)").count(), 1);
@@ -184,6 +186,7 @@ fn compute_group(code: &[u32], user_sgprs: u32, rsrc2: u32, threads: u32) -> gfx
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        scratch_wave_bytes: 0,
     })
     .unwrap()
 }
@@ -397,6 +400,7 @@ fn integer_colour_formats_export_integers() {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        scratch_wave_bytes: 0,
     };
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("uint4 c0 [[color(0)]]"));
@@ -438,6 +442,7 @@ fn integer_texture_slots_read_and_write_integers() {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        scratch_wave_bytes: 0,
     };
     let float = translate(&request(0, 0)).unwrap();
     let typed = translate(&request(1, 2)).unwrap();
@@ -500,6 +505,7 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
         logic_targets: [0, 0x48, 0, 0, 0, 0, 0, 8],
         swizzles: [0x1B, 0, 0, 0, 0, 0, 0, 0x93],
         probe_flat: false,
+        scratch_wave_bytes: 0,
     };
     let bytes = gfx10::capture::Capture::new(&req).to_bytes();
     let c = gfx10::capture::Capture::from_bytes(&bytes).unwrap();
@@ -657,6 +663,7 @@ fn getpc_gives_the_address_of_the_next_instruction() {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        scratch_wave_bytes: 0,
     };
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("0x500001004ul"));

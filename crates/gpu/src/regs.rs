@@ -47,6 +47,7 @@ pub mod context {
     pub const SPI_PS_INPUT_ADDR: usize = 0x1B4;
     pub const SPI_SHADER_COL_FORMAT: usize = 0x1C5;
     pub const SX_BLEND_OPT_CONTROL: usize = 0x1D7;
+    pub const SPI_TMPRING_SIZE: usize = 0x1BA;
     pub const CB_BLEND0_CONTROL: usize = 0x1E0;
     pub const PA_CL_CLIP_CNTL: usize = 0x204;
     pub const PA_SU_SC_MODE_CNTL: usize = 0x205;
@@ -82,6 +83,7 @@ pub mod sh {
     pub const COMPUTE_NUM_THREAD_X: usize = 0x207;
     pub const COMPUTE_PGM_LO: usize = 0x20C;
     pub const COMPUTE_PGM_RSRC2: usize = 0x213;
+    pub const COMPUTE_TMPRING_SIZE: usize = 0x218;
     pub const COMPUTE_USER_DATA_0: usize = 0x240;
     /// User data registers per stage.
     pub const USER_DATA_COUNT: usize = 32;

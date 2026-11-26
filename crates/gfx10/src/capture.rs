@@ -1,21 +1,12 @@
 //! A translation request saved to a file, so programs a title runs can be
 //! translated again offline (`PS5SLOP_SHADER_DUMP`, the `captures` example).
-//!
-//! The file is little-endian dwords: magic, version, stage, user SGPR count,
-//! NGG flag, `SPI_PS_INPUT_ENA`, `SPI_PS_INPUT_ADDR`, `SPI_SHADER_COL_FORMAT`,
-//! `COMPUTE_PGM_RSRC2`, the three thread counts, the unsigned and signed
-//! integer texture masks, the number of `SPI_PS_INPUT_CNTL` values and those
-//! values, the program address (two dwords), the flags (bit 0 grid bounds,
-//! bit 1 dropped depth export, bits 8 to 15 the half-float targets), the
-//! logic op and the eight logic targets (three dwords), the eight swizzles
-//! (two dwords), then the code.
-//! Version 1 files have no texture masks, version 2 files no address,
-//! version 3 files no flags, version 4 files no logic op.
+//! Files are little-endian dwords, written by `Capture::to_bytes`; files of
+//! older versions lack the fields added after them.
 
 use crate::translate::{Request, Stage, program};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"g10c");
-const VERSION: u32 = 5;
+const VERSION: u32 = 6;
 const GRID_BOUNDS: u32 = 1;
 const DROP_DEPTH_EXPORT: u32 = 2;
 
@@ -40,6 +31,7 @@ pub struct Capture {
     pub logic_op: u8,
     pub logic_targets: [u8; 8],
     pub swizzles: [u8; 8],
+    pub scratch_wave_bytes: u32,
     pub code: Vec<u32>,
 }
 
@@ -69,6 +61,7 @@ impl Capture {
             logic_op: req.logic_op,
             logic_targets: req.logic_targets,
             swizzles: req.swizzles,
+            scratch_wave_bytes: req.scratch_wave_bytes,
             code: req.code[..len.min(req.code.len())].to_vec(),
         }
     }
@@ -95,6 +88,7 @@ impl Capture {
             logic_targets: self.logic_targets,
             swizzles: self.swizzles,
             probe_flat: false,
+            scratch_wave_bytes: self.scratch_wave_bytes,
         }
     }
 
@@ -137,6 +131,7 @@ impl Capture {
             u32::from_le_bytes([t[4], t[5], t[6], t[7]]),
             u32::from_le_bytes([s[0], s[1], s[2], s[3]]),
             u32::from_le_bytes([s[4], s[5], s[6], s[7]]),
+            self.scratch_wave_bytes,
         ]);
         w.extend_from_slice(&self.code);
         w.iter().flat_map(|x| x.to_le_bytes()).collect()
@@ -187,6 +182,11 @@ impl Capture {
             swizzles = bytes(code_at + 3)?;
             code_at += 5;
         }
+        let mut scratch_wave_bytes = 0;
+        if w[1] >= 6 {
+            scratch_wave_bytes = *w.get(code_at)?;
+            code_at += 1;
+        }
         Some(Capture {
             stage,
             user_sgprs: w[3],
@@ -206,6 +206,7 @@ impl Capture {
             logic_op,
             logic_targets,
             swizzles,
+            scratch_wave_bytes,
             code: w[code_at..].to_vec(),
         })
     }

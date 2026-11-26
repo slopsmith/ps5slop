@@ -235,6 +235,9 @@ impl<'a> Tx<'a> {
             self.guard(s.trim_end());
             return Ok(());
         }
+        if name.starts_with("scratch_") && !f.lds {
+            return self.scratch(pc, op, f, store, n, d16);
+        }
         if f.lds || !(name.starts_with("flat_") || name.starts_with("global_")) {
             return Err(err(pc, format!("unsupported instruction {name}")));
         }
@@ -292,6 +295,89 @@ impl<'a> Tx<'a> {
         }
         self.guard(&s);
         Ok(())
+    }
+
+    /// SCRATCH loads and stores, in the lane's own `scratch_mem` (a program that
+    /// never stores to scratch reads zero instead, above).
+    fn scratch(
+        &mut self,
+        pc: usize,
+        op: &str,
+        f: &crate::decode::Flat,
+        store: Option<(u16, &str)>,
+        n: u16,
+        d16: Option<bool>,
+    ) -> Result<(), TranslateError> {
+        if self.scratch_bytes() == 0 {
+            return Err(err(
+                pc,
+                "scratch store with no scratch memory (TMPRING_SIZE)",
+            ));
+        }
+        let base = if (f.saddr as u16) < SGPR_COUNT {
+            self.s(f.saddr as u16)
+        } else {
+            self.v(f.addr as u16)
+        };
+        let a = format!("{base} + uint({})", f.offset as i32);
+        let mut s = format!("uint a = {a};");
+        if let Some((n, width)) = store {
+            for i in 0..n {
+                let v = self.v(f.data as u16 + i);
+                let (bytes, v) = match width {
+                    "8" => (1, v),
+                    "8hi" | "16hi" => (1 + (width == "16hi") as u32, format!("({v} >> 16)")),
+                    "16" => (2, v),
+                    _ => (4, v),
+                };
+                write!(
+                    s,
+                    " scratch_st(scratch_mem, a + {}u, {bytes}u, {v});",
+                    4 * i
+                )
+                .unwrap();
+            }
+            self.guard(&s);
+            return Ok(());
+        }
+        let (bytes, signed) = match op {
+            "load_ubyte" | "load_ubyte_d16" | "load_ubyte_d16_hi" => (1, false),
+            "load_sbyte" | "load_sbyte_d16" | "load_sbyte_d16_hi" => (1, true),
+            "load_ushort" | "load_short_d16" | "load_short_d16_hi" => (2, false),
+            "load_sshort" => (2, true),
+            _ => (4, false),
+        };
+        let read = |k: u16| {
+            let r = format!("scratch_ld(scratch_mem, a + {}u, {bytes}u)", 4 * k);
+            match (signed, bytes) {
+                (true, 1) => format!("uint(int(char({r})))"),
+                (true, _) => format!("uint(int(short({r})))"),
+                _ => r,
+            }
+        };
+        let d = self.v(f.vdst as u16);
+        match d16 {
+            Some(true) => write!(s, " {d} = ({d} & 0xffffu) | ({} << 16);", read(0)).unwrap(),
+            Some(false) => {
+                write!(s, " {d} = ({d} & 0xffff0000u) | ({} & 0xffffu);", read(0)).unwrap()
+            }
+            None => {
+                for k in 0..n {
+                    write!(s, " uint t{k} = {};", read(k)).unwrap();
+                }
+                for k in 0..n {
+                    let d = self.v(f.vdst as u16 + k);
+                    write!(s, " {d} = t{k};").unwrap();
+                }
+            }
+        }
+        self.guard(&s);
+        Ok(())
+    }
+
+    /// Bytes of scratch each lane owns.
+    pub(super) fn scratch_bytes(&self) -> u32 {
+        (self.req.scratch_wave_bytes / if self.wave32 { 32 } else { 64 }) & !3
     }
 
     pub(super) fn mubuf(

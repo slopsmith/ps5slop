@@ -38,6 +38,7 @@ pub fn untranslated(case: &Case) -> Option<String> {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        scratch_wave_bytes: (case.reg(0x218) >> 12 & 0x1FFF) << 10,
     };
     translate(&req).err().map(|e| match e.pc {
         Some(pc) => format!("at dword {pc}: {}", e.message),

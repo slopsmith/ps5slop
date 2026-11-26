@@ -188,10 +188,16 @@ impl Metal {
     ) -> Option<Arc<Program>> {
         let c = state.context;
         let cntl = &c[context::SPI_PS_INPUT_CNTL_0..context::SPI_PS_INPUT_CNTL_0 + 32];
+        let tmpring = if stage == Stage::Compute {
+            state.sh[sh::COMPUTE_TMPRING_SIZE]
+        } else {
+            c[context::SPI_TMPRING_SIZE]
+        };
+        let scratch_wave_bytes = (tmpring >> 12 & 0x1FFF) << 10;
         let key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            (stage as u8, user_sgprs, ngg, variant).hash(&mut h);
+            (stage as u8, user_sgprs, ngg, variant, scratch_wave_bytes).hash(&mut h);
             if stage == Stage::Pixel {
                 (
                     cntl,
@@ -249,6 +255,7 @@ impl Metal {
                 logic_targets: variant.logic_targets,
                 swizzles: variant.swizzles,
                 probe_flat: diag::config().gpu.probe_flat,
+                scratch_wave_bytes,
             };
             if let Some(dir) = &diag::config().gpu.shader_dump {
                 let path = dir.join(format!("{stage:?}-{address:x}-{key:016x}.bin"));
