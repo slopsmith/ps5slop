@@ -17,7 +17,7 @@ use gfx10::opinfo::by_name;
 
 /// The image descriptor (32 bytes), then the sampler (16 bytes); the pixel
 /// program gets this address in its first two user SGPRs.
-const DESC: u64 = INPUTS + 0x1000;
+pub const DESC: u64 = INPUTS + 0x1000;
 /// Where the pixel program puts the sample's address operands.
 const VADDR: u32 = 4;
 
@@ -95,8 +95,8 @@ const TARGETS: [Target; 2] = [
 
 /// The LOD of `image_sample_l` and the bias of `image_sample_b`: between
 /// two mips, so trilinear filtering blends them.
-const LOD: f32 = 1.37;
-const BIAS: f32 = 0.6;
+pub const LOD: f32 = 1.37;
+pub const BIAS: f32 = 0.6;
 
 /// The pixel program: loads the descriptors, computes the address from the
 /// pixel position, samples into v20..v23 and exports them as 32-bit floats.
@@ -223,7 +223,7 @@ fn draw(
     sampler: Sampler,
     aniso: u32,
     target: Target,
-) -> Case {
+) -> TextureDraw {
     let (_, fcode, bits, _) = FORMATS
         .iter()
         .copied()
@@ -251,11 +251,34 @@ fn draw(
         (TEXTURE, texture_bytes(scene.size, scene.levels, bits == 64)),
     ];
     d.covers = vec!["exp", op];
-    case(d)
+    TextureDraw {
+        case: case(d),
+        op,
+        u: scene.u,
+        v: scene.v,
+        float_target: target.1.0 == 14,
+    }
+}
+
+/// A texture draw and how its pixel program samples.
+pub struct TextureDraw {
+    pub case: Case,
+    pub op: &'static str,
+    /// The coordinates at pixel centre `(x, y)`: `u[0] * x + u[1] * y + u[2]`,
+    /// the second term fused.
+    pub u: [f32; 3],
+    pub v: [f32; 3],
+    /// Whether the target holds 32-bit floats rather than 8-bit unorm.
+    pub float_target: bool,
 }
 
 /// Every texture draw.
 pub fn cases() -> Vec<Case> {
+    draws().into_iter().map(|d| d.case).collect()
+}
+
+/// Every texture draw with how it samples.
+pub fn draws() -> Vec<TextureDraw> {
     let mut out = Vec::new();
     for format in TEXTURE_FORMATS {
         for target in TARGETS {

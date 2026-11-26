@@ -19,7 +19,7 @@ const OUT_NAMES: [&str; 8] = ["d0", "d1", "d2", "d3", "-", "-", "-", "-"];
 /// The texture's texels.
 pub(super) const TEXTURE: u64 = 0x60_0000;
 /// The image descriptor (32 bytes), then the sampler (16 bytes).
-const DESC: u64 = INPUTS + 0x8_0000;
+pub const DESC: u64 = INPUTS + 0x8_0000;
 
 // Assembled with `llvm-mc -mcpu=gfx1013 -mattr=+wavefrontsize64`.
 const PROLOGUE: [u32; 23] = [

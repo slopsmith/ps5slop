@@ -16,6 +16,7 @@ pub mod amdgpu;
 pub mod chart;
 pub mod compat;
 pub mod coverage;
+pub mod filter;
 pub mod hardware;
 #[cfg(target_os = "macos")]
 pub mod metal;

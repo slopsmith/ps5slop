@@ -15,7 +15,7 @@ use gfx10::opinfo::by_name;
 use super::{BASE_MODE, INPUTS, OUTPUTS, PROGRAM, Rng};
 use crate::{Case, write_pages};
 
-mod texture;
+pub(super) mod texture;
 
 /// The pixel program's address; the vertex program sits at [`PROGRAM`].
 const PIXEL_PROGRAM: u64 = PROGRAM + 0x1000;

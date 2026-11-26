@@ -91,6 +91,17 @@ enum Command {
         #[arg(long, default_value = "gfx1033")]
         cpu: String,
     },
+    /// Measures Metal's texture filtering against a model of the hardware's
+    /// 8-bit weights, or against kept hardware results where there are
+    /// some: lane counts for the image tests, and PNGs and error
+    /// statistics for the `draw texture` tests (macOS only).
+    Filter {
+        /// Directory for the PNGs and `filter.tsv` (created if missing).
+        out: PathBuf,
+        /// Directory of kept hardware results.
+        #[arg(long)]
+        hardware: Option<PathBuf>,
+    },
     /// Prints what test files hold.
     Info {
         #[arg(required = true)]
@@ -296,6 +307,52 @@ fn generate(dir: &Path, filter: &[String]) -> Result<bool, String> {
     }
     println!("done; {untranslated} not translated");
     Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn filter(out: &Path, hardware: Option<&Path>) -> Result<bool, String> {
+    use std::fmt::Write as _;
+    if let Some(dir) = hardware {
+        println!("{}", hwcheck::filter::report::validate(dir, file_name)?);
+    }
+    let stats = hwcheck::filter::report::draws(out, hardware, file_name)?;
+    let mut tsv = String::from("test\tpixels");
+    for pair in ["Metal-model", "Metal-hardware", "model-hardware"] {
+        for column in [
+            "max error",
+            "mean error",
+            "pixels differing",
+            "pixels differing at 8 bits",
+        ] {
+            write!(tsv, "\t{pair} {column}").unwrap();
+        }
+    }
+    tsv.push('\n');
+    for s in &stats {
+        write!(tsv, "{}\t{}", s.name, s.pixels).unwrap();
+        for c in [s.metal_model, s.metal_hardware, s.model_hardware] {
+            match c {
+                Some(c) => write!(
+                    tsv,
+                    "\t{:.3e}\t{:.3e}\t{}\t{}",
+                    c.max, c.mean, c.differ, c.differ8
+                ),
+                None => write!(tsv, "\t-\t-\t-\t-"),
+            }
+            .unwrap();
+        }
+        tsv.push('\n');
+    }
+    let path = out.join("filter.tsv");
+    std::fs::write(&path, &tsv).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    print!("{tsv}");
+    println!("wrote {} and the PNGs beside it", path.display());
+    Ok(true)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn filter(_: &Path, _: Option<&Path>) -> Result<bool, String> {
+    Err("measuring filtering needs macOS and Metal".into())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -582,6 +639,7 @@ fn main() -> ExitCode {
             merge.as_deref(),
             images.as_deref(),
         ),
+        Command::Filter { out, hardware } => filter(&out, hardware.as_deref()),
         Command::Info { tests } => info(&tests),
         Command::Coverage => coverage(),
         Command::Chart {
