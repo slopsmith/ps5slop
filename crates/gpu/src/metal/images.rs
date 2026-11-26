@@ -732,6 +732,34 @@ impl Metal {
         kind: TextureKind,
     ) -> Option<Retained<Texture>> {
         let (format, bpe) = raw_format(image.format)?;
+        self.storage_image_as(host, image, kind, format, bpe)
+    }
+
+    /// The image programs take atomics on: as [`Self::storage_image`], but
+    /// 32-bit float images as unsigned integers, since Metal makes no
+    /// atomic textures of floats.
+    pub(super) fn atomic_image(
+        &mut self,
+        host: &dyn Host,
+        image: Image,
+        kind: TextureKind,
+    ) -> Option<Retained<Texture>> {
+        match raw_format(image.format)? {
+            (MTLPixelFormat::R32Float, bpe) => {
+                self.storage_image_as(host, image, kind, MTLPixelFormat::R32Uint, bpe)
+            }
+            (format, bpe) => self.storage_image_as(host, image, kind, format, bpe),
+        }
+    }
+
+    fn storage_image_as(
+        &mut self,
+        host: &dyn Host,
+        image: Image,
+        kind: TextureKind,
+        format: MTLPixelFormat,
+        bpe: u32,
+    ) -> Option<Retained<Texture>> {
         self.color_newer.insert(image.address);
         if is_depth_layout(image.raw_tile) {
             self.depth_stores.insert(image.address);

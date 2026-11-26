@@ -88,6 +88,12 @@ impl<'a> Tx<'a> {
                 ));
             }
         };
+        // Loads, stores and atomics address a cube as six array slices.
+        let kind = if kind == TextureKind::Cube && (rw || name.starts_with("image_atomic_")) {
+            TextureKind::Tex2dArray
+        } else {
+            kind
+        };
         let n = mimg_addr_count(name, m.dim, m.a16) as usize;
         let addr_regs: Vec<u16> = (0..n)
             .map(|i| {
@@ -700,10 +706,11 @@ impl<'a> Tx<'a> {
             "and" => "atomic_fetch_and",
             "or" => "atomic_fetch_or",
             "xor" => "atomic_fetch_xor",
-            "cmpswap" | "inc" | "dec" => "",
+            "cmpswap" | "inc" | "dec" | "fcmpswap" | "fmin" | "fmax" => "",
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
-        if m.dmask != 1 && !(op == "cmpswap" && m.dmask == 3) || m.d16 {
+        let pair = matches!(op, "cmpswap" | "fcmpswap");
+        if m.dmask != 1 && !(pair && m.dmask == 3) || m.d16 {
             return Err(err(pc, format!("unsupported form of {name}")));
         }
         let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Atomic, View::Raw)?;
@@ -728,7 +735,18 @@ impl<'a> Tx<'a> {
         } else {
             d.clone()
         };
-        let mut s = if op == "cmpswap" {
+        let float_op = match op {
+            "fmin" => Some(format!("fminmax_bits(uint(r.x), {d}, false)")),
+            "fmax" => Some(format!("fminmax_bits(uint(r.x), {d}, true)")),
+            _ => None,
+        };
+        let mut s = if op == "fcmpswap" {
+            // Float compare: -0 equals +0 and NaN equals nothing.
+            let cmp = self.v(m.vdata as u16 + 1);
+            format!(
+                "{elem}4 r = t{t}.atomic_load({coord}); while (feq_bits(uint(r.x), {cmp}) && !t{t}.atomic_compare_exchange_weak({coord}, &r, {elem}4({value}))) {{}}"
+            )
+        } else if op == "cmpswap" {
             let cmp = self.v(m.vdata as u16 + 1);
             let cmp = if elem == "int" {
                 format!("int({cmp})")
@@ -738,18 +756,21 @@ impl<'a> Tx<'a> {
             format!(
                 "{elem}4 r = {elem}4({cmp}); for (;;) {{ if (t{t}.atomic_compare_exchange_weak({coord}, &r, {elem}4({value}))) {{ r = {elem}4({cmp}); break; }} if (r.x != {cmp}) break; }}"
             )
-        } else if let Some(new) = match (op, elem) {
-            // The texel's type decides the signedness of Metal's min and max.
-            ("smin", "uint") => Some(format!("uint(min(int(r.x), int({d})))")),
-            ("smax", "uint") => Some(format!("uint(max(int(r.x), int({d})))")),
-            ("umin", "int") => Some(format!("int(min(uint(r.x), {d}))")),
-            ("umax", "int") => Some(format!("int(max(uint(r.x), {d}))")),
-            ("inc", _) => Some(format!("{elem}(uint(r.x) >= {d} ? 0u : uint(r.x) + 1u)")),
-            ("dec", _) => Some(format!(
-                "{elem}(uint(r.x) == 0u || uint(r.x) > {d} ? {d} : uint(r.x) - 1u)"
-            )),
-            _ => None,
-        } {
+        } else if let Some(new) = float_op
+            .map(|f| format!("{elem}({f})"))
+            .or(match (op, elem) {
+                // The texel's type decides the signedness of Metal's min and max.
+                ("smin", "uint") => Some(format!("uint(min(int(r.x), int({d})))")),
+                ("smax", "uint") => Some(format!("uint(max(int(r.x), int({d})))")),
+                ("umin", "int") => Some(format!("int(min(uint(r.x), {d}))")),
+                ("umax", "int") => Some(format!("int(max(uint(r.x), {d}))")),
+                ("inc", _) => Some(format!("{elem}(uint(r.x) >= {d} ? 0u : uint(r.x) + 1u)")),
+                ("dec", _) => Some(format!(
+                    "{elem}(uint(r.x) == 0u || uint(r.x) > {d} ? {d} : uint(r.x) - 1u)"
+                )),
+                _ => None,
+            })
+        {
             // Compare and exchange until no other thread changed the texel in between.
             format!(
                 "{elem}4 r = t{t}.atomic_load({coord}); for (;;) {{ if (t{t}.atomic_compare_exchange_weak({coord}, &r, {elem}4({new}))) break; }}"

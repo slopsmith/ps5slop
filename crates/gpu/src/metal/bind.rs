@@ -215,7 +215,7 @@ impl Metal {
                         if image.address == 0 || image.kind < 8 {
                             None
                         } else {
-                            self.storage_image(host, image, kind).and_then(|t| {
+                            self.atomic_image(host, image, kind).and_then(|t| {
                                 if t.pixelFormat() == want {
                                     Some(t)
                                 } else if atomic_capable(t.pixelFormat()) {
