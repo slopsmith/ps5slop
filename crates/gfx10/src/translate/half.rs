@@ -476,11 +476,17 @@ impl<'a> Tx<'a> {
         v: &Valu,
     ) -> Result<(), TranslateError> {
         let name = inst.op.name;
-        if !matches!(v.enc, VEnc::E32 | VEnc::E64)
-            || (v.enc == VEnc::E64 && (v.abs != 0 || v.neg != 0 || v.clamp || v.omod != 0))
-        {
+        let dwords = v.sdwa.dst_sel == 6 && v.sdwa.src_sel[0] == 6 && !v.sdwa.sext[0];
+        let plain = match v.enc {
+            VEnc::E32 | VEnc::Dpp16 | VEnc::Dpp8 => true,
+            VEnc::E64 => v.abs == 0 && v.neg == 0 && !v.clamp && v.omod == 0,
+            VEnc::Sdwa => dwords,
+            _ => false,
+        };
+        if !plain || (name == "v_swaprel_b32" && v.enc != VEnc::E32 && v.enc != VEnc::E64) {
             return Err(err(pc, format!("unsupported form of {name}")));
         }
+        let dpp = matches!(v.enc, VEnc::Dpp16 | VEnc::Dpp8);
         let m0 = self.s(124);
         self.movrel = true;
         let src = v.src[0];
@@ -504,10 +510,28 @@ impl<'a> Tx<'a> {
         }
         self.v(dst);
         let need_base = || base.ok_or_else(|| err(pc, format!("{name} from a non-VGPR")));
+        // DPP reads the indexed source from the lane it picks, so every lane
+        // reads its own first.
+        let mut moved = "rv";
+        if dpp && name != "v_movreld_b32" {
+            self.line(&format!(
+                "uint movrel_src{pc} = 0u; switch ({src_index} + {}u) {{ {VREAD}movrel_src{pc}{VEND} }}",
+                need_base()?
+            ));
+            self.dpp_src0(pc, inst, v, &format!("movrel_src{pc}"))?;
+            moved = "dpp0";
+        }
         let stmt = match name {
+            "v_movrels_b32" if dpp => {
+                let d = self.v(dst);
+                format!("{d} = dpp0;")
+            }
             "v_movrels_b32" => {
                 let d = self.v(dst);
                 format!("{{ {} {d} = rv; }}", read("rv", need_base()?, &src_index))
+            }
+            "v_movrelsd_b32" | "v_movrelsd_2_b32" if dpp => {
+                format!("{{ {} }}", write(dst, &dst_index, moved))
             }
             "v_movreld_b32" => {
                 let s = self.usrc(pc, inst, v, 0)?;

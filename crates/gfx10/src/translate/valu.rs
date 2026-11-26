@@ -110,8 +110,13 @@ impl<'a> Tx<'a> {
     fn valu_inner(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
         let op = inst.op;
         let name = op.name;
-        if matches!(v.enc, VEnc::Dpp16 | VEnc::Dpp8) {
-            self.dpp_src0(pc, inst, v)?;
+        let indexed_read = matches!(
+            name,
+            "v_movrels_b32" | "v_movrelsd_b32" | "v_movrelsd_2_b32"
+        );
+        if matches!(v.enc, VEnc::Dpp16 | VEnc::Dpp8) && !indexed_read {
+            let a = self.src32(v.src[dpp_operand(inst)], None, pc)?;
+            self.dpp_src0(pc, inst, v, &a)?;
         }
         if v.enc == VEnc::Sdwa && op.fmt != Fmt::Vopc && v.sdwa.dst_sel != 6 {
             return self.sdwa_dst(pc, inst, v);
@@ -120,6 +125,14 @@ impl<'a> Tx<'a> {
             return self.vopc(pc, inst, v);
         }
         if name == "v_nop" || name == "v_illegal" || name == "v_pipeflush" {
+            return Ok(());
+        }
+        if name == "v_swap_b32" {
+            if v.src[0] < 256 || v.enc != VEnc::E32 {
+                return Err(err(pc, format!("unsupported form of {name}")));
+            }
+            let (a, d) = (self.v(v.src[0] - 256), self.v(v.vdst as u16));
+            self.guard(&format!("uint t = {d}; {d} = {a}; {a} = t;"));
             return Ok(());
         }
         // Lanes are not modelled: a register is one value per thread. A
@@ -600,7 +613,13 @@ impl<'a> Tx<'a> {
 
     // A DPP quad permutation that reads one lane of the quad becomes a quad
     // broadcast of src0 into `dpp0`, which then stands in for src0.
-    fn dpp_src0(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
+    pub(super) fn dpp_src0(
+        &mut self,
+        pc: usize,
+        inst: &Inst,
+        v: &Valu,
+        a: &str,
+    ) -> Result<(), TranslateError> {
         let ctrl = v.dpp.ctrl;
         let lane = ctrl & 3;
         let broadcast = v.enc == VEnc::Dpp16
@@ -614,12 +633,11 @@ impl<'a> Tx<'a> {
             && v.dpp.bank_mask == 0xF
             && self.req.stage != Stage::Vertex;
         if !broadcast && !permute && self.req.stage != Stage::Vertex {
-            return self.dpp_general(pc, inst, v);
+            return self.dpp_general(pc, v, a);
         }
         if !broadcast && !permute {
             return Err(err(pc, format!("unsupported DPP form of {}", inst.op.name)));
         }
-        let a = self.src32(v.src[dpp_operand(inst)], None, pc)?;
         self.regs.insert("dpp0".into());
         if broadcast {
             self.line(&format!("dpp0 = quad_broadcast({a}, {lane}u);"));
@@ -634,7 +652,7 @@ impl<'a> Tx<'a> {
 
     /// DPP forms other than full-mask quad permutations, as `simd_shuffle`
     /// within 32-lane Metal SIMD groups.
-    fn dpp_general(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
+    fn dpp_general(&mut self, pc: usize, v: &Valu, a: &str) -> Result<(), TranslateError> {
         let ctrl = v.dpp.ctrl as u32;
         let (src, inside) = if v.enc == VEnc::Dpp8 {
             (
@@ -661,7 +679,6 @@ impl<'a> Tx<'a> {
                 _ => return Err(err(pc, format!("unsupported DPP control {ctrl:#x}"))),
             }
         };
-        let a = self.src32(v.src[dpp_operand(inst)], None, pc)?;
         self.simd_lane = true;
         self.regs.insert("dpp0".into());
         let (rows, banks) = if v.enc == VEnc::Dpp8 {
