@@ -161,10 +161,37 @@ pub struct Gpu {
     pub cpu_indirect: bool,
     pub no_throttle: bool,
     pub probe_flat: bool,
+    /// Parts of the exact float semantics left to Metal's own arithmetic.
+    pub plain_float: PlainFloat,
     /// Where hotkey captures (`.ps5frame` and `.gputrace`) are written.
     pub capture_dir: Option<PathBuf>,
     /// Folder holding local `.ps5frame` + golden pairs for `frame_replay` tests.
     pub frame_captures: Option<PathBuf>,
+}
+
+/// `PS5SLOP_FLOAT_PLAIN`: parts of the float VALU semantics translated as
+/// plain Metal arithmetic instead of following the hardware.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct PlainFloat {
+    pub nan: bool,
+    pub denorm: bool,
+    pub round: bool,
+    pub mods: bool,
+}
+
+impl PlainFloat {
+    /// A comma-separated list of `nan`, `denorm`, `round`, `mods`, or `all`.
+    fn parse(list: &str) -> Self {
+        let mut p = Self::default();
+        for part in list.split(',').map(str::trim) {
+            let all = part == "all";
+            p.nan |= all || part == "nan";
+            p.denorm |= all || part == "denorm";
+            p.round |= all || part == "round";
+            p.mods |= all || part == "mods";
+        }
+        p
+    }
 }
 
 impl Default for Gpu {
@@ -273,6 +300,7 @@ impl Config {
                 cpu_indirect: flag("PS5SLOP_GPU_CPU_INDIRECT"),
                 no_throttle: flag("PS5SLOP_GPU_NO_THROTTLE"),
                 probe_flat: flag("PS5SLOP_PROBE_FLAT"),
+                plain_float: PlainFloat::parse(&text("PS5SLOP_FLOAT_PLAIN").unwrap_or_default()),
                 capture_dir: path("PS5SLOP_CAPTURE_DIR"),
                 frame_captures: path("PS5SLOP_FRAME_CAPTURES"),
             },
@@ -376,6 +404,29 @@ mod tests {
             watch(0x1000, 100, 0)
         );
         assert_eq!(with(&[("PS5SLOP_GPU_WATCH", "1000@soon")]).gpu.watch, None);
+    }
+
+    #[test]
+    fn plain_float_takes_a_list_of_parts_or_all() {
+        let p = |v| with(&[("PS5SLOP_FLOAT_PLAIN", v)]).gpu.plain_float;
+        assert_eq!(
+            p("nan, round"),
+            PlainFloat {
+                nan: true,
+                round: true,
+                ..PlainFloat::default()
+            }
+        );
+        assert_eq!(
+            p("all"),
+            PlainFloat {
+                nan: true,
+                denorm: true,
+                round: true,
+                mods: true
+            }
+        );
+        assert_eq!(with(&[]).gpu.plain_float, PlainFloat::default());
     }
 
     #[test]

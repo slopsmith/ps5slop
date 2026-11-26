@@ -67,6 +67,7 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
     })
@@ -160,6 +161,7 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
     })
@@ -176,7 +178,11 @@ fn compute(code: &[u32], user_sgprs: u32, rsrc2: u32) -> gfx10::Translated {
 }
 
 fn compute_group(code: &[u32], user_sgprs: u32, rsrc2: u32, threads: u32) -> gfx10::Translated {
-    translate(&Request {
+    translate(&compute_request(code, user_sgprs, rsrc2, threads)).unwrap()
+}
+
+fn compute_request(code: &[u32], user_sgprs: u32, rsrc2: u32, threads: u32) -> Request<'_> {
+    Request {
         stage: Stage::Compute,
         code,
         address: 0,
@@ -200,10 +206,10 @@ fn compute_group(code: &[u32], user_sgprs: u32, rsrc2: u32, threads: u32) -> gfx
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
-    })
-    .unwrap()
+    }
 }
 
 #[test]
@@ -419,6 +425,7 @@ fn integer_colour_formats_export_integers() {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
     };
@@ -463,6 +470,7 @@ fn dual_source_blending_blends_with_the_mrt1_export() {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        plain_float: 0,
         scratch_wave_bytes: 0,
         coded_textures: 0,
         rsrc1: DEFAULT_RSRC1,
@@ -516,6 +524,7 @@ fn blending_into_half_targets_writes_the_cb_halves() {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        plain_float: 0,
         scratch_wave_bytes: 0,
         coded_textures: 0,
         rsrc1: DEFAULT_RSRC1,
@@ -565,6 +574,7 @@ fn integer_texture_slots_read_and_write_integers() {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
     };
@@ -632,6 +642,7 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
         logic_targets: [0, 0x48, 0, 0, 0, 0, 0, 8],
         swizzles: [0x1B, 0, 0, 0, 0, 0, 0, 0x93],
         probe_flat: false,
+        plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
     };
@@ -798,6 +809,7 @@ fn getpc_gives_the_address_of_the_next_instruction() {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
     };
@@ -897,6 +909,26 @@ fn explicit_derivative_samples_become_gradient_samples() {
     assert!(t.msl.contains("float2(F(v4), F(v5))"));
     assert!(t.msl.contains("min_lod_clamp(F(v6))"));
     compile(&t.msl);
+}
+
+#[test]
+fn float_ops_compile_with_every_part_left_to_metal() {
+    let code = [
+        0x0600_0501, // v_add_f32_e32 v0, v1, v2
+        0x6400_0501, // v_add_f16_e32 v0, v1, v2
+        0xBF81_0000, // s_endpgm
+    ];
+    let keep_all = DEFAULT_RSRC1 | 0xFF << 12 | 1 << 23;
+    for rsrc1 in [DEFAULT_RSRC1, keep_all] {
+        for plain in 0..16 {
+            let mut req = compute_request(&code, 0, 0, 64);
+            req.rsrc1 = rsrc1;
+            req.plain_float = plain;
+            let msl = translate(&req).unwrap().msl;
+            assert!(msl.contains("add32(") && msl.contains("add16("));
+            compile(&msl);
+        }
+    }
 }
 
 #[test]

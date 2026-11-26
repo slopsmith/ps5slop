@@ -214,6 +214,18 @@ impl Metal {
             c[context::SPI_TMPRING_SIZE]
         };
         let scratch_wave_bytes = (tmpring >> 12 & 0x1FFF) << 10;
+        let plain_float = {
+            let p = diag::config().gpu.plain_float;
+            [
+                (p.nan, shader::PLAIN_NAN),
+                (p.denorm, shader::PLAIN_DENORM),
+                (p.round, shader::PLAIN_ROUND),
+                (p.mods, shader::PLAIN_MODS),
+            ]
+            .iter()
+            .filter(|(on, _)| *on)
+            .fold(0, |bits, (_, bit)| bits | bit)
+        };
         let key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -224,6 +236,7 @@ impl Metal {
                 variant,
                 scratch_wave_bytes,
                 rsrc1,
+                plain_float,
             )
                 .hash(&mut h);
             if stage == Stage::Pixel {
@@ -286,6 +299,7 @@ impl Metal {
                 logic_targets: variant.logic_targets,
                 swizzles: variant.swizzles,
                 probe_flat: diag::config().gpu.probe_flat,
+                plain_float,
                 scratch_wave_bytes,
                 rsrc1,
             };

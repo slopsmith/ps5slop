@@ -101,6 +101,7 @@ impl Capture {
             logic_targets: self.logic_targets,
             swizzles: self.swizzles,
             probe_flat: false,
+            plain_float: 0,
             scratch_wave_bytes: self.scratch_wave_bytes,
             rsrc1: self.rsrc1,
         }

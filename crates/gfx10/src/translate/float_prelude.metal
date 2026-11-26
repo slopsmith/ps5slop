@@ -5,6 +5,8 @@
 //   FM_DN32, FM_DN16: denormals (bit 0 inputs kept, bit 1 results kept);
 //   FM_DX10: a clamped NaN becomes 0; FM_IEEE: signalling NaNs are quieted,
 //   output modifiers are ignored.
+// FX_NAN, FX_DN, FX_RND and FX_MODS are 0 for parts left to Metal's own
+// arithmetic (Request::plain_float), for measuring what they cost.
 // Metal float arithmetic rounds to nearest even and flushes f32 denormals,
 // so other round modes come from the rounding error, which TwoSum and fma
 // give exactly.
@@ -13,10 +15,10 @@ static inline bool nan32(uint x) { return (x & 0x7fffffffu) > 0x7f800000u; }
 static inline bool snan32(uint x) { return nan32(x) && (x & 0x400000u) == 0u; }
 static inline bool den32(uint x) { return (x & 0x7f800000u) == 0u && (x & 0x7fffffu) != 0u; }
 static inline bool zero32(uint x) { return (x & 0x7fffffffu) == 0u; }
-static inline uint flush32(uint x) { return den32(x) ? x & 0x80000000u : x; }
+static inline uint flush32(uint x) { return FX_DN && den32(x) ? x & 0x80000000u : x; }
 static inline uint in32(uint x) { return (FM_DN32 & 1) == 0 ? flush32(x) : x; }
 static inline uint out32(uint x) { return (FM_DN32 & 2) == 0 ? flush32(x) : x; }
-static inline uint quiet32(uint x) { return FM_IEEE ? x | 0x400000u : x; }
+static inline uint quiet32(uint x) { return FX_NAN && FM_IEEE ? x | 0x400000u : x; }
 
 // The NaN an instruction returns: its first NaN source, or the default NaN.
 static inline uint nan_of32(uint a, uint b, uint c) {
@@ -25,7 +27,7 @@ static inline uint nan_of32(uint a, uint b, uint c) {
 
 static inline uint fin32(float r, uint a, uint b, uint c) {
     uint u = as_type<uint>(r);
-    return nan32(u) ? nan_of32(a, b, c) : out32(u);
+    return FX_NAN && nan32(u) ? nan_of32(a, b, c) : out32(u);
 }
 
 // An order-preserving integer for a non-NaN float; both zeros map to 0.
@@ -205,7 +207,7 @@ static inline uint soft_sum(bool na, int ea, ulong ma, bool nb, int eb, ulong mb
 // denormal source or a result near the denormal range, in a mode that
 // keeps denormals.
 static inline bool soft32(float r, uint a, uint b, uint c) {
-    if (FM_DN32 == 0) return false;
+    if (!FX_DN || FM_DN32 == 0) return false;
     bool fin = (a & 0x7f800000u) != 0x7f800000u && (b & 0x7f800000u) != 0x7f800000u && (c & 0x7f800000u) != 0x7f800000u;
     return fin && (den32(a) || den32(b) || den32(c) || abs(r) < 0x1p-125f);
 }
@@ -226,7 +228,7 @@ static inline uint soft_fma32(uint a, uint b, uint c) {
 // stands in as the smallest normal for results the exact path leaves to
 // Metal (those with an infinite or NaN source).
 static inline float val32(uint a) {
-    return (FM_DN32 & 1) != 0 && den32(a) ? as_type<float>((a & 0x80000000u) | 0x800000u) : F(a);
+    return FX_DN && (FM_DN32 & 1) != 0 && den32(a) ? as_type<float>((a & 0x80000000u) | 0x800000u) : F(a);
 }
 
 static inline uint add32(uint a, uint b) {
@@ -278,7 +280,7 @@ static inline uint fma32(uint a, uint b, uint c) {
         r = zero_sign(dir32(r, e, isfinite(x) && isfinite(y) && isfinite(z)), e, pos0(prod0(a, b), z), FM_RND32);
     }
     uint u = as_type<uint>(r);
-    return nan32(u) ? nan_fma32(a, b, c) : out32(u);
+    return FX_NAN && nan32(u) ? nan_fma32(a, b, c) : out32(u);
 }
 
 // A product of the legacy multiply rules plus c, fused.
@@ -298,7 +300,7 @@ static inline uint mad32(uint a, uint b, uint c) {
         r = zero_sign(dir32(r, e, isfinite(p) && isfinite(z)), e, pos0(p, z), FM_RND32);
     }
     uint u = as_type<uint>(r);
-    return nan32(u) ? nan_fma32(a, b, c) : flush32(u);
+    return FX_NAN && nan32(u) ? nan_fma32(a, b, c) : flush32(u);
 }
 
 static inline uint mad_legacy32(uint a, uint b, uint c) {
@@ -307,6 +309,7 @@ static inline uint mad_legacy32(uint a, uint b, uint c) {
 
 static inline uint max32(uint a, uint b) {
     a = in32(a); b = in32(b);
+    if (!FX_NAN) return out32(as_type<uint>(fmax(F(a), F(b))));
     if (FM_IEEE && snan32(a)) return quiet32(a);
     if (FM_IEEE && snan32(b)) return quiet32(b);
     if (nan32(a)) return nan32(b) ? a : out32(b);
@@ -317,6 +320,7 @@ static inline uint max32(uint a, uint b) {
 
 static inline uint min32(uint a, uint b) {
     a = in32(a); b = in32(b);
+    if (!FX_NAN) return out32(as_type<uint>(fmin(F(a), F(b))));
     if (FM_IEEE && snan32(a)) return quiet32(a);
     if (FM_IEEE && snan32(b)) return quiet32(b);
     if (nan32(a)) return nan32(b) ? a : out32(b);
@@ -327,6 +331,7 @@ static inline uint min32(uint a, uint b) {
 
 static inline uint med3_32(uint a, uint b, uint c) {
     a = in32(a); b = in32(b); c = in32(c);
+    if (!FX_NAN) return max32(min32(a, b), min32(max32(a, b), c));
     if (nan32(a) || nan32(b) || nan32(c)) return min32(min32(a, b), c);
     uint m = max32(max32(a, b), c);
     if (m == a) return max32(b, c);
@@ -357,6 +362,7 @@ static inline uint rndne32(uint a) { a = in32(a); return fin32(rint(F(a)), a, 0u
 // Transcendentals flush denormals whatever the mode.
 static inline uint tr32(float r, uint a) {
     uint u = as_type<uint>(r);
+    if (!FX_NAN) return flush32(u);
     return nan32(a) ? quiet32(a) : nan32(u) ? 0xffc00000u : flush32(u);
 }
 
@@ -493,12 +499,14 @@ static inline uint cvt_unorm16(uint a) {
 
 // Output modifiers make -0 +0.
 static inline uint omod32(uint r, float k) {
+    if (!FX_MODS) return as_type<uint>(F(r) * k);
     if (FM_IEEE || (FM_DN32 & 2) != 0 || nan32(r)) return r;
     uint x = flush32(as_type<uint>(F(r) * k));
     return zero32(x) ? 0u : x;
 }
 
 static inline uint clamp32(uint r) {
+    if (!FX_MODS) return as_type<uint>(saturate(F(r)));
     if (nan32(r)) return FM_DX10 ? 0u : r;
     if ((r >> 31) != 0u) return 0u;
     return min(r, 0x3f800000u);
@@ -512,10 +520,10 @@ static inline bool nan16(uint x) { return (x & 0x7fffu) > 0x7c00u; }
 static inline bool snan16(uint x) { return nan16(x) && (x & 0x200u) == 0u; }
 static inline bool den16(uint x) { return (x & 0x7c00u) == 0u && (x & 0x3ffu) != 0u; }
 static inline bool zero16(uint x) { return (x & 0x7fffu) == 0u; }
-static inline uint flush16(uint x) { return den16(x) ? x & 0x8000u : x; }
+static inline uint flush16(uint x) { return FX_DN && den16(x) ? x & 0x8000u : x; }
 static inline uint in16(uint x) { x &= 0xffffu; return (FM_DN16 & 1) == 0 ? flush16(x) : x; }
 static inline uint out16(uint x) { return (FM_DN16 & 2) == 0 ? flush16(x) : x; }
-static inline uint quiet16(uint x) { return FM_IEEE ? x | 0x200u : x; }
+static inline uint quiet16(uint x) { return FX_NAN && FM_IEEE ? x | 0x200u : x; }
 // f16 bits widened to f32 by integer operations: Metal was seen to keep a
 // widened half at half precision in later arithmetic.
 static inline float hf(uint x) {
@@ -533,6 +541,7 @@ static inline uint nan_of16(uint a, uint b, uint c) {
 // x + lo as f16 bits, rounded under mode m (lo is below x's last bit, or
 // zero); results below the smallest normal are flushed unless keep.
 static inline uint h16(float x, float lo, uint m, bool keep) {
+    if (!FX_RND && m == 0u && (keep || !FX_DN)) return uint(as_type<ushort>(half(x)));
     uint u = as_type<uint>(x);
     uint s = (u >> 16) & 0x8000u;
     uint a = u & 0x7fffffffu;
@@ -547,7 +556,7 @@ static inline uint h16(float x, float lo, uint m, bool keep) {
         int e = int(a >> 23) - 127;
         uint mant = a & 0x7fffffu;
         if ((a >> 23) == 0u) e = -126; else mant |= 0x800000u;
-        if (!keep && e < -14) return s;
+        if (FX_DN && !keep && e < -14) return s;
 
         uint sh = e >= -14 ? 13u : uint(13 + (-14 - e));
         if (sh >= 25u) {
@@ -566,16 +575,21 @@ static inline uint h16(float x, float lo, uint m, bool keep) {
         enc -= 1u;
     }
     if (enc >= 0x7c00u) enc = toward ? 0x7bffu : 0x7c00u;
-    if (!keep && enc < 0x400u) enc = 0u;
+    if (FX_DN && !keep && enc < 0x400u) enc = 0u;
     return s | enc;
 }
 
 static inline uint fin16(float r, float lo, uint a, uint b, uint c) {
-    return isnan(r) ? nan_of16(a, b, c) : h16(r, lo, FM_RND16, (FM_DN16 & 2) != 0);
+    return FX_NAN && isnan(r) ? nan_of16(a, b, c) : h16(r, lo, FM_RND16, (FM_DN16 & 2) != 0);
 }
+
+// Metal's own half arithmetic, for FX_RND 0.
+static inline half hh(uint x) { return as_type<half>(ushort(x)); }
+static inline uint hu(half x) { return uint(as_type<ushort>(x)); }
 
 static inline uint add16(uint a, uint b) {
     a = in16(a); b = in16(b);
+    if (!FX_RND) return out16(hu(hh(a) + hh(b)));
     float x = hf(a), y = hf(b), r = zero_sign(x + y, 0.0f, pos0(x, y), FM_RND16);
     return fin16(r, sum_err(x, y, r), a, b, 0u);
 }
@@ -584,6 +598,7 @@ static inline uint sub16(uint a, uint b) { return add16(a, b ^ 0x8000u); }
 
 static inline uint mul16(uint a, uint b) {
     a = in16(a); b = in16(b);
+    if (!FX_RND) return out16(hu(hh(a) * hh(b)));
     return fin16(hf(a) * hf(b), 0.0f, a, b, 0u);
 }
 
@@ -595,15 +610,16 @@ static inline uint nan_fma16(uint a, uint b, uint c) {
 
 static inline uint fma16(uint a, uint b, uint c) {
     a = in16(a); b = in16(b); c = in16(c);
+    if (!FX_RND) return out16(hu(fma(hh(a), hh(b), hh(c))));
     float p = hf(a) * hf(b), z = hf(c), r = zero_sign(p + z, 0.0f, pos0(p, z), FM_RND16);
-    return isnan(r) ? nan_fma16(a, b, c) : fin16(r, sum_err(p, z, r), a, b, c);
+    return FX_NAN && isnan(r) ? nan_fma16(a, b, c) : fin16(r, sum_err(p, z, r), a, b, c);
 
 }
 
 static inline uint mad16(uint a, uint b, uint c) {
     a = in16(a); b = in16(b); c = in16(c);
     uint p = fin16(hf(a) * hf(b), 0.0f, a, b, 0u);
-    return nan16(p) ? nan_fma16(a, b, c) : add16(p, c);
+    return FX_NAN && nan16(p) ? nan_fma16(a, b, c) : add16(p, c);
 }
 
 static inline uint ldexp16(uint a, int n) {
@@ -614,6 +630,7 @@ static inline uint ldexp16(uint a, int n) {
 
 static inline uint max16(uint a, uint b) {
     a = in16(a); b = in16(b);
+    if (!FX_NAN) { float x = hf(a); return out16(fmax(x, hf(b)) == x ? a : b); }
     if (FM_IEEE && snan16(a)) return quiet16(a);
     if (FM_IEEE && snan16(b)) return quiet16(b);
     if (nan16(a)) return nan16(b) ? a : out16(b);
@@ -624,6 +641,7 @@ static inline uint max16(uint a, uint b) {
 
 static inline uint min16(uint a, uint b) {
     a = in16(a); b = in16(b);
+    if (!FX_NAN) { float x = hf(a); return out16(fmin(x, hf(b)) == x ? a : b); }
     if (FM_IEEE && snan16(a)) return quiet16(a);
     if (FM_IEEE && snan16(b)) return quiet16(b);
     if (nan16(a)) return nan16(b) ? a : out16(b);
@@ -634,6 +652,7 @@ static inline uint min16(uint a, uint b) {
 
 static inline uint med3_16(uint a, uint b, uint c) {
     a = in16(a); b = in16(b); c = in16(c);
+    if (!FX_NAN) return max16(min16(a, b), min16(max16(a, b), c));
     if (nan16(a) || nan16(b) || nan16(c)) return min16(min16(a, b), c);
     uint m = max16(max16(a, b), c);
     if (m == a) return max16(b, c);
@@ -643,7 +662,7 @@ static inline uint med3_16(uint a, uint b, uint c) {
 
 // A one-source f16 op computed in f32, rounded to nearest.
 static inline uint op1_16(float r, uint a) {
-    return isnan(r) ? nan_of16(a, 0u, 0u) : h16(r, 0.0f, 0u, (FM_DN16 & 2) != 0);
+    return FX_NAN && isnan(r) ? nan_of16(a, 0u, 0u) : h16(r, 0.0f, 0u, (FM_DN16 & 2) != 0);
 }
 
 static inline uint floor16(uint a) { a = in16(a); return op1_16(floor(hf(a)), a); }
@@ -679,12 +698,14 @@ static inline uint fract16(uint a) {
 }
 
 static inline uint omod16(uint r, float k) {
+    if (!FX_MODS) return h16(hf(r) * k, 0.0f, FM_RND16, (FM_DN16 & 2) != 0);
     if (FM_IEEE || (FM_DN16 & 2) != 0 || nan16(r)) return r;
     uint x = h16(hf(r) * k, 0.0f, FM_RND16, false);
     return zero16(x) ? 0u : x;
 }
 
 static inline uint clamp16(uint r) {
+    if (!FX_MODS) return nan16(r) || (r & 0x8000u) != 0u ? 0u : min(r, 0x3c00u);
     if (nan16(r)) return FM_DX10 ? 0u : r;
     if ((r & 0x8000u) != 0u) return 0u;
     return min(r, 0x3c00u);
@@ -731,6 +752,11 @@ static inline bool cmp_code(bool un, bool lt, bool eq, bool gt, uint c) {
 }
 
 static inline bool cmp32(uint a, uint b, uint c) {
+    if (!FX_DN) {
+        float x = F(a), y = F(b);
+        bool un = isnan(x) || isnan(y);
+        return cmp_code(un, x < y, x == y, x > y, c);
+    }
     a = in32(a); b = in32(b);
     bool un = nan32(a) || nan32(b);
     int x = key32(a), y = key32(b);

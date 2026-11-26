@@ -5,7 +5,8 @@
 //! compiles them, unless `--fast` is given.
 //! Usage: `cargo run --release -p gfx10 --example compile_times -- DIR
 //! [--threads N] [--size] [--fast] [--strip-comments] [--min-bytes N] [--warm]
-//! [--dump OUT]`; `--dump` writes each translation to OUT instead.
+//! [--plain-float BITS] [--dump OUT]`; `--dump` writes each translation to
+//! OUT instead. `--plain-float` translates with `Request::plain_float`.
 
 #[cfg(target_os = "macos")]
 fn main() {
@@ -23,6 +24,7 @@ fn main() {
     let mut dump = None;
     let mut warm = false;
     let mut fast = false;
+    let mut plain_float = 0u8;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--threads" => threads = args.next().and_then(|v| v.parse().ok()).unwrap_or(1),
@@ -31,6 +33,7 @@ fn main() {
             "--dump" => dump = args.next(),
             "--warm" => warm = true,
             "--fast" => fast = true,
+            "--plain-float" => plain_float = args.next().and_then(|v| v.parse().ok()).unwrap_or(0),
             "--min-bytes" => min_bytes = args.next().and_then(|v| v.parse().ok()).unwrap_or(0),
             _ => panic!("unknown option {a}"),
         }
@@ -49,7 +52,9 @@ fn main() {
             let Some(c) = Capture::from_bytes(&std::fs::read(path).unwrap()) else {
                 continue;
             };
-            let Ok(t) = gfx10::translate(&c.request()) else {
+            let mut req = c.request();
+            req.plain_float = plain_float;
+            let Ok(t) = gfx10::translate(&req) else {
                 continue;
             };
             t.msl

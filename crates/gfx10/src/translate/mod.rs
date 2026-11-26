@@ -107,6 +107,10 @@ pub struct Request<'a> {
     /// Pixel stage, for debugging: the first flat input's raw value goes to
     /// colour output 1 in place of what the program computes.
     pub probe_flat: bool,
+    /// Parts of the float semantics left to Metal's own arithmetic, for
+    /// measuring what they cost: [`PLAIN_NAN`], [`PLAIN_DENORM`],
+    /// [`PLAIN_ROUND`] and [`PLAIN_MODS`]. 0 follows the hardware exactly.
+    pub plain_float: u8,
     /// Bytes of scratch each wave owns: `WAVESIZE` of `COMPUTE_TMPRING_SIZE` or
     /// `SPI_TMPRING_SIZE`, in KiB on GFX10.
     pub scratch_wave_bytes: u32,
@@ -114,6 +118,17 @@ pub struct Request<'a> {
     /// fields set the float mode the program runs in.
     pub rsrc1: u32,
 }
+
+/// NaN results, quieting and the NaN rules of min, max and med3.
+pub const PLAIN_NAN: u8 = 1;
+/// Flushing of f32 and f16 denormals per mode, the exact path for kept f32
+/// denormals, and comparisons of denormals.
+pub const PLAIN_DENORM: u8 = 2;
+/// Round modes other than nearest even, and f16 arithmetic computed in f32
+/// and rounded once (Metal's half arithmetic and conversions instead).
+pub const PLAIN_ROUND: u8 = 4;
+/// The rules of output modifiers and clamp (IEEE mode, -0, DX10 clamp).
+pub const PLAIN_MODS: u8 = 8;
 
 /// A `PGM_RSRC1` for programs whose real one is unknown: f32 denormals
 /// flushed, f16 and f64 denormals kept, round to nearest even, DX10 clamp.

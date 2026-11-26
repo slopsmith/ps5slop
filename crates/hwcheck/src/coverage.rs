@@ -89,6 +89,7 @@ pub fn coverage(op: &OpInfo) -> Coverage {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
     };

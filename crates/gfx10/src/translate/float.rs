@@ -6,17 +6,25 @@ use crate::opinfo::Ty;
 
 pub(super) const FLOAT_PRELUDE: &str = include_str!("float_prelude.metal");
 
-/// The `#define`s `FLOAT_PRELUDE` reads, from a `PGM_RSRC1`.
-pub(super) fn mode_defines(rsrc1: u32) -> String {
+/// The `#define`s `FLOAT_PRELUDE` reads, from a `PGM_RSRC1` and the parts
+/// left to Metal (`Request::plain_float`).
+pub(super) fn mode_defines(rsrc1: u32, plain: u8) -> String {
     let mode = rsrc1 >> 12 & 0xFF;
+    let round = if plain & PLAIN_ROUND != 0 { 0 } else { mode };
+    let exact = |part: u8| u8::from(plain & part == 0);
     format!(
-        "#define FM_RND32 {}u\n#define FM_RND16 {}u\n#define FM_DN32 {}u\n#define FM_DN16 {}u\n#define FM_DX10 {}\n#define FM_IEEE {}\n",
-        mode & 3,
-        mode >> 2 & 3,
+        "#define FM_RND32 {}u\n#define FM_RND16 {}u\n#define FM_DN32 {}u\n#define FM_DN16 {}u\n#define FM_DX10 {}\n#define FM_IEEE {}\n\
+         #define FX_NAN {}\n#define FX_DN {}\n#define FX_RND {}\n#define FX_MODS {}\n",
+        round & 3,
+        round >> 2 & 3,
         mode >> 4 & 3,
         mode >> 6 & 3,
         rsrc1 >> 21 & 1,
         rsrc1 >> 23 & 1,
+        exact(PLAIN_NAN),
+        exact(PLAIN_DENORM),
+        exact(PLAIN_ROUND),
+        exact(PLAIN_MODS),
     )
 }
 

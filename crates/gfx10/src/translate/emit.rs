@@ -98,7 +98,7 @@ impl<'a> Tx<'a> {
     fn emit(&mut self) -> String {
         let mut out = String::from(PRELUDE);
         if self.floats {
-            out.push_str(&float::mode_defines(self.req.rsrc1));
+            out.push_str(&float::mode_defines(self.req.rsrc1, self.req.plain_float));
             out.push_str(float::FLOAT_PRELUDE);
         }
 

@@ -41,6 +41,7 @@ pub fn untranslated(case: &Case) -> Option<String> {
         logic_targets: [0; 8],
         swizzles: [0; 8],
         probe_flat: false,
+        plain_float: 0,
         scratch_wave_bytes: (case.reg(0x218) >> 12 & 0x1FFF) << 10,
         rsrc1: case.reg(0x212),
     };
