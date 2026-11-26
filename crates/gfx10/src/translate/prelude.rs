@@ -769,6 +769,7 @@ static inline ImageLayout image_layout(uint f) {
     else if (f >= 62u && f <= 64u) { l.width = uint4(32u, 32u, 0u, 0u); l.type = f - 58u; }
     else if (f >= 65u && f <= 71u) { l.width = uint4(16u); l.type = f - 65u; }
     else if (f >= 75u && f <= 77u) { l.width = uint4(32u); l.type = f - 71u; }
+    else if (f >= 128u && f <= 130u) { l.width = f == 128u ? uint4(8u, 0u, 0u, 0u) : f == 129u ? uint4(8u, 8u, 0u, 0u) : uint4(8u); l.type = 7u; }
     else if (f == 132u) { l.width = uint4(9u, 9u, 9u, 5u); l.type = 8u; }
     else if (f == 133u) { l.width = uint4(5u, 6u, 5u, 0u); l.type = 0u; }
     else if (f == 135u) { l.width = uint4(1u, 5u, 5u, 5u); l.type = 0u; }
@@ -862,6 +863,28 @@ static inline uint image_to_small_float(uint b, uint m) {
     uint rest = b & ((1u << (23u - m)) - 1u), half_way = 1u << (22u - m);
     if (rest > half_way || (rest == half_way && (v & 1u) != 0u)) v++;
     return min(v, (31u << m) - 1u);
+}
+
+// The bits an element of format `f` takes.
+static inline uint image_element_bits(uint f) {
+    ImageLayout l = image_layout(f);
+    return l.width.x + l.width.y + l.width.z + l.width.w;
+}
+
+// An element read as bits (`image_load_pck`): its dwords, an element of 8
+// or 16 bits zero- or (`sgn`) sign-extended (measured on RDNA2).
+static inline uint4 image_unpack(uint4 raw, uint w1, bool sgn) {
+    uint bits = image_element_bits((w1 >> 20) & 0x1ffu);
+    if (bits < 32u) raw.x = sgn ? uint(image_sext(raw.x, bits)) : raw.x & image_mask(bits);
+    for (uint i = (bits + 31u) / 32u; i < 4u; i++) raw[i] = 0u;
+    return raw;
+}
+
+// An element written as bits (`image_store_pck`) from store data dwords.
+static inline uint4 image_pack(uint4 v, uint w1) {
+    uint bits = image_element_bits((w1 >> 20) & 0x1ffu);
+    if (bits < 32u) v.x &= image_mask(bits);
+    return v;
 }
 
 // Whether image stores write an image of format `f`: not the depth and

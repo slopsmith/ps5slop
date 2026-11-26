@@ -295,9 +295,9 @@ pub(super) fn channel_selects(image: &Image) -> [u8; 4] {
 pub(super) fn coded_format(format: u32) -> Option<(MTLPixelFormat, u32)> {
     use MTLPixelFormat as P;
     let bytes = match format {
-        1..=6 | 131 | 137 => 1,
-        7..=19 | 133 | 135 | 136 => 2,
-        20..=61 | 132 | 140..=144 => 4,
+        1..=6 | 128 | 131 | 137 => 1,
+        7..=19 | 129 | 133 | 135 | 136 => 2,
+        20..=61 | 130 | 132 | 140..=144 => 4,
         62..=71 | 145 | 146 => 8,
         75..=77 => 16,
         _ => return None,
@@ -309,6 +309,17 @@ pub(super) fn coded_format(format: u32) -> Option<(MTLPixelFormat, u32)> {
         8 => (P::RG32Uint, 8),
         _ => (P::RGBA32Uint, 16),
     })
+}
+
+/// `tex`, holding an image of format `format`, viewed as unsigned integers
+/// of the element's size, for programs that unpack its bits.
+pub(super) fn bits_view(tex: Retained<Texture>, format: u32) -> Option<Retained<Texture>> {
+    let (want, _) = coded_format(format)?;
+    if tex.pixelFormat() == want {
+        Some(tex)
+    } else {
+        tex.newTextureViewWithPixelFormat(want)
+    }
 }
 
 /// The Metal format and bytes per element of an image read or written

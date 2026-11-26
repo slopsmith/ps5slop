@@ -157,7 +157,7 @@ impl Metal {
             if let Resource::Texture {
                 slot,
                 ref source,
-                raw,
+                view,
                 ..
             } = *r
                 && let Some(d) = self.descriptor(host, user, source, 8)
@@ -171,7 +171,7 @@ impl Metal {
                     Some(Number::Uint) => variant.uint_textures |= 1 << slot,
                     Some(Number::Sint) => variant.sint_textures |= 1 << slot,
                     Some(Number::Float) => {}
-                    None if raw && coded_format(image.format).is_some() => {
+                    None if view == View::Raw && coded_format(image.format).is_some() => {
                         variant.coded_textures |= 1 << slot
                     }
                     None => {}

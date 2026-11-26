@@ -183,7 +183,7 @@ impl Metal {
                     ref source,
                     kind,
                     access,
-                    raw,
+                    view,
                 } => {
                     let d = self.descriptor(host, user, source, 8)?;
                     let image = Image::read(&d);
@@ -229,15 +229,22 @@ impl Metal {
                         if image.address == 0 || image.kind < 8 {
                             None
                         } else {
-                            self.storage_image(host, image, kind)
-                                .and_then(|t| store_swizzled(t, image.swizzle))
-                                .and_then(without_srgb)
+                            let t = self.storage_image(host, image, kind);
+                            if view == View::Bits {
+                                t.and_then(|t| bits_view(t, image.format))
+                            } else {
+                                t.and_then(|t| store_swizzled(t, image.swizzle))
+                                    .and_then(without_srgb)
+                            }
                         }
                     } else if image.address == 0 || image.kind < 8 {
                         self.null_texture(kind)
-                    } else if image_format(image.format).is_none() && !raw {
+                    } else if image_format(image.format).is_none() && view == View::Sampled {
                         None
-                    } else if raw {
+                    } else if view == View::Bits {
+                        self.image(host, image, kind)
+                            .and_then(|t| bits_view(t, image.format))
+                    } else if view == View::Raw {
                         self.image(host, image, kind).and_then(without_srgb)
                     } else {
                         self.image(host, image, kind)

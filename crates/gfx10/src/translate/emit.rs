@@ -5,13 +5,13 @@ use super::*;
 impl<'a> Tx<'a> {
     pub(super) fn finish(mut self) -> Translated {
         let mut resources = Vec::new();
-        for (i, (_, kind, source, access, raw)) in self.textures.iter().enumerate() {
+        for (i, (_, kind, source, access, view)) in self.textures.iter().enumerate() {
             resources.push(Resource::Texture {
                 slot: i as u8,
                 source: source.clone(),
                 kind: *kind,
                 access: *access,
-                raw: *raw,
+                view: *view,
             });
         }
         for (i, source) in self.samplers.iter().enumerate() {

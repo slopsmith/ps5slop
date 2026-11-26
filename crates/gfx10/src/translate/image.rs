@@ -5,7 +5,7 @@ use super::*;
 impl<'a> Tx<'a> {
     // The element type of texture slot `t` and how a component of it becomes a VGPR value.
     pub(super) fn texel(&self, t: usize) -> (&'static str, &'static str) {
-        if self.req.coded_textures >> t & 1 != 0 {
+        if self.req.coded_textures >> t & 1 != 0 || self.textures[t].4 == View::Bits {
             ("uint", "")
         } else if self.atomic_textures >> t & 1 != 0 {
             if self.req.sint_textures >> t & 1 != 0 {
@@ -23,24 +23,30 @@ impl<'a> Tx<'a> {
     }
 
     // The texture slot for the T# at `srsrc`, merging how it is accessed.
-    // Filtered and unfiltered (raw) reads of one T# get separate slots.
+    // Each view of one T# gets its own slot.
     fn texture_slot(
         &mut self,
         pc: usize,
         srsrc: u16,
         kind: TextureKind,
         access: Access,
-        raw: bool,
+        view: View,
     ) -> Result<usize, TranslateError> {
         let source = self.descriptor_source(pc, srsrc, 8)?;
+        let bits = self.bits_textures.contains(&(srsrc, kind));
+        let view = if view == View::Raw && bits {
+            View::Bits
+        } else {
+            view
+        };
         let t = match self
             .textures
             .iter()
-            .position(|x| x.0 == srsrc && x.1 == kind && x.2 == source && x.4 == raw)
+            .position(|x| x.0 == srsrc && x.1 == kind && x.2 == source && x.4 == view)
         {
             Some(t) => t,
             None => {
-                self.textures.push((srsrc, kind, source, access, raw));
+                self.textures.push((srsrc, kind, source, access, view));
                 self.textures.len() - 1
             }
         };
@@ -58,10 +64,7 @@ impl<'a> Tx<'a> {
     }
 
     pub(super) fn mimg(&mut self, pc: usize, name: &str, m: &Mimg) -> Result<(), TranslateError> {
-        let rw = matches!(
-            name,
-            "image_load" | "image_load_mip" | "image_store" | "image_store_mip"
-        );
+        let rw = name.starts_with("image_load") || name.starts_with("image_store");
         if (m.a16 && !rw) || m.tfe || m.lwe {
             return Err(err(pc, "unsupported image modifiers"));
         }
@@ -91,7 +94,7 @@ impl<'a> Tx<'a> {
             })
             .collect();
         match name {
-            "image_load" | "image_load_mip" | "image_store" | "image_store_mip" => {
+            _ if rw => {
                 return self.image_rw(pc, name, m, kind, &addr_regs);
             }
             "image_get_resinfo" => return self.image_resinfo(pc, m, kind, &addr_regs),
@@ -105,7 +108,7 @@ impl<'a> Tx<'a> {
             .strip_prefix("image_sample")
             .or_else(|| name.strip_prefix("image_gather4"))
             .ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?;
-        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Sample, false)?;
+        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Sample, View::Sampled)?;
         let s_source = self.descriptor_source(pc, m.ssamp as u16, 4)?;
         let sm = match self.samplers.iter().position(|x| *x == s_source) {
             Some(i) => i,
@@ -246,7 +249,8 @@ impl<'a> Tx<'a> {
         }
     }
 
-    // `image_load`, `image_store` and their `_mip` forms: unfiltered texel access.
+    // `image_load`, `image_store` and their `_mip` and `_pck` forms:
+    // unfiltered texel access.
     fn image_rw(
         &mut self,
         pc: usize,
@@ -257,7 +261,9 @@ impl<'a> Tx<'a> {
     ) -> Result<(), TranslateError> {
         let store = name.starts_with("image_store");
         let access = if store { Access::Write } else { Access::Sample };
-        let t = self.texture_slot(pc, m.srsrc as u16, kind, access, true)?;
+        let pck = name.contains("_pck");
+        let view = if pck { View::Bits } else { View::Raw };
+        let t = self.texture_slot(pc, m.srsrc as u16, kind, access, view)?;
         let regs: Vec<String> = addr.iter().map(|&r| self.v(r)).collect();
         let a: Vec<String> = if m.a16 {
             (0..2 * regs.len())
@@ -266,7 +272,7 @@ impl<'a> Tx<'a> {
         } else {
             regs
         };
-        let mip = name.ends_with("_mip");
+        let mip = name.contains("_mip");
         let level = |i: usize| if mip { a[i].clone() } else { "0u".into() };
         let coord = match kind {
             TextureKind::Tex2d => format!("uint2({}, {})", a[0], a[1]),
@@ -280,16 +286,24 @@ impl<'a> Tx<'a> {
         };
         let d = m.vdata as u16;
         let (elem, conv) = self.texel(t);
-        let coded = self.req.coded_textures >> t & 1 != 0;
-        if coded && m.d16 {
+        let coded = self.req.coded_textures >> t & 1 != 0 || self.textures[t].4 == View::Bits;
+        if (coded || pck) && m.d16 {
             return Err(err(pc, format!("unsupported form of {name}")));
         }
         let w = binding::TEXTURE_WORDS + 2 * t as u32;
+        // The `_pck` forms move the element's dwords, one VGPR per DMASK bit.
+        let dwords = m.dmask.count_ones() as usize;
         if store {
             let mut comps = Vec::new();
             let mut j = 0u16;
             for i in 0..4 {
-                if m.dmask >> i & 1 != 0 {
+                if pck {
+                    comps.push(if i < dwords {
+                        self.v(d + i as u16)
+                    } else {
+                        "0u".into()
+                    });
+                } else if m.dmask >> i & 1 != 0 {
                     let v = if m.d16 {
                         self.v(d + j / 2)
                     } else {
@@ -319,11 +333,11 @@ impl<'a> Tx<'a> {
             } else {
                 String::new()
             };
-            let (encode, when) = if coded {
-                (
-                    "image_encode",
-                    format!("if (image_storable((user[{w}] >> 20) & 0x1ffu)) "),
-                )
+            let storable = format!("if (image_storable((user[{w}] >> 20) & 0x1ffu)) ");
+            let (encode, when) = if pck {
+                ("image_pack", storable)
+            } else if coded {
+                ("image_encode", storable)
             } else {
                 ("image_store_channels", String::new())
             };
@@ -333,7 +347,10 @@ impl<'a> Tx<'a> {
             ));
         } else {
             let mut s = format!("{elem}4 r = t{t}.read({coord}, {lvl});");
-            if coded {
+            if pck {
+                let sgn = name.ends_with("_sgn");
+                write!(s, " r = image_unpack(r, user[{w}], {sgn});").unwrap();
+            } else if coded {
                 write!(s, " r = image_decode(r, user[{w}], user[{}]);", w + 1).unwrap();
             } else {
                 if elem == "float" {
@@ -341,7 +358,11 @@ impl<'a> Tx<'a> {
                 }
                 write!(s, " r = image_sel(r, user[{w}], user[{}]);", w + 1).unwrap();
             }
-            let comps: Vec<usize> = (0..4).filter(|&i| m.dmask >> i & 1 != 0).collect();
+            let comps: Vec<usize> = if pck {
+                (0..dwords).collect()
+            } else {
+                (0..4).filter(|&i| m.dmask >> i & 1 != 0).collect()
+            };
             self.write_results(&mut s, m, elem, conv, &comps);
             self.guard(&s);
         }
@@ -374,7 +395,7 @@ impl<'a> Tx<'a> {
         if m.dmask != 1 && !(op == "cmpswap" && m.dmask == 3) || m.d16 {
             return Err(err(pc, format!("unsupported form of {name}")));
         }
-        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Atomic, true)?;
+        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Atomic, View::Raw)?;
         let a: Vec<String> = addr.iter().map(|&r| self.v(r)).collect();
         let coord = match kind {
             TextureKind::Tex2d => format!("uint2({}, {})", a[0], a[1]),
@@ -451,7 +472,7 @@ impl<'a> Tx<'a> {
         kind: TextureKind,
         addr: &[u16],
     ) -> Result<(), TranslateError> {
-        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Sample, false)?;
+        let t = self.texture_slot(pc, m.srsrc as u16, kind, Access::Sample, View::Sampled)?;
         let lod = self.v(addr[0]);
         let third = match kind {
             TextureKind::Tex2dArray => format!("t{t}.get_array_size()"),

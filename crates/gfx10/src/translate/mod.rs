@@ -180,6 +180,20 @@ pub enum Access {
     Atomic,
 }
 
+/// How a texture slot sees its image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum View {
+    /// For sampling: with its channel selects and sRGB conversion applied.
+    Sampled,
+    /// As memory holds it, without channel selects or sRGB conversion: the
+    /// program applies them (and converts the formats in
+    /// [`Request::coded_textures`]).
+    Raw,
+    /// As unsigned integers of the element's size, whatever the format:
+    /// the program unpacks the channels' bits (`image_*_pck`).
+    Bits,
+}
+
 /// A Metal object the host binds for the program.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Resource {
@@ -189,9 +203,7 @@ pub enum Resource {
         source: Source,
         kind: TextureKind,
         access: Access,
-        /// Bound as the image's memory holds it, without its channel
-        /// selects or sRGB conversion: the program applies them.
-        raw: bool,
+        view: View,
     },
     /// An S#, bound at `[[sampler(slot)]]`.
     Sampler { slot: u8, source: Source },
@@ -347,6 +359,18 @@ pub fn translate(req: &Request) -> Result<Translated, TranslateError> {
     let insts = program(req.code)?;
     let mut dry = Tx::new(req, insts.clone());
     dry.run()?;
+    let bits: Vec<(u16, TextureKind)> = dry
+        .textures
+        .iter()
+        .filter(|t| t.4 == View::Bits)
+        .map(|t| (t.0, t.1))
+        .collect();
+    if !bits.is_empty() {
+        // Again with the bits slots merged, so slot numbers match the last pass.
+        dry = Tx::new(req, insts.clone());
+        dry.bits_textures = bits.clone();
+        dry.run()?;
+    }
     let syms = dry.sgpr_sources();
     let mut tx = Tx::new(req, insts);
     tx.syms = Some(syms);
@@ -358,6 +382,7 @@ pub fn translate(req: &Request) -> Result<Translated, TranslateError> {
         .enumerate()
         .filter(|(_, t)| t.3 == Access::Atomic)
         .fold(0, |m, (i, _)| m | 1 << i);
+    tx.bits_textures = bits;
     tx.read_write_textures = dry
         .textures
         .iter()
@@ -436,8 +461,8 @@ struct Tx<'a> {
     syms: Option<BTreeMap<usize, Syms>>,
     /// Descriptor register, dimension, source and access, as of the first
     /// instruction using it.
-    /// T# register, dimension, origin, access, whether bound raw.
-    textures: Vec<(u16, TextureKind, Source, Access, bool)>,
+    /// T# register, dimension, origin, access, view.
+    textures: Vec<(u16, TextureKind, Source, Access, View)>,
     samplers: Vec<Source>,
     /// Constant buffers by base, with the bytes the program reads from them.
     constants: Vec<(Base, u32)>,
@@ -468,6 +493,10 @@ struct Tx<'a> {
     atomic_textures: u32,
     /// Texture slots both read and written, from the first pass.
     read_write_textures: u32,
+    /// T# registers and dimensions some instruction reads or writes as
+    /// bits, from the first pass (which does not know descriptor origins
+    /// yet): other raw accesses there share that slot, so they see its stores.
+    bits_textures: Vec<(u16, TextureKind)>,
     /// The entry point declares `slane`, the thread's lane in its SIMD group.
     simd_lane: bool,
     /// The current DPP instruction leaves some lanes unwritten (`dpp_on`).
@@ -593,6 +622,7 @@ impl<'a> Tx<'a> {
             quad_lane: false,
             atomic_textures: 0,
             read_write_textures: 0,
+            bits_textures: Vec::new(),
             simd_lane: false,
             dpp_lane_off: false,
             movrel: false,

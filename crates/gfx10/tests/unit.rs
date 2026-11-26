@@ -1,6 +1,6 @@
 //! Self-contained checks on hand-written programs (no llvm-mc, no game files).
 
-use gfx10::translate::{Access, Request, Resource, Source, Stage, TextureKind};
+use gfx10::translate::{Access, Request, Resource, Source, Stage, TextureKind, View};
 use gfx10::{Syntax, decode, print, translate};
 
 fn text(words: &[u32]) -> String {
@@ -110,7 +110,7 @@ fn textured_pixel_shader_binds_user_sgpr_descriptors() {
                 source: Source::UserSgpr(0),
                 kind: TextureKind::Tex2d,
                 access: Access::Sample,
-                raw: false,
+                view: View::Sampled,
             },
             Resource::Sampler {
                 slot: 0,
@@ -294,7 +294,7 @@ fn descriptors_loaded_through_user_pointers_become_memory_sources() {
                 },
                 kind: TextureKind::Tex2d,
                 access: Access::Sample,
-                raw: false,
+                view: View::Sampled,
             },
             Resource::Sampler {
                 slot: 0,
