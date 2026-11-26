@@ -3,8 +3,82 @@
 
 use super::*;
 use crate::opinfo::Ty;
+use std::collections::HashSet;
 
-pub(super) const FLOAT_PRELUDE: &str = include_str!("float_prelude.metal");
+const FLOAT_PRELUDE: &str = include_str!("float_prelude.metal");
+
+/// Where `prelude_for` puts the float helpers in a program being emitted.
+pub(super) const PRELUDE_HERE: &str = "\n// float helpers\n";
+
+/// The float helpers `program` calls, directly or through each other, in
+/// prelude order. Metal compile time grows with source size, and most
+/// programs call a handful of the helpers.
+pub(super) fn prelude_for(program: &str) -> String {
+    let helpers = helpers();
+    let mut used: HashSet<&str> = identifiers(program)
+        .filter(|n| helpers.iter().any(|(name, _)| name == n))
+        .collect();
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for (name, text) in &helpers {
+            if used.contains(name) {
+                for n in identifiers(text) {
+                    if helpers.iter().any(|(h, _)| *h == n) && used.insert(n) {
+                        grew = true;
+                    }
+                }
+            }
+        }
+    }
+    let mut out = String::from("\n");
+    for (name, text) in &helpers {
+        if used.contains(name) {
+            out.push_str(text);
+        }
+    }
+    out
+}
+
+fn identifiers(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|w| !w.is_empty())
+}
+
+/// Each helper's name and text (its leading comment included).
+fn helpers() -> Vec<(&'static str, &'static str)> {
+    let mut starts: Vec<usize> = Vec::new();
+    let mut comment = None;
+    let mut at = 0;
+    for line in FLOAT_PRELUDE.split_inclusive('\n') {
+        if line.starts_with("static inline") {
+            starts.push(comment.unwrap_or(at));
+            comment = None;
+        } else if line.starts_with("//") {
+            comment.get_or_insert(at);
+        } else if line.trim().is_empty() {
+            comment = None;
+        }
+        at += line.len();
+    }
+    starts.push(FLOAT_PRELUDE.len());
+    starts
+        .windows(2)
+        .map(|w| {
+            let text = &FLOAT_PRELUDE[w[0]..w[1]];
+            let sig = text
+                .lines()
+                .find(|l| l.starts_with("static inline"))
+                .unwrap_or_default();
+            let name = sig
+                .split('(')
+                .next()
+                .and_then(|head| head.split_whitespace().last())
+                .unwrap_or_default();
+            (name, text)
+        })
+        .collect()
+}
 
 /// The `#define`s `FLOAT_PRELUDE` reads, from a `PGM_RSRC1` and the parts
 /// left to Metal (`Request::plain_float`).

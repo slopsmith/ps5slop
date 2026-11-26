@@ -99,7 +99,7 @@ impl<'a> Tx<'a> {
         let mut out = String::from(PRELUDE);
         if self.floats {
             out.push_str(&float::mode_defines(self.req.rsrc1, self.req.plain_float));
-            out.push_str(float::FLOAT_PRELUDE);
+            out.push_str(float::PRELUDE_HERE);
         }
 
         if self.lockstep {
@@ -452,6 +452,9 @@ impl<'a> Tx<'a> {
                     self.body
                 ));
             }
+        }
+        if self.floats {
+            out = out.replacen(float::PRELUDE_HERE, &float::prelude_for(&out), 1);
         }
         out
     }

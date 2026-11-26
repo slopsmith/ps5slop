@@ -69,7 +69,9 @@ Cost: every mask write is an exchange, which costs a barrier or a meeting. Narro
 
 ### Float semantics
 
-Float VALU instructions follow the float mode of the stage's `PGM_RSRC1` (FLOAT_MODE, DX10_CLAMP, IEEE_MODE), fixed at translation; `s_setreg`, `s_round_mode` and `s_denorm_mode` do not change it. The rules are in `float_prelude.metal`, whose helpers take and return bit patterns, because Metal flushes f32 denormals in all arithmetic and comparisons (also in its safe math mode) and returns its own NaN. Checked against RDNA2 hardware with the oracle below:
+By default float VALU instructions are plain Metal arithmetic: on a GTA V street frame the exact semantics below drew the same pixels as plain arithmetic, at about four times the GPU time (most of it f16 arithmetic computed exactly) and 45% more compile time. `PS5SLOP_FLOAT_EXACT` turns on the exact form, per part: NaN rules, denormals, round modes, output modifiers.
+
+The exact form follows the float mode of the stage's `PGM_RSRC1` (FLOAT_MODE, DX10_CLAMP, IEEE_MODE), fixed at translation; `s_setreg`, `s_round_mode` and `s_denorm_mode` do not change it. The rules are in `float_prelude.metal`, whose helpers take and return bit patterns, because Metal flushes f32 denormals in all arithmetic and comparisons (also in its safe math mode) and returns its own NaN; a program carries only the helpers it calls. Checked against RDNA2 hardware with the oracle below (run it with `PS5SLOP_FLOAT_EXACT=all` to check them):
 
 - A NaN result is the first NaN source as it is (quieted only in IEEE mode), after input modifiers; subtraction negates its second source first. An invalid operation gives `0xFFC00000`; in an FMA an invalid product wins over a NaN addend. Min and max follow the ISA guide's pseudo-code, and two NaNs give the first.
 - Round modes other than nearest even come from the exact rounding error (TwoSum, `fma`), with tiny operands scaled up first so that Metal does not flush the error. f16 arithmetic runs in f32, where its sums, products and FMAs are exact or have an exact error, and is rounded to f16 once.

@@ -215,15 +215,15 @@ impl Metal {
         };
         let scratch_wave_bytes = (tmpring >> 12 & 0x1FFF) << 10;
         let plain_float = {
-            let p = diag::config().gpu.plain_float;
+            let e = diag::config().gpu.exact_float;
             [
-                (p.nan, shader::PLAIN_NAN),
-                (p.denorm, shader::PLAIN_DENORM),
-                (p.round, shader::PLAIN_ROUND),
-                (p.mods, shader::PLAIN_MODS),
+                (e.nan, shader::PLAIN_NAN),
+                (e.denorm, shader::PLAIN_DENORM),
+                (e.round, shader::PLAIN_ROUND),
+                (e.mods, shader::PLAIN_MODS),
             ]
             .iter()
-            .filter(|(on, _)| *on)
+            .filter(|(exact, _)| !*exact)
             .fold(0, |bits, (_, bit)| bits | bit)
         };
         let key = {
