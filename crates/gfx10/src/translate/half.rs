@@ -7,28 +7,6 @@ const F16_CONSTANTS: [u32; 9] = [
     0x3800, 0xB800, 0x3C00, 0xBC00, 0x4000, 0xC000, 0x4400, 0xC400, 0x3118,
 ];
 pub(super) const HALF_OPS: &[&str] = &[
-    "v_add_f16",
-    "v_sub_f16",
-    "v_subrev_f16",
-    "v_mul_f16",
-    "v_max_f16",
-    "v_min_f16",
-    "v_fma_f16",
-    "v_fmac_f16",
-    "v_mad_f16",
-    "v_max3_f16",
-    "v_min3_f16",
-    "v_med3_f16",
-    "v_rcp_f16",
-    "v_sqrt_f16",
-    "v_rsq_f16",
-    "v_floor_f16",
-    "v_ceil_f16",
-    "v_trunc_f16",
-    "v_rndne_f16",
-    "v_fract_f16",
-    "v_exp_f16",
-    "v_log_f16",
     "v_add_nc_u16",
     "v_add_nc_i16",
     "v_sub_nc_u16",
@@ -76,31 +54,37 @@ impl<'a> Tx<'a> {
             let u = self.usrc(pc, inst, v, i)?;
             let inline = (240..=248).contains(&v.src[i]);
             let mut e = if v.opsel_hi >> i & 1 != 0 && !inline {
-                let half = if v.opsel >> i & 1 != 0 { "y" } else { "x" };
-                format!("float(as_type<half2>({u}).{half})")
+                let shift = if v.opsel >> i & 1 != 0 { " >> 16" } else { "" };
+                format!("widen16({u}{shift})")
             } else {
-                format!("F({u})")
+                format!("in32({u})")
             };
             if v.neg_hi >> i & 1 != 0 {
-                e = format!("fabs({e})");
+                e = format!("({e} & 0x7fffffffu)");
             }
             if v.neg >> i & 1 != 0 {
-                e = format!("(-{e})");
+                e = format!("({e} ^ 0x80000000u)");
             }
             srcs.push(e);
         }
-        let mut r = format!("fma({}, {}, {})", srcs[0], srcs[1], srcs[2]);
-        if v.clamp {
-            r = format!("saturate({r})");
-        }
         let d = self.v(v.vdst as u16);
         self.regs.insert(format!("v{}", v.vdst));
-        let stmt = match inst.op.name {
-            "v_fma_mix_f32" => format!("{d} = U({r});"),
-            "v_fma_mixlo_f16" => {
-                format!("{d} = ({d} & 0xffff0000u) | uint(as_type<ushort>(half({r})));")
+        let stmt = if inst.op.name == "v_fma_mix_f32" {
+            let mut r = format!("fma32({})", srcs.join(", "));
+            if v.clamp {
+                r = format!("clamp32({r})");
             }
-            _ => format!("{d} = ({d} & 0xffffu) | (uint(as_type<ushort>(half({r}))) << 16);"),
+            format!("{d} = {r};")
+        } else {
+            let mut r = format!("fma_mix16({})", srcs.join(", "));
+            if v.clamp {
+                r = format!("clamp16({r})");
+            }
+            if inst.op.name == "v_fma_mixlo_f16" {
+                format!("{d} = ({d} & 0xffff0000u) | {r};")
+            } else {
+                format!("{d} = ({d} & 0xffffu) | {r} << 16;")
+            }
         };
         self.guard(&stmt);
         Ok(())
@@ -217,36 +201,21 @@ impl<'a> Tx<'a> {
         })
     }
 
-    pub(super) fn hsrc(
-        &mut self,
-        pc: usize,
-        inst: &Inst,
-        v: &Valu,
-        i: usize,
-    ) -> Result<String, TranslateError> {
-        let mut e = format!("as_type<half>(ushort({}))", self.src16(pc, inst, v, i)?);
-        if v.abs >> i & 1 != 0 {
-            e = format!("abs({e})");
-        }
-        if v.neg >> i & 1 != 0 {
-            e = format!("(-{e})");
-        }
-        Ok(e)
-    }
-
     /// Writes a 16-bit result to the low half of the destination, or with
     /// VOP3 `op_sel[3]` to the high half; the other half is kept (GFX10).
-    fn write16(&mut self, v: &Valu, r: &str) {
+    pub(super) fn write16(&mut self, v: &Valu, r: &str) {
         let d = self.v(v.vdst as u16);
         self.regs.insert(format!("v{}", v.vdst));
-        if v.enc == VEnc::E64 && v.opsel & 8 != 0 {
+        if v.enc == VEnc::Sdwa {
+            self.guard(&format!("{d} = {r} & 0xffffu;"));
+        } else if v.enc == VEnc::E64 && v.opsel & 8 != 0 {
             self.guard(&format!("{d} = ({d} & 0xffffu) | (({r} & 0xffffu) << 16);"));
         } else {
             self.guard(&format!("{d} = ({d} & 0xffff0000u) | ({r} & 0xffffu);"));
         }
     }
 
-    /// Scalar 16-bit float and integer operations.
+    /// Scalar 16-bit integer operations.
     pub(super) fn half16(
         &mut self,
         pc: usize,
@@ -256,59 +225,6 @@ impl<'a> Tx<'a> {
         let name = inst.op.name;
         if matches!(v.enc, VEnc::Dpp16 | VEnc::Dpp8) {
             return Err(err(pc, format!("unsupported form of {name}")));
-        }
-        let n = inst.op.srcs.len().min(3);
-        if name.ends_with("_f16") {
-            let mut s = Vec::new();
-            for i in 0..n {
-                s.push(self.hsrc(pc, inst, v, i)?);
-            }
-            if name == "v_fmac_f16" {
-                let d = self.v(v.vdst as u16);
-                s.push(format!("as_type<half>(ushort({d}))"));
-            }
-            let r = match name {
-                "v_add_f16" => format!("{} + {}", s[0], s[1]),
-                "v_sub_f16" => format!("{} - {}", s[0], s[1]),
-                "v_subrev_f16" => format!("{} - {}", s[1], s[0]),
-                "v_mul_f16" => format!("{} * {}", s[0], s[1]),
-                "v_max_f16" => format!("fmax({}, {})", s[0], s[1]),
-                "v_min_f16" => format!("fmin({}, {})", s[0], s[1]),
-                "v_fma_f16" | "v_fmac_f16" | "v_mad_f16" => {
-                    format!("fma({}, {}, {})", s[0], s[1], s[2])
-                }
-                "v_max3_f16" => format!("fmax(fmax({}, {}), {})", s[0], s[1], s[2]),
-                "v_min3_f16" => format!("fmin(fmin({}, {}), {})", s[0], s[1], s[2]),
-                "v_med3_f16" => format!(
-                    "fmax(fmin({a}, {b}), fmin(fmax({a}, {b}), {c}))",
-                    a = s[0],
-                    b = s[1],
-                    c = s[2]
-                ),
-                "v_rcp_f16" => format!("1.0h / {}", s[0]),
-                "v_sqrt_f16" => format!("sqrt({})", s[0]),
-                "v_rsq_f16" => format!("rsqrt({})", s[0]),
-                "v_floor_f16" => format!("floor({})", s[0]),
-                "v_ceil_f16" => format!("ceil({})", s[0]),
-                "v_trunc_f16" => format!("trunc({})", s[0]),
-                "v_rndne_f16" => format!("rint({})", s[0]),
-                "v_fract_f16" => format!("fract({})", s[0]),
-                "v_exp_f16" => format!("exp2({})", s[0]),
-                "v_log_f16" => format!("log2({})", s[0]),
-                _ => return Err(err(pc, format!("unsupported instruction {name}"))),
-            };
-            let mut r = format!("half({r})");
-            match v.omod {
-                1 => r = format!("({r} * 2.0h)"),
-                2 => r = format!("({r} * 4.0h)"),
-                3 => r = format!("({r} * 0.5h)"),
-                _ => {}
-            }
-            if v.clamp {
-                r = format!("saturate({r})");
-            }
-            self.write16(v, &format!("uint(as_type<ushort>({r}))"));
-            return Ok(());
         }
         let a = self.src16(pc, inst, v, 0)?;
         let b = self.src16(pc, inst, v, 1)?;
@@ -346,7 +262,7 @@ impl<'a> Tx<'a> {
             self.guard(&format!("{d} = {r};"));
             return Ok(());
         }
-        if n == 3 {
+        if inst.op.srcs.len() >= 3 {
             let c = self.src16(pc, inst, v, 2)?;
             let (uc, ic) = (format!("({c} & 0xffffu)"), format!("int(short({c}))"));
             let signed = name.ends_with("_i16");
@@ -412,14 +328,22 @@ impl<'a> Tx<'a> {
         } else {
             return Err(err(pc, format!("unsupported form of {name}")));
         };
-        let n = inst.op.srcs.len().min(3);
+        let n = if name == "v_pk_fmac_f16" {
+            2
+        } else {
+            inst.op.srcs.len().min(3)
+        };
         let mut lo = Vec::new();
+
         let mut hi = Vec::new();
         for i in 0..n {
             let code = v.src[i];
+            // In the VOP2 form an inline constant fills the low half only
+            // (RDNA2 hardware); VOP3P is assumed to replicate it.
             let u = if (240..=248).contains(&code) {
                 let c = F16_CONSTANTS[code as usize - 240];
-                format!("0x{:x}u", c | c << 16)
+                let hi = if v.enc == VEnc::E32 { 0 } else { c << 16 };
+                format!("0x{:x}u", c | hi)
             } else {
                 self.usrc(pc, inst, v, i)?
             };
@@ -428,45 +352,38 @@ impl<'a> Tx<'a> {
                 (opsel_hi >> i & 1, v.neg_hi >> i & 1, &mut hi),
             ] {
                 let shift = if sel != 0 { " >> 16" } else { "" };
-                let mut e = format!("as_type<half>(ushort({u}{shift}))");
+                let mut e = format!("(({u}{shift}) & 0xffffu)");
                 if neg != 0 {
-                    e = format!("(-{e})");
+                    e = format!("({e} ^ 0x8000u)");
                 }
                 out.push(e);
             }
         }
         if name == "v_pk_fmac_f16" {
             let d = self.v(v.vdst as u16);
-            lo.push(format!("as_type<half>(ushort({d}))"));
-            hi.push(format!("as_type<half>(ushort({d} >> 16))"));
+            lo.push(format!("({d} & 0xffffu)"));
+            hi.push(format!("({d} >> 16)"));
         }
-        let f = |s: &[String]| -> Option<String> {
-            Some(match name {
-                "v_pk_add_f16" => format!("{} + {}", s[0], s[1]),
-                "v_pk_mul_f16" => format!("{} * {}", s[0], s[1]),
-                "v_pk_max_f16" => format!("fmax({}, {})", s[0], s[1]),
-                "v_pk_min_f16" => format!("fmin({}, {})", s[0], s[1]),
-                "v_pk_fma_f16" | "v_pk_fmac_f16" => format!("fma({}, {}, {})", s[0], s[1], s[2]),
-                _ => return None,
-            })
+        let helper = match name {
+            "v_pk_add_f16" => "add16",
+            "v_pk_mul_f16" => "mul16",
+            "v_pk_max_f16" => "max16",
+            "v_pk_min_f16" => "min16",
+            "v_pk_fma_f16" | "v_pk_fmac_f16" => "fma16",
+            _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
-        let (Some(l), Some(h)) = (f(&lo), f(&hi)) else {
-            return Err(err(pc, format!("unsupported instruction {name}")));
-        };
-        let (l, h) = if v.clamp {
-            (
-                format!("saturate(half({l}))"),
-                format!("saturate(half({h}))"),
-            )
-        } else {
-            (format!("half({l})"), format!("half({h})"))
-        };
+        let (mut l, mut h) = (
+            format!("{helper}({})", lo.join(", ")),
+            format!("{helper}({})", hi.join(", ")),
+        );
+        if v.clamp {
+            (l, h) = (format!("clamp16({l})"), format!("clamp16({h})"));
+        }
         let d = self.v(v.vdst as u16);
         self.regs.insert(format!("v{}", v.vdst));
-        self.guard(&format!("{d} = as_type<uint>(half2({l}, {h}));"));
+        self.guard(&format!("{d} = {l} | {h} << 16;"));
         Ok(())
     }
-
     /// Indexed VGPR moves through M0. VGPRs are named locals, so an indexed
     /// access is a `switch` whose cases `emit` fills in (`VREAD`, `VWRITE`).
     pub(super) fn movrel(

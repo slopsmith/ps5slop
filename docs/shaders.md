@@ -67,7 +67,19 @@ In lockstep programs:
 
 Cost: every mask write is an exchange, which costs a barrier or a meeting. Narrowing that to the masks that really need the whole wave is planned (below).
 
+### Float semantics
+
+Float VALU instructions follow the float mode of the stage's `PGM_RSRC1` (FLOAT_MODE, DX10_CLAMP, IEEE_MODE), fixed at translation; `s_setreg`, `s_round_mode` and `s_denorm_mode` do not change it. The rules are in `float_prelude.metal`, whose helpers take and return bit patterns, because Metal flushes f32 denormals in all arithmetic and comparisons (also in its safe math mode) and returns its own NaN. Checked against RDNA2 hardware with the oracle below:
+
+- A NaN result is the first NaN source as it is (quieted only in IEEE mode), after input modifiers; subtraction negates its second source first. An invalid operation gives `0xFFC00000`; in an FMA an invalid product wins over a NaN addend. Min and max follow the ISA guide's pseudo-code, and two NaNs give the first.
+- Round modes other than nearest even come from the exact rounding error (TwoSum, `fma`), with tiny operands scaled up first so that Metal does not flush the error. f16 arithmetic runs in f32, where its sums, products and FMAs are exact or have an exact error, and is rounded to f16 once.
+- In modes that keep f32 denormals, operations a denormal reaches run as exact integer arithmetic. Results below the smallest normal are flushed before rounding.
+- Output modifiers are ignored in IEEE mode and when output denormals are kept; clamp turns NaN into 0 under DX10_CLAMP.
+- `v_mad_f32` and its legacy, `mac`, `madmk` and `madak` forms round the product, as GFX10.1 does; GFX10.3 runs them fused, so the oracle's results for them differ in the last bit by design.
+- `v_rcp`, `v_rsq`, `v_sqrt`, `v_exp`, `v_log`, `v_sin` and `v_cos` take Metal's functions with the hardware's special cases. AMD's approximations are not documented, and their f32 results differ from hardware's in the last bit or so for many inputs.
+
 ### Control flow
+
 
 - Without branches the body is straight-line code.
 - **Structured** (`Nest` in `flow.rs`): the translator reads branches as the guest compiler's structured code. A forward conditional branch over a region becomes `if`, with an `else` when the region ends in an unconditional branch further on; a backward branch target starts a loop up to the last branch back to it; branches back to the innermost loop's start are `continue` and branches just past it are `break`.

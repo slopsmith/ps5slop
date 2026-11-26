@@ -40,19 +40,6 @@ using namespace metal;
 #define F(x) as_type<float>(uint(x))
 #define U(x) as_type<uint>(float(x))
 
-// v_cmp_class_f32's mask: signalling NaN, quiet NaN, -inf, -normal,
-// -denormal, -0, +0, +denormal, +normal, +inf.
-static inline bool fclass(float x, uint mask) {
-    uint b = as_type<uint>(x);
-    bool neg = (b >> 31) != 0u;
-    uint e = (b >> 23) & 0xffu, f = b & 0x7fffffu;
-    uint k;
-    if (e == 0xffu) k = f != 0u ? ((f >> 22) != 0u ? 1u : 0u) : (neg ? 2u : 9u);
-    else if (e == 0u) k = f != 0u ? (neg ? 4u : 7u) : (neg ? 5u : 6u);
-    else k = neg ? 3u : 8u;
-    return (mask >> k & 1u) != 0u;
-}
-
 static inline uint bfe_u32(uint v, uint o, uint w) {
     w = min(w, 32u);
     if (w == 0u) return 0u;
@@ -147,10 +134,6 @@ static inline uint quadmask64(ulong v) {
         if ((v >> (4u * q)) & 0xful) r |= 1u << q;
     }
     return r;
-}
-
-static inline float med3(float a, float b, float c) {
-    return fmax(fmin(a, b), fmin(fmax(a, b), c));
 }
 
 static inline int med3_i(int a, int b, int c) {

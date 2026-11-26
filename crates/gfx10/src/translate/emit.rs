@@ -95,6 +95,9 @@ impl<'a> Tx<'a> {
 
     fn emit(&mut self) -> String {
         let mut out = String::from(PRELUDE);
+        out.push_str(&float::mode_defines(self.req.rsrc1));
+        out.push_str(float::FLOAT_PRELUDE);
+
         if self.lockstep {
             self.simd_lane = true;
             out.push_str(&format!(

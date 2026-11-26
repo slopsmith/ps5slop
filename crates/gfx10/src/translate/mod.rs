@@ -14,8 +14,10 @@ use crate::opinfo::Fmt;
 use crate::print::{Syntax, mimg_addr_count, print};
 
 mod emit;
+mod float;
 mod flow;
 mod half;
+
 mod image;
 mod mem;
 mod prelude;
@@ -870,22 +872,5 @@ fn cmp_op(op: &str) -> Option<&'static str> {
         "lt" => "<",
         "le" => "<=",
         _ => return None,
-    })
-}
-
-fn fcmp(op: &str, a: &str, b: &str) -> Option<String> {
-    Some(match op {
-        "f" => "false".into(),
-        "tru" => "true".into(),
-        "o" => format!("(!isnan({a}) && !isnan({b}))"),
-        "u" => format!("(isnan({a}) || isnan({b}))"),
-        "lg" => format!("(({a}) < ({b}) || ({a}) > ({b}))"),
-        "neq" => format!("!(({a}) == ({b}))"),
-        "nge" => format!("!(({a}) >= ({b}))"),
-        "nlg" => format!("!(({a}) < ({b}) || ({a}) > ({b}))"),
-        "ngt" => format!("!(({a}) > ({b}))"),
-        "nle" => format!("!(({a}) <= ({b}))"),
-        "nlt" => format!("!(({a}) < ({b}))"),
-        _ => format!("({a}) {} ({b})", cmp_op(op)?),
     })
 }

@@ -1079,18 +1079,14 @@ fn typed_buffer_loads_take_the_instruction_format_and_fma_mix_reads_halves() {
     ];
     let t = compute(&code, 4, 4 << 1);
     assert!(t.msl.contains(&format!("& ~0x7f000u) | {}u)", 77 << 12)));
+    assert!(t.msl.contains("fma32(widen16(v2), in32(v3), widen16(v4))"));
     assert!(
         t.msl
-            .contains("fma(float(as_type<half2>(v2).x), F(v3), float(as_type<half2>(v4).x))")
-    );
-    assert!(
-        t.msl.contains(
-            "saturate(fma(float(as_type<half2>(v2).y), (-float(as_type<half2>(v3).x)), F("
-        )
+            .contains("clamp16(fma_mix16(widen16(v2 >> 16), (widen16(v3) ^ 0x80000000u), in32(")
     );
     assert!(
         t.msl
-            .contains("fma(fabs(F(v2)), float(as_type<half2>(v3).x), F(v4))")
+            .contains("fma_mix16((in32(v2) & 0x7fffffffu), widen16(v3), in32(v4))")
     );
     compile(&t.msl);
 }
@@ -1155,7 +1151,8 @@ fn wave32_saveexec_xad_class_addtid_and_image_atomics() {
     assert!(t.msl.contains("uint old = exec_lo; uint n = s3 & old;"));
     assert!(t.msl.contains("uint n = ~s3 & old;"));
     assert!(t.msl.contains("(v2 ^ v3) + v4"));
-    assert!(t.msl.contains("fclass(F(v1), v2)"));
+    assert!(t.msl.contains("class32(v1, v2)"));
+
     assert!(
         t.msl
             .contains("4u * ((lid.x + lid.y * 64u + lid.z * 64u) & 63u)")

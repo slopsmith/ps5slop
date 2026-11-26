@@ -238,8 +238,14 @@ impl<'a> Tx<'a> {
         if PACKED_F16.contains(&name) {
             return self.pk_f16(pc, inst, v);
         }
+        if float::is_float16(name) {
+            return self.float16(pc, inst, v);
+        }
         if HALF_OPS.contains(&name) {
             return self.half16(pc, inst, v);
+        }
+        if self.float32(pc, inst, v)? {
+            return Ok(());
         }
         if name.starts_with("v_movrel") || name == "v_swaprel_b32" {
             return self.movrel(pc, inst, v);
@@ -266,39 +272,15 @@ impl<'a> Tx<'a> {
         }
         let f = |t: &mut Self, i: usize| t.fsrc(pc, inst, v, i);
         let u = |t: &mut Self, i: usize| t.usrc(pc, inst, v, i);
-        let k = || format!("F(0x{:x}u)", inst.literal.unwrap_or(0));
         let vdst = v.vdst as u16;
-        let old = format!("F(v{vdst})");
         self.regs.insert(format!("v{vdst}"));
-        let fl: Option<String> = Some(match name {
+        match name {
             "v_mov_b32" => {
                 let a = u(self, 0)?;
                 let d = self.v(vdst);
                 self.guard(&format!("{d} = {a};"));
                 return Ok(());
             }
-            "v_add_f32" => format!("{} + {}", f(self, 0)?, f(self, 1)?),
-            "v_sub_f32" => format!("{} - {}", f(self, 0)?, f(self, 1)?),
-            "v_subrev_f32" => format!("{} - {}", f(self, 1)?, f(self, 0)?),
-            "v_mul_f32" => format!("{} * {}", f(self, 0)?, f(self, 1)?),
-            "v_mul_legacy_f32" => {
-                let (a, b) = (f(self, 0)?, f(self, 1)?);
-                format!("(({a}) == 0.0f || ({b}) == 0.0f) ? 0.0f : ({a}) * ({b})")
-            }
-            "v_max_f32" => format!("fmax({}, {})", f(self, 0)?, f(self, 1)?),
-            "v_min_f32" => format!("fmin({}, {})", f(self, 0)?, f(self, 1)?),
-            "v_mac_f32" | "v_mac_legacy_f32" => {
-                format!("{} * {} + {old}", f(self, 0)?, f(self, 1)?)
-            }
-            "v_fmac_f32" => format!("fma({}, {}, {old})", f(self, 0)?, f(self, 1)?),
-            "v_madmk_f32" => format!("{} * {} + {}", f(self, 0)?, k(), f(self, 1)?),
-            "v_madak_f32" => format!("{} * {} + {}", f(self, 0)?, f(self, 1)?, k()),
-            "v_fmamk_f32" => format!("fma({}, {}, {})", f(self, 0)?, k(), f(self, 1)?),
-            "v_fmaak_f32" => format!("fma({}, {}, {})", f(self, 0)?, f(self, 1)?, k()),
-            "v_mad_f32" | "v_mad_legacy_f32" => {
-                format!("{} * {} + {}", f(self, 0)?, f(self, 1)?, f(self, 2)?)
-            }
-            "v_fma_f32" => format!("fma({}, {}, {})", f(self, 0)?, f(self, 1)?, f(self, 2)?),
             "v_med3_i32" => {
                 let (a, b, c) = (u(self, 0)?, u(self, 1)?, u(self, 2)?);
                 let ui = format!("uint(med3_i(int({a}), int({b}), int({c})))");
@@ -329,59 +311,7 @@ impl<'a> Tx<'a> {
                 self.guard(&format!("{d} = {ui};"));
                 return Ok(());
             }
-            "v_min3_f32" => format!(
-                "fmin(fmin({}, {}), {})",
-                f(self, 0)?,
-                f(self, 1)?,
-                f(self, 2)?
-            ),
-            "v_max3_f32" => format!(
-                "fmax(fmax({}, {}), {})",
-                f(self, 0)?,
-                f(self, 1)?,
-                f(self, 2)?
-            ),
-            "v_med3_f32" => format!("med3({}, {}, {})", f(self, 0)?, f(self, 1)?, f(self, 2)?),
-            "v_rcp_f32" | "v_rcp_iflag_f32" => format!("1.0f / {}", f(self, 0)?),
-            "v_rsq_f32" => format!("rsqrt({})", f(self, 0)?),
-            "v_sqrt_f32" => format!("sqrt({})", f(self, 0)?),
-            "v_sin_f32" => format!("sin({} * 6.2831853071795864f)", f(self, 0)?),
-            "v_cos_f32" => format!("cos({} * 6.2831853071795864f)", f(self, 0)?),
-            "v_exp_f32" => format!("exp2({})", f(self, 0)?),
-            "v_log_f32" => format!("log2({})", f(self, 0)?),
-            "v_fract_f32" => format!("fract({})", f(self, 0)?),
-            "v_floor_f32" => format!("floor({})", f(self, 0)?),
-            "v_ceil_f32" => format!("ceil({})", f(self, 0)?),
-            "v_trunc_f32" => format!("trunc({})", f(self, 0)?),
-            "v_rndne_f32" => format!("rint({})", f(self, 0)?),
-            "v_ldexp_f32" => {
-                let a = f(self, 0)?;
-                let b = u(self, 1)?;
-                format!("ldexp({a}, int({b}))")
-            }
-            "v_cvt_f32_i32" => format!("float(int({}))", u(self, 0)?),
-            "v_cvt_f32_u32" => format!("float({})", u(self, 0)?),
-            "v_cvt_f32_ubyte0" => format!("float({} & 0xffu)", u(self, 0)?),
-            "v_cvt_off_f32_i4" => format!("float(int({} << 28) >> 28) / 16.0f", u(self, 0)?),
-            "v_cvt_f32_ubyte1" => format!("float(({} >> 8) & 0xffu)", u(self, 0)?),
-            "v_cvt_f32_ubyte2" => format!("float(({} >> 16) & 0xffu)", u(self, 0)?),
-            "v_cvt_f32_ubyte3" => format!("float({} >> 24)", u(self, 0)?),
-            "v_cvt_f32_f16" => format!("float(as_type<half2>({}).x)", u(self, 0)?),
-            "v_cubeid_f32" | "v_cubesc_f32" | "v_cubetc_f32" | "v_cubema_f32" => format!(
-                "cube_{}({}, {}, {})",
-                &name[6..8],
-                f(self, 0)?,
-                f(self, 1)?,
-                f(self, 2)?
-            ),
-            _ => String::new(),
-        })
-        .filter(|s| !s.is_empty());
-        if let Some(e) = fl {
-            let e = self.output_mods(v, &e);
-            let d = self.v(vdst);
-            self.guard(&format!("{d} = U({e});"));
-            return Ok(());
+            _ => {}
         }
         let ui = match name {
             "v_cndmask_b32" => {
@@ -517,33 +447,6 @@ impl<'a> Tx<'a> {
                 u(self, 1)?,
                 u(self, 2)?
             ),
-            "v_cvt_u32_f32" => format!("uint(clamp({}, 0.0f, 4294967295.0f))", f(self, 0)?),
-            "v_cvt_i32_f32" => format!(
-                "uint(int(clamp({}, -2147483648.0f, 2147483647.0f)))",
-                f(self, 0)?
-            ),
-            "v_cvt_flr_i32_f32" => format!("uint(int(floor({})))", f(self, 0)?),
-            "v_cvt_rpi_i32_f32" => format!("uint(int(floor({} + 0.5f)))", f(self, 0)?),
-            "v_cvt_pkrtz_f16_f32" => format!(
-                "as_type<uint>(half2(half_rtz({}), half_rtz({})))",
-                f(self, 0)?,
-                f(self, 1)?
-            ),
-            "v_cvt_f16_f32" => format!("uint(as_type<ushort>(half({})))", f(self, 0)?),
-            "v_cvt_pknorm_u16_f32" => {
-                format!(
-                    "pack_float_to_unorm2x16(float2({}, {}))",
-                    f(self, 0)?,
-                    f(self, 1)?
-                )
-            }
-            "v_cvt_pknorm_i16_f32" => {
-                format!(
-                    "pack_float_to_snorm2x16(float2({}, {}))",
-                    f(self, 0)?,
-                    f(self, 1)?
-                )
-            }
             "v_cvt_pk_u16_u32" => format!(
                 "(min({}, 0xffffu)) | (min({}, 0xffffu) << 16)",
                 u(self, 0)?,
@@ -853,20 +756,6 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
-    pub(super) fn output_mods(&self, v: &Valu, e: &str) -> String {
-        let mut e = format!("({e})");
-        match v.omod {
-            1 => e = format!("({e} * 2.0f)"),
-            2 => e = format!("({e} * 4.0f)"),
-            3 => e = format!("({e} * 0.5f)"),
-            _ => {}
-        }
-        if v.clamp {
-            e = format!("saturate({e})");
-        }
-        e
-    }
-
     pub(super) fn vopc(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
         let name = inst.op.name;
         let cmpx = name.starts_with("v_cmpx_");
@@ -876,23 +765,9 @@ impl<'a> Tx<'a> {
         let (op, ty) = rest
             .rsplit_once('_')
             .ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?;
+        let float = self.fcompare(pc, inst, v, op, ty)?;
         let cond = match ty {
-            "f32" if op == "class" => {
-                let a = self.fsrc(pc, inst, v, 0)?;
-                let m = self.usrc(pc, inst, v, 1)?;
-                format!("fclass({a}, {m})")
-            }
-            "f32" => {
-                let (a, b) = (self.fsrc(pc, inst, v, 0)?, self.fsrc(pc, inst, v, 1)?);
-                fcmp(op, &a, &b)
-                    .ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?
-            }
-            "f16" if op != "class" => {
-                let (a, b) = (self.hsrc(pc, inst, v, 0)?, self.hsrc(pc, inst, v, 1)?);
-                let (a, b) = (format!("float({a})"), format!("float({b})"));
-                fcmp(op, &a, &b)
-                    .ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?
-            }
+            _ if float.is_some() => float.unwrap_or_default(),
             "i32" | "u32" | "i16" | "u16" => {
                 let (a, b) = (self.usrc(pc, inst, v, 0)?, self.usrc(pc, inst, v, 1)?);
                 let (a, b) = match ty {
