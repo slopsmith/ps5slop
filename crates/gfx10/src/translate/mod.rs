@@ -85,6 +85,10 @@ pub struct Request<'a> {
     /// The CB rounds what it writes to them toward zero (measured on RDNA2),
     /// so the program does that itself.
     pub half_targets: u8,
+    /// Pixel stage: MRTs (bit n for MRT n) whose Metal target encodes sRGB
+    /// itself. The program exports the linear value of the code the CB's
+    /// encoder gives, which differs from the exact curve in a few steps.
+    pub srgb_targets: u8,
     /// Pixel stage: MRT0 blends with a `SRC1` factor, so the MRT1 export is
     /// its second blend source rather than a target of its own.
     pub dual_source: bool,

@@ -170,6 +170,8 @@ impl<'a> Tx<'a> {
                         n => format!("cb_pack(float4({value}), {}u, {n}u)", packed & 0x1F),
                     };
                     format!("o.c{target} = {};", packed_store(target, &word, packed))
+                } else if self.req.srgb_targets >> target & 1 != 0 && !matches!(fmt, 7 | 8) {
+                    format!("o.c{target} = cb_srgb_snap({value});")
                 } else {
                     format!("o.c{target} = {value};")
                 }

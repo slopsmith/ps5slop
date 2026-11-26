@@ -70,6 +70,8 @@ pub(super) struct Variant {
     pub(super) drop_depth_export: bool,
     /// Pixel: `Request::half_targets`.
     pub(super) half_targets: u8,
+    /// Pixel: `Request::srgb_targets`.
+    pub(super) srgb_targets: u8,
     /// Pixel: `Request::dual_source`.
     pub(super) dual_source: bool,
     /// Pixel: `Request::blends`.
@@ -323,6 +325,7 @@ impl Metal {
                 grid_bounds: variant.grid_bounds,
                 drop_depth_export: variant.drop_depth_export,
                 half_targets: variant.half_targets,
+                srgb_targets: variant.srgb_targets,
                 dual_source: variant.dual_source,
                 blends: variant.blends,
                 logic_op: variant.logic_op,
@@ -794,6 +797,17 @@ pub(super) fn half_targets(c: &[u32]) -> u8 {
         .filter(|&n| {
             ColorTarget::read(c, n)
                 .is_some_and(|t| t.format.number == 7 && matches!(t.format.layout, 2 | 5 | 12))
+        })
+        .fold(0, |m, n| m | 1 << n)
+}
+
+/// The MRTs Metal encodes as sRGB (`Request::srgb_targets`); packed sRGB
+/// targets are encoded by the program.
+pub(super) fn srgb_targets(c: &[u32]) -> u8 {
+    (0..8)
+        .filter(|&n| {
+            ColorTarget::read(c, n)
+                .is_some_and(|t| t.format.number == 6 && !packed_target(t.format))
         })
         .fold(0, |m, n| m | 1 << n)
 }

@@ -270,6 +270,7 @@ impl Metal {
                     col_format,
                     drop_depth_export: !depth_bound,
                     half_targets: half_targets(c),
+                    srgb_targets: srgb_targets(c),
                     dual_source: dual_source(c),
                     blends: blends(c),
                     logic_op,

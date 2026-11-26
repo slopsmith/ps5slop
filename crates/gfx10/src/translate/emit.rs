@@ -565,6 +565,8 @@ impl<'a> Tx<'a> {
                 format!("cb_blend(blend_src{n}, float4(d{n}), {src1}, blend_color, {w:#x}u)");
             if self.req.half_targets >> n & 1 != 0 {
                 out.push_str(&format!("o.c{n} = cb_half({blend}); "));
+            } else if self.req.srgb_targets >> n & 1 != 0 {
+                out.push_str(&format!("o.c{n} = cb_srgb_snap({blend}); "));
             } else {
                 out.push_str(&format!("o.c{n} = {blend}; "));
             }

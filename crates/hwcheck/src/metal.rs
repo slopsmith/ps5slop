@@ -44,6 +44,7 @@ pub fn request<'a>(case: &Case, code: &'a [u32]) -> Request<'a> {
         grid_bounds: false,
         drop_depth_export: false,
         half_targets: 0,
+        srgb_targets: 0,
         dual_source: false,
         blends: [0; 8],
         logic_op: 0xCC,

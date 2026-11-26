@@ -31,6 +31,7 @@ pub struct Capture {
     pub grid_bounds: bool,
     pub drop_depth_export: bool,
     pub half_targets: u8,
+    pub srgb_targets: u8,
     pub dual_source: bool,
     pub blends: [u32; 8],
     pub logic_op: u8,
@@ -66,6 +67,7 @@ impl Capture {
             grid_bounds: req.grid_bounds,
             drop_depth_export: req.drop_depth_export,
             half_targets: req.half_targets,
+            srgb_targets: req.srgb_targets,
             dual_source: req.dual_source,
             blends: req.blends,
             logic_op: req.logic_op,
@@ -97,6 +99,7 @@ impl Capture {
             grid_bounds: self.grid_bounds,
             drop_depth_export: self.drop_depth_export,
             half_targets: self.half_targets,
+            srgb_targets: self.srgb_targets,
             dual_source: self.dual_source,
             blends: self.blends,
             logic_op: self.logic_op,
@@ -142,7 +145,8 @@ impl Capture {
                 0
             }
             | if self.dual_source { DUAL_SOURCE } else { 0 }
-            | u32::from(self.half_targets) << 8;
+            | u32::from(self.half_targets) << 8
+            | u32::from(self.srgb_targets) << 16;
         w.extend_from_slice(&[self.address as u32, (self.address >> 32) as u32, flags]);
         let (t, s) = (self.logic_targets, self.swizzles);
         w.extend_from_slice(&[
@@ -252,6 +256,7 @@ impl Capture {
             grid_bounds: flags & GRID_BOUNDS != 0,
             drop_depth_export: flags & DROP_DEPTH_EXPORT != 0,
             half_targets: (flags >> 8) as u8,
+            srgb_targets: (flags >> 16) as u8,
             dual_source: flags & DUAL_SOURCE != 0,
             blends,
             logic_op,
