@@ -347,8 +347,8 @@ pub(super) fn image_format(format: u32) -> Option<(MTLPixelFormat, u32)> {
 /// How many channels GFX10 image format `format` stores.
 pub(super) fn channels(format: u32) -> u8 {
     match format {
-        1..=13 | 20..=22 | 128 | 131 | 140 | 175 | 176 | 285 => 1,
-        14..=19 | 23..=29 | 62..=64 | 129 | 137 | 141..=146 | 177 | 178 => 2,
+        1..=13 | 20..=22 | 128 | 140 | 145 | 146 | 175 | 176 => 1,
+        14..=19 | 23..=29 | 62..=64 | 129 | 137 | 141..=144 | 177 | 178 => 2,
         30..=43 | 72..=74 | 132 | 133 | 179 | 180 => 3,
         _ => 4,
     }
@@ -369,9 +369,9 @@ pub(super) fn channel_selects(image: &Image) -> [u8; 4] {
 pub(super) fn coded_format(format: u32) -> Option<(MTLPixelFormat, u32)> {
     use MTLPixelFormat as P;
     let bytes = match format {
-        1..=6 | 128 | 131 | 137 => 1,
+        1..=6 | 128 | 137 => 1,
         7..=19 | 129 | 133 | 135 | 136 => 2,
-        20..=61 | 130 | 132 | 140..=144 => 4,
+        20..=61 | 130..=132 | 140..=144 | 285 => 4,
         62..=71 | 145 | 146 => 8,
         75..=77 => 16,
         _ => return None,
