@@ -50,6 +50,7 @@ impl<'a> Tx<'a> {
         inst: &Inst,
         v: &Valu,
     ) -> Result<(), TranslateError> {
+        self.floats = true;
         let mut srcs = Vec::new();
         for i in 0..3 {
             let u = self.usrc(pc, inst, v, i)?;
@@ -324,6 +325,7 @@ impl<'a> Tx<'a> {
         inst: &Inst,
         v: &Valu,
     ) -> Result<(), TranslateError> {
+        self.floats = true;
         let name = inst.op.name;
         let (opsel, opsel_hi) = if v.enc == VEnc::P {
             (v.opsel, v.opsel_hi)

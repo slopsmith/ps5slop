@@ -517,6 +517,8 @@ struct Tx<'a> {
     lockstep: bool,
     /// The body holds indexed VGPR accesses (`movrel`) to fill in.
     movrel: bool,
+    /// The body uses float VALU helpers (`FLOAT_PRELUDE`).
+    floats: bool,
     ij_vgprs: BTreeMap<u16, Interp>,
     user_base: u16,
 }
@@ -635,7 +637,9 @@ impl<'a> Tx<'a> {
             simd_lane: false,
             dpp_lane_off: false,
             movrel: false,
+            floats: false,
             ij_vgprs,
+
             user_base,
         }
     }

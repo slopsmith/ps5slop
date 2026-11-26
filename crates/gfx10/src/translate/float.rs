@@ -114,6 +114,7 @@ impl<'a> Tx<'a> {
         v: &Valu,
         i: usize,
     ) -> Result<String, TranslateError> {
+        self.floats = true;
         let mut e = self.usrc(pc, inst, v, i)?;
         if v.abs >> i & 1 != 0 {
             e = format!("({e} & 0x7fffffffu)");
@@ -132,7 +133,9 @@ impl<'a> Tx<'a> {
         v: &Valu,
         i: usize,
     ) -> Result<String, TranslateError> {
+        self.floats = true;
         let mut e = format!("({} & 0xffffu)", self.src16(pc, inst, v, i)?);
+
         if v.abs >> i & 1 != 0 {
             e = format!("({e} & 0x7fffu)");
         }
@@ -294,6 +297,7 @@ impl<'a> Tx<'a> {
         } else {
             self.mods32(v, float)
         };
+        self.floats = true;
         self.regs.insert(format!("v{vdst}"));
         let d = self.v(vdst);
         self.guard(&format!("{d} = {value};"));
@@ -307,9 +311,11 @@ impl<'a> Tx<'a> {
         inst: &Inst,
         v: &Valu,
     ) -> Result<(), TranslateError> {
+        self.floats = true;
         let name = inst.op.name;
         let n = inst.op.srcs.len().min(3);
         let mut s = Vec::new();
+
         for i in 0..n {
             s.push(match inst.op.srcs[i] {
                 Ty::F16 | Ty::PkF16 => self.hbits(pc, inst, v, i)?,
