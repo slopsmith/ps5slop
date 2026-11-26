@@ -339,6 +339,7 @@ pub(super) fn image_format(format: u32) -> Option<(MTLPixelFormat, u32)> {
         180 => (P::BC6H_RGBFloat, 16),
         181 => (P::BC7_RGBAUnorm, 16),
         182 => (P::BC7_RGBAUnorm_sRGB, 16),
+        140 => (P::R32Float, 4),
         _ => return None,
     })
 }
