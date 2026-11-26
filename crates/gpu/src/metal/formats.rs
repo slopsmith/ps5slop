@@ -249,6 +249,26 @@ pub(super) fn image_format(format: u32) -> Option<(MTLPixelFormat, u32)> {
     })
 }
 
+/// How many channels GFX10 image format `format` stores.
+pub(super) fn channels(format: u32) -> u8 {
+    match format {
+        1..=13 | 20..=22 | 128 | 131 | 140 | 175 | 176 | 285 => 1,
+        14..=19 | 23..=29 | 62..=64 | 129 | 137 | 141..=146 | 177 | 178 => 2,
+        30..=43 | 72..=74 | 132 | 133 | 179 | 180 => 3,
+        _ => 4,
+    }
+}
+
+/// An image's channel selects (`DST_SEL_X..W`) as the hardware applies them:
+/// selecting a channel the format does not store gives channel `c mod n`
+/// of its `n` channels (measured on RDNA2).
+pub(super) fn channel_selects(image: &Image) -> [u8; 4] {
+    let n = channels(image.format);
+    image
+        .swizzle
+        .map(|s| if s >= 4 { 4 + (s - 4) % n } else { s })
+}
+
 pub(super) fn is_depth_format(f: MTLPixelFormat) -> bool {
     matches!(
         f,

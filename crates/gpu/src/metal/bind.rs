@@ -232,7 +232,7 @@ impl Metal {
                         self.null_texture(kind)
                     } else {
                         self.image(host, image, kind)
-                            .and_then(|t| self.swizzled(t, image.swizzle))
+                            .and_then(|t| self.swizzled(t, channel_selects(&image)))
                     };
                     let Some(tex) = tex else {
                         let how = match access {
