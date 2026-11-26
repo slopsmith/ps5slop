@@ -216,26 +216,31 @@ impl<'a> Tx<'a> {
         };
         let (elem, conv) = self.texel(t);
         let mut s = format!("{elem}4 r = t{t}.sample(smp{sm}, {coord}{level});");
-        if let Some(dref) = &dref {
-            if gather || elem != "float" {
-                return Err(err(pc, format!("unsupported form of {name}")));
-            }
-            write!(
-                s,
-                " r = float4(depth_compare((user[{}] >> 12) & 7u, {dref}, r.x) ? 1.0f : 0.0f);",
-                binding::SAMPLER_WORDS + sm as u32
-            )
-            .unwrap();
-        }
         if gather {
             if !matches!(kind, TextureKind::Tex2d | TextureKind::Tex2dArray)
-                || !matches!(variant, "" | "_lz" | "_o" | "_lz_o")
+                || !matches!(flags.as_slice(), [] | ["lz"])
                 || m.dmask.count_ones() != 1
             {
                 return Err(err(pc, format!("unsupported form of {name}")));
             }
             let c = ["x", "y", "z", "w"][m.dmask.trailing_zeros() as usize];
             s = format!("{elem}4 r = t{t}.gather(smp{sm}, {coord}, int2(0), component::{c});");
+        }
+        if let Some(dref) = &dref {
+            if elem != "float" {
+                return Err(err(pc, format!("unsupported form of {name}")));
+            }
+            let f = format!("(user[{}] >> 12) & 7u", binding::SAMPLER_WORDS + sm as u32);
+            // A gather compares each of its texels.
+            let compared = if gather { 4 } else { 1 };
+            let r: Vec<String> = (0..compared)
+                .map(|i| format!("depth_compare({f}, {dref}, r[{i}]) ? 1.0f : 0.0f"))
+                .collect();
+            if gather {
+                write!(s, " r = float4({});", r.join(", ")).unwrap();
+            } else {
+                write!(s, " r = float4({});", r[0]).unwrap();
+            }
         }
         let comps: Vec<usize> = (0..4)
             .filter(|&i| gather || m.dmask >> i & 1 != 0)
