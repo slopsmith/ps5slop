@@ -935,6 +935,22 @@ pub fn cases() -> Vec<Case> {
         d.format = (COLOR_8_8_8_8, 6, 0, 4);
         out.push(case(d));
     }
+    for (suffix, format) in [
+        ("", (COLOR_8_8_8_8, NUMBER_UNORM, 0, 4)),
+        (" to 32_32_32_32 float", (14, 7, 0, 16)),
+    ] {
+        let mut d = Draw::new(
+            "draw input",
+            format!("MovP0 flat shaded{suffix}"),
+            Interp::MovP0,
+            Out::F32,
+            tris("inputs"),
+        );
+        const FLAT_SHADE: u32 = 1 << 10;
+        d.pixel.cntl = FLAT_SHADE;
+        d.format = format;
+        out.push(case(d));
+    }
     for interp in [Interp::PerspCenter, Interp::LinearCenter] {
         out.push(case(Draw::new(
             "draw clip",
