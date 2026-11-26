@@ -614,11 +614,25 @@ pub fn case(d: Draw) -> Case {
         .collect();
     write_pages(&mut case.input, vertex_buffer, &verts);
     let mut rng = Rng::new(&format!("target {} {}", d.name, d.variant));
+    let finite = finite_mask(d.format.0, d.format.1);
     let fill: Vec<u8> = (0..pitch * HEIGHT / 4)
-        .flat_map(|_| (rng.next() as u32).to_le_bytes())
+        .flat_map(|_| (rng.next() as u32 & finite).to_le_bytes())
         .collect();
     write_pages(&mut case.input, TARGET, &fill);
     case
+}
+
+/// The bits a random fill of a target keeps so that every value is finite:
+/// packed float formats lose each channel's top exponent bit. Other formats
+/// keep every bit.
+fn finite_mask(format: u32, number: u32) -> u32 {
+    const FLOAT: u32 = 7;
+    let top_bits = match (format, number) {
+        (6, FLOAT) => 1 << 10 | 1 << 21 | 1 << 31,
+        (7, FLOAT) => 1 << 9 | 1 << 20 | 1 << 31,
+        _ => 0,
+    };
+    !top_bits
 }
 
 /// `n` random triangles in clip space, x and y up to `reach` times w, with
