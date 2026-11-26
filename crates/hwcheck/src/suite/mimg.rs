@@ -321,7 +321,8 @@ fn load_back(dim: Dim, mip: bool) -> [u32; 2] {
 }
 
 /// Bytes of a linear texture of `bits` per texel (per 4x4 block when
-/// `block`), rows padded to 256 bytes, every level.
+/// `block`), rows padded to 256 bytes, every level. Each slice of an array
+/// and each depth slice of a 3D image holds its own mip chain.
 fn texture_bytes(dim: Dim, bits: u32, block: bool, levels: u32) -> u32 {
     let (w, h, d) = dim.size;
     let mut total = 0;
@@ -333,9 +334,9 @@ fn texture_bytes(dim: Dim, bits: u32, block: bool, levels: u32) -> u32 {
             (lw, lh)
         };
         let row = (cols * bits / 8).next_multiple_of(256);
-        total += row * rows * if dim.dim == 2 { (d >> l).max(1) } else { d };
+        total += row * rows;
     }
-    total
+    total * d
 }
 
 fn descriptor(dim: Dim, format: u32, levels: u32) -> [u32; 8] {
