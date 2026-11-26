@@ -574,6 +574,45 @@ pub fn cases() -> Vec<Case> {
             out.extend(case(op, form, BASE_MODE));
         }
     }
+    out.extend(reversed_dpp_cases());
+    out
+}
+
+/// Integer ops whose first operand is the second in the operation.
+const REVERSED: [&str; 5] = [
+    "v_subrev_nc_u32",
+    "v_subrev_co_ci_u32",
+    "v_lshlrev_b32",
+    "v_lshrrev_b32",
+    "v_ashrrev_i32",
+];
+
+/// [`REVERSED`] under DPP with random operands in every lane, so the result
+/// shows which source DPP reads from another lane.
+fn reversed_dpp_cases() -> Vec<Case> {
+    let lanes = (GROUPS * 64) as usize;
+    let mut out = Vec::new();
+    for op in REVERSED.iter().filter_map(|n| gfx10::opinfo::by_name(n)) {
+        for form in [Form::Dpp(0), Form::Dpp(1), Form::Dpp(4), Form::Dpp8] {
+            let Some(inst) = encode(op, form) else {
+                continue;
+            };
+            let variant = format!("{}, random operands in every lane", form.name());
+            let mut rng = Rng::new(&format!("{} {variant}", op.name));
+            let inputs = (0..lanes * IN_WORDS)
+                .map(|i| match i % IN_WORDS {
+                    6 => rng.next() as u32 & 1,
+                    _ => rng.next() as u32,
+                })
+                .collect();
+            let body = Body {
+                setup: &[],
+                inst: &inst,
+                after: &[],
+            };
+            out.extend(around(op, variant, body, false, BASE_MODE, Some(inputs)));
+        }
+    }
     out
 }
 
