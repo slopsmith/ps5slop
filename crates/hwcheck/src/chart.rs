@@ -38,10 +38,10 @@ impl Status {
 
     fn label(self) -> &'static str {
         match self {
-            Status::Agrees => "matches RDNA2 hardware",
-            Status::Fails => "differs from RDNA2 hardware",
+            Status::Agrees => "matches the reference GPU",
+            Status::Fails => "differs from the reference GPU",
             Status::Untested => "translated, not tested yet",
-            Status::Untestable => "translated, cannot be tested on RDNA2",
+            Status::Untestable => "translated, runs differently on the reference GPU's ISA",
             Status::Missing => "not translated",
         }
     }
@@ -389,8 +389,11 @@ pub fn html(forms: &[Form], source: &str) -> String {
     }
     let mut lists = String::new();
     for (title, status) in [
-        ("Differs from RDNA2 hardware", Status::Fails),
-        ("Cannot be tested on RDNA2", Status::Untestable),
+        ("Differs from the reference GPU", Status::Fails),
+        (
+            "Runs differently on the reference GPU's ISA",
+            Status::Untestable,
+        ),
         ("Not translated", Status::Missing),
     ] {
         let _ = write!(lists, "<h2>{title}</h2><dl>");
@@ -434,7 +437,7 @@ dl {{ display:grid; grid-template-columns:max-content 1fr; gap:6px 16px; }} dt {
 code {{ font-size:12px; margin-right:6px; white-space:nowrap; }}
 </style></head><body><main>
 <h1>GPU instruction status</h1>
-<p>{translated} of {total} gfx1013 instruction forms translated. Hardware results: {}. Green means the result matches an RDNA2 GPU (gfx1033); the PS5 is gfx1013, so PS5 behaviour stays unverified.</p>
+<p>{translated} of {total} gfx1013 instruction forms translated. Hardware results: {}. The reference GPU is a Steam Deck's (Van Gogh, gfx1033, GFX10.3). The PS5's GPU is gfx1013 (GFX10.1): both are RDNA2 parts, but they differ in ISA generation and shader ABI, so green means the result matches gfx1033 and PS5 behaviour stays unverified. Blue marks forms GFX10.3 runs differently from GFX10.1, such as the multiply-adds it runs fused.</p>
 <ul class="legend">{legend}</ul>
 {svg}
 {lists}
