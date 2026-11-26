@@ -4,7 +4,18 @@ use super::*;
 
 /// A vertex program, whether it draws rectangles or uses OpenGL clip space,
 /// and the attributes it must add.
-pub(super) type VariantKey = (u64, bool, bool, Vec<u32>, Vec<u32>);
+pub(super) type VariantKey = (u64, VertexForm, Vec<u32>, Vec<u32>);
+
+/// How a draw's vertex function differs from its program's own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(super) struct VertexForm {
+    /// Rectangle lists: three vertices per rectangle, the fourth corner made.
+    pub(super) rect: bool,
+    /// OpenGL clip space (z from -w to w).
+    pub(super) gl_clip: bool,
+    /// Point lists: the points' diameter in pixels, as f32 bits.
+    pub(super) point_size: Option<u32>,
+}
 
 /// Time per frame draws to redrawn targets may wait for their pipelines
 /// before they are skipped.
@@ -37,6 +48,13 @@ pub(super) struct Variant {
     pub(super) grid_bounds: bool,
     /// Pixel: no depth target is bound, so a depth export is dropped.
     pub(super) drop_depth_export: bool,
+    /// Pixel: `Request::half_targets`.
+    pub(super) half_targets: u8,
+    /// Pixel: `Request::logic_op` and `Request::logic_targets`.
+    pub(super) logic_op: u8,
+    pub(super) logic_targets: [u8; 8],
+    /// Pixel: `Request::swizzles`.
+    pub(super) swizzles: [u8; 8],
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -47,7 +65,7 @@ pub(super) struct PipelineKey {
     pub(super) blends: [(Blend, u8); 8],
     pub(super) depth: usize,
     pub(super) stencil: bool,
-    pub(super) rect: bool,
+    pub(super) form: VertexForm,
 }
 
 /// The `user(locnN)` locations a pixel program reads flat (declared `uint4`).
@@ -226,6 +244,10 @@ impl Metal {
                 sint_textures: variant.sint_textures,
                 grid_bounds: variant.grid_bounds,
                 drop_depth_export: variant.drop_depth_export,
+                half_targets: variant.half_targets,
+                logic_op: variant.logic_op,
+                logic_targets: variant.logic_targets,
+                swizzles: variant.swizzles,
                 probe_flat: diag::config().gpu.probe_flat,
             };
             if let Some(dir) = &diag::config().gpu.shader_dump {
@@ -346,9 +368,13 @@ impl Metal {
         &mut self,
         vertex: &Program,
         pixel: &Program,
-        rect: bool,
-        gl_clip: bool,
+        form: VertexForm,
     ) -> Arc<Task<Retained<Function>>> {
+        let VertexForm {
+            rect,
+            gl_clip,
+            point_size,
+        } = form;
         let locations = |msl: &str| -> Vec<u32> {
             let mut v: Vec<u32> = msl
                 .match_indices("[[user(locn")
@@ -376,11 +402,12 @@ impl Metal {
                 m
             }
         };
-        let flat: Vec<u32> = if rect { Vec::new() } else { pixel.flat.clone() };
-        if missing.is_empty() && flat.is_empty() && !rect && !gl_clip {
+        // Rectangles keep flat outputs from the first vertex: `rect_source` combines floats only.
+        let flat = pixel.flat.clone();
+        if missing.is_empty() && flat.is_empty() && form == VertexForm::default() {
             return vertex.function.clone();
         }
-        let key = (vertex.id, rect, gl_clip, missing.clone(), flat.clone());
+        let key = (vertex.id, form, missing.clone(), flat.clone());
         if let Some(f) = self.variants.get(&key) {
             return f.clone();
         }
@@ -390,7 +417,7 @@ impl Metal {
             vertex.translated.entry.clone(),
         );
         let label = format!(
-            "vertex {:#x} variant rect {rect} gl_clip {gl_clip} missing {missing:?} flat {flat:?}",
+            "vertex {:#x} variant {form:?} missing {missing:?} flat {flat:?}",
             vertex.address
         );
         let queued = std::time::Instant::now();
@@ -415,6 +442,9 @@ impl Metal {
             }
             if gl_clip {
                 msl = gl_clip_space(&msl);
+            }
+            if let Some(size) = point_size {
+                msl = with_point_size(&msl, f32::from_bits(size));
             }
             let f = if rect {
                 rect_source(&msl).and_then(|m| compile(&device, &m, "gen5_vs_rect", &label))
@@ -619,6 +649,19 @@ fn rect_source(msl: &str) -> Option<String> {
     ))
 }
 
+fn with_point_size(msl: &str, size: f32) -> String {
+    msl.replacen(
+        "    float4 pos [[position]];\n",
+        "    float4 pos [[position]];\n    float psize [[point_size]];\n",
+        1,
+    )
+    .replacen(
+        "    VsOut o = {};\n",
+        &format!("    VsOut o = {{}};\n    o.psize = {size:?};\n"),
+        1,
+    )
+}
+
 // OpenGL-style clip space puts z in [-w, w]; Metal clips z below 0.
 fn gl_clip_space(msl: &str) -> String {
     let mut out = String::with_capacity(msl.len() + 128);
@@ -635,6 +678,104 @@ fn gl_clip_space(msl: &str) -> String {
     }
     out.push_str(rest);
     out.replacen("struct VsOut {", "static inline float4 gl_z(float4 p) { p.z = (p.z + p.w) * 0.5; return p; }\n\nstruct VsOut {", 1)
+}
+
+/// The MRTs whose target holds 16-bit floats and does not blend.
+pub(super) fn half_targets(c: &[u32]) -> u8 {
+    (0..8)
+        .filter(|&n| {
+            ColorTarget::read(c, n)
+                .is_some_and(|t| t.format.number == 7 && matches!(t.format.layout, 2 | 5 | 12))
+                && !Blend::read(c, n).enable
+        })
+        .fold(0, |m, n| m | 1 << n)
+}
+
+/// The export component each channel of a target in `format` stores, as
+/// `Request::swizzles` packs it; 0 for the order exported, and for the
+/// swaps the target's Metal format makes itself (BGRA). Mesa's
+/// `ac_translate_colorswap` gives the four-channel swaps and some others;
+/// the rest follow the per-channel-count table of AMD's R6xx-era register
+/// documentation (not checked on hardware).
+pub(super) fn export_swizzle(format: regs::ColorFormat) -> u8 {
+    const X: u8 = 0;
+    const Y: u8 = 1;
+    const Z: u8 = 2;
+    const W: u8 = 3;
+    let channels = match format.layout {
+        1 | 2 | 4 => 1,
+        3 | 5 | 11 => 2,
+        6 | 7 | 16 | 24 => 3,
+        _ => 4,
+    };
+    if matches!(
+        color_format(format),
+        Some(
+            MTLPixelFormat::BGRA8Unorm
+                | MTLPixelFormat::BGRA8Unorm_sRGB
+                | MTLPixelFormat::BGR10A2Unorm
+        )
+    ) {
+        return 0;
+    }
+    let order: &[u8] = match (channels, format.swap) {
+        (_, 0) => return 0,
+        (1, 1) => &[Y],
+        (1, 2) => &[Z],
+        (1, _) => &[W],
+        (2, 1) => &[X, W],
+        (2, 2) => &[Y, X],
+        (2, _) => &[W, X],
+        (3, 1) => &[X, Y, W],
+        (3, 2) => &[Z, Y, X],
+        (3, _) => &[W, Y, X],
+        (_, 1) => &[Z, Y, X, W],
+        (_, 2) => &[W, Z, Y, X],
+        _ => &[W, X, Y, Z],
+    };
+    (0..4).fold(0, |s, i| {
+        s | order.get(i).copied().unwrap_or(i as u8) << (2 * i)
+    })
+}
+
+/// `CB_COLOR_CONTROL.ROP3` and the targets it applies to
+/// (`Request::logic_targets`): unorm and integer targets of 8, 16 or 32 bits
+/// per channel that do not blend and whose `CB_BLENDn_CONTROL.DISABLE_ROP3`
+/// is clear. Only in `CB_NORMAL` mode: context registers start at 0 here
+/// (CLEAR_STATE's defaults are not modelled), and a ROP3 of 0 would clear.
+pub(super) fn logic_targets(c: &[u32]) -> (u8, [u8; 8]) {
+    let control = c[context::CB_COLOR_CONTROL];
+    let rop = if control >> 4 & 7 == 1 {
+        (control >> 16) as u8
+    } else {
+        0xCC
+    };
+    let mut targets = [0; 8];
+    if rop == 0xCC {
+        return (rop, targets);
+    }
+    for (n, t) in targets.iter_mut().enumerate() {
+        let Some(ct) = ColorTarget::read(c, n) else {
+            continue;
+        };
+        if Blend::read(c, n).enable || c[context::CB_BLEND0_CONTROL + n] >> 31 != 0 {
+            continue;
+        }
+        let bits = match ct.format.layout {
+            1 | 3 | 10 => 8,
+            2 | 5 | 12 => 16,
+            4 | 11 | 14 => 32,
+            _ => continue,
+        };
+        let kind = match ct.format.number {
+            0 => 0,
+            4 => 1,
+            5 => 2,
+            _ => continue,
+        };
+        *t = bits | kind << 6;
+    }
+    (rop, targets)
 }
 
 /// `SPI_SHADER_COL_FORMAT` with each integer target's export made the

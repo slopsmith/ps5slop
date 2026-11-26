@@ -6,13 +6,16 @@
 //! `COMPUTE_PGM_RSRC2`, the three thread counts, the unsigned and signed
 //! integer texture masks, the number of `SPI_PS_INPUT_CNTL` values and those
 //! values, the program address (two dwords), the flags (bit 0 grid bounds,
-//! bit 1 dropped depth export), then the code. Version 1 files have no
-//! texture masks, version 2 files no address, version 3 files no flags.
+//! bit 1 dropped depth export, bits 8 to 15 the half-float targets), the
+//! logic op and the eight logic targets (three dwords), the eight swizzles
+//! (two dwords), then the code.
+//! Version 1 files have no texture masks, version 2 files no address,
+//! version 3 files no flags, version 4 files no logic op.
 
 use crate::translate::{Request, Stage, program};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"g10c");
-const VERSION: u32 = 4;
+const VERSION: u32 = 5;
 const GRID_BOUNDS: u32 = 1;
 const DROP_DEPTH_EXPORT: u32 = 2;
 
@@ -33,6 +36,10 @@ pub struct Capture {
     pub address: u64,
     pub grid_bounds: bool,
     pub drop_depth_export: bool,
+    pub half_targets: u8,
+    pub logic_op: u8,
+    pub logic_targets: [u8; 8],
+    pub swizzles: [u8; 8],
     pub code: Vec<u32>,
 }
 
@@ -58,6 +65,10 @@ impl Capture {
             address: req.address,
             grid_bounds: req.grid_bounds,
             drop_depth_export: req.drop_depth_export,
+            half_targets: req.half_targets,
+            logic_op: req.logic_op,
+            logic_targets: req.logic_targets,
+            swizzles: req.swizzles,
             code: req.code[..len.min(req.code.len())].to_vec(),
         }
     }
@@ -79,6 +90,10 @@ impl Capture {
             sint_textures: self.sint_textures,
             grid_bounds: self.grid_bounds,
             drop_depth_export: self.drop_depth_export,
+            half_targets: self.half_targets,
+            logic_op: self.logic_op,
+            logic_targets: self.logic_targets,
+            swizzles: self.swizzles,
             probe_flat: false,
         }
     }
@@ -112,8 +127,17 @@ impl Capture {
                 DROP_DEPTH_EXPORT
             } else {
                 0
-            };
+            }
+            | u32::from(self.half_targets) << 8;
         w.extend_from_slice(&[self.address as u32, (self.address >> 32) as u32, flags]);
+        let (t, s) = (self.logic_targets, self.swizzles);
+        w.extend_from_slice(&[
+            self.logic_op.into(),
+            u32::from_le_bytes([t[0], t[1], t[2], t[3]]),
+            u32::from_le_bytes([t[4], t[5], t[6], t[7]]),
+            u32::from_le_bytes([s[0], s[1], s[2], s[3]]),
+            u32::from_le_bytes([s[4], s[5], s[6], s[7]]),
+        ]);
         w.extend_from_slice(&self.code);
         w.iter().flat_map(|x| x.to_le_bytes()).collect()
     }
@@ -152,6 +176,17 @@ impl Capture {
             flags = *w.get(code_at)?;
             code_at += 1;
         }
+        let (mut logic_op, mut logic_targets, mut swizzles) = (0xCC, [0; 8], [0; 8]);
+        if w[1] >= 5 {
+            let bytes = |at: usize| -> Option<[u8; 8]> {
+                let (lo, hi) = (w.get(at)?.to_le_bytes(), w.get(at + 1)?.to_le_bytes());
+                Some([lo[0], lo[1], lo[2], lo[3], hi[0], hi[1], hi[2], hi[3]])
+            };
+            logic_op = *w.get(code_at)? as u8;
+            logic_targets = bytes(code_at + 1)?;
+            swizzles = bytes(code_at + 3)?;
+            code_at += 5;
+        }
         Some(Capture {
             stage,
             user_sgprs: w[3],
@@ -167,6 +202,10 @@ impl Capture {
             address,
             grid_bounds: flags & GRID_BOUNDS != 0,
             drop_depth_export: flags & DROP_DEPTH_EXPORT != 0,
+            half_targets: (flags >> 8) as u8,
+            logic_op,
+            logic_targets,
+            swizzles,
             code: w[code_at..].to_vec(),
         })
     }

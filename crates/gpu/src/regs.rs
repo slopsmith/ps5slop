@@ -46,9 +46,11 @@ pub mod context {
     pub const SPI_PS_INPUT_ENA: usize = 0x1B3;
     pub const SPI_PS_INPUT_ADDR: usize = 0x1B4;
     pub const SPI_SHADER_COL_FORMAT: usize = 0x1C5;
+    pub const SX_BLEND_OPT_CONTROL: usize = 0x1D7;
     pub const CB_BLEND0_CONTROL: usize = 0x1E0;
     pub const PA_CL_CLIP_CNTL: usize = 0x204;
     pub const PA_SU_SC_MODE_CNTL: usize = 0x205;
+    pub const PA_SU_POINT_SIZE: usize = 0x280;
     pub const PA_CL_VTE_CNTL: usize = 0x206;
     pub const VGT_SHADER_STAGES_EN: usize = 0x2D5;
     pub const CB_COLOR0_BASE: usize = 0x318;
@@ -273,7 +275,8 @@ impl DepthState {
     }
 }
 
-/// `CB_BLENDn_CONTROL`.
+/// `CB_BLENDn_CONTROL`. Both of the MRT's `SX_BLEND_OPT_CONTROL` disable
+/// bits set make the SX bypass blending (Mesa's `ac_formats.c`, measured).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Blend {
     pub enable: bool,
@@ -288,10 +291,11 @@ pub struct Blend {
 impl Blend {
     pub fn read(c: &[u32], n: usize) -> Self {
         let v = c[context::CB_BLEND0_CONTROL + n];
+        let bypass = c[context::SX_BLEND_OPT_CONTROL] >> (4 * n) & 3 == 3;
         let separate = v & (1 << 29) != 0;
         let (cs, co, cd) = (v & 0x1F, (v >> 5) & 7, (v >> 8) & 0x1F);
         Self {
-            enable: v & (1 << 30) != 0,
+            enable: v & (1 << 30) != 0 && !bypass,
             color_src: cs,
             color_op: co,
             color_dst: cd,
@@ -535,6 +539,10 @@ mod tests {
             (b.color_src, b.color_dst, b.alpha_src, b.alpha_dst),
             (4, 5, 1, 5)
         );
+        c[context::SX_BLEND_OPT_CONTROL] = 0x31;
+        assert!(Blend::read(&c, 0).enable);
+        c[context::SX_BLEND_OPT_CONTROL] = 0x13;
+        assert!(!Blend::read(&c, 0).enable);
     }
 
     #[test]

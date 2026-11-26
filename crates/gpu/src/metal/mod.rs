@@ -486,6 +486,7 @@ impl Backend for Metal {
                     let target = Target {
                         texture: t,
                         pixel_format: MTLPixelFormat(s.target_format as _),
+                        swizzle: 0,
                     };
                     self.targets.insert(s.address, target);
                 }
@@ -761,6 +762,7 @@ impl Backend for Metal {
             && let Some(t) = self.targets.get(&addr)
         {
             let src = t.texture.clone();
+            let stored = t.swizzle;
             let copy = match self.shown.get(&addr) {
                 Some(c)
                     if c.width() == src.width()
@@ -795,8 +797,22 @@ impl Backend for Metal {
                 );
                 tracing::info!(target: "gpu::trace", "shown {addr:#x} copied from {a:#x} into {b:#x}");
             }
-            if let Ok(mut f) = frames().lock() {
-                f.insert(addr, SharedTexture(copy));
+            // Shown in the channel order the program exported, which the
+            // display reads the buffer's memory in.
+            let shown = if stored == 0 {
+                Some(copy)
+            } else {
+                let sel = std::array::from_fn(|c| {
+                    (0..4u8)
+                        .find(|&i| stored >> (2 * i) & 3 == c as u8)
+                        .map_or(0, |i| 4 + i)
+                });
+                self.swizzled(copy, sel)
+            };
+            if let Some(shown) = shown
+                && let Ok(mut f) = frames().lock()
+            {
+                f.insert(addr, SharedTexture(shown));
             }
         } else {
             self.flush_and_wait();

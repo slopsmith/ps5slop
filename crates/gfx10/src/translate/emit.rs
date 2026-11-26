@@ -354,6 +354,14 @@ impl<'a> Tx<'a> {
                     body = body.replace("return o;", &probe);
                     tail = tail.replace("return o;", &probe);
                 }
+                for n in 0..8 {
+                    let logic = self.req.logic_targets[n];
+                    if self.req.logic_op == 0xCC || logic == 0 || self.mrts >> n & 1 == 0 {
+                        continue;
+                    }
+                    let ty = ["float4", "uint4", "int4"][(logic >> 6).min(2) as usize];
+                    entry_params.push(format!("{ty} d{n} [[color({n})]]"));
+                }
                 out.push_str(&format!(
                     "fragment PsOut gen5_ps({} [[stage_in]], {}) {{\n    PsOut o = {{}};\n    bool exported = false;\n{init}{}{tail}}}\n",
                     if shared { "PsInRaw raw" } else { "PsIn in" },
@@ -481,8 +489,12 @@ impl<'a> Tx<'a> {
                 8 => Some("U(in.pos.x)"),
                 9 => Some("U(in.pos.y)"),
                 10 => Some("U(in.pos.z)"),
-                11 => Some("U(in.pos.w)"),
+                // Metal's position w is 1/w; the hardware's POS_W is w.
+                11 => Some("U(1.0f / in.pos.w)"),
                 12 => Some("(in.front ? 0x3f800000u : 0xbf800000u)"),
+                // Single-sampled targets: the one sample is covered.
+                14 => Some("1u"),
+                15 => Some("(uint(in.pos.x) | uint(in.pos.y) << 16)"),
                 _ => None,
             };
             if let Some(v) = value.filter(|_| on && self.regs.contains(&format!("v{reg}"))) {

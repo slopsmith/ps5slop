@@ -812,6 +812,7 @@ impl Metal {
             Target {
                 texture: texture.clone(),
                 pixel_format: format,
+                swizzle: 0,
             },
         );
         record(image.address | 2, &texture, true);

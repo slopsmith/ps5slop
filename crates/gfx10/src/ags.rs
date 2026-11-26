@@ -205,6 +205,10 @@ impl Ags<'_> {
             sint_textures: 0,
             grid_bounds: false,
             drop_depth_export: false,
+            half_targets: 0,
+            logic_op: 0xCC,
+            logic_targets: [0; 8],
+            swizzles: [0; 8],
             probe_flat: false,
         }
     }

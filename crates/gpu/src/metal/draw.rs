@@ -231,6 +231,10 @@ impl Metal {
         let ps_data =
             &s[sh::SPI_SHADER_USER_DATA_PS_0..sh::SPI_SHADER_USER_DATA_PS_0 + sh::USER_DATA_COUNT];
         let col_format = export_formats(c);
+        let (logic_op, logic_targets) = logic_targets(c);
+        let swizzles = std::array::from_fn(|n| {
+            ColorTarget::read(c, n).map_or(0, |t| export_swizzle(t.format))
+        });
         self.note(|| {
             format!(
                 "vertex {vs_addr:#x} pixel {ps_addr:#x} col_format {:#x}",
@@ -265,6 +269,10 @@ impl Metal {
                 Variant {
                     col_format,
                     drop_depth_export: !depth_bound,
+                    half_targets: half_targets(c),
+                    logic_op,
+                    logic_targets,
+                    swizzles,
                     ..Variant::default()
                 },
             )
@@ -297,9 +305,19 @@ impl Metal {
                 c[context::DB_RENDER_CONTROL]
             )
         });
-        let rect = u[uconfig::VGT_PRIMITIVE_TYPE] == 7;
+        let prim = u[uconfig::VGT_PRIMITIVE_TYPE];
+        // 7 (`DI_PT_2D_RECTANGLE`) as titles use it, 17 `DI_PT_RECTLIST`.
+        let rect = matches!(prim, 7 | 17);
+        // PA_SU_POINT_SIZE: half the height in 12.4 fixed point.
+        let point_size = (prim == 1)
+            .then(|| (f32::from((c[context::PA_SU_POINT_SIZE] & 0xFFFF) as u16) / 8.0).to_bits());
         let gl_clip = c[context::PA_CL_CLIP_CNTL] & (1 << 19) == 0;
-        let vertex_function = self.vertex_function(&vertex, &pixel, rect, gl_clip);
+        let form = VertexForm {
+            rect,
+            gl_clip,
+            point_size,
+        };
+        let vertex_function = self.vertex_function(&vertex, &pixel, form);
 
         let mask = c[context::CB_TARGET_MASK];
         let mut targets = Vec::new();
@@ -310,7 +328,7 @@ impl Metal {
             blends: [(Blend::read(c, 0), 0); 8],
             depth: 0,
             stencil: false,
-            rect,
+            form,
         };
         for n in attached_targets(mask, col_format) {
             let write = (mask >> (4 * n)) & 0xF;
@@ -341,6 +359,13 @@ impl Metal {
                 (view, t.address | (t.mip_level as u64) << 40)
             };
             key.formats[targets.len()] = format.0;
+            // The write mask is in export order; Metal's is in channel order.
+            let swizzle = export_swizzle(t.format);
+            let write = if swizzle == 0 {
+                write
+            } else {
+                (0..4).fold(0, |m, i| m | (write >> (swizzle >> (2 * i) & 3) & 1) << i)
+            };
             key.blends[targets.len()] = (Blend::read(c, n), write_mask(write) as u8);
             let slice = if tex.textureType() == MTLTextureType::Type2DArray {
                 t.slice
@@ -627,9 +652,9 @@ impl Metal {
         let (znear, zfar) = (znear * zs + zo, zfar * zs + zo);
         enc.setViewport(MTLViewport {
             originX: (vp.x_offset - vp.x_scale) as f64,
-            originY: (vp.y_offset - vp.y_scale.abs()) as f64,
+            originY: (vp.y_offset + vp.y_scale) as f64,
             width: (2.0 * vp.x_scale) as f64,
-            height: (2.0 * vp.y_scale.abs()) as f64,
+            height: (-2.0 * vp.y_scale) as f64,
             znear: znear as f64,
             zfar: zfar as f64,
         });
@@ -663,7 +688,7 @@ impl Metal {
             1 => MTLPrimitiveType::Point,
             2 => MTLPrimitiveType::Line,
             3 => MTLPrimitiveType::LineStrip,
-            4 | 5 | 7 => MTLPrimitiveType::Triangle,
+            4 | 5 | 7 | 17 => MTLPrimitiveType::Triangle,
             6 => MTLPrimitiveType::TriangleStrip,
             p => {
                 self.note(|| format!("primitive type {p:#x}"));

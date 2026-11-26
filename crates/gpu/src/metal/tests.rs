@@ -2148,3 +2148,49 @@ fn depth_only_draw_without_db_size_writes_depth_and_metadata_pass_is_classified(
     assert_eq!(metal.reasons.get("metadata pass").copied().unwrap_or(0), 1);
     metal.flush_and_wait();
 }
+
+#[test]
+fn a_shown_target_without_a_bgra_metal_format_shows_its_exported_order() {
+    let Some(mut metal) = Metal::new() else {
+        return;
+    };
+    let mem = Mem::new(4 << 20);
+    let target = ColorTarget {
+        address: 0x10000,
+        width: 64,
+        height: 4,
+        format: regs::ColorFormat {
+            layout: 12,
+            number: 7,
+            swap: 1,
+        },
+        tile: Some(TileMode::Linear),
+        raw_tile: 0,
+        max_mip: 0,
+        mip_level: 0,
+        slice: 0,
+        slices: 1,
+        fast_clear: None,
+        dcc: None,
+    };
+    const QUARTER: u16 = 0x3400;
+    const HALF: u16 = 0x3800;
+    const ONE: u16 = 0x3C00;
+    let texel: Vec<u8> = [QUARTER, HALF, ONE, ONE]
+        .iter()
+        .flat_map(|h| h.to_le_bytes())
+        .collect();
+    let row: Vec<u8> = texel.repeat(64);
+    for y in 0..4 {
+        mem.write(target.address + y * 64 * 8, &row);
+    }
+    metal.target(&mem, &target).expect("the target is made");
+    metal.frame_done(Some(target.address));
+    let shown = frame(target.address).expect("the target is shown");
+    let (_, _, rgba) = read_rgba(&shown).expect("the frame reads back");
+    assert_eq!(
+        &rgba[..4],
+        &[255, 128, 64, 255],
+        "B, G, R, A in memory shows as R, G, B, A"
+    );
+}

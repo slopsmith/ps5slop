@@ -14,6 +14,9 @@ pub(super) const BLANK_TARGET: u64 = 0xFFFF_FFFF_F000;
 pub(super) struct Target {
     pub(super) texture: Retained<Texture>,
     pub(super) pixel_format: MTLPixelFormat,
+    /// The export component each channel holds (`export_swizzle`), as the
+    /// last draw to the target stored them.
+    pub(super) swizzle: u8,
 }
 
 impl Metal {
@@ -91,6 +94,9 @@ impl Metal {
             if let Some(v) = &volume {
                 self.copy_slices(v, existing);
             }
+            if let Some(e) = self.targets.get_mut(&t.address) {
+                e.swizzle = export_swizzle(t.format);
+            }
             record(t.address | 2, existing, false);
             return Some((existing.clone(), format));
         }
@@ -133,6 +139,7 @@ impl Metal {
             Target {
                 texture: texture.clone(),
                 pixel_format: format,
+                swizzle: export_swizzle(t.format),
             },
         );
         record(t.address | 2, &texture, true);

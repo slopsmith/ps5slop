@@ -58,7 +58,7 @@ pub(super) fn write_mask(bits: u32) -> usize {
 /// The Metal format of a color target, for the layouts titles render to.
 pub(super) fn color_format(f: regs::ColorFormat) -> Option<MTLPixelFormat> {
     use MTLPixelFormat as P;
-    let bgr = f.swap & 1 == 1;
+    let bgr = f.swap == 1;
     Some(match (f.layout, f.number) {
         (10, 6) if bgr => P::BGRA8Unorm_sRGB,
         (10, 6) => P::RGBA8Unorm_sRGB,

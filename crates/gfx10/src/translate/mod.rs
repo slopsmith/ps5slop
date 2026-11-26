@@ -72,6 +72,22 @@ pub struct Request<'a> {
     pub grid_bounds: bool,
     /// Pixel stage: no depth target is bound, so a depth export is dropped.
     pub drop_depth_export: bool,
+    /// Pixel stage: MRTs (bit n for MRT n) whose target holds 16-bit floats
+    /// and does not blend. The CB rounds 32-bit float exports to them toward
+    /// zero (measured on RDNA2), so the program does that itself.
+    pub half_targets: u8,
+    /// Pixel stage: `CB_COLOR_CONTROL.ROP3`, applied to the MRTs that
+    /// `logic_targets` names; 0xCC (copy) applies nothing.
+    pub logic_op: u8,
+    /// Pixel stage, per MRT: 0, or the target's bits per channel with its
+    /// number type in bits 6 and 7 (0 unorm, 1 uint, 2 sint). The program
+    /// reads the target and applies `logic_op` to the stored bits, as the CB
+    /// does.
+    pub logic_targets: [u8; 8],
+    /// Pixel stage, per MRT: the export component each target channel
+    /// stores, two bits per channel from channel 0 up (`CB_COLOR_INFO`'s
+    /// COMP_SWAP); 0 stores them as exported.
+    pub swizzles: [u8; 8],
     /// Pixel stage, for debugging: the first flat input's raw value goes to
     /// colour output 1 in place of what the program computes.
     pub probe_flat: bool,

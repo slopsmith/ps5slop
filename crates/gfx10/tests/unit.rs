@@ -57,6 +57,10 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
         sint_textures: 0,
         grid_bounds: false,
         drop_depth_export: false,
+        half_targets: 0,
+        logic_op: 0xCC,
+        logic_targets: [0; 8],
+        swizzles: [0; 8],
         probe_flat: false,
     })
     .unwrap()
@@ -140,6 +144,10 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
         sint_textures: 0,
         grid_bounds: false,
         drop_depth_export: false,
+        half_targets: 0,
+        logic_op: 0xCC,
+        logic_targets: [0; 8],
+        swizzles: [0; 8],
         probe_flat: false,
     })
     .unwrap();
@@ -171,6 +179,10 @@ fn compute_group(code: &[u32], user_sgprs: u32, rsrc2: u32, threads: u32) -> gfx
         sint_textures: 0,
         grid_bounds: false,
         drop_depth_export: false,
+        half_targets: 0,
+        logic_op: 0xCC,
+        logic_targets: [0; 8],
+        swizzles: [0; 8],
         probe_flat: false,
     })
     .unwrap()
@@ -380,6 +392,10 @@ fn integer_colour_formats_export_integers() {
         sint_textures: 0,
         grid_bounds: false,
         drop_depth_export: false,
+        half_targets: 0,
+        logic_op: 0xCC,
+        logic_targets: [0; 8],
+        swizzles: [0; 8],
         probe_flat: false,
     };
     let t = translate(&req).unwrap();
@@ -417,6 +433,10 @@ fn integer_texture_slots_read_and_write_integers() {
         sint_textures,
         grid_bounds: false,
         drop_depth_export: false,
+        half_targets: 0,
+        logic_op: 0xCC,
+        logic_targets: [0; 8],
+        swizzles: [0; 8],
         probe_flat: false,
     };
     let float = translate(&request(0, 0)).unwrap();
@@ -475,6 +495,10 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
         sint_textures: 0,
         grid_bounds: true,
         drop_depth_export: false,
+        half_targets: 5,
+        logic_op: 0x88,
+        logic_targets: [0, 0x48, 0, 0, 0, 0, 0, 8],
+        swizzles: [0x1B, 0, 0, 0, 0, 0, 0, 0x93],
         probe_flat: false,
     };
     let bytes = gfx10::capture::Capture::new(&req).to_bytes();
@@ -484,10 +508,23 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
         (
             again.grid_bounds,
             again.drop_depth_export,
+            again.half_targets,
+            again.logic_op,
+            again.logic_targets,
+            again.swizzles,
             again.address,
             again.code
         ),
-        (true, false, 0x1000, &code[..])
+        (
+            true,
+            false,
+            5,
+            0x88,
+            [0, 0x48, 0, 0, 0, 0, 0, 8],
+            [0x1B, 0, 0, 0, 0, 0, 0, 0x93],
+            0x1000,
+            &code[..]
+        )
     );
 }
 
@@ -615,6 +652,10 @@ fn getpc_gives_the_address_of_the_next_instruction() {
         sint_textures: 0,
         grid_bounds: false,
         drop_depth_export: false,
+        half_targets: 0,
+        logic_op: 0xCC,
+        logic_targets: [0; 8],
+        swizzles: [0; 8],
         probe_flat: false,
     };
     let t = translate(&req).unwrap();

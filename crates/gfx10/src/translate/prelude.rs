@@ -99,12 +99,42 @@ static inline int med3_i(int a, int b, int c) {
     return max(min(a, b), min(max(a, b), c));
 }
 
-// Float to half, rounding toward zero: values past the largest half become
-// +-65504, not infinity.
+
+// A half's bits as a float, in integer steps: the compiler may keep a
+// value converted to half at float precision, an export may not.
+static inline float f16_float(uint h) {
+    uint s = (h & 0x8000u) << 16;
+    uint e = (h >> 10) & 0x1Fu;
+    uint m = h & 0x3FFu;
+    if (e == 0u) return as_type<float>(s | as_type<uint>(float(m) * 0x1p-24f));
+    if (e == 31u) return as_type<float>(s | 0x7F800000u | m << 13);
+    return as_type<float>(s | (e + 112u) << 23 | m << 13);
+}
+
+// A float's bits as a half rounded toward zero, in integer steps: past the
+// largest half it becomes +-65504; infinity stays, NaN keeps its sign and top
+// payload bits and becomes quiet.
+static inline uint f16_rtz_bits(float x) {
+    uint b = as_type<uint>(x);
+    uint s = (b >> 16) & 0x8000u;
+    uint a = b & 0x7FFFFFFFu;
+    if (a > 0x7F800000u) return s | 0x7E00u | (a >> 13 & 0x3FFu);
+    if (a == 0x7F800000u) return s | 0x7C00u;
+    int e = int(a >> 23) - 112;
+    if (e >= 31) return s | 0x7BFFu;
+    if (e <= 0) {
+        if (e < -10) return s;
+        return s | ((a & 0x7FFFFFu) | 0x800000u) >> uint(14 - e);
+    }
+    return s | uint(e) << 10 | (a & 0x7FFFFFu) >> 13;
+}
+
 static inline half half_rtz(float x) {
-    half h = half(x);
-    if (abs(float(h)) > abs(x)) h = as_type<half>(ushort(as_type<ushort>(h) - 1u));
-    return h;
+    return as_type<half>(ushort(f16_rtz_bits(x)));
+}
+
+static inline float f16_trunc(float x) {
+    return f16_float(f16_rtz_bits(x));
 }
 
 // `mem` covers [base, end); windows over [base2, end2) and [base3, end3) lie `delta`

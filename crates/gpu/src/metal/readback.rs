@@ -12,11 +12,20 @@ pub fn read_rgba(texture: &SharedTexture) -> Option<(u32, u32, Vec<u8>)> {
         format,
         MTLPixelFormat::BGRA8Unorm | MTLPixelFormat::BGRA8Unorm_sRGB
     );
-    if !bgra
-        && !matches!(
-            format,
-            MTLPixelFormat::RGBA8Unorm | MTLPixelFormat::RGBA8Unorm_sRGB
-        )
+    let sw = t.swizzle();
+    let viewed = (sw.red, sw.green, sw.blue, sw.alpha)
+        != (
+            MTLTextureSwizzle::Red,
+            MTLTextureSwizzle::Green,
+            MTLTextureSwizzle::Blue,
+            MTLTextureSwizzle::Alpha,
+        );
+    if viewed
+        || !bgra
+            && !matches!(
+                format,
+                MTLPixelFormat::RGBA8Unorm | MTLPixelFormat::RGBA8Unorm_sRGB
+            )
     {
         return read_converted(t, false);
     }

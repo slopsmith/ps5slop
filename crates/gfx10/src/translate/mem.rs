@@ -22,14 +22,9 @@ impl<'a> Tx<'a> {
         if self.req.stage != Stage::Pixel {
             return Err(err(pc, "interpolation outside a pixel shader"));
         }
-        // SPI_PS_INPUT_CNTL's FLAT_SHADE (bit 10) makes interpolation return the
-        // provoking vertex's value whatever the instruction.
-        let flat_shade = self
-            .req
-            .ps_input_cntl
-            .get(attr as usize)
-            .is_some_and(|c| c & 0x400 != 0);
-        let mode = if name == "v_interp_mov_f32" || flat_shade {
+        // `SPI_PS_INPUT_CNTL`'s FLAT_SHADE leaves `v_interp_p1/p2` interpolating
+        // (measured on RDNA2).
+        let mode = if name == "v_interp_mov_f32" {
             Interp::Flat
         } else {
             self.input_interp(vsrc)
@@ -112,7 +107,7 @@ impl<'a> Tx<'a> {
                             "int4(short({lo}), short({lo} >> 16), short({hi}), short({hi} >> 16))"
                         ),
                         _ => format!(
-                            "float4(float2(as_type<half2>({lo})), float2(as_type<half2>({hi})))"
+                            "float4(f16_float({lo} & 0xffffu), f16_float({lo} >> 16), f16_float({hi} & 0xffffu), f16_float({hi} >> 16))"
                         ),
                     }
                 } else {
@@ -133,10 +128,37 @@ impl<'a> Tx<'a> {
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         ),
+                        _ if self.req.half_targets >> target & 1 != 0 => {
+                            let parts: Vec<String> = comps
+                                .iter()
+                                .map(|(on, r)| {
+                                    if *on {
+                                        format!("f16_trunc(F({r}))")
+                                    } else {
+                                        "0.0f".into()
+                                    }
+                                })
+                                .collect();
+                            format!("float4({})", parts.join(", "))
+                        }
                         _ => float4(&comps),
                     }
                 };
-                format!("o.c{target} = {value};")
+                let swizzle = self.req.swizzles[target as usize];
+                let value = if swizzle == 0 {
+                    value
+                } else {
+                    let sel: String = (0..4)
+                        .map(|i| ['x', 'y', 'z', 'w'][(swizzle >> (2 * i) & 3) as usize])
+                        .collect();
+                    format!("({value}).{sel}")
+                };
+                let logic = self.req.logic_targets[target as usize];
+                if self.req.logic_op != 0xCC && logic != 0 {
+                    logic_op(target, &value, self.req.logic_op, logic)
+                } else {
+                    format!("o.c{target} = {value};")
+                }
             }
             (Stage::Pixel, 8) => {
                 // MRTZ: depth in R, stencil in G, the sample mask in B.
@@ -664,4 +686,58 @@ impl<'a> Tx<'a> {
             _ => self.stores = None,
         }
     }
+}
+
+/// `o.cN = value` with ROP3 `rop` applied between the value as the target
+/// stores it (integers saturated to the channel, measured) and the target's
+/// current bits (`dN`, read through the attachment). The pattern operand is
+/// taken as 0.
+fn logic_op(target: u8, value: &str, rop: u8, logic: u8) -> String {
+    let bits = u32::from(logic & 0x3F).min(32);
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1 << bits) - 1
+    };
+    let max = format!("{:?}f", mask as f32);
+    let (src, dst) = match logic >> 6 {
+        0 => (
+            format!("uint4(floor(saturate({value}) * {max} + 0.5f))"),
+            format!("uint4(floor(saturate(d{target}) * {max} + 0.5f))"),
+        ),
+        1 => (
+            format!("min(uint4({value}), {mask:#x}u)"),
+            format!("d{target}"),
+        ),
+        _ => {
+            let (lo, hi) = (-(1i64 << (bits - 1)), (1i64 << (bits - 1)) - 1);
+            (
+                format!("as_type<uint4>(clamp(int4({value}), int({lo}), int({hi})))"),
+                format!("as_type<uint4>(d{target})"),
+            )
+        }
+    };
+    let terms: Vec<&str> = [("~s & ~d", 0), ("~s & d", 1), ("s & ~d", 2), ("s & d", 3)]
+        .iter()
+        .filter(|(_, i)| rop >> i & 1 != 0)
+        .map(|(t, _)| *t)
+        .collect();
+    let combined = if terms.is_empty() {
+        "uint4(0u)".to_string()
+    } else {
+        terms
+            .iter()
+            .map(|t| format!("({t})"))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let out = match logic >> 6 {
+        0 => format!("float4(r) / {max}"),
+        1 => "r".to_string(),
+        _ if bits == 32 => "as_type<int4>(r)".to_string(),
+        _ => format!("as_type<int4>(r << {0}u) >> {0}", 32 - bits),
+    };
+    format!(
+        "uint4 s = {src}; uint4 d = {dst}; uint4 r = ({combined}) & {mask:#x}u; o.c{target} = {out};"
+    )
 }
