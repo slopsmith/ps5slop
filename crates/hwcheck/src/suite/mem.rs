@@ -19,7 +19,9 @@ const OUT_NAMES: [&str; 8] = ["ret0", "ret1", "ret2", "ret3", "-", "-", "-", "-"
 const DATA: u64 = 0x30_0000;
 /// Random words stores and atomics change, compared whole afterwards.
 const STORE: u64 = 0x50_0000;
-const AREA_BYTES: u32 = 0x1_0000;
+/// Room for the farthest access any descriptor reaches from its index and
+/// offset, so every access the range check lets through is mapped.
+const AREA_BYTES: u32 = 0x2_0000;
 /// Each wave's buffer descriptor, 16 bytes apart.
 const DESC: u64 = INPUTS + 0x8_0000;
 
@@ -73,6 +75,9 @@ fn saddr(base: u64) -> [u32; 4] {
 
 const INDEX: u32 = 1;
 const OFFSET: u32 = 2;
+/// Index and offset for accesses with both, apart from the ones `idxen` and
+/// `offen` use alone, so each can keep lanes apart.
+const BOTH: u32 = 11;
 const GLOBAL_OFFSET: u32 = 3;
 const FLAT_ADDRESS: u32 = 9;
 const DATA_VGPR: u32 = 4;
@@ -221,7 +226,7 @@ fn encode(op: &OpInfo, mode: Mode, format: u32) -> Option<Vec<u32>> {
             let (offen, idxen, vaddr, offset, soffset) = match mode {
                 Mode::Offen => (1, 0, OFFSET, 0, 0x80),
                 Mode::Idxen => (0, 1, INDEX, 0, 0x80),
-                Mode::Both => (1, 1, INDEX, 0, 0x80),
+                Mode::Both => (1, 1, BOTH, 0, 0x80),
                 Mode::Offsets => (1, 0, OFFSET, 0x40, SOFFSET),
                 _ => return None,
             };
@@ -257,10 +262,13 @@ fn encode(op: &OpInfo, mode: Mode, format: u32) -> Option<Vec<u32>> {
 }
 
 /// Bytes of the store area each wave writes in.
-const STORE_SPAN: u64 = 0x800;
+const STORE_SPAN: u64 = 0x2000;
 
-// Stores go where no other lane stores, so the order lanes store in, which
-// the hardware defines and Metal does not, stays out of the test.
+/// Room below the first GLOBAL and FLAT address for the negative immediate offset.
+const GLOBAL_START: u64 = 0x40;
+
+// Stores go where no other lane stores: Metal leaves the lane order undefined.
+// Swizzled stores take every fourth index, as wide accesses there overlap.
 fn records(base: u64, writes: bool, seed: &str) -> Vec<u32> {
     let mut rng = Rng::new(seed);
     let lanes = (GROUPS * 64) as usize;
@@ -269,9 +277,15 @@ fn records(base: u64, writes: bool, seed: &str) -> Vec<u32> {
         let (lane, group) = ((i % 64) as u32, (i / 64) as u64);
         let mut w = [0u32; IN_WORDS];
         let global = if writes {
-            w[0] = lane;
+            let swizzled = DESCRIPTORS[group as usize % DESCRIPTORS.len()].5 & 1 != 0;
+            w[0] = if swizzled { lane * 4 } else { lane };
             w[1] = lane * 16;
-            group * STORE_SPAN + lane as u64 * 16
+            (w[10], w[11]) = if swizzled {
+                (lane * 4, lane % 4 * 4)
+            } else {
+                (lane, lane * 16)
+            };
+            group * STORE_SPAN + GLOBAL_START + lane as u64 * 16
         } else {
             w[0] = if rng.below(8) == 0 {
                 rng.below(0x3000) as u32
@@ -279,7 +293,8 @@ fn records(base: u64, writes: bool, seed: &str) -> Vec<u32> {
                 rng.below(300) as u32
             };
             w[1] = rng.below(0x800) as u32 & !3;
-            rng.below(0x8000) as u64 & !3
+            (w[10], w[11]) = (w[0], rng.below(0x800) as u32 & !3);
+            GLOBAL_START + (rng.below(0x8000) as u64 & !3)
         };
         w[2] = global as u32;
         for word in &mut w[3..7] {
@@ -382,7 +397,7 @@ mod tests {
         let text = |n: &str, m, f| case(by_name(n).unwrap(), m, f).unwrap().text;
         assert_eq!(
             text("buffer_load_dword", Mode::Both, 0),
-            "buffer_load_dword v20, v[1:2], s[40:43], 0 idxen offen"
+            "buffer_load_dword v20, v[11:12], s[40:43], 0 idxen offen"
         );
         assert_eq!(
             text("buffer_store_dwordx2", Mode::Offsets, 0),

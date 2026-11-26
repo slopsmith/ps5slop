@@ -119,6 +119,10 @@ fn conditions() -> Vec<(&'static str, Vec<u32>)> {
             ],
         ),
         ("exec from each lane", mask_from(EXEC, V1).to_vec()),
+        (
+            "exec from each lane, then s_nop 4",
+            [mask_from(EXEC, V1).to_vec(), vec![sopp("s_nop", 4)]].concat(),
+        ),
     ]
 }
 

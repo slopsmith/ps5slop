@@ -1,22 +1,22 @@
 //! Scratch tests: every SCRATCH load and store as a round trip through each
-//! lane's private memory. Each wave points FLAT_SCRATCH at its own 64 KiB so
+//! lane's private memory. Each wave points FLAT_SCRATCH at its own 4 KiB so
 //! waves cannot race; a load test first stores the lane's operands, a store
 //! test reads back what it stored.
 
 use gfx10::opinfo::{Fmt, OpInfo, all};
 
 use super::BASE_MODE;
-use super::valu::{Body, around};
-use crate::Case;
+use super::valu::{Body, GROUPS, around};
+use crate::{Case, write_pages};
 
 const SCRATCH: u32 = 0x80_0000;
-const WAVE_BYTES: u32 = 0x1_0000;
+const WAVE_BYTES: u32 = 0x1000;
 
 // Assembled with `llvm-mc -mcpu=gfx1013 -mattr=+wavefrontsize64`.
 fn setup() -> Vec<u32> {
     vec![
         0x9328_FF04,
-        WAVE_BYTES, // s_mul_i32 s40, s4, 0x10000
+        WAVE_BYTES, // s_mul_i32 s40, s4, 0x1000
         0x8028_FF28,
         SCRATCH,     // s_add_u32 s40, s40, 0x800000
         0xBEA9_0380, // s_mov_b32 s41, 0
@@ -65,6 +65,8 @@ fn case(op: &OpInfo) -> Option<Case> {
     const WAVES: u32 = 32;
     case.compute[0x213 - crate::COMPUTE_FIRST] |= SCRATCH_EN;
     case.compute[0x218 - crate::COMPUTE_FIRST] = WAVES | (WAVE_BYTES / 1024) << 12;
+    let zeros = vec![0; (GROUPS * WAVE_BYTES) as usize];
+    write_pages(&mut case.input, SCRATCH as u64, &zeros);
     Some(case)
 }
 

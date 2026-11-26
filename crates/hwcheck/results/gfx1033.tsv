@@ -1,17 +1,17 @@
-buffer_atomic_add	both	differ	0 of 1024: ; 185 stored dwords value
-buffer_atomic_add	idxen	differ	0 of 1024: ; 112 stored dwords value
+buffer_atomic_add	both	differ	0 of 1024: ; 172 stored dwords value
+buffer_atomic_add	idxen	differ	0 of 1024: ; 104 stored dwords value
 buffer_atomic_add	offen	agree
 buffer_atomic_add	offsets	agree
 buffer_atomic_add_x2	both	untranslated	at dword 29: unsupported instruction buffer_atomic_add_x2
 buffer_atomic_add_x2	idxen	untranslated	at dword 29: unsupported instruction buffer_atomic_add_x2
 buffer_atomic_add_x2	offen	untranslated	at dword 29: unsupported instruction buffer_atomic_add_x2
 buffer_atomic_add_x2	offsets	untranslated	at dword 29: unsupported instruction buffer_atomic_add_x2
-buffer_atomic_and	both	differ	0 of 1024: ; 185 stored dwords value
-buffer_atomic_and	idxen	differ	0 of 1024: ; 112 stored dwords value
+buffer_atomic_and	both	differ	0 of 1024: ; 172 stored dwords value
+buffer_atomic_and	idxen	differ	0 of 1024: ; 104 stored dwords value
 buffer_atomic_and	offen	agree
 buffer_atomic_and	offsets	agree
-buffer_atomic_and_x2	both	differ	64 of 1024: 64 value; 308 stored dwords value
-buffer_atomic_and_x2	idxen	differ	64 of 1024: 64 value; 160 stored dwords value
+buffer_atomic_and_x2	both	differ	0 of 1024: ; 344 stored dwords value
+buffer_atomic_and_x2	idxen	differ	0 of 1024: ; 208 stored dwords value
 buffer_atomic_and_x2	offen	agree
 buffer_atomic_and_x2	offsets	agree
 buffer_atomic_cmpswap	both	agree
@@ -38,18 +38,18 @@ buffer_atomic_fcmpswap_x2	both	untranslated	at dword 29: unsupported instruction
 buffer_atomic_fcmpswap_x2	idxen	untranslated	at dword 29: unsupported instruction buffer_atomic_fcmpswap_x2
 buffer_atomic_fcmpswap_x2	offen	untranslated	at dword 29: unsupported instruction buffer_atomic_fcmpswap_x2
 buffer_atomic_fcmpswap_x2	offsets	untranslated	at dword 29: unsupported instruction buffer_atomic_fcmpswap_x2
-buffer_atomic_fmax	both	differ	0 of 1024: ; 95 stored dwords value
-buffer_atomic_fmax	idxen	differ	0 of 1024: ; 57 stored dwords value
-buffer_atomic_fmax	offen	differ	0 of 1024: ; 5 stored dwords value
-buffer_atomic_fmax	offsets	differ	0 of 1024: ; 7 stored dwords value
+buffer_atomic_fmax	both	differ	0 of 1024: ; 80 stored dwords value
+buffer_atomic_fmax	idxen	differ	0 of 1024: ; 62 stored dwords value
+buffer_atomic_fmax	offen	differ	0 of 1024: ; 2 stored dwords value
+buffer_atomic_fmax	offsets	differ	0 of 1024: ; 6 stored dwords value
 buffer_atomic_fmax_x2	both	untranslated	at dword 29: unsupported instruction buffer_atomic_fmax_x2
 buffer_atomic_fmax_x2	idxen	untranslated	at dword 29: unsupported instruction buffer_atomic_fmax_x2
 buffer_atomic_fmax_x2	offen	untranslated	at dword 29: unsupported instruction buffer_atomic_fmax_x2
 buffer_atomic_fmax_x2	offsets	untranslated	at dword 29: unsupported instruction buffer_atomic_fmax_x2
-buffer_atomic_fmin	both	differ	0 of 1024: ; 84 stored dwords value
-buffer_atomic_fmin	idxen	differ	0 of 1024: ; 78 stored dwords value
-buffer_atomic_fmin	offen	differ	0 of 1024: ; 5 stored dwords value
-buffer_atomic_fmin	offsets	differ	0 of 1024: ; 6 stored dwords value
+buffer_atomic_fmin	both	differ	0 of 1024: ; 88 stored dwords value
+buffer_atomic_fmin	idxen	differ	0 of 1024: ; 61 stored dwords value
+buffer_atomic_fmin	offen	differ	0 of 1024: ; 4 stored dwords value
+buffer_atomic_fmin	offsets	differ	0 of 1024: ; 7 stored dwords value
 buffer_atomic_fmin_x2	both	untranslated	at dword 29: unsupported instruction buffer_atomic_fmin_x2
 buffer_atomic_fmin_x2	idxen	untranslated	at dword 29: unsupported instruction buffer_atomic_fmin_x2
 buffer_atomic_fmin_x2	offen	untranslated	at dword 29: unsupported instruction buffer_atomic_fmin_x2
@@ -62,16 +62,16 @@ buffer_atomic_inc_x2	both	untranslated	at dword 29: unsupported instruction buff
 buffer_atomic_inc_x2	idxen	untranslated	at dword 29: unsupported instruction buffer_atomic_inc_x2
 buffer_atomic_inc_x2	offen	untranslated	at dword 29: unsupported instruction buffer_atomic_inc_x2
 buffer_atomic_inc_x2	offsets	untranslated	at dword 29: unsupported instruction buffer_atomic_inc_x2
-buffer_atomic_or	both	differ	0 of 1024: ; 185 stored dwords value
-buffer_atomic_or	idxen	differ	0 of 1024: ; 112 stored dwords value
+buffer_atomic_or	both	differ	0 of 1024: ; 172 stored dwords value
+buffer_atomic_or	idxen	differ	0 of 1024: ; 104 stored dwords value
 buffer_atomic_or	offen	agree
 buffer_atomic_or	offsets	agree
-buffer_atomic_or_x2	both	differ	64 of 1024: 64 value; 308 stored dwords value
-buffer_atomic_or_x2	idxen	differ	64 of 1024: 64 value; 160 stored dwords value
+buffer_atomic_or_x2	both	differ	0 of 1024: ; 343 stored dwords value
+buffer_atomic_or_x2	idxen	differ	0 of 1024: ; 208 stored dwords value
 buffer_atomic_or_x2	offen	agree
 buffer_atomic_or_x2	offsets	agree
-buffer_atomic_smax	both	differ	0 of 1024: ; 83 stored dwords value
-buffer_atomic_smax	idxen	differ	0 of 1024: ; 63 stored dwords value
+buffer_atomic_smax	both	differ	0 of 1024: ; 79 stored dwords value
+buffer_atomic_smax	idxen	differ	0 of 1024: ; 57 stored dwords value
 buffer_atomic_smax	offen	agree
 buffer_atomic_smax	offsets	agree
 buffer_atomic_smax_x2	both	untranslated	at dword 29: unsupported instruction buffer_atomic_smax_x2
@@ -79,70 +79,70 @@ buffer_atomic_smax_x2	idxen	untranslated	at dword 29: unsupported instruction bu
 buffer_atomic_smax_x2	offen	untranslated	at dword 29: unsupported instruction buffer_atomic_smax_x2
 buffer_atomic_smax_x2	offsets	untranslated	at dword 29: unsupported instruction buffer_atomic_smax_x2
 buffer_atomic_smin	both	differ	0 of 1024: ; 96 stored dwords value
-buffer_atomic_smin	idxen	differ	0 of 1024: ; 68 stored dwords value
+buffer_atomic_smin	idxen	differ	0 of 1024: ; 52 stored dwords value
 buffer_atomic_smin	offen	agree
 buffer_atomic_smin	offsets	agree
 buffer_atomic_smin_x2	both	untranslated	at dword 29: unsupported instruction buffer_atomic_smin_x2
 buffer_atomic_smin_x2	idxen	untranslated	at dword 29: unsupported instruction buffer_atomic_smin_x2
 buffer_atomic_smin_x2	offen	untranslated	at dword 29: unsupported instruction buffer_atomic_smin_x2
 buffer_atomic_smin_x2	offsets	untranslated	at dword 29: unsupported instruction buffer_atomic_smin_x2
-buffer_atomic_sub	both	differ	0 of 1024: ; 185 stored dwords value
-buffer_atomic_sub	idxen	differ	0 of 1024: ; 112 stored dwords value
+buffer_atomic_sub	both	differ	0 of 1024: ; 172 stored dwords value
+buffer_atomic_sub	idxen	differ	0 of 1024: ; 104 stored dwords value
 buffer_atomic_sub	offen	agree
 buffer_atomic_sub	offsets	agree
 buffer_atomic_sub_x2	both	untranslated	at dword 29: unsupported instruction buffer_atomic_sub_x2
 buffer_atomic_sub_x2	idxen	untranslated	at dword 29: unsupported instruction buffer_atomic_sub_x2
 buffer_atomic_sub_x2	offen	untranslated	at dword 29: unsupported instruction buffer_atomic_sub_x2
 buffer_atomic_sub_x2	offsets	untranslated	at dword 29: unsupported instruction buffer_atomic_sub_x2
-buffer_atomic_swap	both	differ	0 of 1024: ; 185 stored dwords value
-buffer_atomic_swap	idxen	differ	0 of 1024: ; 112 stored dwords value
+buffer_atomic_swap	both	differ	0 of 1024: ; 172 stored dwords value
+buffer_atomic_swap	idxen	differ	0 of 1024: ; 104 stored dwords value
 buffer_atomic_swap	offen	agree
 buffer_atomic_swap	offsets	agree
-buffer_atomic_swap_x2	both	differ	64 of 1024: 64 value; 306 stored dwords value
-buffer_atomic_swap_x2	idxen	differ	64 of 1024: 64 value; 160 stored dwords value
+buffer_atomic_swap_x2	both	differ	0 of 1024: ; 344 stored dwords value
+buffer_atomic_swap_x2	idxen	differ	0 of 1024: ; 208 stored dwords value
 buffer_atomic_swap_x2	offen	agree
 buffer_atomic_swap_x2	offsets	agree
-buffer_atomic_umax	both	differ	0 of 1024: ; 105 stored dwords value
-buffer_atomic_umax	idxen	differ	0 of 1024: ; 65 stored dwords value
+buffer_atomic_umax	both	differ	0 of 1024: ; 85 stored dwords value
+buffer_atomic_umax	idxen	differ	0 of 1024: ; 59 stored dwords value
 buffer_atomic_umax	offen	agree
 buffer_atomic_umax	offsets	agree
 buffer_atomic_umax_x2	both	untranslated	at dword 29: unsupported instruction buffer_atomic_umax_x2
 buffer_atomic_umax_x2	idxen	untranslated	at dword 29: unsupported instruction buffer_atomic_umax_x2
 buffer_atomic_umax_x2	offen	untranslated	at dword 29: unsupported instruction buffer_atomic_umax_x2
 buffer_atomic_umax_x2	offsets	untranslated	at dword 29: unsupported instruction buffer_atomic_umax_x2
-buffer_atomic_umin	both	differ	0 of 1024: ; 87 stored dwords value
-buffer_atomic_umin	idxen	differ	0 of 1024: ; 50 stored dwords value
+buffer_atomic_umin	both	differ	0 of 1024: ; 76 stored dwords value
+buffer_atomic_umin	idxen	differ	0 of 1024: ; 51 stored dwords value
 buffer_atomic_umin	offen	agree
 buffer_atomic_umin	offsets	agree
 buffer_atomic_umin_x2	both	untranslated	at dword 29: unsupported instruction buffer_atomic_umin_x2
 buffer_atomic_umin_x2	idxen	untranslated	at dword 29: unsupported instruction buffer_atomic_umin_x2
 buffer_atomic_umin_x2	offen	untranslated	at dword 29: unsupported instruction buffer_atomic_umin_x2
 buffer_atomic_umin_x2	offsets	untranslated	at dword 29: unsupported instruction buffer_atomic_umin_x2
-buffer_atomic_xor	both	differ	0 of 1024: ; 185 stored dwords value
-buffer_atomic_xor	idxen	differ	0 of 1024: ; 112 stored dwords value
+buffer_atomic_xor	both	differ	0 of 1024: ; 172 stored dwords value
+buffer_atomic_xor	idxen	differ	0 of 1024: ; 104 stored dwords value
 buffer_atomic_xor	offen	agree
 buffer_atomic_xor	offsets	agree
-buffer_atomic_xor_x2	both	differ	64 of 1024: 64 value; 308 stored dwords value
-buffer_atomic_xor_x2	idxen	differ	64 of 1024: 64 value; 160 stored dwords value
+buffer_atomic_xor_x2	both	differ	0 of 1024: ; 344 stored dwords value
+buffer_atomic_xor_x2	idxen	differ	0 of 1024: ; 208 stored dwords value
 buffer_atomic_xor_x2	offen	agree
 buffer_atomic_xor_x2	offsets	agree
 buffer_gl0_inv	leaves v_add_f32's result alone	agree
 buffer_gl1_inv	leaves v_add_f32's result alone	agree
-buffer_load_dword	both	differ	179 of 1024: 179 value
-buffer_load_dword	idxen	differ	181 of 1024: 181 value
+buffer_load_dword	both	differ	109 of 1024: 109 value
+buffer_load_dword	idxen	differ	120 of 1024: 120 value
 buffer_load_dword	offen	agree
 buffer_load_dword	offsets	agree
-buffer_load_dwordx2	both	differ	114 of 1024: 114 value
-buffer_load_dwordx2	idxen	differ	182 of 1024: 182 value
-buffer_load_dwordx2	offen	differ	3 of 1024: 3 value
+buffer_load_dwordx2	both	differ	134 of 1024: 134 value
+buffer_load_dwordx2	idxen	differ	114 of 1024: 114 value
+buffer_load_dwordx2	offen	agree
 buffer_load_dwordx2	offsets	agree
-buffer_load_dwordx3	both	differ	193 of 1024: 193 value
-buffer_load_dwordx3	idxen	differ	239 of 1024: 239 value
+buffer_load_dwordx3	both	differ	127 of 1024: 127 value
+buffer_load_dwordx3	idxen	differ	179 of 1024: 179 value
 buffer_load_dwordx3	offen	differ	2 of 1024: 2 value
 buffer_load_dwordx3	offsets	agree
-buffer_load_dwordx4	both	differ	178 of 1024: 178 value
-buffer_load_dwordx4	idxen	differ	192 of 1024: 192 value
-buffer_load_dwordx4	offen	differ	2 of 1024: 2 value
+buffer_load_dwordx4	both	differ	115 of 1024: 115 value
+buffer_load_dwordx4	idxen	differ	181 of 1024: 181 value
+buffer_load_dwordx4	offen	agree
 buffer_load_dwordx4	offsets	agree
 buffer_load_format_d16_hi_x	both	untranslated	at dword 29: unsupported instruction buffer_load_format_d16_hi_x
 buffer_load_format_d16_hi_x	idxen	untranslated	at dword 29: unsupported instruction buffer_load_format_d16_hi_x
@@ -164,24 +164,24 @@ buffer_load_format_d16_xyzw	both	untranslated	at dword 29: unsupported instructi
 buffer_load_format_d16_xyzw	idxen	untranslated	at dword 29: unsupported instruction buffer_load_format_d16_xyzw
 buffer_load_format_d16_xyzw	offen	untranslated	at dword 29: unsupported instruction buffer_load_format_d16_xyzw
 buffer_load_format_d16_xyzw	offsets	untranslated	at dword 29: unsupported instruction buffer_load_format_d16_xyzw
-buffer_load_format_x	both	differ	238 of 1024: 238 value
-buffer_load_format_x	idxen	differ	176 of 1024: 176 value
-buffer_load_format_x	offen	differ	130 of 1024: 130 value
-buffer_load_format_x	offsets	differ	130 of 1024: 130 value
-buffer_load_format_xy	both	differ	374 of 1024: 374 value
-buffer_load_format_xy	idxen	differ	487 of 1024: 487 value
-buffer_load_format_xy	offen	differ	321 of 1024: 321 value
-buffer_load_format_xy	offsets	differ	324 of 1024: 324 value
-buffer_load_format_xyz	both	differ	445 of 1024: 445 value
-buffer_load_format_xyz	idxen	differ	643 of 1024: 643 value
-buffer_load_format_xyz	offen	differ	389 of 1024: 389 value
-buffer_load_format_xyz	offsets	differ	393 of 1024: 393 value
-buffer_load_format_xyzw	both	differ	455 of 1024: 455 value
-buffer_load_format_xyzw	idxen	differ	573 of 1024: 573 value
-buffer_load_format_xyzw	offen	differ	390 of 1024: 390 value
-buffer_load_format_xyzw	offsets	differ	387 of 1024: 387 value
-buffer_load_sbyte	both	differ	120 of 1024: 120 value
-buffer_load_sbyte	idxen	differ	59 of 1024: 59 value
+buffer_load_format_x	both	differ	170 of 1024: 170 value
+buffer_load_format_x	idxen	differ	171 of 1024: 171 value
+buffer_load_format_x	offen	differ	132 of 1024: 132 value
+buffer_load_format_x	offsets	differ	131 of 1024: 131 value
+buffer_load_format_xy	both	differ	352 of 1024: 352 value
+buffer_load_format_xy	idxen	differ	479 of 1024: 479 value
+buffer_load_format_xy	offen	differ	329 of 1024: 329 value
+buffer_load_format_xy	offsets	differ	328 of 1024: 328 value
+buffer_load_format_xyz	both	differ	414 of 1024: 414 value
+buffer_load_format_xyz	idxen	differ	575 of 1024: 575 value
+buffer_load_format_xyz	offen	differ	393 of 1024: 393 value
+buffer_load_format_xyz	offsets	differ	388 of 1024: 388 value
+buffer_load_format_xyzw	both	differ	396 of 1024: 396 value
+buffer_load_format_xyzw	idxen	differ	572 of 1024: 572 value
+buffer_load_format_xyzw	offen	differ	391 of 1024: 391 value
+buffer_load_format_xyzw	offsets	differ	391 of 1024: 391 value
+buffer_load_sbyte	both	differ	57 of 1024: 57 value
+buffer_load_sbyte	idxen	differ	53 of 1024: 53 value
 buffer_load_sbyte	offen	agree
 buffer_load_sbyte	offsets	agree
 buffer_load_sbyte_d16	both	untranslated	at dword 29: unsupported instruction buffer_load_sbyte_d16
@@ -200,12 +200,12 @@ buffer_load_short_d16_hi	both	untranslated	at dword 29: unsupported instruction 
 buffer_load_short_d16_hi	idxen	untranslated	at dword 29: unsupported instruction buffer_load_short_d16_hi
 buffer_load_short_d16_hi	offen	untranslated	at dword 29: unsupported instruction buffer_load_short_d16_hi
 buffer_load_short_d16_hi	offsets	untranslated	at dword 29: unsupported instruction buffer_load_short_d16_hi
-buffer_load_sshort	both	differ	128 of 1024: 128 value
-buffer_load_sshort	idxen	differ	54 of 1024: 54 value
+buffer_load_sshort	both	differ	55 of 1024: 55 value
+buffer_load_sshort	idxen	differ	52 of 1024: 52 value
 buffer_load_sshort	offen	agree
 buffer_load_sshort	offsets	agree
-buffer_load_ubyte	both	differ	64 of 1024: 64 value
-buffer_load_ubyte	idxen	differ	114 of 1024: 114 value
+buffer_load_ubyte	both	differ	55 of 1024: 55 value
+buffer_load_ubyte	idxen	differ	54 of 1024: 54 value
 buffer_load_ubyte	offen	agree
 buffer_load_ubyte	offsets	agree
 buffer_load_ubyte_d16	both	untranslated	at dword 29: unsupported instruction buffer_load_ubyte_d16
@@ -216,32 +216,32 @@ buffer_load_ubyte_d16_hi	both	untranslated	at dword 29: unsupported instruction 
 buffer_load_ubyte_d16_hi	idxen	untranslated	at dword 29: unsupported instruction buffer_load_ubyte_d16_hi
 buffer_load_ubyte_d16_hi	offen	untranslated	at dword 29: unsupported instruction buffer_load_ubyte_d16_hi
 buffer_load_ubyte_d16_hi	offsets	untranslated	at dword 29: unsupported instruction buffer_load_ubyte_d16_hi
-buffer_load_ushort	both	differ	128 of 1024: 128 value
-buffer_load_ushort	idxen	differ	116 of 1024: 116 value
+buffer_load_ushort	both	differ	55 of 1024: 55 value
+buffer_load_ushort	idxen	differ	54 of 1024: 54 value
 buffer_load_ushort	offen	agree
 buffer_load_ushort	offsets	agree
-buffer_store_byte	both	differ	0 of 1024: ; 185 stored dwords value
-buffer_store_byte	idxen	differ	0 of 1024: ; 111 stored dwords value
+buffer_store_byte	both	differ	0 of 1024: ; 172 stored dwords value
+buffer_store_byte	idxen	differ	0 of 1024: ; 102 stored dwords value
 buffer_store_byte	offen	agree
 buffer_store_byte	offsets	agree
 buffer_store_byte_d16_hi	both	untranslated	at dword 29: unsupported instruction buffer_store_byte_d16_hi
 buffer_store_byte_d16_hi	idxen	untranslated	at dword 29: unsupported instruction buffer_store_byte_d16_hi
 buffer_store_byte_d16_hi	offen	untranslated	at dword 29: unsupported instruction buffer_store_byte_d16_hi
 buffer_store_byte_d16_hi	offsets	untranslated	at dword 29: unsupported instruction buffer_store_byte_d16_hi
-buffer_store_dword	both	differ	0 of 1024: ; 185 stored dwords value
-buffer_store_dword	idxen	differ	0 of 1024: ; 112 stored dwords value
+buffer_store_dword	both	differ	0 of 1024: ; 172 stored dwords value
+buffer_store_dword	idxen	differ	0 of 1024: ; 104 stored dwords value
 buffer_store_dword	offen	agree
 buffer_store_dword	offsets	agree
-buffer_store_dwordx2	both	differ	0 of 1024: ; 367 stored dwords value
-buffer_store_dwordx2	idxen	differ	0 of 1024: ; 164 stored dwords value
+buffer_store_dwordx2	both	differ	0 of 1024: ; 344 stored dwords value
+buffer_store_dwordx2	idxen	differ	0 of 1024: ; 208 stored dwords value
 buffer_store_dwordx2	offen	agree
 buffer_store_dwordx2	offsets	agree
-buffer_store_dwordx3	both	differ	0 of 1024: ; 552 stored dwords value
-buffer_store_dwordx3	idxen	differ	0 of 1024: ; 216 stored dwords value
+buffer_store_dwordx3	both	differ	0 of 1024: ; 508 stored dwords value
+buffer_store_dwordx3	idxen	differ	0 of 1024: ; 312 stored dwords value
 buffer_store_dwordx3	offen	agree
 buffer_store_dwordx3	offsets	agree
-buffer_store_dwordx4	both	differ	0 of 1024: ; 719 stored dwords value
-buffer_store_dwordx4	idxen	differ	0 of 1024: ; 268 stored dwords value
+buffer_store_dwordx4	both	differ	0 of 1024: ; 672 stored dwords value
+buffer_store_dwordx4	idxen	differ	0 of 1024: ; 416 stored dwords value
 buffer_store_dwordx4	offen	agree
 buffer_store_dwordx4	offsets	agree
 buffer_store_format_d16_hi_x	both	untranslated	at dword 29: unsupported instruction buffer_store_format_d16_hi_x
@@ -264,24 +264,24 @@ buffer_store_format_d16_xyzw	both	untranslated	at dword 29: unsupported instruct
 buffer_store_format_d16_xyzw	idxen	untranslated	at dword 29: unsupported instruction buffer_store_format_d16_xyzw
 buffer_store_format_d16_xyzw	offen	untranslated	at dword 29: unsupported instruction buffer_store_format_d16_xyzw
 buffer_store_format_d16_xyzw	offsets	untranslated	at dword 29: unsupported instruction buffer_store_format_d16_xyzw
-buffer_store_format_x	both	differ	0 of 1024: ; 1018 stored dwords value
-buffer_store_format_x	idxen	differ	0 of 1024: ; 1017 stored dwords value
+buffer_store_format_x	both	differ	0 of 1024: ; 1014 stored dwords value
+buffer_store_format_x	idxen	differ	0 of 1024: ; 1015 stored dwords value
 buffer_store_format_x	offen	differ	0 of 1024: ; 898 stored dwords value
 buffer_store_format_x	offsets	differ	0 of 1024: ; 896 stored dwords value
-buffer_store_format_xy	both	differ	0 of 1024: ; 1005 stored dwords value
-buffer_store_format_xy	idxen	differ	0 of 1024: ; 973 stored dwords value
+buffer_store_format_xy	both	differ	0 of 1024: ; 1001 stored dwords value
+buffer_store_format_xy	idxen	differ	0 of 1024: ; 971 stored dwords value
 buffer_store_format_xy	offen	differ	0 of 1024: ; 884 stored dwords value
 buffer_store_format_xy	offsets	differ	0 of 1024: ; 880 stored dwords value
-buffer_store_format_xyz	both	differ	0 of 1024: ; 988 stored dwords value
-buffer_store_format_xyz	idxen	differ	0 of 1024: ; 971 stored dwords value
-buffer_store_format_xyz	offen	differ	0 of 1024: ; 862 stored dwords value
-buffer_store_format_xyz	offsets	differ	0 of 1024: ; 866 stored dwords value
-buffer_store_format_xyzw	both	differ	0 of 1024: ; 795 stored dwords value
-buffer_store_format_xyzw	idxen	differ	0 of 1024: ; 772 stored dwords value
+buffer_store_format_xyz	both	differ	0 of 1024: ; 986 stored dwords value
+buffer_store_format_xyz	idxen	differ	0 of 1024: ; 968 stored dwords value
+buffer_store_format_xyz	offen	differ	0 of 1024: ; 861 stored dwords value
+buffer_store_format_xyz	offsets	differ	0 of 1024: ; 864 stored dwords value
+buffer_store_format_xyzw	both	differ	0 of 1024: ; 790 stored dwords value
+buffer_store_format_xyzw	idxen	differ	0 of 1024: ; 770 stored dwords value
 buffer_store_format_xyzw	offen	differ	0 of 1024: ; 674 stored dwords value
 buffer_store_format_xyzw	offsets	differ	0 of 1024: ; 674 stored dwords value
-buffer_store_short	both	differ	0 of 1024: ; 185 stored dwords value
-buffer_store_short	idxen	differ	0 of 1024: ; 112 stored dwords value
+buffer_store_short	both	differ	0 of 1024: ; 172 stored dwords value
+buffer_store_short	idxen	differ	0 of 1024: ; 104 stored dwords value
 buffer_store_short	offen	agree
 buffer_store_short	offsets	agree
 buffer_store_short_d16_hi	both	untranslated	at dword 29: unsupported instruction buffer_store_short_d16_hi
@@ -3879,51 +3879,61 @@ s_buffer_load_dwordx8	offset 0x10 + soffset	differ	679 of 1024: 679 value
 s_buffer_load_dwordx8	offset 0x1004 + soffset	differ	755 of 1024: 755 value
 s_buffer_load_dwordx8	offset 0x40	differ	593 of 1024: 593 value
 s_cbranch_cdbgsys	exec from each lane	untranslated	at dword 19: unsupported branch s_cbranch_cdbgsys
+s_cbranch_cdbgsys	exec from each lane, then s_nop 4	untranslated	at dword 20: unsupported branch s_cbranch_cdbgsys
 s_cbranch_cdbgsys	exec from the group's bit 0	untranslated	at dword 19: unsupported branch s_cbranch_cdbgsys
 s_cbranch_cdbgsys	scc from the group's bit 0	untranslated	at dword 18: unsupported branch s_cbranch_cdbgsys
 s_cbranch_cdbgsys	vcc from each lane	untranslated	at dword 19: unsupported branch s_cbranch_cdbgsys
 s_cbranch_cdbgsys	vcc from the group's bit 1	untranslated	at dword 19: unsupported branch s_cbranch_cdbgsys
 s_cbranch_cdbgsys_and_user	exec from each lane	untranslated	at dword 19: unsupported branch s_cbranch_cdbgsys_and_user
+s_cbranch_cdbgsys_and_user	exec from each lane, then s_nop 4	untranslated	at dword 20: unsupported branch s_cbranch_cdbgsys_and_user
 s_cbranch_cdbgsys_and_user	exec from the group's bit 0	untranslated	at dword 19: unsupported branch s_cbranch_cdbgsys_and_user
 s_cbranch_cdbgsys_and_user	scc from the group's bit 0	untranslated	at dword 18: unsupported branch s_cbranch_cdbgsys_and_user
 s_cbranch_cdbgsys_and_user	vcc from each lane	untranslated	at dword 19: unsupported branch s_cbranch_cdbgsys_and_user
 s_cbranch_cdbgsys_and_user	vcc from the group's bit 1	untranslated	at dword 19: unsupported branch s_cbranch_cdbgsys_and_user
 s_cbranch_cdbgsys_or_user	exec from each lane	untranslated	at dword 19: unsupported branch s_cbranch_cdbgsys_or_user
+s_cbranch_cdbgsys_or_user	exec from each lane, then s_nop 4	untranslated	at dword 20: unsupported branch s_cbranch_cdbgsys_or_user
 s_cbranch_cdbgsys_or_user	exec from the group's bit 0	untranslated	at dword 19: unsupported branch s_cbranch_cdbgsys_or_user
 s_cbranch_cdbgsys_or_user	scc from the group's bit 0	untranslated	at dword 18: unsupported branch s_cbranch_cdbgsys_or_user
 s_cbranch_cdbgsys_or_user	vcc from each lane	untranslated	at dword 19: unsupported branch s_cbranch_cdbgsys_or_user
 s_cbranch_cdbgsys_or_user	vcc from the group's bit 1	untranslated	at dword 19: unsupported branch s_cbranch_cdbgsys_or_user
 s_cbranch_cdbguser	exec from each lane	untranslated	at dword 19: unsupported branch s_cbranch_cdbguser
+s_cbranch_cdbguser	exec from each lane, then s_nop 4	untranslated	at dword 20: unsupported branch s_cbranch_cdbguser
 s_cbranch_cdbguser	exec from the group's bit 0	untranslated	at dword 19: unsupported branch s_cbranch_cdbguser
 s_cbranch_cdbguser	scc from the group's bit 0	untranslated	at dword 18: unsupported branch s_cbranch_cdbguser
 s_cbranch_cdbguser	vcc from each lane	untranslated	at dword 19: unsupported branch s_cbranch_cdbguser
 s_cbranch_cdbguser	vcc from the group's bit 1	untranslated	at dword 19: unsupported branch s_cbranch_cdbguser
 s_cbranch_execnz	exec from each lane	agree
+s_cbranch_execnz	exec from each lane, then s_nop 4	agree
 s_cbranch_execnz	exec from the group's bit 0	agree
 s_cbranch_execnz	scc from the group's bit 0	agree
 s_cbranch_execnz	vcc from each lane	agree
 s_cbranch_execnz	vcc from the group's bit 1	agree
 s_cbranch_execz	exec from each lane	agree
+s_cbranch_execz	exec from each lane, then s_nop 4	differ	1 of 2048: 1 value
 s_cbranch_execz	exec from the group's bit 0	agree
 s_cbranch_execz	scc from the group's bit 0	agree
 s_cbranch_execz	vcc from each lane	agree
 s_cbranch_execz	vcc from the group's bit 1	agree
 s_cbranch_scc0	exec from each lane	differ	1 of 2048: 1 value
+s_cbranch_scc0	exec from each lane, then s_nop 4	differ	1 of 2048: 1 value
 s_cbranch_scc0	exec from the group's bit 0	agree
 s_cbranch_scc0	scc from the group's bit 0	agree
 s_cbranch_scc0	vcc from each lane	agree
 s_cbranch_scc0	vcc from the group's bit 1	agree
 s_cbranch_scc1	exec from each lane	agree
+s_cbranch_scc1	exec from each lane, then s_nop 4	agree
 s_cbranch_scc1	exec from the group's bit 0	agree
 s_cbranch_scc1	scc from the group's bit 0	agree
 s_cbranch_scc1	vcc from each lane	agree
 s_cbranch_scc1	vcc from the group's bit 1	agree
 s_cbranch_vccnz	exec from each lane	differ	1 of 2048: 1 value
+s_cbranch_vccnz	exec from each lane, then s_nop 4	agree
 s_cbranch_vccnz	exec from the group's bit 0	agree
 s_cbranch_vccnz	scc from the group's bit 0	agree
 s_cbranch_vccnz	vcc from each lane	agree
 s_cbranch_vccnz	vcc from the group's bit 1	agree
 s_cbranch_vccz	exec from each lane	agree
+s_cbranch_vccz	exec from each lane, then s_nop 4	differ	2 of 2048: 2 value
 s_cbranch_vccz	exec from the group's bit 0	agree
 s_cbranch_vccz	scc from the group's bit 0	agree
 s_cbranch_vccz	vcc from each lane	agree
@@ -4203,38 +4213,38 @@ tbuffer_load_format_d16_xyzw	offsets format 22	untranslated	at dword 29: unsuppo
 tbuffer_load_format_d16_xyzw	offsets format 44	untranslated	at dword 29: unsupported instruction buffer_load_format_d16_xyzw
 tbuffer_load_format_d16_xyzw	offsets format 56	untranslated	at dword 29: unsupported instruction buffer_load_format_d16_xyzw
 tbuffer_load_format_d16_xyzw	offsets format 71	untranslated	at dword 29: unsupported instruction buffer_load_format_d16_xyzw
-tbuffer_load_format_x	both format 22	differ	313 of 1024: 313 value
-tbuffer_load_format_x	both format 44	differ	602 of 1024: 602 value
-tbuffer_load_format_x	both format 56	differ	245 of 1024: 245 value
-tbuffer_load_format_x	both format 71	differ	324 of 1024: 324 value
+tbuffer_load_format_x	both format 22	differ	250 of 1024: 250 value
+tbuffer_load_format_x	both format 44	differ	569 of 1024: 569 value
+tbuffer_load_format_x	both format 56	differ	244 of 1024: 244 value
+tbuffer_load_format_x	both format 71	differ	258 of 1024: 258 value
 tbuffer_load_format_x	offsets format 22	differ	64 of 1024: 64 value
-tbuffer_load_format_x	offsets format 44	differ	595 of 1024: 595 value
-tbuffer_load_format_x	offsets format 56	differ	61 of 1024: 61 value
-tbuffer_load_format_x	offsets format 71	differ	87 of 1024: 87 value
-tbuffer_load_format_xy	both format 22	differ	250 of 1024: 250 value
-tbuffer_load_format_xy	both format 44	differ	699 of 1024: 699 value
-tbuffer_load_format_xy	both format 56	differ	370 of 1024: 370 value
-tbuffer_load_format_xy	both format 71	differ	390 of 1024: 390 value
+tbuffer_load_format_x	offsets format 44	differ	585 of 1024: 585 value
+tbuffer_load_format_x	offsets format 56	differ	63 of 1024: 63 value
+tbuffer_load_format_x	offsets format 71	differ	83 of 1024: 83 value
+tbuffer_load_format_xy	both format 22	differ	240 of 1024: 240 value
+tbuffer_load_format_xy	both format 44	differ	680 of 1024: 680 value
+tbuffer_load_format_xy	both format 56	differ	303 of 1024: 303 value
+tbuffer_load_format_xy	both format 71	differ	325 of 1024: 325 value
 tbuffer_load_format_xy	offsets format 22	differ	64 of 1024: 64 value
 tbuffer_load_format_xy	offsets format 44	differ	767 of 1024: 767 value
 tbuffer_load_format_xy	offsets format 56	differ	128 of 1024: 128 value
-tbuffer_load_format_xy	offsets format 71	differ	156 of 1024: 156 value
-tbuffer_load_format_xyz	both format 22	differ	370 of 1024: 370 value
-tbuffer_load_format_xyz	both format 44	differ	685 of 1024: 685 value
-tbuffer_load_format_xyz	both format 56	differ	370 of 1024: 370 value
-tbuffer_load_format_xyz	both format 71	differ	401 of 1024: 401 value
+tbuffer_load_format_xy	offsets format 71	differ	163 of 1024: 163 value
+tbuffer_load_format_xyz	both format 22	differ	306 of 1024: 306 value
+tbuffer_load_format_xyz	both format 44	differ	686 of 1024: 686 value
+tbuffer_load_format_xyz	both format 56	differ	308 of 1024: 308 value
+tbuffer_load_format_xyz	both format 71	differ	341 of 1024: 341 value
 tbuffer_load_format_xyz	offsets format 22	differ	128 of 1024: 128 value
 tbuffer_load_format_xyz	offsets format 44	differ	768 of 1024: 768 value
 tbuffer_load_format_xyz	offsets format 56	differ	128 of 1024: 128 value
-tbuffer_load_format_xyz	offsets format 71	differ	176 of 1024: 176 value
-tbuffer_load_format_xyzw	both format 22	differ	350 of 1024: 350 value
-tbuffer_load_format_xyzw	both format 44	differ	447 of 1024: 447 value
-tbuffer_load_format_xyzw	both format 56	differ	356 of 1024: 356 value
-tbuffer_load_format_xyzw	both format 71	differ	392 of 1024: 392 value
+tbuffer_load_format_xyz	offsets format 71	differ	170 of 1024: 170 value
+tbuffer_load_format_xyzw	both format 22	differ	297 of 1024: 297 value
+tbuffer_load_format_xyzw	both format 44	differ	566 of 1024: 566 value
+tbuffer_load_format_xyzw	both format 56	differ	297 of 1024: 297 value
+tbuffer_load_format_xyzw	both format 71	differ	326 of 1024: 326 value
 tbuffer_load_format_xyzw	offsets format 22	differ	128 of 1024: 128 value
 tbuffer_load_format_xyzw	offsets format 44	differ	768 of 1024: 768 value
 tbuffer_load_format_xyzw	offsets format 56	differ	128 of 1024: 128 value
-tbuffer_load_format_xyzw	offsets format 71	differ	186 of 1024: 186 value
+tbuffer_load_format_xyzw	offsets format 71	differ	190 of 1024: 190 value
 tbuffer_store_format_d16_x	both format 22	untranslated	at dword 29: unsupported instruction buffer_store_format_d16_x
 tbuffer_store_format_d16_x	both format 44	untranslated	at dword 29: unsupported instruction buffer_store_format_d16_x
 tbuffer_store_format_d16_x	both format 56	untranslated	at dword 29: unsupported instruction buffer_store_format_d16_x
@@ -4267,34 +4277,34 @@ tbuffer_store_format_d16_xyzw	offsets format 22	untranslated	at dword 29: unsupp
 tbuffer_store_format_d16_xyzw	offsets format 44	untranslated	at dword 29: unsupported instruction buffer_store_format_d16_xyzw
 tbuffer_store_format_d16_xyzw	offsets format 56	untranslated	at dword 29: unsupported instruction buffer_store_format_d16_xyzw
 tbuffer_store_format_d16_xyzw	offsets format 71	untranslated	at dword 29: unsupported instruction buffer_store_format_d16_xyzw
-tbuffer_store_format_x	both format 22	differ	0 of 1024: ; 185 stored dwords value
-tbuffer_store_format_x	both format 44	differ	0 of 1024: ; 773 stored dwords value
-tbuffer_store_format_x	both format 56	differ	0 of 1024: ; 895 stored dwords value
-tbuffer_store_format_x	both format 71	differ	0 of 1024: ; 1662 stored dwords value
+tbuffer_store_format_x	both format 22	differ	0 of 1024: ; 172 stored dwords value
+tbuffer_store_format_x	both format 44	differ	0 of 1024: ; 775 stored dwords value
+tbuffer_store_format_x	both format 56	differ	0 of 1024: ; 890 stored dwords value
+tbuffer_store_format_x	both format 71	differ	0 of 1024: ; 1666 stored dwords value
 tbuffer_store_format_x	offsets format 22	agree
 tbuffer_store_format_x	offsets format 44	differ	0 of 1024: ; 768 stored dwords value
 tbuffer_store_format_x	offsets format 56	differ	0 of 1024: ; 768 stored dwords value
 tbuffer_store_format_x	offsets format 71	differ	0 of 1024: ; 1536 stored dwords value
-tbuffer_store_format_xy	both format 22	differ	0 of 1024: ; 185 stored dwords value
-tbuffer_store_format_xy	both format 44	differ	0 of 1024: ; 773 stored dwords value
-tbuffer_store_format_xy	both format 56	differ	0 of 1024: ; 895 stored dwords value
-tbuffer_store_format_xy	both format 71	differ	0 of 1024: ; 1491 stored dwords value
+tbuffer_store_format_xy	both format 22	differ	0 of 1024: ; 172 stored dwords value
+tbuffer_store_format_xy	both format 44	differ	0 of 1024: ; 775 stored dwords value
+tbuffer_store_format_xy	both format 56	differ	0 of 1024: ; 891 stored dwords value
+tbuffer_store_format_xy	both format 71	differ	0 of 1024: ; 1494 stored dwords value
 tbuffer_store_format_xy	offsets format 22	agree
 tbuffer_store_format_xy	offsets format 44	differ	0 of 1024: ; 768 stored dwords value
 tbuffer_store_format_xy	offsets format 56	differ	0 of 1024: ; 768 stored dwords value
 tbuffer_store_format_xy	offsets format 71	differ	0 of 1024: ; 1362 stored dwords value
-tbuffer_store_format_xyz	both format 22	differ	0 of 1024: ; 185 stored dwords value
-tbuffer_store_format_xyz	both format 44	differ	0 of 1024: ; 773 stored dwords value
-tbuffer_store_format_xyz	both format 56	differ	0 of 1024: ; 891 stored dwords value
-tbuffer_store_format_xyz	both format 71	differ	0 of 1024: ; 1625 stored dwords value
+tbuffer_store_format_xyz	both format 22	differ	0 of 1024: ; 172 stored dwords value
+tbuffer_store_format_xyz	both format 44	differ	0 of 1024: ; 775 stored dwords value
+tbuffer_store_format_xyz	both format 56	differ	0 of 1024: ; 890 stored dwords value
+tbuffer_store_format_xyz	both format 71	differ	0 of 1024: ; 1620 stored dwords value
 tbuffer_store_format_xyz	offsets format 22	agree
 tbuffer_store_format_xyz	offsets format 44	differ	0 of 1024: ; 768 stored dwords value
-tbuffer_store_format_xyz	offsets format 56	differ	0 of 1024: ; 766 stored dwords value
+tbuffer_store_format_xyz	offsets format 56	differ	0 of 1024: ; 768 stored dwords value
 tbuffer_store_format_xyz	offsets format 71	differ	0 of 1024: ; 1369 stored dwords value
-tbuffer_store_format_xyzw	both format 22	differ	0 of 1024: ; 185 stored dwords value
-tbuffer_store_format_xyzw	both format 44	differ	0 of 1024: ; 773 stored dwords value
-tbuffer_store_format_xyzw	both format 56	differ	0 of 1024: ; 184 stored dwords value
-tbuffer_store_format_xyzw	both format 71	differ	0 of 1024: ; 1435 stored dwords value
+tbuffer_store_format_xyzw	both format 22	differ	0 of 1024: ; 172 stored dwords value
+tbuffer_store_format_xyzw	both format 44	differ	0 of 1024: ; 775 stored dwords value
+tbuffer_store_format_xyzw	both format 56	differ	0 of 1024: ; 172 stored dwords value
+tbuffer_store_format_xyzw	both format 71	differ	0 of 1024: ; 1431 stored dwords value
 tbuffer_store_format_xyzw	offsets format 22	agree
 tbuffer_store_format_xyzw	offsets format 44	differ	0 of 1024: ; 768 stored dwords value
 tbuffer_store_format_xyzw	offsets format 56	agree
