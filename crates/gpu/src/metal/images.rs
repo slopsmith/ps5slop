@@ -694,10 +694,19 @@ impl Metal {
         };
         d.setMinFilter(filter(s.min_linear));
         d.setMagFilter(filter(s.mag_linear));
-        d.setMipFilter(if s.mip_linear {
-            MTLSamplerMipFilter::Linear
-        } else {
-            MTLSamplerMipFilter::Nearest
+        d.setMipFilter(match s.mip {
+            0 => MTLSamplerMipFilter::NotMipmapped,
+            1 => MTLSamplerMipFilter::Nearest,
+            _ => MTLSamplerMipFilter::Linear,
+        });
+        d.setMaxAnisotropy(1 << s.aniso);
+        d.setLodMinClamp(s.lod[0] as f32 / 256.0);
+        d.setLodMaxClamp(s.lod[1] as f32 / 256.0);
+        // Register border colours (a table at `TA_BC_BASE_ADDR`) are not tracked.
+        d.setBorderColor(match s.border {
+            1 => MTLSamplerBorderColor::OpaqueBlack,
+            2 => MTLSamplerBorderColor::OpaqueWhite,
+            _ => MTLSamplerBorderColor::TransparentBlack,
         });
         let mode = |c: u8| match c {
             0 => MTLSamplerAddressMode::Repeat,

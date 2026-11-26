@@ -439,16 +439,30 @@ pub struct Sampler {
     pub clamp: [u8; 3],
     pub mag_linear: bool,
     pub min_linear: bool,
-    pub mip_linear: bool,
+    /// `MIP_FILTER`: 0 none (the base level only), 1 point, 2 linear.
+    pub mip: u8,
+    /// `MAX_ANISO_RATIO` (1x, 2x, 4x, 8x, 16x) where an XY filter is anisotropic, else 0.
+    pub aniso: u8,
+    /// `MIN_LOD` and `MAX_LOD`, unsigned 4.8 fixed point.
+    pub lod: [u16; 2],
+    /// `BORDER_COLOR_TYPE`: transparent black, opaque black, opaque white, register.
+    pub border: u8,
 }
 
 impl Sampler {
     pub fn read(d: &[u32]) -> Self {
         Self {
             clamp: [0, 3, 6].map(|s| ((d[0] >> s) & 7) as u8),
-            mag_linear: (d[2] >> 20) & 3 != 0,
-            min_linear: (d[2] >> 22) & 3 != 0,
-            mip_linear: (d[2] >> 26) & 3 == 2,
+            mag_linear: (d[2] >> 20) & 1 != 0,
+            min_linear: (d[2] >> 22) & 1 != 0,
+            mip: ((d[2] >> 26) & 3) as u8,
+            aniso: if (d[2] >> 21) & 1 != 0 || (d[2] >> 23) & 1 != 0 {
+                ((d[0] >> 9) & 7).min(4) as u8
+            } else {
+                0
+            },
+            lod: [(d[1] & 0xFFF) as u16, ((d[1] >> 12) & 0xFFF) as u16],
+            border: (d[3] >> 30) as u8,
         }
     }
 }
@@ -516,7 +530,7 @@ mod tests {
         assert_eq!(t.tile, Some(TileMode::RenderTarget));
         assert_eq!(t.kind, 9);
         let s = Sampler::read(&[0x192, 0xfff000, 0x150_0000, 0]);
-        assert!(s.mag_linear && s.min_linear && !s.mip_linear);
+        assert!(s.mag_linear && s.min_linear && s.mip == 0);
     }
 
     #[test]
