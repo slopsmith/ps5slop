@@ -618,6 +618,24 @@ impl<'a> Tx<'a> {
                 regs[3],
             );
         }
+        if name == "ds_permute_b32" && !gds && self.req.stage != Stage::Vertex {
+            // Wave64 permutes run as two 32-lane halves; the highest sender wins and
+            // lanes nobody sends to get 0 (measured on gfx1033).
+            let [addr, data0, _, vdst] = regs;
+            let (a, d0, d) = (self.v(addr), self.v(data0), self.v(vdst));
+            let off = offset0 as u32 | (offset1 as u32) << 8;
+            let on = self.mask_on(126);
+            self.simd_lane = true;
+            self.line(&format!(
+                "{{ uint pt = {on} ? (({a} + {off}u) >> 2) & 31u : 32u; uint pr = 0u; uint pl = uint(slane);"
+            ));
+            self.line(&format!(
+                "for (ushort j = 0; j < 32; j++) {{ uint dj = simd_shuffle({d0}, j); if (simd_shuffle(pt, j) == pl) pr = dj; }}"
+            ));
+            self.guard(&format!("{d} = pr;"));
+            self.line("}");
+            return Ok(());
+        }
         if name == "ds_bpermute_b32" && !gds && self.req.stage != Stage::Vertex {
             // Metal SIMD groups are 32 lanes, so the source lane is taken mod 32.
             let [addr, data0, _, vdst] = regs;
@@ -768,11 +786,111 @@ impl<'a> Tx<'a> {
                 let d = dst(self, 0);
                 write!(s, " {d} = (a + {off}u) < LDS_BYTES ? uint(int(*(threadgroup {ty}*)((threadgroup uchar*)lds + a + {off}u))) : 0u;").unwrap();
             }
+            "ds_read_u8_d16" | "ds_read_u8_d16_hi" | "ds_read_i8_d16" | "ds_read_i8_d16_hi"
+            | "ds_read_u16_d16" | "ds_read_u16_d16_hi" => {
+                let ty = match &name[8..10] {
+                    "u8" => "uchar",
+                    "i8" => "char",
+                    _ => "ushort",
+                };
+                let d = dst(self, 0);
+                write!(s, " uint h = (a + {off}u) < LDS_BYTES ? uint(int(*(threadgroup {ty}*)((threadgroup uchar*)lds + a + {off}u))) & 0xffffu : 0u;").unwrap();
+                if name.ends_with("_hi") {
+                    write!(s, " {d} = ({d} & 0xffffu) | (h << 16);").unwrap();
+                } else {
+                    write!(s, " {d} = ({d} & 0xffff0000u) | h;").unwrap();
+                }
+            }
+            "ds_write_b8_d16_hi" | "ds_write_b16_d16_hi" => {
+                let v = d0(self, 0);
+                let ty = if name.contains("b8") {
+                    "uchar"
+                } else {
+                    "ushort"
+                };
+                write!(s, " if ((a + {off}u) < LDS_BYTES) *(threadgroup {ty}*)((threadgroup uchar*)lds + a + {off}u) = {ty}({v} >> 16);").unwrap();
+            }
+            "ds_wrxchg2_rtn_b32"
+            | "ds_wrxchg2st64_rtn_b32"
+            | "ds_wrxchg2_rtn_b64"
+            | "ds_wrxchg2st64_rtn_b64" => {
+                // The whole wave makes its first exchange before its second (measured).
+                let wide = name.ends_with("b64");
+                let scale = if wide { 8 } else { 4 } * if name.contains("st64") { 64 } else { 1 };
+                let (o0, o1) = pair(scale);
+                let swap = |t: &mut Self, i: u16, o: u32| {
+                    let (lo, hi) = (
+                        t.v(if i == 0 { data0 } else { data1 }),
+                        t.v(if i == 0 { data0 } else { data1 } + 1),
+                    );
+                    if wide {
+                        format!(
+                            "x2t{i} = lds_rmw64(lds, {a} + {o}u, ulong({hi}) << 32 | {lo}, 0ul, 13u);"
+                        )
+                    } else {
+                        format!("x2t{i} = lds_rmw_swap(lds, {a} + {o}u, {lo});")
+                    }
+                };
+                let (s0, s1) = (swap(self, 0, o0), swap(self, 1, o1));
+                self.line("{ ulong x2t0 = 0ul, x2t1 = 0ul;");
+                if self.lockstep {
+                    self.lane_order(wide, &mut |t| {
+                        t.guard(&s0);
+                        Ok(())
+                    })?;
+                    self.line("wave_meet(wv);");
+                    self.lane_order(wide, &mut |t| {
+                        t.guard(&s1);
+                        Ok(())
+                    })?;
+                } else {
+                    self.guard(&format!("{s0} {s1}"));
+                }
+                let mut r = String::new();
+                let vals: &[&str] = if wide {
+                    &[
+                        "uint(x2t0)",
+                        "uint(x2t0 >> 32)",
+                        "uint(x2t1)",
+                        "uint(x2t1 >> 32)",
+                    ]
+                } else {
+                    &["uint(x2t0)", "uint(x2t1)"]
+                };
+                for (i, v) in vals.iter().enumerate() {
+                    let d = dst(self, i as u16);
+                    write!(r, " {d} = {v};").unwrap();
+                }
+                self.guard(r.trim_start());
+                self.line("}");
+                return Ok(());
+            }
             _ => {
                 let base = name.strip_prefix("ds_").unwrap();
                 let rtn = base.contains("_rtn_");
                 let op = base.replace("_rtn", "");
                 let v = d0(self, 0);
+                let at = format!("a + {off}u");
+                if let Some(code) = lds64_op(&op) {
+                    let (vh, w, wh) = (d0(self, 1), d1(self, 0), d1(self, 1));
+                    // Two-data forms: mskor's bits and cmpst's stored value come second.
+                    let second = if matches!(code, 12 | 14 | 15) {
+                        format!("ulong({wh}) << 32 | {w}")
+                    } else {
+                        "0ul".into()
+                    };
+                    write!(
+                        s,
+                        " ulong t = lds_rmw64(lds, {at}, ulong({vh}) << 32 | {v}, {second}, {code}u);"
+                    )
+                    .unwrap();
+                    if rtn {
+                        let (r0, r1) = (dst(self, 0), dst(self, 1));
+                        write!(s, " {r0} = uint(t); {r1} = uint(t >> 32);").unwrap();
+                    }
+                    self.guard(&s);
+                    return Ok(());
+                }
                 let call = match op.as_str() {
                     "add_u32" | "sub_u32" | "and_b32" | "or_b32" | "xor_b32" | "min_u32"
                     | "max_u32" | "min_i32" | "max_i32" | "wrxchg_b32" => {
@@ -785,16 +903,29 @@ impl<'a> Tx<'a> {
                             ("wrxchg", _) => "swap",
                             (f, _) => f,
                         };
-                        format!("lds_rmw_{f}(lds, a + {off}u, {v})")
+                        format!("lds_rmw_{f}(lds, {at}, {v})")
                     }
-                    "rsub_u32" => format!("lds_rmw_rsub(lds, a + {off}u, {v})"),
-                    "min_f32" | "max_f32" => {
-                        let f = &op[..3];
-                        format!("lds_rmw_f{f}(lds, a + {off}u, {v})")
+                    "min_f32" => format!("lds_rmw_op(lds, {at}, {v}, 0u, 0u)"),
+                    "max_f32" => format!("lds_rmw_op(lds, {at}, {v}, 0u, 1u)"),
+                    "rsub_u32" => format!("lds_rmw_op(lds, {at}, {v}, 0u, 2u)"),
+                    "inc_u32" => format!("lds_rmw_op(lds, {at}, {v}, 0u, 3u)"),
+                    "dec_u32" => format!("lds_rmw_op(lds, {at}, {v}, 0u, 4u)"),
+                    "wrap_b32" => {
+                        let w = d1(self, 0);
+                        format!("lds_rmw_op(lds, {at}, {v}, {w}, 5u)")
+                    }
+                    "mskor_b32" => {
+                        let w = d1(self, 0);
+                        format!("lds_rmw_op(lds, {at}, {v}, {w}, 6u)")
+                    }
+                    "add_f32" => format!("lds_rmw_op(lds, {at}, {v}, 0u, 7u)"),
+                    "cmpst_f32" => {
+                        let w = d1(self, 0);
+                        format!("lds_rmw_op(lds, {at}, {v}, {w}, 8u)")
                     }
                     "cmpst_b32" => {
                         let new = d1(self, 0);
-                        format!("lds_cas(lds, a + {off}u, {new}, {v})")
+                        format!("lds_cas(lds, {at}, {new}, {v})")
                     }
                     _ => return Err(err(pc, format!("unsupported instruction {name}"))),
                 };
@@ -810,8 +941,8 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
-    // Atomic counter at M0's base (high half for GDS) plus `offset`; each
-    // thread updates it individually because lanes run as separate threads.
+    // The counter is at M0's high half plus `offset`, for LDS as for GDS
+    // (measured on gfx1033).
     fn ds_counter(
         &mut self,
         pc: usize,
@@ -823,6 +954,28 @@ impl<'a> Tx<'a> {
         let m0 = self.s(124);
         let d = self.v(vdst);
         let op = if name == "ds_append" { "add" } else { "sub" };
+        if self.lockstep {
+            // The wave counts its active lanes once and every lane gets the old value.
+            let (lo, hi) = (self.s(126), self.s(127));
+            let update = if gds {
+                self.gds = true;
+                format!(
+                    "atomic_fetch_{op}_explicit(&gds[((({m0} >> 16) + {offset}u) & 0xfffcu) >> 2], n, memory_order_relaxed)"
+                )
+            } else {
+                if self.req.stage != Stage::Compute {
+                    return Err(err(pc, format!("unsupported LDS access {name}")));
+                }
+                self.lds = true;
+                format!("lds_rmw_{op}(lds, ({m0} >> 16) + {offset}u, n)")
+            };
+            self.line(&format!(
+                "{{ ulong e = ulong({hi}) << 32 | {lo}; uint n = uint(popcount(e)); uint first = e == 0ul ? 0u : uint(ctz(e)); uint old = 0u; if (n != 0u && wl == first) old = {update}; old = wave_readlane(old, first, wv);"
+            ));
+            self.guard(&format!("{d} = old;"));
+            self.line("}");
+            return Ok(());
+        }
         let stmt = if gds {
             self.gds = true;
             format!(
@@ -833,7 +986,7 @@ impl<'a> Tx<'a> {
                 return Err(err(pc, format!("unsupported LDS access {name}")));
             }
             self.lds = true;
-            format!("{{ {d} = lds_rmw_{op}(lds, ({m0} & 0xffffu) + {offset}u, 1u); }}")
+            format!("{{ {d} = lds_rmw_{op}(lds, ({m0} >> 16) + {offset}u, 1u); }}")
         };
         self.guard(&stmt);
         Ok(())
@@ -905,4 +1058,28 @@ fn logic_op(target: u8, value: &str, rop: u8, logic: u8) -> String {
     format!(
         "uint4 s = {src}; uint4 d = {dst}; uint4 r = ({combined}) & {mask:#x}u; o.c{target} = {out};"
     )
+}
+/// The `lds_rmw64` code of a 64-bit LDS atomic (its name without `ds_` and `_rtn`).
+fn lds64_op(op: &str) -> Option<u32> {
+    Some(match op {
+        "add_u64" => 0,
+        "sub_u64" => 1,
+        "rsub_u64" => 2,
+        "inc_u64" => 3,
+        "dec_u64" => 4,
+        "min_i64" => 5,
+        "max_i64" => 6,
+        "min_u64" => 7,
+        "max_u64" => 8,
+        "and_b64" => 9,
+        "or_b64" => 10,
+        "xor_b64" => 11,
+        "mskor_b64" => 12,
+        "wrxchg_b64" => 13,
+        "cmpst_b64" => 14,
+        "cmpst_f64" => 15,
+        "min_f64" => 16,
+        "max_f64" => 17,
+        _ => return None,
+    })
 }

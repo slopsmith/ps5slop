@@ -985,31 +985,61 @@ static inline uint lds_cas(threadgroup uint* lds, uint a, uint v, uint cmp) {
     return e;
 }
 
-static inline uint lds_rmw_fmin(threadgroup uint* lds, uint a, uint v) {
+// LDS atomics Metal lacks, as compare-and-swap loops; `op` picks the update:
+// 0 fmin, 1 fmax, 2 rsub, 3 inc, 4 dec, 5 wrap (with `w`), 6 mskor (`v` the
+// mask, `w` the bits), 7 fadd (a NaN operand comes back quieted), 8 float
+// compare-and-store (`v` compared, `w` stored).
+static inline uint lds_rmw_op(threadgroup uint* lds, uint a, uint v, uint w, uint op) {
     if (a >= LDS_BYTES) return 0u;
     threadgroup atomic_uint* p = (threadgroup atomic_uint*)&lds[a >> 2];
     uint e = atomic_load_explicit(p, memory_order_relaxed);
     for (;;) {
-        uint n = as_type<uint>(fmin(as_type<float>(e), as_type<float>(v)));
+        uint n;
+        switch (op) {
+        case 0u: n = fminmax_bits(e, v, false); break;
+        case 1u: n = fminmax_bits(e, v, true); break;
+        case 2u: n = v - e; break;
+        case 3u: n = e >= v ? 0u : e + 1u; break;
+        case 4u: n = e == 0u || e > v ? v : e - 1u; break;
+        case 5u: n = e >= v ? e - v : e + w; break;
+        case 6u: n = (e & ~v) | w; break;
+        case 7u: n = isnan(F(e)) ? e | 0x400000u : isnan(F(v)) ? v | 0x400000u : U(F(e) + F(v)); break;
+        default: n = F(e) == F(v) ? w : e; break;
+        }
         if (n == e || atomic_compare_exchange_weak_explicit(p, &e, n, memory_order_relaxed, memory_order_relaxed)) return e;
     }
 }
 
-static inline uint lds_rmw_fmax(threadgroup uint* lds, uint a, uint v) {
-    if (a >= LDS_BYTES) return 0u;
-    threadgroup atomic_uint* p = (threadgroup atomic_uint*)&lds[a >> 2];
-    uint e = atomic_load_explicit(p, memory_order_relaxed);
-    for (;;) {
-        uint n = as_type<uint>(fmax(as_type<float>(e), as_type<float>(v)));
-        if (n == e || atomic_compare_exchange_weak_explicit(p, &e, n, memory_order_relaxed, memory_order_relaxed)) return e;
+// 64-bit LDS atomics, a read and a write of two dwords: exact when lanes that
+// hit one place run one after another, as lockstep programs run them. `op`: 0 add,
+// 1 sub, 2 rsub, 3 inc, 4 dec, 5 smin, 6 smax, 7 umin, 8 umax, 9 and, 10 or,
+// 11 xor, 12 mskor (`v` the mask, `w` the bits), 13 exchange, 14 compare-and-store
+// (`v` compared, `w` stored), 15 the same on doubles, 16 fmin, 17 fmax.
+static inline ulong lds_rmw64(threadgroup uint* lds, uint a, ulong v, ulong w, uint op) {
+    if (a + 4u >= LDS_BYTES) return 0ul;
+    ulong e = ulong(lds[(a >> 2) + 1u]) << 32 | lds[a >> 2], n;
+    switch (op) {
+    case 0u: n = e + v; break;
+    case 1u: n = e - v; break;
+    case 2u: n = v - e; break;
+    case 3u: n = e >= v ? 0ul : e + 1ul; break;
+    case 4u: n = e == 0ul || e > v ? v : e - 1ul; break;
+    case 5u: n = ulong(min(long(e), long(v))); break;
+    case 6u: n = ulong(max(long(e), long(v))); break;
+    case 7u: n = min(e, v); break;
+    case 8u: n = max(e, v); break;
+    case 9u: n = e & v; break;
+    case 10u: n = e | v; break;
+    case 11u: n = e ^ v; break;
+    case 12u: n = (e & ~v) | w; break;
+    case 13u: n = v; break;
+    case 14u: n = e == v ? w : e; break;
+    case 15u: n = f64_eq(e, v) ? w : e; break;
+    case 16u: n = f64_minmax(e, v, false); break;
+    default: n = f64_minmax(e, v, true); break;
     }
-}
-
-static inline uint lds_rmw_rsub(threadgroup uint* lds, uint a, uint v) {
-    if (a >= LDS_BYTES) return 0u;
-    threadgroup atomic_uint* p = (threadgroup atomic_uint*)&lds[a >> 2];
-    uint e = atomic_load_explicit(p, memory_order_relaxed);
-    while (!atomic_compare_exchange_weak_explicit(p, &e, v - e, memory_order_relaxed, memory_order_relaxed)) {}
+    lds[a >> 2] = uint(n);
+    lds[(a >> 2) + 1u] = uint(n >> 32);
     return e;
 }
 "#;

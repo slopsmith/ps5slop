@@ -70,6 +70,18 @@ pub(super) fn ordered_lds(inst: &Inst) -> bool {
     matches!(inst.kind, Kind::Ds { gds: false, .. }) && inst.op.name.contains("_rtn_")
 }
 
+/// An LDS atomic built from a compare-and-swap loop or from plain accesses, whose
+/// lanes Metal does not apply in lane order when they hit one place.
+pub(super) fn serial_lds(inst: &Inst) -> bool {
+    let name = inst.op.name;
+    matches!(inst.kind, Kind::Ds { gds: false, .. })
+        && !name.starts_with("ds_read")
+        && !name.starts_with("ds_write")
+        && ["f32", "64", "rsub", "inc_", "dec_", "wrap", "mskor"]
+            .iter()
+            .any(|k| name.contains(k))
+}
+
 /// A scalar instruction that writes the lane mask.
 pub(super) fn writes_exec(inst: &Inst) -> bool {
     let exec = |d: u16| d == src::EXEC_LO || d == src::EXEC_HI;
@@ -231,16 +243,9 @@ impl<'a> Tx<'a> {
         if step {
             self.line("wave_meet(wv);");
         }
-        if step && ordered_lds(inst) {
-            // A wave's LDS atomics take effect in lane order; within a SIMD group Metal's
-            // were seen to, so the low half goes first.
-            self.line("if ((wv.sgi & 1u) == 0u) {");
-            self.inst(pc, inst)?;
-            self.line("}");
-            self.line("wave_meet(wv);");
-            self.line("if ((wv.sgi & 1u) != 0u) {");
-            self.inst(pc, inst)?;
-            self.line("}");
+        let two_phase = inst.op.name.contains("wrxchg2");
+        if step && !two_phase && (ordered_lds(inst) || serial_lds(inst)) {
+            self.lane_order(serial_lds(inst), &mut |t| t.inst(pc, inst))?;
         } else {
             self.inst(pc, inst)?;
         }
@@ -251,6 +256,35 @@ impl<'a> Tx<'a> {
         }
         if step {
             self.line("wave_meet(wv);");
+        }
+        Ok(())
+    }
+
+    /// Emits an LDS access so a lockstep wave's lanes take effect in lane order:
+    /// within a SIMD group Metal's native atomics were seen to, so the low half
+    /// goes first; `serial` ones (compare-and-swap loops, plain accesses) run one
+    /// lane at a time.
+    pub(super) fn lane_order(
+        &mut self,
+        serial: bool,
+        body: &mut dyn FnMut(&mut Self) -> Result<(), TranslateError>,
+    ) -> Result<(), TranslateError> {
+        for half in ["==", "!="] {
+            if half == "!=" {
+                self.line("wave_meet(wv);");
+            }
+            self.line(&format!("if ((wv.sgi & 1u) {half} 0u) {{"));
+            if serial {
+                self.line("for (uint sl = 0u; sl < 32u; sl++) {");
+                self.line("if (uint(slane) == sl) {");
+            }
+            body(self)?;
+            if serial {
+                self.line("}");
+                self.line("simdgroup_barrier(mem_flags::mem_threadgroup);");
+                self.line("}");
+            }
+            self.line("}");
         }
         Ok(())
     }
