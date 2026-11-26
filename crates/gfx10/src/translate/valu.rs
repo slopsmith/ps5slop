@@ -374,9 +374,29 @@ impl<'a> Tx<'a> {
                 };
                 format!("{sel} != 0u ? {b} : {a}")
             }
-            "v_add_nc_u32" => format!("{} + {}", u(self, 0)?, u(self, 1)?),
-            "v_sub_nc_u32" => format!("{} - {}", u(self, 0)?, u(self, 1)?),
-            "v_subrev_nc_u32" => format!("{} - {}", u(self, 1)?, u(self, 0)?),
+            "v_add_nc_u32" | "v_sub_nc_u32" | "v_subrev_nc_u32" => {
+                let (a, b) = (u(self, 0)?, u(self, 1)?);
+                let (a, b) = if name == "v_subrev_nc_u32" {
+                    (b, a)
+                } else {
+                    (a, b)
+                };
+                match (name == "v_add_nc_u32", v.clamp) {
+                    (true, false) => format!("{a} + {b}"),
+                    (true, true) => format!("{a} + min({b}, ~{a})"),
+                    (false, false) => format!("{a} - {b}"),
+                    (false, true) => format!("{a} - min({a}, {b})"),
+                }
+            }
+            "v_add_nc_i32" | "v_sub_nc_i32" => {
+                let (a, b) = (u(self, 0)?, u(self, 1)?);
+                let op = if name == "v_add_nc_i32" { '+' } else { '-' };
+                if v.clamp {
+                    sat_i32(&format!("long(int({a})) {op} long(int({b}))"))
+                } else {
+                    format!("{a} {op} {b}")
+                }
+            }
             "v_and_b32" => format!("{} & {}", u(self, 0)?, u(self, 1)?),
             "v_or_b32" => format!("{} | {}", u(self, 0)?, u(self, 1)?),
             "v_xor_b32" => format!("{} ^ {}", u(self, 0)?, u(self, 1)?),
@@ -393,22 +413,31 @@ impl<'a> Tx<'a> {
             "v_mul_lo_u32" | "v_mul_lo_i32" => format!("{} * {}", u(self, 0)?, u(self, 1)?),
             "v_mul_hi_u32" => format!("mulhi({}, {})", u(self, 0)?, u(self, 1)?),
             "v_mul_hi_i32" => format!("uint(mulhi(int({}), int({})))", u(self, 0)?, u(self, 1)?),
-            "v_mul_u32_u24" => format!(
-                "({} & 0xffffffu) * ({} & 0xffffffu)",
-                u(self, 0)?,
-                u(self, 1)?
-            ),
-            "v_mul_i32_i24" => format!(
-                "uint(((int({}) << 8) >> 8) * ((int({}) << 8) >> 8))",
-                u(self, 0)?,
-                u(self, 1)?
-            ),
-            "v_mad_u32_u24" => format!(
-                "({} & 0xffffffu) * ({} & 0xffffffu) + {}",
-                u(self, 0)?,
-                u(self, 1)?,
-                u(self, 2)?
-            ),
+            "v_mul_u32_u24" | "v_mul_hi_u32_u24" | "v_mad_u32_u24" => {
+                let (a, b) = (u(self, 0)?, u(self, 1)?);
+                let mut e = format!("ulong({a} & 0xffffffu) * ulong({b} & 0xffffffu)");
+                if name == "v_mad_u32_u24" {
+                    e = format!("{e} + ulong({})", u(self, 2)?);
+                }
+                match name {
+                    "v_mul_hi_u32_u24" => format!("uint(({e}) >> 32)"),
+                    _ if v.clamp => format!("uint(min({e}, 0xfffffffful))"),
+                    _ => format!("uint({e})"),
+                }
+            }
+            "v_mul_i32_i24" | "v_mul_hi_i32_i24" | "v_mad_i32_i24" => {
+                let (a, b) = (u(self, 0)?, u(self, 1)?);
+                let i24 = |x: &str| format!("long((int({x}) << 8) >> 8)");
+                let mut e = format!("{} * {}", i24(&a), i24(&b));
+                if name == "v_mad_i32_i24" {
+                    e = format!("{e} + long(int({}))", u(self, 2)?);
+                }
+                match name {
+                    "v_mul_hi_i32_i24" => format!("uint(ulong({e}) >> 32)"),
+                    _ if v.clamp => sat_i32(&e),
+                    _ => format!("uint({e})"),
+                }
+            }
             "v_bfe_u32" => format!(
                 "bfe_u32({}, {} & 31u, {} & 31u)",
                 u(self, 0)?,
@@ -644,10 +673,12 @@ impl<'a> Tx<'a> {
         let mut s = format!(
             "{{ uint a = {a}; uint b = {b}; uint c = {cin}; ulong r = {value}; bool on = {exec}; bool k = ({carry}) && on;"
         );
-        if v.clamp {
-            return Err(err(pc, "clamped carry arithmetic"));
-        }
-        write!(s, " if (on) {d} = uint(r);").unwrap();
+        let result = match (v.clamp, name.starts_with("v_add")) {
+            (false, _) => "uint(r)",
+            (true, true) => "(k ? 0xffffffffu : uint(r))",
+            (true, false) => "(k ? 0u : uint(r))",
+        };
+        write!(s, " if (on) {d} = {result};").unwrap();
         if dst != src::NULL {
             s.push_str(&self.set_mask(dst, "k"));
         }
@@ -670,27 +701,32 @@ impl<'a> Tx<'a> {
     // `v_mad_u64_u32`/`v_mad_i64_i32`: a 64-bit product plus a 64-bit addend
     // into a VGPR pair, with the carry (unsigned) or overflow (signed) out.
     fn mad64(&mut self, pc: usize, inst: &Inst, v: &Valu) -> Result<(), TranslateError> {
-        if v.clamp {
-            return Err(err(pc, "clamped 64-bit multiply-add"));
-        }
         let a = self.usrc(pc, inst, v, 0)?;
         let b = self.usrc(pc, inst, v, 1)?;
         let c = self.vsrc64(pc, inst, v.src[2])?;
         let signed = inst.op.name == "v_mad_i64_i32";
-        let (value, carry) = if signed {
+        // The carry out is bit 64 of the exact sum, for the signed form that
+        // of the sign-extended product and addend.
+        let (product, carry) = if signed {
             (
-                format!("ulong(long(int({a})) * long(int({b})) + long({c}))"),
-                format!(
-                    "(long(int({a})) * long(int({b}))) > 0 ? long(r) < long({c}) : long(r) > long({c})"
-                ),
+                format!("ulong(long(int({a})) * long(int({b})))"),
+                "((((p ^ c) >> 63) ^ ulong(r < c)) != 0ul)",
             )
         } else {
-            (format!("ulong({a}) * ulong({b}) + {c}"), format!("r < {c}"))
+            (format!("ulong({a}) * ulong({b})"), "r < c")
         };
+        let mut value = "r".to_string();
+        if v.clamp {
+            value = if signed {
+                "(((p ^ r) & (c ^ r)) >> 63 != 0ul ? (long(r) < 0 ? 0x7ffffffffffffffful : 0x8000000000000000ul) : r)".into()
+            } else {
+                "(r < c ? ~0ul : r)".into()
+            };
+        }
         let exec = self.mask_on(126);
         let (lo, hi) = (self.v(v.vdst as u16), self.v(v.vdst as u16 + 1));
         let mut s = format!(
-            "{{ ulong r = {value}; bool on = {exec}; bool k = ({carry}) && on; if (on) {{ {lo} = uint(r); {hi} = uint(r >> 32); }}"
+            "{{ ulong p = {product}; ulong c = {c}; ulong r = p + c; bool on = {exec}; bool k = ({carry}) && on; ulong d = {value}; if (on) {{ {lo} = uint(d); {hi} = uint(d >> 32); }}"
         );
         let dst = v.sdst.map_or(src::NULL, |s| s as u16);
         if dst != src::NULL {
@@ -801,4 +837,9 @@ impl<'a> Tx<'a> {
         self.line(&format!("{{ bool c = ({cond}) && {e};{set} }}"));
         Ok(())
     }
+}
+
+/// A 64-bit signed expression saturated to a 32-bit signed result.
+fn sat_i32(e: &str) -> String {
+    format!("uint(int(clamp({e}, long(-2147483648), long(2147483647))))")
 }
