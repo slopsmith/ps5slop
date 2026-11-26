@@ -184,7 +184,7 @@ Image loads and stores follow the hardware's conversions, measured with the hard
 - Unaligned dword buffer accesses round down to a dword (Metal's behaviour), and typed accesses are read where they fall. The reference GPU honours unaligned dwords, and gave 0 to a whole wave of indexed typed loads through a stride-2 buffer with a wider format.
 - GDS ordered counts do not translate. Scratch through buffer instructions (a V# with `ADD_TID_ENABLE`) is not handled.
 - NGG programs that use LDS, barriers and `exp prim` to build their own geometry need a mesh-shader path (a threadgroup per wave, LDS as threadgroup memory, vertex and primitive exports as mesh outputs). Not started.
-- `image_bvh_intersect_ray` is software traversal over the game's BVH nodes. It stays while no title needs more; ray tracing is to move to Metal's ray tracing ([gpu.md](gpu.md)). On a triangle the ray misses, the hardware still returns its numerators and denominator with an infinite t; we return (inf, 1, 0, 0) as radv's emulation does.
+- `image_bvh_intersect_ray` is software traversal over the game's BVH nodes. It stays while no title needs more; ray tracing is to move to Metal's ray tracing ([gpu.md](gpu.md)). On a triangle the ray misses, the hardware still returns its numerators and denominator with an infinite t (its sign the denominator's); we return (inf, 1, 0, 0) as radv's emulation does. The hardware's values there fit neither radv's watertight test nor Möller-Trumbore, so the rule is not known. A box child whose pointer is 0xFFFFFFFF sorts as a miss even where the ray enters its box (measured); 3 of about 530 box lanes per test still come back with two hit children in the other order.
 
 ## Testing
 

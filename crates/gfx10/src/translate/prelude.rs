@@ -488,9 +488,11 @@ static inline uint4 bvh_intersect(device const uchar* mem, Win w, uint4 d, ulong
             float3 near = min(b0, b1), far = max(b0, b1);
             float t0 = max(max(near.x, near.y), near.z);
             float t1 = min(min(far.x, far.y), far.z);
-            if (!isnan(lo.x) && t1 >= max(0.0f, t0) && t0 < tmax) {
+            uint c = ld32(mem, w, a + 4ul * i);
+            // An invalid child pointer sorts as a miss (measured on gfx1033).
+            if (!isnan(lo.x) && t1 >= max(0.0f, t0) && t0 < tmax && c != 0xffffffffu) {
                 dist[i] = t0;
-                child[i] = ld32(mem, w, a + 4ul * i);
+                child[i] = c;
             }
         }
         if ((d.y >> 31) != 0u) {
