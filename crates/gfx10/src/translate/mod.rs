@@ -71,10 +71,10 @@ pub struct Request<'a> {
     /// Slot numbers do not depend on these masks.
     pub uint_textures: u32,
     pub sint_textures: u32,
-    /// Texture slots read or written raw whose format Metal lacks, or whose
-    /// conversion Metal does differently (16-bit float stores): bound as
-    /// unsigned integers of the element's size, declared `<uint>`, and
-    /// converted by the program from the format in the T#.
+    /// Texture slots whose format Metal lacks, or raw ones whose conversion
+    /// Metal does differently (16-bit float stores): bound as unsigned
+    /// integers of the element's size, declared `<uint>`, and converted (and
+    /// for samples filtered) by the program from the format in the T#.
     pub coded_textures: u32,
     /// Compute stage: threads at or past the grid size in `bounds` (three
     /// dwords at [`binding::BOUNDS`]) start with EXEC clear.

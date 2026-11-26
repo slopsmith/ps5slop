@@ -1320,6 +1320,85 @@ static inline vec<E, 4> gather_read(texture2d_array<E> t, uint slice, uint l, in
     return r;
 }
 
+// A filter's blend of `a` and `b` by `f`: a texel of weight 0 takes no
+// part, so an infinite one next to it gives no NaN (measured on RDNA2).
+static inline float4 filter_blend(float4 a, float4 b, float f) {
+    return f == 0.0f ? a : f == 1.0f ? b : a * (1.0f - f) + b * f;
+}
+
+// Raw texels of images whose format Metal lacks, read for sampling.
+static inline uint4 coded_read(texture2d<uint> t, uint slice, int x, int y, uint l) {
+    return t.read(uint2(x, y), l);
+}
+
+static inline uint4 coded_read(texture2d_array<uint> t, uint slice, int x, int y, uint l) {
+    return t.read(uint2(x, y), slice, l);
+}
+
+// Texel `p` of level `l` of a coded image, decoded, under the S#'s address
+// modes (`sw`), or its border colour.
+template <typename T>
+static inline float4 coded_texel(T t, uint slice, int2 p, int2 size, uint l, uint4 sw, uint w1, uint w3) {
+    int x = tex_wrap(p.x, size.x, sw.x & 7u), y = tex_wrap(p.y, size.y, (sw.x >> 3) & 7u);
+    if (x < 0 || y < 0) {
+        return float4(border_component(sw.w, 0u), border_component(sw.w, 1u),
+                      border_component(sw.w, 2u), border_component(sw.w, 3u));
+    }
+    return as_type<float4>(image_decode(coded_read(t, slice, x, y, l), w1, w3));
+}
+
+// One level of a coded image sampled at `uv`, the position kept to 8
+// fraction bits as the hardware does; integer formats are not blended.
+template <typename T>
+static inline float4 coded_level(T t, uint slice, float2 uv, uint l, bool linear, uint4 sw, uint w1, uint w3) {
+    int2 size = int2(t.get_width(l), t.get_height(l));
+    float2 p = uv * float2(size);
+    if (!linear) {
+        return coded_texel(t, slice, int2(floor(rint(p * 256.0f) / 256.0f)), size, l, sw, w1, w3);
+    }
+    float2 q = rint((p - 0.5f) * 256.0f) / 256.0f, b = floor(q), f = q - b;
+    int2 i = int2(b);
+    float4 t00 = coded_texel(t, slice, i, size, l, sw, w1, w3);
+    float4 t10 = coded_texel(t, slice, i + int2(1, 0), size, l, sw, w1, w3);
+    float4 t01 = coded_texel(t, slice, i + int2(0, 1), size, l, sw, w1, w3);
+    float4 t11 = coded_texel(t, slice, i + int2(1, 1), size, l, sw, w1, w3);
+    return filter_blend(filter_blend(t00, t10, f.x), filter_blend(t01, t11, f.x), f.y);
+}
+
+// A sample of a coded image at `lod` (after the sampler's bias and
+// clamps), filtered by the S#'s filters as the hardware's filtering is
+// modelled (hwcheck::filter): magnification at LODs up to 0, 8-bit
+// positions and trilinear fractions.
+template <typename T>
+static inline float4 sample_coded(T t, uint slice, float2 uv, float lod, uint4 sw, uint w1, uint w3) {
+    uint type = image_layout((w1 >> 20) & 0x1ffu).type;
+    bool integer = type == 4u || type == 5u;
+    bool linear = !integer && ((lod > 0.0f ? sw.z >> 22 : sw.z >> 20) & 1u) != 0u;
+    uint mip = (sw.z >> 26) & 3u;
+    float last = float(t.get_num_mip_levels() - 1u);
+    float l = clamp(lod, 0.0f, last);
+    if (mip == 0u) return coded_level(t, slice, uv, 0u, linear, sw, w1, w3);
+    if (mip == 1u || integer) return coded_level(t, slice, uv, uint(floor(l + 0.5f)), linear, sw, w1, w3);
+    float l0 = floor(l), f = rint((l - l0) * 256.0f) / 256.0f;
+    float4 a = coded_level(t, slice, uv, uint(l0), linear, sw, w1, w3);
+    if (f == 0.0f) return a;
+    return filter_blend(a, coded_level(t, slice, uv, min(uint(l0) + 1u, uint(last)), linear, sw, w1, w3), f);
+}
+
+// A gather's four texels of a coded image, component `c` decoded.
+// Gathers of 24_8_UNORM read 0 (measured for component x; samples of it
+// and gathers of 24_8_UINT read the texels).
+template <typename T>
+static inline float4 gather_coded(T t, uint slice, uint l, int4 xs, int4 ys, uint w3s, uint c, uint w1, uint w3) {
+    if (((w1 >> 20) & 0x1ffu) == 143u) return float4(0.0f);
+    float4 r;
+    for (int i = 0; i < 4; i++) {
+        r[i] = xs[i] < 0 || ys[i] < 0 ? border_component(w3s, c)
+            : as_type<float4>(image_decode(coded_read(t, slice, xs[i], ys[i], l), w1, w3))[c];
+    }
+    return r;
+}
+
 // SQ_TEX_DEPTH_COMPARE: the reference against the fetched value.
 static inline bool depth_compare(uint f, float ref, float v) {
     switch (f) {

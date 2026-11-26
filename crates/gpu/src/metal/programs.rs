@@ -61,8 +61,8 @@ pub(super) struct Variant {
     pub(super) col_format: u32,
     pub(super) uint_textures: u32,
     pub(super) sint_textures: u32,
-    /// Raw texture slots whose format Metal lacks or that store 16-bit
-    /// floats (see `Request::coded_textures`).
+    /// Texture slots whose format Metal lacks, or raw ones that store
+    /// 16-bit floats (see `Request::coded_textures`).
     pub(super) coded_textures: u32,
     /// Compute: threads past a grid size read from a buffer do nothing.
     pub(super) grid_bounds: bool,
@@ -204,7 +204,7 @@ impl Metal {
                         variant.coded_textures |= 1 << slot
                     }
                     Some(Number::Float) => {}
-                    None if view == View::Raw && coded_format(image.format).is_some() => {
+                    None if view != View::Bits && coded_format(image.format).is_some() => {
                         variant.coded_textures |= 1 << slot
                     }
                     None => {}

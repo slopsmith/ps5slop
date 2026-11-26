@@ -221,9 +221,19 @@ impl<'a> Tx<'a> {
         at += bias as usize;
         let dref = compare.then(|| addr[at].clone());
         at += compare as usize;
+        let mut deriv_lod = None;
         if derivs {
             // Derivatives come before the coordinates: d/dx of each, then d/dy.
             let g = &addr[at..];
+            deriv_lod = Some(format!(
+                "sampler_lod(user[{}], user[{}], lod_2d(float2({}, {}) * float2(t{t}.get_width(0), t{t}.get_height(0)), float2({}, {}) * float2(t{t}.get_width(0), t{t}.get_height(0))))",
+                w + 1,
+                w + 2,
+                g[0],
+                g[1],
+                g[2],
+                g[3]
+            ));
             let grad = match kind {
                 TextureKind::Tex2d | TextureKind::Tex2dArray => format!(
                     "gradient2d(float2({}, {}), float2({}, {}))",
@@ -305,6 +315,14 @@ impl<'a> Tx<'a> {
             }
         };
         let implicit_lod = matches!(flags.as_slice(), [] | ["b"] | ["cl"] | ["b", "cl"]);
+        // Formats Metal lacks are read raw and filtered by the program.
+        let coded = self.req.coded_textures >> t & 1 != 0;
+        if coded && !matches!(kind, TextureKind::Tex2d | TextureKind::Tex2dArray) {
+            return Err(err(
+                pc,
+                format!("{name} of a format Metal lacks on {kind:?}"),
+            ));
+        }
         let compute = self.req.stage == Stage::Compute;
         let pixel = self.req.stage == Stage::Pixel;
         let scaled = format!("coord_scale(user[{w}]{unorm}, t{t})");
@@ -313,7 +331,7 @@ impl<'a> Tx<'a> {
             None
         } else if compute {
             Some(self.quad_lod(pc, kind, t, c, &scaled))
-        } else if pixel && gather {
+        } else if pixel && (gather || coded) {
             Some(format!("t{t}.calculate_unclamped_lod(smp{sm}, {coord})"))
         } else {
             None
@@ -337,7 +355,7 @@ impl<'a> Tx<'a> {
             level = lod.as_ref().map(|l| format!("level({l})"));
         }
         let level = level.map(|l| format!(", {l}")).unwrap_or_default();
-        let (elem, conv) = self.texel(t);
+        let (elem, conv) = if coded { ("float", "U") } else { self.texel(t) };
         let mut s = format!("{elem}4 r = t{t}.sample(smp{sm}, {coord}{level});");
         let filtered = self.req.filter_bilinear
             && kind == TextureKind::Tex2d
@@ -369,8 +387,28 @@ impl<'a> Tx<'a> {
                 tw = binding::TEXTURE_WORDS + 2 * t as u32,
             );
         }
+        let (uv, slice) = match coord.split_once(", uint(") {
+            Some((xy, _)) => (
+                xy.to_string(),
+                format!(
+                    "uint(clamp(rint({}), 0.0f, float(t{t}.get_array_size() - 1)))",
+                    c[2]
+                ),
+            ),
+            None => (coord.clone(), "0u".to_string()),
+        };
         if gather {
             s = self.gather(pc, name, m, kind, t, sm, &coord, c, &raw, offset, lod)?;
+        } else if coded && !get_lod {
+            let lod = lod.or(deriv_lod).unwrap_or_else(|| "0.0f".into());
+            let tw = binding::TEXTURE_WORDS + 2 * t as u32;
+            s = format!(
+                "float4 r = sample_coded(t{t}, {slice}, {uv}, {lod}, uint4(user[{w}], user[{}], user[{}], user[{}]), user[{tw}], user[{}]);",
+                w + 1,
+                w + 2,
+                w + 3,
+                tw + 1
+            );
         } else if get_lod {
             // The LOD clamped to the sampler's range and the levels, then as
             // computed; the S#'s bias is assumed to count in both.
@@ -438,11 +476,12 @@ impl<'a> Tx<'a> {
         if m.dmask.count_ones() != 1 || (row && kind == TextureKind::Cube) {
             return Err(err(pc, format!("unsupported form of {name}")));
         }
-        let (elem, _) = self.texel(t);
+        let coded = self.req.coded_textures >> t & 1 != 0;
+        let elem = if coded { "float" } else { self.texel(t).0 };
         let comp = m.dmask.trailing_zeros();
         let cc = ["x", "y", "z", "w"][comp as usize];
         let metal = format!("t{t}.gather(smp{sm}, {coord}, int2(0), component::{cc})");
-        if kind == TextureKind::Cube {
+        if kind == TextureKind::Cube && !coded {
             return Ok(format!(
                 "{elem}4 r = t{t}.gather(smp{sm}, {coord}, component::{cc});"
             ));
@@ -469,15 +508,32 @@ impl<'a> Tx<'a> {
         let texels = format!(
             "int4 gx, gy; gather_texels(float2({}, {}) * coord_scale(user[{w}]{unorm}, t{t}), \
              int2(t{t}.get_width(gl), t{t}.get_height(gl)), {off}, user[{w}], {row}, gx, gy); \
-             r = gather_read(t{t}, {slice}gl, gx, gy, user[{}], {comp}u);",
+             r = {read};",
             c[0],
             c[1],
-            w + 3
+            read = if coded {
+                let tw = binding::TEXTURE_WORDS + 2 * t as u32;
+                format!(
+                    "gather_coded(t{t}, {}, gl, gx, gy, user[{}], {comp}u, user[{tw}], user[{}])",
+                    if slice.is_empty() {
+                        "0u"
+                    } else {
+                        slice.trim_end_matches(", ")
+                    },
+                    w + 3,
+                    tw + 1
+                )
+            } else {
+                format!(
+                    "gather_read(t{t}, {slice}gl, gx, gy, user[{}], {comp}u)",
+                    w + 3
+                )
+            },
         );
         let level = format!(
             "uint gl = (user[{w}]{unorm}) & 0x8000u ? 0u : gather_level({lod}, t{t}.get_num_mip_levels());"
         );
-        Ok(if row {
+        Ok(if row || coded {
             format!("{elem}4 r; {{ {level} {texels} }}")
         } else {
             format!("{elem}4 r; {{ {level} if (gl == 0u) r = {metal}; else {{ {texels} }} }}")

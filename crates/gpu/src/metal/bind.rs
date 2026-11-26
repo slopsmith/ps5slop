@@ -239,12 +239,15 @@ impl Metal {
                         }
                     } else if image.address == 0 || image.kind < 8 {
                         self.null_texture(kind)
-                    } else if image_format(image.format).is_none() && view == View::Sampled {
+                    } else if image_format(image.format).is_none()
+                        && view == View::Sampled
+                        && program.coded_textures >> slot & 1 == 0
+                    {
                         None
                     } else if view == View::Bits {
                         self.image(host, image, kind)
                             .and_then(|t| bits_view(t, image.format))
-                    } else if view == View::Raw {
+                    } else if view == View::Raw || program.coded_textures >> slot & 1 != 0 {
                         self.image(host, image, kind).and_then(without_srgb)
                     } else {
                         self.image(host, image, kind)
