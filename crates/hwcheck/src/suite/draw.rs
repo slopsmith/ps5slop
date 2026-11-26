@@ -406,23 +406,72 @@ const TRILIST: u32 = 4;
 const COLOR_8_8_8_8: u32 = 10;
 const NUMBER_UNORM: u32 = 0;
 
-// `SX_MRT*_BLEND_OPT` as radeonsi sets it (`si_create_blend_state`): no
-// skipping of colour or alpha work.
-fn sx_blend_opt(blend: u32) -> u32 {
+const BLEND_ENABLE: u32 = 1 << 30;
+
+// As radeonsi's `si_create_blend_state`: a hint that does not fit the blend
+// scrambles the target on RDNA2.
+fn sx_blend_opt(blend: u32, dual: bool) -> u32 {
     const PRESERVE_ALL: u32 = 1;
     const BLEND_DISABLED: u32 = 6;
-    const ENABLE: u32 = 1 << 30;
-    let comb = if blend & ENABLE != 0 {
-        0
+    if blend & BLEND_ENABLE == 0 {
+        return PRESERVE_ALL
+            | PRESERVE_ALL << 4
+            | BLEND_DISABLED << 8
+            | PRESERVE_ALL << 16
+            | PRESERVE_ALL << 20
+            | BLEND_DISABLED << 24;
+    }
+    if dual {
+        return 0;
+    }
+    let separate = blend & 1 << 29 != 0;
+    let field = |at: u32| blend >> at & 0x1F;
+    let (src, func, dst) = (field(0), field(5) & 7, field(8));
+    let (asrc, afunc, adst) = if separate {
+        (field(16), field(21) & 7, field(24))
     } else {
-        BLEND_DISABLED
+        (src, func, dst)
     };
-    PRESERVE_ALL
-        | PRESERVE_ALL << 4
-        | comb << 8
-        | PRESERVE_ALL << 16
-        | PRESERVE_ALL << 20
-        | comb << 24
+    let half = |src: u32, func: u32, dst: u32, alpha: bool| {
+        let src_opt = opt_factor(src, alpha);
+        let uses_dst = matches!(src, 6..=10);
+        let dst_opt = if src == SRC_ALPHA_SATURATE && matches!(dst, 0 | 4 | 10) {
+            NONE_IGNORE_A0
+        } else if uses_dst {
+            NONE_IGNORE_NONE
+        } else {
+            opt_factor(dst, alpha)
+        };
+        src_opt | dst_opt << 4 | (func + 1) << 8
+    };
+    half(src, func, dst, false) | half(asrc, afunc, adst, true) << 16
+}
+
+const SRC_ALPHA_SATURATE: u32 = 10;
+const NONE_IGNORE_A0: u32 = 6;
+const NONE_IGNORE_NONE: u32 = 7;
+
+// radeonsi's `si_translate_blend_opt_factor`.
+fn opt_factor(factor: u32, alpha: bool) -> u32 {
+    const NONE_IGNORE_ALL: u32 = 0;
+    const ALL_IGNORE_NONE: u32 = 1;
+    const C1_IGNORE_C0: u32 = 2;
+    const C0_IGNORE_C1: u32 = 3;
+    const A1_IGNORE_A0: u32 = 4;
+    const A0_IGNORE_A1: u32 = 5;
+    match factor {
+        0 => NONE_IGNORE_ALL,
+        1 => ALL_IGNORE_NONE,
+        2 if alpha => A1_IGNORE_A0,
+        2 => C1_IGNORE_C0,
+        3 if alpha => A0_IGNORE_A1,
+        3 => C0_IGNORE_C1,
+        4 => A1_IGNORE_A0,
+        5 => A0_IGNORE_A1,
+        SRC_ALPHA_SATURATE if alpha => ALL_IGNORE_NONE,
+        SRC_ALPHA_SATURATE => NONE_IGNORE_A0,
+        _ => NONE_IGNORE_NONE,
+    }
 }
 
 fn rsrc1(vgprs: u32) -> u32 {
@@ -446,6 +495,8 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
         HEIGHT as f32 / 2.0
     };
     let (sx0, sy0, sx1, sy1) = d.scissor;
+    let dual = d.pixel.dual && d.blend & BLEND_ENABLE != 0;
+    let blend_controls = [d.blend, BLEND_ENABLE];
     [
         set(0xB120, &[(PROGRAM >> 8) as u32, (PROGRAM >> 40) as u32]),
         set(0xB128, &[rsrc1(16), 2 << 1]),
@@ -481,8 +532,8 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
             0x2_8238,
             &[d.write_mask, if d.pixel.dual { 0xFF } else { 0xF }],
         ),
-        set(0x2_8808, &[CB_NORMAL | d.rop3 << 16]),
-        set(0x2_8780, &[d.blend]),
+        set(0x2_8808, &[CB_NORMAL | d.rop3 << 16 | dual as u32]),
+        set(0x2_8780, &blend_controls[..1 + dual as usize]),
         set(0x2_8414, &d.blend_color.map(f32::to_bits)),
         set(0x2_8C60, &[(TARGET >> 8) as u32]),
         set(0x2_8E40, &[(TARGET >> 40) as u32]),
@@ -522,7 +573,7 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
         set(0x2_8A00, &[8 << 16 | 8, 0xFFFF_0000]),
         set(0x2_8A08, &[8 << 3]),
         set(0x2_8754, &[0, 0, 0]),
-        set(0x2_8760, &[sx_blend_opt(d.blend); 8]),
+        set(0x2_8760, &[sx_blend_opt(d.blend, dual); 8]),
         packet(NUM_INSTANCES, &[1]),
         packet(DRAW_INDEX_AUTO, &[d.vertices.len() as u32, AUTO_INDEX]),
     ]
