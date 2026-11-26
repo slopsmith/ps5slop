@@ -200,16 +200,16 @@ fn vintrp(op: u32, vdst: u32, vsrc: u32, chan: u32) -> u32 {
     0xC800_0000 | vdst << 18 | op << 16 | chan << 8 | vsrc
 }
 
-/// `exp mrtN` of `srcs`, done and valid mask; packed (`compr`) exports
-/// name each register twice and carry two of them.
-fn export(target: u32, compr: bool, srcs: [u32; 4]) -> [u32; 2] {
+/// `exp mrtN` of `srcs` with the valid mask, `done` on the last export;
+/// packed (`compr`) exports name each register twice and carry two of them.
+fn export(target: u32, compr: bool, done: bool, srcs: [u32; 4]) -> [u32; 2] {
     let regs = if compr {
         srcs[2] << 8 | srcs[0]
     } else {
         srcs[3] << 24 | srcs[2] << 16 | srcs[1] << 8 | srcs[0]
     };
     [
-        0xF800_0000 | 1 << 12 | 1 << 11 | (compr as u32) << 10 | target << 4 | 0xF,
+        0xF800_0000 | 1 << 12 | (done as u32) << 11 | (compr as u32) << 10 | target << 4 | 0xF,
         regs,
     ]
 }
@@ -222,11 +222,13 @@ pub struct Pixel {
     pub inputs: u32,
     pub cntl: u32,
     pub code: Vec<u32>,
+    pub dual: bool,
 }
 
 /// The pixel program for `interp` and `out`: four floats into v20..v23,
-/// converted, exported to MRT0.
-pub fn pixel(interp: Interp, out: Out) -> Pixel {
+/// converted, exported to MRT0, and with `dual` also to MRT1 with its halves
+/// swapped, the second source of dual-source blending.
+pub fn pixel(interp: Interp, out: Out, dual: bool) -> Pixel {
     const PERSP_SAMPLE: u32 = 0;
     const PERSP_CENTER: u32 = 1;
     const PERSP_CENTROID: u32 = 2;
@@ -255,8 +257,9 @@ pub fn pixel(interp: Interp, out: Out) -> Pixel {
             }
         }
         Interp::MovP0 => {
+            const P0: u32 = 2;
             for c in 0..4 {
-                code.push(vintrp(2, 20 + c, 0, c));
+                code.push(vintrp(2, 20 + c, P0, c));
             }
         }
         _ => {
@@ -326,7 +329,13 @@ pub fn pixel(interp: Interp, out: Out) -> Pixel {
             (true, [24, 24, 25, 25])
         }
     };
-    code.extend(export(0, compr, srcs));
+    if dual {
+        code.extend(export(0, compr, false, srcs));
+        let [a, b, c, d] = srcs;
+        code.extend(export(1, compr, true, [c, d, a, b]));
+    } else {
+        code.extend(export(0, compr, true, srcs));
+    }
     code.push(0xBF81_0000);
     const FLAT_SHADE: u32 = 1 << 10;
     Pixel {
@@ -337,6 +346,7 @@ pub fn pixel(interp: Interp, out: Out) -> Pixel {
             0
         },
         code,
+        dual,
     }
 }
 
@@ -375,7 +385,7 @@ impl Draw {
         Draw {
             name: name.into(),
             variant,
-            pixel: pixel(interp, out),
+            pixel: pixel(interp, out, false),
             out,
             format: (COLOR_8_8_8_8, NUMBER_UNORM, 0, 4),
             blend: 0,
@@ -463,8 +473,14 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
         set(0x2_86D8, &[1]),
         set(0x2_8644, &[d.pixel.cntl]),
         set(0x2_8710, &[0]),
-        set(0x2_8714, &[d.out.export_format()]),
-        set(0x2_8238, &[d.write_mask, 0xF]),
+        set(
+            0x2_8714,
+            &[d.out.export_format() * if d.pixel.dual { 0x11 } else { 1 }],
+        ),
+        set(
+            0x2_8238,
+            &[d.write_mask, if d.pixel.dual { 0xFF } else { 0xF }],
+        ),
         set(0x2_8808, &[CB_NORMAL | d.rop3 << 16]),
         set(0x2_8780, &[d.blend]),
         set(0x2_8414, &d.blend_color.map(f32::to_bits)),
@@ -505,7 +521,7 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
         set(0x2_8C44, &[2 | 1 << 18]),
         set(0x2_8A00, &[8 << 16 | 8, 0xFFFF_0000]),
         set(0x2_8A08, &[8 << 3]),
-        set(0x2_8754, &[0, 0, 0x3333_3333]),
+        set(0x2_8754, &[0, 0, 0]),
         set(0x2_8760, &[sx_blend_opt(d.blend); 8]),
         packet(NUM_INSTANCES, &[1]),
         packet(DRAW_INDEX_AUTO, &[d.vertices.len() as u32, AUTO_INDEX]),
@@ -513,11 +529,15 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
     .concat()
 }
 
+/// Rows of a linear render target start 256 bytes apart at least (Mesa's
+/// `ac_surface`, confirmed by the hardware oracle).
+const LINEAR_PITCH_ALIGN: u32 = 256;
+
 /// The case for `d`, its target filled with random bytes first.
 pub fn case(d: Draw) -> Case {
     let vertex_buffer = INPUTS;
     let bpp = d.format.3;
-    let pitch = WIDTH * bpp;
+    let pitch = (WIDTH * bpp).next_multiple_of(LINEAR_PITCH_ALIGN);
     let mut case = Case {
         opcode: d.name.clone(),
         variant: d.variant.clone(),
@@ -550,16 +570,17 @@ pub fn case(d: Draw) -> Case {
     case
 }
 
-/// `n` random triangles in clip space with random attributes in [0, 1].
-fn triangles(n: usize, seed: &str) -> Vec<[f32; 8]> {
+/// `n` random triangles in clip space, x and y up to `reach` times w, with
+/// random attributes in [0, 1].
+fn triangles_reaching(n: usize, seed: &str, reach: f32) -> Vec<[f32; 8]> {
     let mut rng = Rng::new(seed);
     let mut f = |lo: f32, hi: f32| lo + (rng.next() % 10_000) as f32 / 10_000.0 * (hi - lo);
     (0..n * 3)
         .map(|_| {
             let w = f(0.5, 2.0);
             [
-                f(-1.2, 1.2) * w,
-                f(-1.2, 1.2) * w,
+                f(-reach, reach) * w,
+                f(-reach, reach) * w,
                 f(0.0, 1.0) * w,
                 w,
                 f(0.0, 1.0),
@@ -569,6 +590,11 @@ fn triangles(n: usize, seed: &str) -> Vec<[f32; 8]> {
             ]
         })
         .collect()
+}
+
+/// `n` random triangles inside the clip volume, so nothing is clipped.
+fn triangles(n: usize, seed: &str) -> Vec<[f32; 8]> {
+    triangles_reaching(n, seed, 1.0)
 }
 
 /// Colour formats: name, `CB_COLOR0_INFO` FORMAT, bytes per pixel.
@@ -643,6 +669,13 @@ fn blend(src: u32, dst: u32, func: u32, alpha: Option<(u32, u32, u32)>) -> u32 {
         | ((alpha.is_some() as u32) * SEPARATE_ALPHA)
 }
 
+/// Whether `CB_BLEND0_CONTROL` uses a `src1` factor anywhere.
+fn reads_src1(blend: u32) -> bool {
+    [0, 8, 16, 24]
+        .iter()
+        .any(|&at| (15..=18).contains(&(blend >> at & 0x1F)))
+}
+
 /// Every draw test.
 pub fn cases() -> Vec<Case> {
     let mut out = Vec::new();
@@ -711,6 +744,15 @@ pub fn cases() -> Vec<Case> {
         d.format = (14, 7, 0, 16);
         out.push(case(d));
     }
+    for interp in [Interp::PerspCenter, Interp::LinearCenter] {
+        out.push(case(Draw::new(
+            "draw clip",
+            format!("{interp:?} past the viewport's edges"),
+            interp,
+            Out::F32,
+            triangles_reaching(8, "clip", 1.5),
+        )));
+    }
 
     for (fmt, number, bpp, fname) in [(10, 0, 4, "8_8_8_8 unorm"), (12, 7, 8, "16_16_16_16 float")]
     {
@@ -724,6 +766,9 @@ pub fn cases() -> Vec<Case> {
             );
             d.format = (fmt, number, 0, bpp);
             d.blend = blend_state;
+            if reads_src1(blend_state) {
+                d.pixel = pixel(Interp::PerspCenter, Out::F32, true);
+            }
             out.push(case(d));
         };
         for (f, name) in FACTORS.iter().enumerate() {
@@ -857,10 +902,10 @@ mod tests {
 
     #[test]
     fn pixel_programs_read_their_inputs_where_the_addr_bits_put_them() {
-        let p = pixel(Interp::LinearCenter, Out::F32);
+        let p = pixel(Interp::LinearCenter, Out::F32, false);
         let text = disassemble(&p.code);
         assert_eq!(text[1], "v_interp_p1_f32_e32 v20, v0, attr0.x");
-        let p = pixel(Interp::FragCoord, Out::Unorm16);
+        let p = pixel(Interp::FragCoord, Out::Unorm16, false);
         let text = disassemble(&p.code);
         assert_eq!(text[1], "v_mov_b32_e32 v20, v2");
         assert!(

@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use gfx10::translate::{Request, Stage, translate};
 use gpu::capture::{CaptureMeta, CommandBuffer, FrameCapture, Submission};
 use gpu::replay::{ReplayOptions, replay};
-use gpu::tiling::{Layout, TileMode};
 
 use crate::{Case, Memory, PAGE, read_pages, write_pages};
 
@@ -79,9 +78,7 @@ pub fn run(case: &mut Case) -> Result<(), String> {
 /// hardware uses (rows padded to 256 bytes).
 fn draw(case: &mut Case) -> Result<(), String> {
     let res = replay(&capture(case), ReplayOptions::default())?;
-    let (addr, width, height, pitch) = case.target;
-    let bpe = pitch / width.max(1);
-    let pitch = Layout::new(TileMode::Linear, bpe, width, height).map_or(pitch, |l| l.pitch * bpe);
+    let (addr, _, height, pitch) = case.target;
     let Some((_, texture)) = res.targets.iter().find(|(a, _)| *a == addr) else {
         case.untranslated = Some(format!("Metal drew nothing ({})", res.summary));
         return Ok(());
@@ -94,7 +91,7 @@ fn draw(case: &mut Case) -> Result<(), String> {
     let mut surface = vec![0u8; pitch as usize * height as usize];
     read_pages(&[&case.input], addr, &mut surface);
     let row = bytes.len() / h.max(1) as usize;
-    let used = row.min((width * bpe) as usize);
+    let used = row.min(pitch as usize);
     for y in 0..height.min(h) as usize {
         surface[y * pitch as usize..][..used].copy_from_slice(&bytes[y * row..][..used]);
     }
