@@ -62,6 +62,7 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
         drop_depth_export: false,
         half_targets: 0,
         dual_source: false,
+        blends: [0; 8],
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],
@@ -154,6 +155,7 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
         drop_depth_export: false,
         half_targets: 0,
         dual_source: false,
+        blends: [0; 8],
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],
@@ -193,6 +195,7 @@ fn compute_group(code: &[u32], user_sgprs: u32, rsrc2: u32, threads: u32) -> gfx
         drop_depth_export: false,
         half_targets: 0,
         dual_source: false,
+        blends: [0; 8],
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],
@@ -411,6 +414,7 @@ fn integer_colour_formats_export_integers() {
         drop_depth_export: false,
         half_targets: 0,
         dual_source: false,
+        blends: [0; 8],
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],
@@ -428,7 +432,7 @@ fn integer_colour_formats_export_integers() {
 }
 
 #[test]
-fn dual_source_blending_takes_mrt1_as_the_second_source() {
+fn dual_source_blending_blends_with_the_mrt1_export() {
     let code = [
         0xF800_100F,
         0x0302_0100, // exp mrt0 v0, v1, v2, v3 vm
@@ -454,6 +458,7 @@ fn dual_source_blending_takes_mrt1_as_the_second_source() {
         drop_depth_export: false,
         half_targets: 0,
         dual_source: false,
+        blends: [0; 8],
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],
@@ -465,13 +470,64 @@ fn dual_source_blending_takes_mrt1_as_the_second_source() {
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("float4 c1 [[color(1)]]"), "{}", t.msl);
     req.dual_source = true;
+    req.blends[0] = 0x4010_0F0F;
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("float4 c0 [[color(0)]]"), "{}", t.msl);
+    assert!(!t.msl.contains("c1 [["), "{}", t.msl);
+    assert!(t.msl.contains("src1 = "), "{}", t.msl);
     assert!(
-        t.msl.contains("float4 c1 [[color(0), index(1)]]"),
+        t.msl
+            .contains("o.c0 = cb_blend(blend_src0, float4(d0), src1, blend_color, 0x40100f0fu);"),
         "{}",
         t.msl
     );
+    assert!(t.reads_blend_color);
+    compile(&t.msl);
+}
+
+#[test]
+fn blending_into_half_targets_writes_the_cb_halves() {
+    let code = [
+        0x5E00_0100, // v_cvt_pkrtz_f16_f32 v0, v0, v0
+        0xF800_1C0F,
+        0x0000_0000, // exp mrt0 v0, v0, v0, v0 done compr vm
+        0xBF81_0000, // s_endpgm
+    ];
+    let mut req = Request {
+        stage: Stage::Pixel,
+        code: &code,
+        address: 0,
+        user_sgprs: 0,
+        ngg: false,
+        ps_input_ena: 2,
+        ps_input_addr: 2,
+        ps_input_cntl: &[],
+        col_format: 0x4,
+        compute_rsrc2: 0,
+        threads: [1, 1, 1],
+        uint_textures: 0,
+        sint_textures: 0,
+        grid_bounds: false,
+        drop_depth_export: false,
+        half_targets: 1,
+        dual_source: false,
+        blends: [0; 8],
+        logic_op: 0xCC,
+        logic_targets: [0; 8],
+        swizzles: [0; 8],
+        probe_flat: false,
+        scratch_wave_bytes: 0,
+        coded_textures: 0,
+        rsrc1: DEFAULT_RSRC1,
+    };
+    let t = translate(&req).unwrap();
+    assert!(t.msl.contains("float4 c0 [[color(0)]]"), "{}", t.msl);
+    assert!(!t.reads_blend_color);
+    req.blends[0] = 0x4505_0504;
+    let t = translate(&req).unwrap();
+    assert!(t.msl.contains("half4 c0 [[color(0)]]"), "{}", t.msl);
+    assert!(t.msl.contains("half4 d0 [[color(0)]]"), "{}", t.msl);
+    assert!(t.msl.contains("o.c0 = cb_half(cb_blend("), "{}", t.msl);
     compile(&t.msl);
 }
 
@@ -504,6 +560,7 @@ fn integer_texture_slots_read_and_write_integers() {
         drop_depth_export: false,
         half_targets: 0,
         dual_source: false,
+        blends: [0; 8],
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],
@@ -570,6 +627,7 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
         drop_depth_export: false,
         half_targets: 5,
         dual_source: true,
+        blends: [0x4005_0504, 0, 0, 0, 0, 0, 0, 0x4001_2001],
         logic_op: 0x88,
         logic_targets: [0, 0x48, 0, 0, 0, 0, 0, 8],
         swizzles: [0x1B, 0, 0, 0, 0, 0, 0, 0x93],
@@ -586,6 +644,7 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
             again.drop_depth_export,
             again.half_targets,
             again.dual_source,
+            again.blends,
             again.logic_op,
             again.logic_targets,
             again.swizzles,
@@ -597,6 +656,7 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
             false,
             5,
             true,
+            [0x4005_0504, 0, 0, 0, 0, 0, 0, 0x4001_2001],
             0x88,
             [0, 0x48, 0, 0, 0, 0, 0, 8],
             [0x1B, 0, 0, 0, 0, 0, 0, 0x93],
@@ -733,6 +793,7 @@ fn getpc_gives_the_address_of_the_next_instruction() {
         drop_depth_export: false,
         half_targets: 0,
         dual_source: false,
+        blends: [0; 8],
         logic_op: 0xCC,
         logic_targets: [0; 8],
         swizzles: [0; 8],

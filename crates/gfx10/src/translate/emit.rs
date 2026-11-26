@@ -47,6 +47,8 @@ impl<'a> Tx<'a> {
             gds: self.gds,
             loop_guard: self.guarded,
             lockstep: self.lockstep,
+            reads_blend_color: self.req.stage == Stage::Pixel
+                && !self.blend_statements().is_empty(),
         }
     }
 
@@ -336,20 +338,24 @@ impl<'a> Tx<'a> {
                     init.insert_str(0, &(fill + " };\n"));
                 }
                 out.push_str("};\n\nstruct PsOut {\n");
+                let src1 = self.req.dual_source && self.mrts & 2 != 0;
                 for i in 0..8 {
-                    if self.mrts >> i & 1 != 0 {
+                    if self.mrts >> i & 1 != 0 && !(i == 1 && src1) {
+                        let blended = self.req.blends[i] != 0;
                         let ty = match self.req.col_format >> (4 * i) & 0xF {
                             7 => "uint4",
                             8 => "int4",
+                            _ if blended && self.req.half_targets >> i & 1 != 0 => "half4",
                             _ => "float4",
                         };
-                        let slot = if i == 1 && self.req.dual_source {
-                            "color(0), index(1)".to_string()
-                        } else {
-                            format!("color({i})")
-                        };
-                        out.push_str(&format!("    {ty} c{i} [[{slot}]];\n"));
+                        out.push_str(&format!("    {ty} c{i} [[color({i})]];\n"));
+                        if blended {
+                            init.push_str(&format!("    float4 blend_src{i} = 0.0f;\n"));
+                        }
                     }
+                }
+                if src1 {
+                    init.push_str("    float4 src1 = 0.0f;\n");
                 }
                 if self.depth {
                     out.push_str("    float depth [[depth(any)]];\n");
@@ -362,8 +368,20 @@ impl<'a> Tx<'a> {
                 let mut body = self.body.clone();
                 let mut tail =
                     String::from("    if (!exported) discard_fragment();\n    return o;\n");
+                let blend = self.blend_statements();
+                if !blend.is_empty() {
+                    let with_blend = format!("{{ {blend}return o; }}");
+                    body = body.replace("return o;", &with_blend);
+                    tail = tail.replace("return o;", &with_blend);
+                    entry_params.push(format!(
+                        "constant float4& blend_color [[buffer({})]]",
+                        binding::BLEND_COLOR
+                    ));
+                }
                 if self.req.probe_flat
                     && self.mrts & 2 != 0
+                    && self.req.blends[1] == 0
+                    && !self.req.dual_source
                     && self.req.col_format >> 4 & 0xF != 7
                     && self.req.col_format >> 4 & 0xF != 8
                     && let Some((&a, _)) = self.attrs.iter().find(|(_, m)| **m == Interp::Flat)
@@ -375,12 +393,21 @@ impl<'a> Tx<'a> {
                     tail = tail.replace("return o;", &probe);
                 }
                 for n in 0..8 {
-                    let logic = self.req.logic_targets[n];
-                    if self.req.logic_op == 0xCC || logic == 0 || self.mrts >> n & 1 == 0 {
+                    if self.mrts >> n & 1 == 0 || n == 1 && src1 {
                         continue;
                     }
-                    let ty = ["float4", "uint4", "int4"][(logic >> 6).min(2) as usize];
-                    entry_params.push(format!("{ty} d{n} [[color({n})]]"));
+                    let logic = self.req.logic_targets[n];
+                    if self.req.logic_op != 0xCC && logic != 0 {
+                        let ty = ["float4", "uint4", "int4"][(logic >> 6).min(2) as usize];
+                        entry_params.push(format!("{ty} d{n} [[color({n})]]"));
+                    } else if self.req.blends[n] != 0 {
+                        let ty = if self.req.half_targets >> n & 1 != 0 {
+                            "half4"
+                        } else {
+                            "float4"
+                        };
+                        entry_params.push(format!("{ty} d{n} [[color({n})]]"));
+                    }
                 }
                 out.push_str(&format!(
                     "fragment PsOut gen5_ps({} [[stage_in]], {}) {{\n    PsOut o = {{}};\n    bool exported = false;\n{init}{}{tail}}}\n",
@@ -493,6 +520,31 @@ impl<'a> Tx<'a> {
             }
         }
         s
+    }
+
+    /// The CB's blend of each exported MRT that `Request::blends` names with
+    /// the target it reads, run before the pixel program returns.
+    fn blend_statements(&self) -> String {
+        let src1 = if self.req.dual_source && self.mrts & 2 != 0 {
+            "src1"
+        } else {
+            "float4(0.0f)"
+        };
+        let mut out = String::new();
+        for n in 0..8 {
+            let w = self.req.blends[n];
+            if w == 0 || self.mrts >> n & 1 == 0 || n == 1 && src1 == "src1" {
+                continue;
+            }
+            let blend =
+                format!("cb_blend(blend_src{n}, float4(d{n}), {src1}, blend_color, {w:#x}u)");
+            if self.req.half_targets >> n & 1 != 0 {
+                out.push_str(&format!("o.c{n} = cb_half({blend}); "));
+            } else {
+                out.push_str(&format!("o.c{n} = {blend}; "));
+            }
+        }
+        out
     }
 
     // Initial VGPRs of a pixel shader, laid out by `SPI_PS_INPUT_ADDR`.

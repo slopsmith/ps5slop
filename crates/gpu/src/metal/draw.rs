@@ -271,6 +271,7 @@ impl Metal {
                     drop_depth_export: !depth_bound,
                     half_targets: half_targets(c),
                     dual_source: dual_source(c),
+                    blends: blends(c),
                     logic_op,
                     logic_targets,
                     swizzles,
@@ -326,7 +327,7 @@ impl Metal {
             vertex: vertex.id,
             pixel: pixel.id,
             formats: [0; 8],
-            blends: [(Blend::read(c, 0), 0); 8],
+            write_masks: [0; 8],
             depth: 0,
             stencil: false,
             form,
@@ -367,7 +368,7 @@ impl Metal {
             } else {
                 (0..4).fold(0, |m, i| m | (write >> (swizzle >> (2 * i) & 3) & 1) << i)
             };
-            key.blends[targets.len()] = (Blend::read(c, n), write_mask(write) as u8);
+            key.write_masks[targets.len()] = write_mask(write) as u8;
             let slice = if tex.textureType() == MTLTextureType::Type2DArray {
                 t.slice
             } else {
@@ -476,7 +477,6 @@ impl Metal {
             let (w, h) = viewport_target_size(c);
             let tex = self.blank_target(w, h)?;
             key.formats[0] = tex.pixelFormat().0;
-            key.blends[0] = (Blend::read(c, 0), 0);
             size = Some((tex.width() as u32, tex.height() as u32));
             targets.push((BLANK_TARGET, tex, 0));
         }
@@ -681,6 +681,14 @@ impl Metal {
         });
         Self::apply(Slot::Vertex(&enc), &vs_bound, vs_data);
         Self::apply(Slot::Fragment(&enc), &ps_bound, ps_data);
+        if pixel.translated.reads_blend_color {
+            let color = blend_color(c);
+            Slot::Fragment(&enc).bytes(
+                color.as_ptr().cast(),
+                std::mem::size_of_val(&color),
+                binding::BLEND_COLOR as usize,
+            );
+        }
         for (slot, t) in &ps_bound.textures {
             let (ptr, w, h) = (Retained::as_ptr(t) as usize, t.width(), t.height());
             self.note(|| format!("bound t{slot} {ptr:#x} {w}x{h}"));

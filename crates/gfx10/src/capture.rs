@@ -7,7 +7,7 @@
 use crate::translate::{DEFAULT_RSRC1, Request, Stage, program};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"g10c");
-const VERSION: u32 = 8;
+const VERSION: u32 = 9;
 const GRID_BOUNDS: u32 = 1;
 const DROP_DEPTH_EXPORT: u32 = 2;
 const DUAL_SOURCE: u32 = 4;
@@ -32,6 +32,7 @@ pub struct Capture {
     pub drop_depth_export: bool,
     pub half_targets: u8,
     pub dual_source: bool,
+    pub blends: [u32; 8],
     pub logic_op: u8,
     pub logic_targets: [u8; 8],
     pub swizzles: [u8; 8],
@@ -65,6 +66,7 @@ impl Capture {
             drop_depth_export: req.drop_depth_export,
             half_targets: req.half_targets,
             dual_source: req.dual_source,
+            blends: req.blends,
             logic_op: req.logic_op,
             logic_targets: req.logic_targets,
             swizzles: req.swizzles,
@@ -94,6 +96,7 @@ impl Capture {
             drop_depth_export: self.drop_depth_export,
             half_targets: self.half_targets,
             dual_source: self.dual_source,
+            blends: self.blends,
             logic_op: self.logic_op,
             logic_targets: self.logic_targets,
             swizzles: self.swizzles,
@@ -147,6 +150,7 @@ impl Capture {
             self.coded_textures,
             self.rsrc1,
         ]);
+        w.extend_from_slice(&self.blends);
         w.extend_from_slice(&self.code);
         w.iter().flat_map(|x| x.to_le_bytes()).collect()
     }
@@ -211,6 +215,11 @@ impl Capture {
             rsrc1 = *w.get(code_at)?;
             code_at += 1;
         }
+        let mut blends = [0; 8];
+        if w[1] >= 9 {
+            blends.copy_from_slice(w.get(code_at..code_at + 8)?);
+            code_at += 8;
+        }
         Some(Capture {
             stage,
             user_sgprs: w[3],
@@ -229,6 +238,7 @@ impl Capture {
             drop_depth_export: flags & DROP_DEPTH_EXPORT != 0,
             half_targets: (flags >> 8) as u8,
             dual_source: flags & DUAL_SOURCE != 0,
+            blends,
             logic_op,
             logic_targets,
             swizzles,

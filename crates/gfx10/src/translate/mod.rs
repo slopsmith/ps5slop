@@ -80,13 +80,18 @@ pub struct Request<'a> {
     pub grid_bounds: bool,
     /// Pixel stage: no depth target is bound, so a depth export is dropped.
     pub drop_depth_export: bool,
-    /// Pixel stage: MRTs (bit n for MRT n) whose target holds 16-bit floats
-    /// and does not blend. The CB rounds 32-bit float exports to them toward
-    /// zero (measured on RDNA2), so the program does that itself.
+    /// Pixel stage: MRTs (bit n for MRT n) whose target holds 16-bit floats.
+    /// The CB rounds what it writes to them toward zero (measured on RDNA2),
+    /// so the program does that itself.
     pub half_targets: u8,
     /// Pixel stage: MRT0 blends with a `SRC1` factor, so the MRT1 export is
     /// its second blend source rather than a target of its own.
     pub dual_source: bool,
+    /// Pixel stage, per MRT: 0, or `CB_BLENDn_CONTROL` with ENABLE set and
+    /// the alpha fields filled in when it does not blend alpha separately,
+    /// and [`BLEND_CLAMP_UNORM`] or [`BLEND_CLAMP_SNORM`] in its unused bits
+    /// 13 and 14. The program reads the target and blends as the CB does.
+    pub blends: [u32; 8],
     /// Pixel stage: `CB_COLOR_CONTROL.ROP3`, applied to the MRTs that
     /// `logic_targets` names; 0xCC (copy) applies nothing.
     pub logic_op: u8,
@@ -262,6 +267,9 @@ pub struct Translated {
     /// Compute stage: each wave's two SIMD groups wait for each other, so a group
     /// must run whole; a partial one is dispatched whole with grid bounds.
     pub lockstep: bool,
+    /// Pixel stage: the program blends, and reads the blend constant at
+    /// [`binding::BLEND_COLOR`].
+    pub reads_blend_color: bool,
 }
 
 /// Why a program could not be translated.
@@ -285,6 +293,9 @@ impl std::error::Error for TranslateError {}
 
 /// Binding indices of the generated MSL.
 pub mod binding {
+    /// `constant float4& blend_color`: `CB_BLEND_RED`..`ALPHA` for
+    /// [`super::Request::blends`].
+    pub const BLEND_COLOR: u32 = 23;
     /// `constant uint* user`: all user SGPR values in order.
     pub const USER: u32 = 0;
     /// `constant Win& mem_base`: the guest range the memory buffer covers, a
@@ -312,6 +323,13 @@ pub mod binding {
     /// The first of the [`super::MAX_CONSTANTS`] `constant uint* cbN` buffers.
     pub const CONSTANTS: u32 = 1;
 }
+
+/// `CB_COLOR_INFO.BLEND_CLAMP` on a unorm or sRGB target, for a
+/// [`Request::blends`] word: the sources and the blend constant are clamped to
+/// [0, 1] before blending.
+pub const BLEND_CLAMP_UNORM: u32 = 1 << 13;
+/// The same on a snorm target, to [-1, 1].
+pub const BLEND_CLAMP_SNORM: u32 = 2 << 13;
 
 /// Constant buffers a program may bind; scalar loads through more bases read
 /// guest memory instead.

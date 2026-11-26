@@ -381,32 +381,6 @@ pub(super) fn is_compressed(f: MTLPixelFormat) -> bool {
     (MTLPixelFormat::BC1_RGBA.0..=MTLPixelFormat::BC7_RGBAUnorm_sRGB.0).contains(&f.0)
 }
 
-pub(super) fn blend_factor(f: u32) -> MTLBlendFactor {
-    use MTLBlendFactor as B;
-    match f {
-        0 => B::Zero,
-        1 => B::One,
-        2 => B::SourceColor,
-        3 => B::OneMinusSourceColor,
-        4 => B::SourceAlpha,
-        5 => B::OneMinusSourceAlpha,
-        6 => B::DestinationAlpha,
-        7 => B::OneMinusDestinationAlpha,
-        8 => B::DestinationColor,
-        9 => B::OneMinusDestinationColor,
-        10 => B::SourceAlphaSaturated,
-        13 => B::BlendColor,
-        14 => B::OneMinusBlendColor,
-        15 => B::Source1Color,
-        16 => B::OneMinusSource1Color,
-        17 => B::Source1Alpha,
-        18 => B::OneMinusSource1Alpha,
-        19 => B::BlendAlpha,
-        20 => B::OneMinusBlendAlpha,
-        _ => B::One,
-    }
-}
-
 pub(super) fn compare(f: u32) -> MTLCompareFunction {
     use MTLCompareFunction as C;
     match f {
@@ -432,15 +406,5 @@ pub(super) fn stencil_op(op: u32) -> MTLStencilOperation {
         8 => S::IncrementWrap,
         9 => S::DecrementWrap,
         _ => S::Keep,
-    }
-}
-
-pub(super) fn blend_op(op: u32) -> MTLBlendOperation {
-    match op {
-        1 => MTLBlendOperation::Subtract,
-        2 => MTLBlendOperation::Min,
-        3 => MTLBlendOperation::Max,
-        4 => MTLBlendOperation::ReverseSubtract,
-        _ => MTLBlendOperation::Add,
     }
 }

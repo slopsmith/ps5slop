@@ -128,7 +128,9 @@ impl<'a> Tx<'a> {
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         ),
-                        _ if self.req.half_targets >> target & 1 != 0 => {
+                        _ if self.req.half_targets >> target & 1 != 0
+                            && self.req.blends[target as usize] == 0 =>
+                        {
                             let parts: Vec<String> = comps
                                 .iter()
                                 .map(|(on, r)| {
@@ -156,6 +158,10 @@ impl<'a> Tx<'a> {
                 let logic = self.req.logic_targets[target as usize];
                 if self.req.logic_op != 0xCC && logic != 0 {
                     logic_op(target, &value, self.req.logic_op, logic)
+                } else if target == 1 && self.req.dual_source {
+                    format!("src1 = {value};")
+                } else if self.req.blends[target as usize] != 0 {
+                    format!("blend_src{target} = {value};")
                 } else {
                     format!("o.c{target} = {value};")
                 }

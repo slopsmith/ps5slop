@@ -54,6 +54,8 @@ pub(super) struct Variant {
     pub(super) half_targets: u8,
     /// Pixel: `Request::dual_source`.
     pub(super) dual_source: bool,
+    /// Pixel: `Request::blends`.
+    pub(super) blends: [u32; 8],
     /// Pixel: `Request::logic_op` and `Request::logic_targets`.
     pub(super) logic_op: u8,
     pub(super) logic_targets: [u8; 8],
@@ -66,7 +68,8 @@ pub(super) struct PipelineKey {
     pub(super) vertex: u64,
     pub(super) pixel: u64,
     pub(super) formats: [usize; 8],
-    pub(super) blends: [(Blend, u8); 8],
+    /// Each attachment's Metal write mask.
+    pub(super) write_masks: [u8; 8],
     pub(super) depth: usize,
     pub(super) stencil: bool,
     pub(super) form: VertexForm,
@@ -278,6 +281,7 @@ impl Metal {
                 drop_depth_export: variant.drop_depth_export,
                 half_targets: variant.half_targets,
                 dual_source: variant.dual_source,
+                blends: variant.blends,
                 logic_op: variant.logic_op,
                 logic_targets: variant.logic_targets,
                 swizzles: variant.swizzles,
@@ -521,17 +525,7 @@ impl Metal {
                 }
                 let att = unsafe { desc.colorAttachments().objectAtIndexedSubscript(i) };
                 att.setPixelFormat(MTLPixelFormat(raw));
-                let (b, mask) = key.blends[i];
-                att.setWriteMask(MTLColorWriteMask(mask as usize));
-                if b.enable {
-                    att.setBlendingEnabled(true);
-                    att.setSourceRGBBlendFactor(blend_factor(b.color_src));
-                    att.setDestinationRGBBlendFactor(blend_factor(b.color_dst));
-                    att.setRgbBlendOperation(blend_op(b.color_op));
-                    att.setSourceAlphaBlendFactor(blend_factor(b.alpha_src));
-                    att.setDestinationAlphaBlendFactor(blend_factor(b.alpha_dst));
-                    att.setAlphaBlendOperation(blend_op(b.alpha_op));
-                }
+                att.setWriteMask(MTLColorWriteMask(key.write_masks[i] as usize));
             }
             if key.depth != 0 {
                 desc.setDepthAttachmentPixelFormat(MTLPixelFormat(key.depth));
@@ -724,15 +718,59 @@ pub(super) fn dual_source(c: &[u32]) -> bool {
             .any(|f| (15..=18).contains(f))
 }
 
-/// The MRTs whose target holds 16-bit floats and does not blend.
+/// The MRTs whose target holds 16-bit floats (`Request::half_targets`).
 pub(super) fn half_targets(c: &[u32]) -> u8 {
     (0..8)
         .filter(|&n| {
             ColorTarget::read(c, n)
                 .is_some_and(|t| t.format.number == 7 && matches!(t.format.layout, 2 | 5 | 12))
-                && !Blend::read(c, n).enable
         })
         .fold(0, |m, n| m | 1 << n)
+}
+
+/// Whether MRT `n` is attached to the draw's pass: a program may read only
+/// attached targets through `[[color(n)]]`.
+fn attached(c: &[u32], n: usize) -> bool {
+    super::draw::attached_targets(c[context::CB_TARGET_MASK], export_formats(c)).any(|a| a == n)
+}
+
+/// `Request::blends`: every MRT that blends, as the pixel program does it,
+/// since Metal's fixed-function blending differs from the CB's in rounding,
+/// NaNs, min and max, and some factors. Integer targets and those with
+/// `CB_COLOR_INFO.BLEND_BYPASS` do not blend, as Mesa's `ac_descriptors.c`
+/// sets that bit for integer formats.
+pub(super) fn blends(c: &[u32]) -> [u32; 8] {
+    std::array::from_fn(|n| {
+        let b = Blend::read(c, n);
+        let Some(t) = ColorTarget::read(c, n).filter(|_| attached(c, n)) else {
+            return 0;
+        };
+        let info = c[context::CB_COLOR0_INFO + n * context::CB_COLOR_STRIDE];
+        if !b.enable || matches!(t.format.number, 4 | 5) || info >> 16 & 1 != 0 {
+            return 0;
+        }
+        let clamp = match t.format.number {
+            _ if info >> 15 & 1 == 0 => 0,
+            0 | 6 => gfx10::translate::BLEND_CLAMP_UNORM,
+            1 => gfx10::translate::BLEND_CLAMP_SNORM,
+            _ => 0,
+        };
+        b.color_src
+            | b.color_op << 5
+            | b.color_dst << 8
+            | clamp
+            | b.alpha_src << 16
+            | b.alpha_op << 21
+            | b.alpha_dst << 24
+            | 1 << 30
+    })
+}
+
+/// `CB_BLEND_RED`..`ALPHA` for `binding::BLEND_COLOR`. The CB keeps 12
+/// significant bits of each, rounded toward zero (measured on RDNA2 with 0.6
+/// only, so whether this is a float or a fixed-point form is not known).
+pub(super) fn blend_color(c: &[u32]) -> [u32; 4] {
+    std::array::from_fn(|i| c[context::CB_BLEND_RED + i] & 0xFFFF_F000)
 }
 
 /// The export component each channel of a target in `format` stores, as
@@ -799,7 +837,7 @@ pub(super) fn logic_targets(c: &[u32]) -> (u8, [u8; 8]) {
         return (rop, targets);
     }
     for (n, t) in targets.iter_mut().enumerate() {
-        let Some(ct) = ColorTarget::read(c, n) else {
+        let Some(ct) = ColorTarget::read(c, n).filter(|_| attached(c, n)) else {
             continue;
         };
         if Blend::read(c, n).enable || c[context::CB_BLEND0_CONTROL + n] >> 31 != 0 {

@@ -178,6 +178,69 @@ static inline float f16_trunc(float x) {
     return f16_float(f16_rtz_bits(x));
 }
 
+// The CB's blend, measured on RDNA2: 32-bit float arithmetic, a ZERO factor
+// drops its term (NaN or infinity times it too), min and max take the factors
+// and ignore a NaN, and BOTH_SRC_ALPHA and BOTH_INV_SRC_ALPHA (11, 12) are 0.
+static inline float cb_factor(uint f, uint c, float4 s, float4 d, float4 s1, float4 k) {
+    switch (f) {
+    case 1u: return 1.0f;
+    case 2u: return s[c];
+    case 3u: return 1.0f - s[c];
+    case 4u: return s.w;
+    case 5u: return 1.0f - s.w;
+    case 6u: return d.w;
+    case 7u: return 1.0f - d.w;
+    case 8u: return d[c];
+    case 9u: return 1.0f - d[c];
+    case 10u: return c == 3u ? 1.0f : fmin(s.w, 1.0f - d.w);
+    case 13u: return k[c];
+    case 14u: return 1.0f - k[c];
+    case 15u: return s1[c];
+    case 16u: return 1.0f - s1[c];
+    case 17u: return s1.w;
+    case 18u: return 1.0f - s1.w;
+    case 19u: return k.w;
+    case 20u: return 1.0f - k.w;
+    default: return 0.0f;
+    }
+}
+
+static inline float4 cb_blend(float4 s, float4 d, float4 s1, float4 k, uint w) {
+    uint clamp_kind = (w >> 13) & 3u;
+    if (clamp_kind != 0u) {
+        float lo = clamp_kind == 1u ? 0.0f : -1.0f;
+        s = clamp(s, lo, 1.0f);
+        s1 = clamp(s1, lo, 1.0f);
+        k = clamp(k, lo, 1.0f);
+    }
+    float4 r;
+    for (uint c = 0u; c < 4u; c++) {
+        uint fields = c == 3u ? w >> 16 : w;
+        uint sf = fields & 0x1Fu, op = (fields >> 5) & 7u, df = (fields >> 8) & 0x1Fu;
+        float a = sf == 0u ? 0.0f : s[c] * cb_factor(sf, c, s, d, s1, k);
+        float b = df == 0u ? 0.0f : d[c] * cb_factor(df, c, s, d, s1, k);
+        switch (op) {
+        case 1u: r[c] = a - b; break;
+        case 2u: r[c] = fmin(a, b); break;
+        case 3u: r[c] = fmax(a, b); break;
+        case 4u: r[c] = b - a; break;
+        default: r[c] = a + b; break;
+        }
+    }
+    return r;
+}
+
+// A blend result as a 16-bit float target keeps it: rounded toward zero, and
+// every NaN the negative quiet one (0xFE00), as measured on RDNA2. Its bits go
+// out as a half, since Metal makes NaN 0x7E00 when it converts a float.
+static inline half4 cb_half(float4 x) {
+    half4 r;
+    for (uint c = 0u; c < 4u; c++) {
+        r[c] = as_type<half>(ushort(isnan(x[c]) ? 0xFE00u : f16_rtz_bits(x[c])));
+    }
+    return r;
+}
+
 // `mem` covers [base, end); windows over [base2, end2) and [base3, end3) lie `delta`
 // and `delta3` bytes from `mem` in the GPU's address space. Stores skip [ro, ro_end).
 struct Win { ulong base; ulong end; ulong base2; ulong end2; long delta; ulong ro; ulong ro_end; ulong base3; ulong end3; long delta3; };
