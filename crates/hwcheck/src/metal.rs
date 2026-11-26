@@ -6,8 +6,9 @@ use std::collections::HashMap;
 use gfx10::translate::{Request, Stage, translate};
 use gpu::capture::{CaptureMeta, CommandBuffer, FrameCapture, Submission};
 use gpu::replay::{ReplayOptions, replay};
+use gpu::tiling::{Layout, TileMode};
 
-use crate::{Case, Memory, PAGE, write_pages};
+use crate::{Case, Memory, PAGE, read_pages, write_pages};
 
 /// Where the command buffer goes in the replayed memory.
 const COMMANDS: u64 = 0x8_0000;
@@ -74,10 +75,13 @@ pub fn run(case: &mut Case) -> Result<(), String> {
 }
 
 /// Runs a draw case and lays the render target Metal drew out in
-/// `case.output` at the target's address and pitch.
+/// `case.output` at the target's address, in the linear layout the
+/// hardware uses (rows padded to 256 bytes).
 fn draw(case: &mut Case) -> Result<(), String> {
     let res = replay(&capture(case), ReplayOptions::default())?;
-    let (addr, _, height, pitch) = case.target;
+    let (addr, width, height, pitch) = case.target;
+    let bpe = pitch / width.max(1);
+    let pitch = Layout::new(TileMode::Linear, bpe, width, height).map_or(pitch, |l| l.pitch * bpe);
     let Some((_, texture)) = res.targets.iter().find(|(a, _)| *a == addr) else {
         case.untranslated = Some(format!("Metal drew nothing ({})", res.summary));
         return Ok(());
@@ -86,11 +90,15 @@ fn draw(case: &mut Case) -> Result<(), String> {
         case.untranslated = Some("Metal's render target format cannot be read back".into());
         return Ok(());
     };
+    // Row padding keeps what memory held.
+    let mut surface = vec![0u8; pitch as usize * height as usize];
+    read_pages(&[&case.input], addr, &mut surface);
     let row = bytes.len() / h.max(1) as usize;
-    for y in 0..height.min(h) {
-        let src = &bytes[y as usize * row..][..row.min(pitch as usize)];
-        write_pages(&mut case.output, addr + y as u64 * pitch as u64, src);
+    let used = row.min((width * bpe) as usize);
+    for y in 0..height.min(h) as usize {
+        surface[y * pitch as usize..][..used].copy_from_slice(&bytes[y * row..][..used]);
     }
+    write_pages(&mut case.output, addr, &surface);
     Ok(())
 }
 

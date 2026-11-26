@@ -71,6 +71,10 @@ enum Command {
         /// Merges the outcomes into this results file (as `run --results` writes them).
         #[arg(long)]
         merge: Option<PathBuf>,
+        /// Writes the hardware's and Metal's render targets of draws that
+        /// differ into this directory, as PPM images and raw bytes.
+        #[arg(long)]
+        images: Option<PathBuf>,
     },
     /// Lists, per encoding format, which opcodes the translator takes and which it refuses.
     Coverage,
@@ -115,7 +119,6 @@ fn test_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
 }
 
 /// A render target of 4-byte pixels as an RGB image, from its dwords.
-#[cfg(target_os = "linux")]
 fn write_ppm(path: &Path, case: &Case, dwords: &[u32]) -> Result<(), String> {
     let (_, w, h, pitch) = case.target;
     let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
@@ -154,12 +157,31 @@ struct Outputs<'a> {
     save: Option<&'a Path>,
 }
 
+/// The hardware's and Metal's render targets of a draw as PPM images and
+/// as the raw bytes of the checked memory.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn write_images(dir: &Path, case: &Case, hw: &[u32]) -> Result<(), String> {
+    let metal = case.metal_checked();
+    let hw = &hw[hw.len().saturating_sub(metal.len())..];
+    let stem = file_name(case);
+    write_ppm(&dir.join(format!("{stem}.hardware.ppm")), case, hw)?;
+    write_ppm(&dir.join(format!("{stem}.metal.ppm")), case, &metal)?;
+    for (kind, words) in [("hardware", hw), ("metal", &metal[..])] {
+        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let path = dir.join(format!("{stem}.{kind}.bin"));
+        std::fs::write(&path, bytes)
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 fn check(
     hardware: &Path,
     filter: &[String],
     show: usize,
     merge: Option<&Path>,
+    images: Option<&Path>,
 ) -> Result<bool, String> {
     use hwcheck::hardware::{Hardware, fingerprint};
     use std::fmt::Write as _;
@@ -199,6 +221,9 @@ fn check(
                     } else {
                         differ += 1;
                         println!("{name}: {}\n  {}", case.text, o.report(show).trim_end());
+                        if let Some(dir) = images.filter(|_| case.graphics) {
+                            write_images(dir, &case, &h.words)?;
+                        }
                         let memory = if o.memory.is_empty() {
                             String::new()
                         } else {
@@ -229,7 +254,13 @@ fn check(
 }
 
 #[cfg(not(target_os = "macos"))]
-fn check(_: &Path, _: &[String], _: usize, _: Option<&Path>) -> Result<bool, String> {
+fn check(
+    _: &Path,
+    _: &[String],
+    _: usize,
+    _: Option<&Path>,
+    _: Option<&Path>,
+) -> Result<bool, String> {
     Err("checking needs macOS and Metal".into())
 }
 
@@ -379,15 +410,7 @@ fn run(
                         differ += 1;
                         println!("{name}: {}\n  {}", case.text, o.report(show).trim_end());
                         if let Some(dir) = images {
-                            let metal = case.metal_checked();
-                            let start = hw.len() - metal.len();
-                            let stem = file_name(&case);
-                            write_ppm(
-                                &dir.join(format!("{stem}.hardware.ppm")),
-                                &case,
-                                &hw[start..],
-                            )?;
-                            write_ppm(&dir.join(format!("{stem}.metal.ppm")), &case, &metal)?;
+                            write_images(dir, &case, &hw)?;
                         }
                         format!("differ\t{} target dwords value", o.memory.len())
                     }
@@ -551,7 +574,14 @@ fn main() -> ExitCode {
             filter,
             show,
             merge,
-        } => check(&hardware, &filter, show, merge.as_deref()),
+            images,
+        } => check(
+            &hardware,
+            &filter,
+            show,
+            merge.as_deref(),
+            images.as_deref(),
+        ),
         Command::Info { tests } => info(&tests),
         Command::Coverage => coverage(),
         Command::Chart {
