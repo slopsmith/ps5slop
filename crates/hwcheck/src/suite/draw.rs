@@ -358,6 +358,8 @@ pub struct Draw {
     pub out: Out,
     /// `CB_COLOR0_INFO` FORMAT, NUMBER_TYPE and COMP_SWAP, and bytes per pixel.
     pub format: (u32, u32, u32, u32),
+    /// Other `CB_COLOR0_INFO` bits.
+    pub info: u32,
     /// `CB_BLEND0_CONTROL`.
     pub blend: u32,
     /// `CB_BLEND_RED`..`ALPHA`.
@@ -376,6 +378,8 @@ pub struct Draw {
     pub scissor: (u32, u32, u32, u32),
     /// Vertices: position (x, y, z, w) and attribute 0.
     pub vertices: Vec<[f32; 8]>,
+    /// The target's dwords before the draw; random when `None`.
+    pub fill: Option<Vec<u32>>,
     /// Opcodes the draw exercises: its exports and interpolation.
     pub covers: Vec<&'static str>,
 }
@@ -388,6 +392,7 @@ impl Draw {
             pixel: pixel(interp, out, false),
             out,
             format: (COLOR_8_8_8_8, NUMBER_UNORM, 0, 4),
+            info: 0,
             blend: 0,
             blend_color: [0.25, 0.5, 0.75, 0.6],
             rop3: 0xCC,
@@ -397,6 +402,7 @@ impl Draw {
             flip_y: true,
             scissor: (0, 0, WIDTH, HEIGHT),
             vertices,
+            fill: None,
             covers: interp.covers(),
         }
     }
@@ -537,7 +543,10 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
         set(0x2_8414, &d.blend_color.map(f32::to_bits)),
         set(0x2_8C60, &[(TARGET >> 8) as u32]),
         set(0x2_8E40, &[(TARGET >> 40) as u32]),
-        set(0x2_8C6C, &[0, format << 2 | number << 8 | swap << 11, 0]),
+        set(
+            0x2_8C6C,
+            &[0, format << 2 | number << 8 | swap << 11 | d.info, 0],
+        ),
         set(0x2_8EC0, &[(HEIGHT - 1) | (WIDTH - 1) << 14]),
         set(0x2_8EE0, &[1 << 24 | 1 << 27]),
         set(0x2_8C78, &[0]),
@@ -615,9 +624,12 @@ pub fn case(d: Draw) -> Case {
     write_pages(&mut case.input, vertex_buffer, &verts);
     let mut rng = Rng::new(&format!("target {} {}", d.name, d.variant));
     let finite = finite_mask(d.format.0, d.format.1);
-    let fill: Vec<u8> = (0..pitch * HEIGHT / 4)
-        .flat_map(|_| (rng.next() as u32 & finite).to_le_bytes())
-        .collect();
+    let fill: Vec<u8> = match &d.fill {
+        Some(dwords) => dwords.iter().flat_map(|w| w.to_le_bytes()).collect(),
+        None => (0..pitch * HEIGHT / 4)
+            .flat_map(|_| (rng.next() as u32 & finite).to_le_bytes())
+            .collect(),
+    };
     write_pages(&mut case.input, TARGET, &fill);
     case
 }
@@ -741,6 +753,39 @@ fn blend(src: u32, dst: u32, func: u32, alpha: Option<(u32, u32, u32)>) -> u32 {
         | ((alpha.is_some() as u32) * SEPARATE_ALPHA)
 }
 
+/// Alphas of the blend sweep's bands.
+const SWEEP_ALPHAS: u32 = 16;
+
+/// The blend sweep's RGBA8 destination: pixel `i` of each band of four
+/// rows holds `i` in every channel.
+fn sweep_destination() -> Vec<u32> {
+    (0..WIDTH * HEIGHT)
+        .map(|p| (p % 256) * 0x0101_0101)
+        .collect()
+}
+
+/// One rectangle per band of four rows, attribute 0 a grey of alpha
+/// `band / 15`, so every pixel blends one destination value with one alpha.
+fn sweep_bands() -> Vec<[f32; 8]> {
+    let rows = HEIGHT / SWEEP_ALPHAS;
+    (0..SWEEP_ALPHAS)
+        .flat_map(|band| {
+            let alpha = band as f32 / (SWEEP_ALPHAS - 1) as f32;
+            let top = 1.0 - (band * rows) as f32 / (HEIGHT as f32 / 2.0);
+            let bottom = 1.0 - ((band + 1) * rows) as f32 / (HEIGHT as f32 / 2.0);
+            let v = |x: f32, y: f32| [x, y, 0.5, 1.0, 0.75, 0.75, 0.75, alpha];
+            [
+                v(-1.0, top),
+                v(1.0, top),
+                v(-1.0, bottom),
+                v(1.0, top),
+                v(1.0, bottom),
+                v(-1.0, bottom),
+            ]
+        })
+        .collect()
+}
+
 /// Whether `CB_BLEND0_CONTROL` uses a `src1` factor anywhere.
 fn reads_src1(blend: u32) -> bool {
     [0, 8, 16, 24]
@@ -851,6 +896,79 @@ pub fn cases() -> Vec<Case> {
             add(format!("function {name}"), blend(4, 5, f as u32, None));
         }
         add("separate alpha".into(), blend(4, 5, 0, Some((1, 1, 3))));
+    }
+    const ZERO: u32 = 0;
+    const ONE: u32 = 1;
+    const SRC_ALPHA: u32 = 4;
+    const ONE_MINUS_SRC_ALPHA: u32 = 5;
+    const CONSTANT_COLOR: u32 = 13;
+    for (name, factor) in [
+        ("dst x 0.5", CONSTANT_COLOR),
+        ("dst x (1 - src alpha)", ONE_MINUS_SRC_ALPHA),
+    ] {
+        let mut d = Draw::new(
+            "draw blend",
+            format!("8_8_8_8 unorm sweep {name}"),
+            Interp::PerspCenter,
+            Out::F16,
+            sweep_bands(),
+        );
+        d.blend = blend(ZERO, factor, 0, None);
+        d.blend_color = [0.5; 4];
+        d.fill = Some(sweep_destination());
+        out.push(case(d));
+    }
+    for (fmt, number, bpp, fname) in [(10, 0, 4, "8_8_8_8 unorm"), (12, 7, 8, "16_16_16_16 float")]
+    {
+        for f in [13, 14, 19, 20] {
+            for (role, state) in [
+                ("src", blend(f, ONE_MINUS_SRC_ALPHA, 0, None)),
+                ("dst", blend(SRC_ALPHA, f, 0, None)),
+            ] {
+                let mut d = Draw::new(
+                    "draw blend",
+                    format!("{fname} {role} {} 0.3 0.7 0.1 0.9", FACTORS[f as usize]),
+                    Interp::PerspCenter,
+                    Out::F16,
+                    tris("blend"),
+                );
+                d.format = (fmt, number, 0, bpp);
+                d.blend = state;
+                d.blend_color = [0.3, 0.7, 0.1, 0.9];
+                out.push(case(d));
+            }
+        }
+        const BLEND_CLAMP: u32 = 1 << 15;
+        let outside: Vec<[f32; 8]> = tris("blend clamp")
+            .into_iter()
+            .map(|mut v| {
+                for a in &mut v[4..] {
+                    *a = *a * 4.0 - 1.5;
+                }
+                v
+            })
+            .collect();
+        for (name, state) in [
+            ("one plus one", blend(ONE, ONE, 0, None)),
+            ("src alpha", blend(SRC_ALPHA, ONE_MINUS_SRC_ALPHA, 0, None)),
+        ] {
+            for clamp in [false, true] {
+                let mut d = Draw::new(
+                    "draw blend",
+                    format!(
+                        "{fname} {name}, sources in [-1.5, 2.5], blend clamp {}",
+                        if clamp { "set" } else { "cleared" }
+                    ),
+                    Interp::PerspCenter,
+                    Out::F16,
+                    outside.clone(),
+                );
+                d.format = (fmt, number, 0, bpp);
+                d.blend = state;
+                d.info = if clamp { BLEND_CLAMP } else { 0 };
+                out.push(case(d));
+            }
+        }
     }
     for rop3 in [0x00, 0xFF, 0x88, 0xEE, 0x66, 0x33, 0x55, 0x99] {
         for (fmt, number, name) in [(10, 0, "8_8_8_8 unorm"), (10, 4, "8_8_8_8 uint")] {
