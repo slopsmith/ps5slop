@@ -575,8 +575,8 @@ draw format	16_16 snorm export F32	untranslated	Metal drew nothing (0 drawn, 0 d
 draw format	16_16 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	16_16 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-draw format	16_16 uint export U32	differ	5 target dwords value
-draw format	16_16 uint export Uint16	differ	5 target dwords value
+draw format	16_16 uint export U32	agree
+draw format	16_16 uint export Uint16	agree
 draw format	16_16 unorm export F32	differ	8 target dwords value
 draw format	16_16 unorm export Unorm16	differ	8 target dwords value
 draw format	16_16_16_16 float export F16	agree
@@ -587,8 +587,8 @@ draw format	16_16_16_16 snorm export F32	untranslated	Metal drew nothing (0 draw
 draw format	16_16_16_16 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	16_16_16_16 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	16_16_16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-draw format	16_16_16_16 uint export U32	differ	8 target dwords value
-draw format	16_16_16_16 uint export Uint16	differ	8 target dwords value
+draw format	16_16_16_16 uint export U32	agree
+draw format	16_16_16_16 uint export Uint16	agree
 draw format	16_16_16_16 unorm export F32	differ	14 target dwords value
 draw format	16_16_16_16 unorm export Unorm16	differ	14 target dwords value
 draw format	1_5_5_5 float export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
@@ -641,8 +641,8 @@ draw format	32_32 snorm export F32	untranslated	Metal drew nothing (0 drawn, 0 d
 draw format	32_32 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	32_32 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	32_32 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-draw format	32_32 uint export U32	differ	5 target dwords value
-draw format	32_32 uint export Uint16	differ	5 target dwords value
+draw format	32_32 uint export U32	agree
+draw format	32_32 uint export Uint16	agree
 draw format	32_32 unorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	32_32 unorm export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	32_32_32_32 float export F16	differ	3373 target dwords value
@@ -653,8 +653,8 @@ draw format	32_32_32_32 snorm export F32	untranslated	Metal drew nothing (0 draw
 draw format	32_32_32_32 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	32_32_32_32 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	32_32_32_32 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-draw format	32_32_32_32 uint export U32	differ	8 target dwords value
-draw format	32_32_32_32 uint export Uint16	differ	1500 target dwords value
+draw format	32_32_32_32 uint export U32	agree
+draw format	32_32_32_32 uint export Uint16	differ	3129 target dwords value
 draw format	32_32_32_32 unorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	32_32_32_32 unorm export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 draw format	4_4_4_4 float export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
@@ -818,36 +818,36 @@ draw rop3	8_8_8_8 unorm rop3 0x88	agree
 draw rop3	8_8_8_8 unorm rop3 0x99	agree
 draw rop3	8_8_8_8 unorm rop3 0xee	agree
 draw rop3	8_8_8_8 unorm rop3 0xff	agree
-draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	5119 target dwords value
-draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	differ	105 target dwords value
-draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	263 target dwords value
-draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 8_8_8_8 unorm	differ	70 target dwords value
-draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 32_32_32_32 float	differ	11383 target dwords value
-draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 8_8_8_8 unorm	differ	3958 target dwords value
-draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 32_32_32_32 float	differ	10127 target dwords value
-draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 8_8_8_8 unorm	differ	3545 target dwords value
-draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	6012 target dwords value
-draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear to 8_8_8_8 unorm	differ	106 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	8195 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 8_8_8_8 unorm	differ	441 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB point, mips point to 32_32_32_32 float	differ	8193 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB point, mips point to 8_8_8_8 unorm	differ	112 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 32_32_32_32 float	differ	11546 target dwords value
+draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	6080 target dwords value
+draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	differ	193 target dwords value
+draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	460 target dwords value
+draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 8_8_8_8 unorm	differ	136 target dwords value
+draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 32_32_32_32 float	differ	15899 target dwords value
+draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
+draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 32_32_32_32 float	differ	15400 target dwords value
+draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
+draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	12578 target dwords value
+draw texture	anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear to 8_8_8_8 unorm	differ	216 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	12414 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 8_8_8_8 unorm	differ	676 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB point, mips point to 32_32_32_32 float	differ	8389 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB point, mips point to 8_8_8_8 unorm	differ	377 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 32_32_32_32 float	differ	16381 target dwords value
 draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 32_32_32_32 float	differ	10645 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 8_8_8_8 unorm	differ	4093 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	8192 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear to 8_8_8_8 unorm	differ	859 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	6073 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 8_8_8_8 unorm	differ	324 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM point, mips point to 32_32_32_32 float	differ	259 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 32_32_32_32 float	differ	16384 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	12414 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear to 8_8_8_8 unorm	differ	608 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	6981 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 8_8_8_8 unorm	differ	328 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM point, mips point to 32_32_32_32 float	differ	460 target dwords value
 draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM point, mips point to 8_8_8_8 unorm	differ	136 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 32_32_32_32 float	differ	11546 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 32_32_32_32 float	differ	15899 target dwords value
 draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 32_32_32_32 float	differ	10649 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 32_32_32_32 float	differ	15292 target dwords value
 draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	7204 target dwords value
-draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear to 8_8_8_8 unorm	differ	357 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	9163 target dwords value
+draw texture	anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear to 8_8_8_8 unorm	differ	328 target dwords value
 draw texture	magnified 8x8 image_gather4 16_16_16_16_FLOAT bilinear clamp to edge to 32_32_32_32 float	agree
 draw texture	magnified 8x8 image_gather4 16_16_16_16_FLOAT bilinear opaque white border to 32_32_32_32 float	differ	3511 target dwords value
 draw texture	magnified 8x8 image_gather4 16_16_16_16_FLOAT bilinear wrap to 32_32_32_32 float	agree
@@ -896,48 +896,48 @@ draw texture	magnified 8x8 image_sample 8_8_8_8_UNORM bilinear wrap to 32_32_32_
 draw texture	magnified 8x8 image_sample 8_8_8_8_UNORM bilinear wrap to 8_8_8_8 unorm	differ	227 target dwords value
 draw texture	magnified 8x8 image_sample 8_8_8_8_UNORM point wrap to 32_32_32_32 float	differ	29 target dwords value
 draw texture	magnified 8x8 image_sample 8_8_8_8_UNORM point wrap to 8_8_8_8 unorm	differ	14 target dwords value
-draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	4299 target dwords value
-draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	differ	109 target dwords value
-draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	252 target dwords value
-draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 8_8_8_8 unorm	differ	73 target dwords value
-draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 32_32_32_32 float	differ	10264 target dwords value
-draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 8_8_8_8 unorm	differ	3168 target dwords value
-draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 32_32_32_32 float	differ	10258 target dwords value
-draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 8_8_8_8 unorm	differ	3166 target dwords value
-draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	10210 target dwords value
-draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT trilinear to 8_8_8_8 unorm	differ	1705 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	8192 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 8_8_8_8 unorm	differ	278 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_SRGB point, mips point to 32_32_32_32 float	differ	8192 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_SRGB point, mips point to 8_8_8_8 unorm	differ	130 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 32_32_32_32 float	differ	10686 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 8_8_8_8 unorm	differ	4047 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 32_32_32_32 float	differ	10680 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 8_8_8_8 unorm	differ	4047 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	10627 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_SRGB trilinear to 8_8_8_8 unorm	differ	2831 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5422 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 8_8_8_8 unorm	differ	295 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_UNORM point, mips point to 32_32_32_32 float	differ	251 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_UNORM point, mips point to 8_8_8_8 unorm	differ	130 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 32_32_32_32 float	differ	10687 target dwords value
+draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	5066 target dwords value
+draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	differ	167 target dwords value
+draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	442 target dwords value
+draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 8_8_8_8 unorm	differ	129 target dwords value
+draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 32_32_32_32 float	differ	13678 target dwords value
+draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
+draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 32_32_32_32 float	differ	13677 target dwords value
+draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
+draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	13204 target dwords value
+draw texture	minified 128x128 image_sample 16_16_16_16_FLOAT trilinear to 8_8_8_8 unorm	differ	847 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	11386 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 8_8_8_8 unorm	differ	801 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_SRGB point, mips point to 32_32_32_32 float	differ	8373 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_SRGB point, mips point to 8_8_8_8 unorm	differ	981 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 32_32_32_32 float	differ	15602 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 32_32_32_32 float	differ	15600 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	15354 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_SRGB trilinear to 8_8_8_8 unorm	differ	1342 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5469 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 8_8_8_8 unorm	differ	181 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_UNORM point, mips point to 32_32_32_32 float	differ	446 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_UNORM point, mips point to 8_8_8_8 unorm	differ	124 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 32_32_32_32 float	differ	12945 target dwords value
 draw texture	minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 32_32_32_32 float	differ	10680 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 32_32_32_32 float	differ	12944 target dwords value
 draw texture	minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	10627 target dwords value
-draw texture	minified 128x128 image_sample 8_8_8_8_UNORM trilinear to 8_8_8_8 unorm	differ	3028 target dwords value
-draw texture	minified 128x128 image_sample_b 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	4299 target dwords value
-draw texture	minified 128x128 image_sample_b 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	8190 target dwords value
-draw texture	minified 128x128 image_sample_b 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	8192 target dwords value
-draw texture	minified 128x128 image_sample_b 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	8192 target dwords value
-draw texture	minified 128x128 image_sample_b 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5422 target dwords value
-draw texture	minified 128x128 image_sample_b 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	8158 target dwords value
-draw texture	minified 128x128 image_sample_l 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	4691 target dwords value
-draw texture	minified 128x128 image_sample_l 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	10499 target dwords value
-draw texture	minified 128x128 image_sample_l 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	8564 target dwords value
-draw texture	minified 128x128 image_sample_l 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	10585 target dwords value
-draw texture	minified 128x128 image_sample_l 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5595 target dwords value
-draw texture	minified 128x128 image_sample_l 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	10585 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	12584 target dwords value
+draw texture	minified 128x128 image_sample 8_8_8_8_UNORM trilinear to 8_8_8_8 unorm	differ	1034 target dwords value
+draw texture	minified 128x128 image_sample_b 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	5073 target dwords value
+draw texture	minified 128x128 image_sample_b 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	13795 target dwords value
+draw texture	minified 128x128 image_sample_b 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	11383 target dwords value
+draw texture	minified 128x128 image_sample_b 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	16383 target dwords value
+draw texture	minified 128x128 image_sample_b 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5481 target dwords value
+draw texture	minified 128x128 image_sample_b 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	13149 target dwords value
+draw texture	minified 128x128 image_sample_l 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	5969 target dwords value
+draw texture	minified 128x128 image_sample_l 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	12055 target dwords value
+draw texture	minified 128x128 image_sample_l 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	9112 target dwords value
+draw texture	minified 128x128 image_sample_l 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	14035 target dwords value
+draw texture	minified 128x128 image_sample_l 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	7337 target dwords value
+draw texture	minified 128x128 image_sample_l 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	12477 target dwords value
 draw write mask	mask 0x1	agree
 draw write mask	mask 0x6	agree
 draw write mask	mask 0x8	agree
@@ -1456,8 +1456,8 @@ exp	draw format: 16_16 snorm export F32	untranslated	Metal drew nothing (0 drawn
 exp	draw format: 16_16 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 16_16 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-exp	draw format: 16_16 uint export U32	differ	5 target dwords value
-exp	draw format: 16_16 uint export Uint16	differ	5 target dwords value
+exp	draw format: 16_16 uint export U32	agree
+exp	draw format: 16_16 uint export Uint16	agree
 exp	draw format: 16_16 unorm export F32	differ	8 target dwords value
 exp	draw format: 16_16 unorm export Unorm16	differ	8 target dwords value
 exp	draw format: 16_16_16_16 float export F16	agree
@@ -1468,8 +1468,8 @@ exp	draw format: 16_16_16_16 snorm export F32	untranslated	Metal drew nothing (0
 exp	draw format: 16_16_16_16 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 16_16_16_16 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 16_16_16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-exp	draw format: 16_16_16_16 uint export U32	differ	8 target dwords value
-exp	draw format: 16_16_16_16 uint export Uint16	differ	8 target dwords value
+exp	draw format: 16_16_16_16 uint export U32	agree
+exp	draw format: 16_16_16_16 uint export Uint16	agree
 exp	draw format: 16_16_16_16 unorm export F32	differ	14 target dwords value
 exp	draw format: 16_16_16_16 unorm export Unorm16	differ	14 target dwords value
 exp	draw format: 1_5_5_5 float export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
@@ -1522,8 +1522,8 @@ exp	draw format: 32_32 snorm export F32	untranslated	Metal drew nothing (0 drawn
 exp	draw format: 32_32 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 32_32 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 32_32 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-exp	draw format: 32_32 uint export U32	differ	5 target dwords value
-exp	draw format: 32_32 uint export Uint16	differ	5 target dwords value
+exp	draw format: 32_32 uint export U32	agree
+exp	draw format: 32_32 uint export Uint16	agree
 exp	draw format: 32_32 unorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 32_32 unorm export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 32_32_32_32 float export F16	differ	3373 target dwords value
@@ -1534,8 +1534,8 @@ exp	draw format: 32_32_32_32 snorm export F32	untranslated	Metal drew nothing (0
 exp	draw format: 32_32_32_32 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 32_32_32_32 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 32_32_32_32 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-exp	draw format: 32_32_32_32 uint export U32	differ	8 target dwords value
-exp	draw format: 32_32_32_32 uint export Uint16	differ	1500 target dwords value
+exp	draw format: 32_32_32_32 uint export U32	agree
+exp	draw format: 32_32_32_32 uint export Uint16	differ	3129 target dwords value
 exp	draw format: 32_32_32_32 unorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 32_32_32_32 unorm export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 exp	draw format: 4_4_4_4 float export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
@@ -1693,36 +1693,36 @@ exp	draw rop3: 8_8_8_8 unorm rop3 0x88	agree
 exp	draw rop3: 8_8_8_8 unorm rop3 0x99	agree
 exp	draw rop3: 8_8_8_8 unorm rop3 0xee	agree
 exp	draw rop3: 8_8_8_8 unorm rop3 0xff	agree
-exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	5119 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	differ	105 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	263 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 8_8_8_8 unorm	differ	70 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 32_32_32_32 float	differ	11383 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 8_8_8_8 unorm	differ	3958 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 32_32_32_32 float	differ	10127 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 8_8_8_8 unorm	differ	3545 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	6012 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear to 8_8_8_8 unorm	differ	106 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	8195 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 8_8_8_8 unorm	differ	441 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB point, mips point to 32_32_32_32 float	differ	8193 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB point, mips point to 8_8_8_8 unorm	differ	112 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 32_32_32_32 float	differ	11546 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	6080 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	differ	193 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	460 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 8_8_8_8 unorm	differ	136 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 32_32_32_32 float	differ	15899 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 32_32_32_32 float	differ	15400 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	12578 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear to 8_8_8_8 unorm	differ	216 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	12414 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 8_8_8_8 unorm	differ	676 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB point, mips point to 32_32_32_32 float	differ	8389 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB point, mips point to 8_8_8_8 unorm	differ	377 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 32_32_32_32 float	differ	16381 target dwords value
 exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 32_32_32_32 float	differ	10645 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 8_8_8_8 unorm	differ	4093 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	8192 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear to 8_8_8_8 unorm	differ	859 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	6073 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 8_8_8_8 unorm	differ	324 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM point, mips point to 32_32_32_32 float	differ	259 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 32_32_32_32 float	differ	16384 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	12414 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear to 8_8_8_8 unorm	differ	608 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	6981 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 8_8_8_8 unorm	differ	328 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM point, mips point to 32_32_32_32 float	differ	460 target dwords value
 exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM point, mips point to 8_8_8_8 unorm	differ	136 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 32_32_32_32 float	differ	11546 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 32_32_32_32 float	differ	15899 target dwords value
 exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 32_32_32_32 float	differ	10649 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 32_32_32_32 float	differ	15292 target dwords value
 exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	7204 target dwords value
-exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear to 8_8_8_8 unorm	differ	357 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	9163 target dwords value
+exp	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear to 8_8_8_8 unorm	differ	328 target dwords value
 exp	draw texture: magnified 8x8 image_gather4 16_16_16_16_FLOAT bilinear clamp to edge to 32_32_32_32 float	agree
 exp	draw texture: magnified 8x8 image_gather4 16_16_16_16_FLOAT bilinear opaque white border to 32_32_32_32 float	differ	3511 target dwords value
 exp	draw texture: magnified 8x8 image_gather4 16_16_16_16_FLOAT bilinear wrap to 32_32_32_32 float	agree
@@ -1771,48 +1771,48 @@ exp	draw texture: magnified 8x8 image_sample 8_8_8_8_UNORM bilinear wrap to 32_3
 exp	draw texture: magnified 8x8 image_sample 8_8_8_8_UNORM bilinear wrap to 8_8_8_8 unorm	differ	227 target dwords value
 exp	draw texture: magnified 8x8 image_sample 8_8_8_8_UNORM point wrap to 32_32_32_32 float	differ	29 target dwords value
 exp	draw texture: magnified 8x8 image_sample 8_8_8_8_UNORM point wrap to 8_8_8_8 unorm	differ	14 target dwords value
-exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	4299 target dwords value
-exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	differ	109 target dwords value
-exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	252 target dwords value
-exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 8_8_8_8 unorm	differ	73 target dwords value
-exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 32_32_32_32 float	differ	10264 target dwords value
-exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 8_8_8_8 unorm	differ	3168 target dwords value
-exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 32_32_32_32 float	differ	10258 target dwords value
-exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 8_8_8_8 unorm	differ	3166 target dwords value
-exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	10210 target dwords value
-exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear to 8_8_8_8 unorm	differ	1705 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	8192 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 8_8_8_8 unorm	differ	278 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB point, mips point to 32_32_32_32 float	differ	8192 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB point, mips point to 8_8_8_8 unorm	differ	130 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 32_32_32_32 float	differ	10686 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 8_8_8_8 unorm	differ	4047 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 32_32_32_32 float	differ	10680 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 8_8_8_8 unorm	differ	4047 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	10627 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear to 8_8_8_8 unorm	differ	2831 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5422 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 8_8_8_8 unorm	differ	295 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM point, mips point to 32_32_32_32 float	differ	251 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM point, mips point to 8_8_8_8 unorm	differ	130 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 32_32_32_32 float	differ	10687 target dwords value
+exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	5066 target dwords value
+exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	differ	167 target dwords value
+exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	442 target dwords value
+exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 8_8_8_8 unorm	differ	129 target dwords value
+exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 32_32_32_32 float	differ	13678 target dwords value
+exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
+exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 32_32_32_32 float	differ	13677 target dwords value
+exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
+exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	13204 target dwords value
+exp	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear to 8_8_8_8 unorm	differ	847 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	11386 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 8_8_8_8 unorm	differ	801 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB point, mips point to 32_32_32_32 float	differ	8373 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB point, mips point to 8_8_8_8 unorm	differ	981 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 32_32_32_32 float	differ	15602 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 32_32_32_32 float	differ	15600 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	15354 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear to 8_8_8_8 unorm	differ	1342 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5469 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 8_8_8_8 unorm	differ	181 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM point, mips point to 32_32_32_32 float	differ	446 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM point, mips point to 8_8_8_8 unorm	differ	124 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 32_32_32_32 float	differ	12945 target dwords value
 exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 32_32_32_32 float	differ	10680 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 32_32_32_32 float	differ	12944 target dwords value
 exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	10627 target dwords value
-exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear to 8_8_8_8 unorm	differ	3028 target dwords value
-exp	draw texture: minified 128x128 image_sample_b 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	4299 target dwords value
-exp	draw texture: minified 128x128 image_sample_b 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	8190 target dwords value
-exp	draw texture: minified 128x128 image_sample_b 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	8192 target dwords value
-exp	draw texture: minified 128x128 image_sample_b 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	8192 target dwords value
-exp	draw texture: minified 128x128 image_sample_b 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5422 target dwords value
-exp	draw texture: minified 128x128 image_sample_b 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	8158 target dwords value
-exp	draw texture: minified 128x128 image_sample_l 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	4691 target dwords value
-exp	draw texture: minified 128x128 image_sample_l 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	10499 target dwords value
-exp	draw texture: minified 128x128 image_sample_l 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	8564 target dwords value
-exp	draw texture: minified 128x128 image_sample_l 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	10585 target dwords value
-exp	draw texture: minified 128x128 image_sample_l 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5595 target dwords value
-exp	draw texture: minified 128x128 image_sample_l 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	10585 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	12584 target dwords value
+exp	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear to 8_8_8_8 unorm	differ	1034 target dwords value
+exp	draw texture: minified 128x128 image_sample_b 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	5073 target dwords value
+exp	draw texture: minified 128x128 image_sample_b 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	13795 target dwords value
+exp	draw texture: minified 128x128 image_sample_b 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	11383 target dwords value
+exp	draw texture: minified 128x128 image_sample_b 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	16383 target dwords value
+exp	draw texture: minified 128x128 image_sample_b 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5481 target dwords value
+exp	draw texture: minified 128x128 image_sample_b 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	13149 target dwords value
+exp	draw texture: minified 128x128 image_sample_l 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	5969 target dwords value
+exp	draw texture: minified 128x128 image_sample_l 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	12055 target dwords value
+exp	draw texture: minified 128x128 image_sample_l 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	9112 target dwords value
+exp	draw texture: minified 128x128 image_sample_l 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	14035 target dwords value
+exp	draw texture: minified 128x128 image_sample_l 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	7337 target dwords value
+exp	draw texture: minified 128x128 image_sample_l 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	12477 target dwords value
 exp	draw write mask: mask 0x1	agree
 exp	draw write mask: mask 0x6	agree
 exp	draw write mask: mask 0x8	agree
@@ -3112,36 +3112,36 @@ image_sample	2d X24_8_32_UINT bilinear wrap	differ	1020 of 1024: 1020 value
 image_sample	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample	cube 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	5119 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	differ	105 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	263 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 8_8_8_8 unorm	differ	70 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 32_32_32_32 float	differ	11383 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 8_8_8_8 unorm	differ	3958 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 32_32_32_32 float	differ	10127 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 8_8_8_8 unorm	differ	3545 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	6012 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear to 8_8_8_8 unorm	differ	106 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	8195 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 8_8_8_8 unorm	differ	441 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB point, mips point to 32_32_32_32 float	differ	8193 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB point, mips point to 8_8_8_8 unorm	differ	112 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 32_32_32_32 float	differ	11546 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	6080 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	differ	193 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	460 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 8_8_8_8 unorm	differ	136 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 32_32_32_32 float	differ	15899 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 32_32_32_32 float	differ	15400 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	12578 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT trilinear to 8_8_8_8 unorm	differ	216 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	12414 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 8_8_8_8 unorm	differ	676 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB point, mips point to 32_32_32_32 float	differ	8389 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB point, mips point to 8_8_8_8 unorm	differ	377 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 32_32_32_32 float	differ	16381 target dwords value
 image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 32_32_32_32 float	differ	10645 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 8_8_8_8 unorm	differ	4093 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	8192 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear to 8_8_8_8 unorm	differ	859 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	6073 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 8_8_8_8 unorm	differ	324 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM point, mips point to 32_32_32_32 float	differ	259 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 32_32_32_32 float	differ	16384 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	12414 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_SRGB trilinear to 8_8_8_8 unorm	differ	608 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	6981 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 8_8_8_8 unorm	differ	328 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM point, mips point to 32_32_32_32 float	differ	460 target dwords value
 image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM point, mips point to 8_8_8_8 unorm	differ	136 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 32_32_32_32 float	differ	11546 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 32_32_32_32 float	differ	15899 target dwords value
 image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 32_32_32_32 float	differ	10649 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 32_32_32_32 float	differ	15292 target dwords value
 image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	7204 target dwords value
-image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear to 8_8_8_8 unorm	differ	357 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	9163 target dwords value
+image_sample	draw texture: anisotropic 128x128 image_sample 8_8_8_8_UNORM trilinear to 8_8_8_8 unorm	differ	328 target dwords value
 image_sample	draw texture: magnified 8x8 image_sample 16_16_16_16_FLOAT bilinear clamp to edge to 32_32_32_32 float	differ	4066 target dwords value
 image_sample	draw texture: magnified 8x8 image_sample 16_16_16_16_FLOAT bilinear clamp to edge to 8_8_8_8 unorm	differ	43 target dwords value
 image_sample	draw texture: magnified 8x8 image_sample 16_16_16_16_FLOAT bilinear mirror to 32_32_32_32 float	differ	4287 target dwords value
@@ -3178,36 +3178,36 @@ image_sample	draw texture: magnified 8x8 image_sample 8_8_8_8_UNORM bilinear wra
 image_sample	draw texture: magnified 8x8 image_sample 8_8_8_8_UNORM bilinear wrap to 8_8_8_8 unorm	differ	227 target dwords value
 image_sample	draw texture: magnified 8x8 image_sample 8_8_8_8_UNORM point wrap to 32_32_32_32 float	differ	29 target dwords value
 image_sample	draw texture: magnified 8x8 image_sample 8_8_8_8_UNORM point wrap to 8_8_8_8 unorm	differ	14 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	4299 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	differ	109 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	252 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 8_8_8_8 unorm	differ	73 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 32_32_32_32 float	differ	10264 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 8_8_8_8 unorm	differ	3168 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 32_32_32_32 float	differ	10258 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 8_8_8_8 unorm	differ	3166 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	10210 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear to 8_8_8_8 unorm	differ	1705 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	8192 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 8_8_8_8 unorm	differ	278 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB point, mips point to 32_32_32_32 float	differ	8192 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB point, mips point to 8_8_8_8 unorm	differ	130 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 32_32_32_32 float	differ	10686 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 8_8_8_8 unorm	differ	4047 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 32_32_32_32 float	differ	10680 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 8_8_8_8 unorm	differ	4047 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	10627 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear to 8_8_8_8 unorm	differ	2831 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5422 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 8_8_8_8 unorm	differ	295 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM point, mips point to 32_32_32_32 float	differ	251 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM point, mips point to 8_8_8_8 unorm	differ	130 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 32_32_32_32 float	differ	10687 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	5066 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	differ	167 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	442 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 8_8_8_8 unorm	differ	129 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 32_32_32_32 float	differ	13678 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 32_32_32_32 float	differ	13677 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	13204 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 16_16_16_16_FLOAT trilinear to 8_8_8_8 unorm	differ	847 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	11386 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB bilinear, mips point to 8_8_8_8 unorm	differ	801 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB point, mips point to 32_32_32_32 float	differ	8373 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB point, mips point to 8_8_8_8 unorm	differ	981 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 32_32_32_32 float	differ	15602 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 32_32_32_32 float	differ	15600 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	15354 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_SRGB trilinear to 8_8_8_8 unorm	differ	1342 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5469 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM bilinear, mips point to 8_8_8_8 unorm	differ	181 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM point, mips point to 32_32_32_32 float	differ	446 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM point, mips point to 8_8_8_8 unorm	differ	124 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 32_32_32_32 float	differ	12945 target dwords value
 image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 16x to 8_8_8_8 unorm	differ	4096 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 32_32_32_32 float	differ	10680 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 32_32_32_32 float	differ	12944 target dwords value
 image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear aniso 2x to 8_8_8_8 unorm	differ	4096 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	10627 target dwords value
-image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear to 8_8_8_8 unorm	differ	3028 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	12584 target dwords value
+image_sample	draw texture: minified 128x128 image_sample 8_8_8_8_UNORM trilinear to 8_8_8_8 unorm	differ	1034 target dwords value
 image_sample_b	1d 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported image dimension 0 in image_sample_b
 image_sample_b	1d array 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported image dimension 4 in image_sample_b
 image_sample_b	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
@@ -3216,12 +3216,12 @@ image_sample_b	2d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_b	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_b	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_b	cube 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_b	draw texture: minified 128x128 image_sample_b 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	4299 target dwords value
-image_sample_b	draw texture: minified 128x128 image_sample_b 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	8190 target dwords value
-image_sample_b	draw texture: minified 128x128 image_sample_b 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	8192 target dwords value
-image_sample_b	draw texture: minified 128x128 image_sample_b 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	8192 target dwords value
-image_sample_b	draw texture: minified 128x128 image_sample_b 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5422 target dwords value
-image_sample_b	draw texture: minified 128x128 image_sample_b 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	8158 target dwords value
+image_sample_b	draw texture: minified 128x128 image_sample_b 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	5073 target dwords value
+image_sample_b	draw texture: minified 128x128 image_sample_b 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	13795 target dwords value
+image_sample_b	draw texture: minified 128x128 image_sample_b 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	11383 target dwords value
+image_sample_b	draw texture: minified 128x128 image_sample_b 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	16383 target dwords value
+image_sample_b	draw texture: minified 128x128 image_sample_b 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5481 target dwords value
+image_sample_b	draw texture: minified 128x128 image_sample_b 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	13149 target dwords value
 image_sample_b_cl	1d 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported image dimension 0 in image_sample_b_cl
 image_sample_b_cl	1d array 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported image dimension 4 in image_sample_b_cl
 image_sample_b_cl	2d 16_16_16_16_FLOAT bilinear wrap	untranslated	at dword 23: unsupported instruction image_sample_b_cl
@@ -3862,12 +3862,12 @@ image_sample_l	2d X24_8_32_UINT bilinear wrap	differ	1020 of 1024: 1020 value
 image_sample_l	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_l	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_l	cube 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	draw texture: minified 128x128 image_sample_l 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	4691 target dwords value
-image_sample_l	draw texture: minified 128x128 image_sample_l 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	10499 target dwords value
-image_sample_l	draw texture: minified 128x128 image_sample_l 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	8564 target dwords value
-image_sample_l	draw texture: minified 128x128 image_sample_l 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	10585 target dwords value
-image_sample_l	draw texture: minified 128x128 image_sample_l 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	5595 target dwords value
-image_sample_l	draw texture: minified 128x128 image_sample_l 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	10585 target dwords value
+image_sample_l	draw texture: minified 128x128 image_sample_l 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	differ	5969 target dwords value
+image_sample_l	draw texture: minified 128x128 image_sample_l 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	12055 target dwords value
+image_sample_l	draw texture: minified 128x128 image_sample_l 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	9112 target dwords value
+image_sample_l	draw texture: minified 128x128 image_sample_l 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	14035 target dwords value
+image_sample_l	draw texture: minified 128x128 image_sample_l 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	7337 target dwords value
+image_sample_l	draw texture: minified 128x128 image_sample_l 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	12477 target dwords value
 image_sample_l_o	1d 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported image dimension 0 in image_sample_l_o
 image_sample_l_o	1d array 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported image dimension 4 in image_sample_l_o
 image_sample_l_o	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
@@ -9034,8 +9034,8 @@ v_interp_p1_f32	draw format: 16_16 snorm export F32	untranslated	Metal drew noth
 v_interp_p1_f32	draw format: 16_16 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 16_16 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p1_f32	draw format: 16_16 uint export U32	differ	5 target dwords value
-v_interp_p1_f32	draw format: 16_16 uint export Uint16	differ	5 target dwords value
+v_interp_p1_f32	draw format: 16_16 uint export U32	agree
+v_interp_p1_f32	draw format: 16_16 uint export Uint16	agree
 v_interp_p1_f32	draw format: 16_16 unorm export F32	differ	8 target dwords value
 v_interp_p1_f32	draw format: 16_16 unorm export Unorm16	differ	8 target dwords value
 v_interp_p1_f32	draw format: 16_16_16_16 float export F16	agree
@@ -9046,8 +9046,8 @@ v_interp_p1_f32	draw format: 16_16_16_16 snorm export F32	untranslated	Metal dre
 v_interp_p1_f32	draw format: 16_16_16_16 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 16_16_16_16 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 16_16_16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p1_f32	draw format: 16_16_16_16 uint export U32	differ	8 target dwords value
-v_interp_p1_f32	draw format: 16_16_16_16 uint export Uint16	differ	8 target dwords value
+v_interp_p1_f32	draw format: 16_16_16_16 uint export U32	agree
+v_interp_p1_f32	draw format: 16_16_16_16 uint export Uint16	agree
 v_interp_p1_f32	draw format: 16_16_16_16 unorm export F32	differ	14 target dwords value
 v_interp_p1_f32	draw format: 16_16_16_16 unorm export Unorm16	differ	14 target dwords value
 v_interp_p1_f32	draw format: 1_5_5_5 float export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
@@ -9100,8 +9100,8 @@ v_interp_p1_f32	draw format: 32_32 snorm export F32	untranslated	Metal drew noth
 v_interp_p1_f32	draw format: 32_32 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 32_32 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 32_32 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p1_f32	draw format: 32_32 uint export U32	differ	5 target dwords value
-v_interp_p1_f32	draw format: 32_32 uint export Uint16	differ	5 target dwords value
+v_interp_p1_f32	draw format: 32_32 uint export U32	agree
+v_interp_p1_f32	draw format: 32_32 uint export Uint16	agree
 v_interp_p1_f32	draw format: 32_32 unorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 32_32 unorm export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 32_32_32_32 float export F16	differ	3373 target dwords value
@@ -9112,8 +9112,8 @@ v_interp_p1_f32	draw format: 32_32_32_32 snorm export F32	untranslated	Metal dre
 v_interp_p1_f32	draw format: 32_32_32_32 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 32_32_32_32 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 32_32_32_32 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p1_f32	draw format: 32_32_32_32 uint export U32	differ	8 target dwords value
-v_interp_p1_f32	draw format: 32_32_32_32 uint export Uint16	differ	1500 target dwords value
+v_interp_p1_f32	draw format: 32_32_32_32 uint export U32	agree
+v_interp_p1_f32	draw format: 32_32_32_32 uint export Uint16	differ	3129 target dwords value
 v_interp_p1_f32	draw format: 32_32_32_32 unorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 32_32_32_32 unorm export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p1_f32	draw format: 4_4_4_4 float export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
@@ -9556,8 +9556,8 @@ v_interp_p2_f32	draw format: 16_16 snorm export F32	untranslated	Metal drew noth
 v_interp_p2_f32	draw format: 16_16 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 16_16 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p2_f32	draw format: 16_16 uint export U32	differ	5 target dwords value
-v_interp_p2_f32	draw format: 16_16 uint export Uint16	differ	5 target dwords value
+v_interp_p2_f32	draw format: 16_16 uint export U32	agree
+v_interp_p2_f32	draw format: 16_16 uint export Uint16	agree
 v_interp_p2_f32	draw format: 16_16 unorm export F32	differ	8 target dwords value
 v_interp_p2_f32	draw format: 16_16 unorm export Unorm16	differ	8 target dwords value
 v_interp_p2_f32	draw format: 16_16_16_16 float export F16	agree
@@ -9568,8 +9568,8 @@ v_interp_p2_f32	draw format: 16_16_16_16 snorm export F32	untranslated	Metal dre
 v_interp_p2_f32	draw format: 16_16_16_16 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 16_16_16_16 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 16_16_16_16 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p2_f32	draw format: 16_16_16_16 uint export U32	differ	8 target dwords value
-v_interp_p2_f32	draw format: 16_16_16_16 uint export Uint16	differ	8 target dwords value
+v_interp_p2_f32	draw format: 16_16_16_16 uint export U32	agree
+v_interp_p2_f32	draw format: 16_16_16_16 uint export Uint16	agree
 v_interp_p2_f32	draw format: 16_16_16_16 unorm export F32	differ	14 target dwords value
 v_interp_p2_f32	draw format: 16_16_16_16 unorm export Unorm16	differ	14 target dwords value
 v_interp_p2_f32	draw format: 1_5_5_5 float export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
@@ -9622,8 +9622,8 @@ v_interp_p2_f32	draw format: 32_32 snorm export F32	untranslated	Metal drew noth
 v_interp_p2_f32	draw format: 32_32 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 32_32 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 32_32 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p2_f32	draw format: 32_32 uint export U32	differ	5 target dwords value
-v_interp_p2_f32	draw format: 32_32 uint export Uint16	differ	5 target dwords value
+v_interp_p2_f32	draw format: 32_32 uint export U32	agree
+v_interp_p2_f32	draw format: 32_32 uint export Uint16	agree
 v_interp_p2_f32	draw format: 32_32 unorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 32_32 unorm export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 32_32_32_32 float export F16	differ	3373 target dwords value
@@ -9634,8 +9634,8 @@ v_interp_p2_f32	draw format: 32_32_32_32 snorm export F32	untranslated	Metal dre
 v_interp_p2_f32	draw format: 32_32_32_32 snorm export Snorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 32_32_32_32 srgb export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 32_32_32_32 srgb export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
-v_interp_p2_f32	draw format: 32_32_32_32 uint export U32	differ	8 target dwords value
-v_interp_p2_f32	draw format: 32_32_32_32 uint export Uint16	differ	1500 target dwords value
+v_interp_p2_f32	draw format: 32_32_32_32 uint export U32	agree
+v_interp_p2_f32	draw format: 32_32_32_32 uint export Uint16	differ	3129 target dwords value
 v_interp_p2_f32	draw format: 32_32_32_32 unorm export F32	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 32_32_32_32 unorm export Unorm16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)
 v_interp_p2_f32	draw format: 4_4_4_4 float export F16	untranslated	Metal drew nothing (0 drawn, 0 dispatched, 1 skipped [("color target format", 1)], render passes ended at lines [], images kept 0 changed 0 without digest 0, 0 writes in GPU order, 0 command buffers failed, 0 dispatches gave up loops; caches: 0 images (0 MiB), 0 targets (0 MiB), 0 depths, 0 volumes, 0 swizzle views, 0 windows, 0 pipelines, 0 compiles queued; compile waits: 0 draws (0 ms), 0 dispatches (0 ms); waits to read memory programs wrote {}, 0 HTILE and 0 colour fast-clear checks on the GPU)

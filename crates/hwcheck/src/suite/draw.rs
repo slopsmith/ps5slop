@@ -274,15 +274,9 @@ pub fn pixel(interp: Interp, out: Out, dual: bool) -> Pixel {
     }
     let scale = |code: &mut Vec<u32>, k: f32, sub: f32| {
         for c in 0..4 {
-            code.extend([
-                vop2("v_mul_f32", 20 + c, LITERAL, VGPR + 20 + c),
-                k.to_bits(),
-            ]);
+            code.extend([vop2("v_mul_f32", 20 + c, LITERAL, 20 + c), k.to_bits()]);
             if sub != 0.0 {
-                code.extend([
-                    vop2("v_subrev_f32", 20 + c, LITERAL, VGPR + 20 + c),
-                    sub.to_bits(),
-                ]);
+                code.extend([vop2("v_subrev_f32", 20 + c, LITERAL, 20 + c), sub.to_bits()]);
             }
         }
     };
