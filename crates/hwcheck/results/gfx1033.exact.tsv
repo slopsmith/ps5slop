@@ -1830,148 +1830,148 @@ image_atomic_add	1d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_add	2d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_add	2d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_add	3d 32_UINT bilinear wrap dmask 0x1	agree
-image_atomic_add	cube 32_UINT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_atomic_add
+image_atomic_add	cube 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_and	1d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_and	1d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_and	2d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_and	2d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_and	3d 32_UINT bilinear wrap dmask 0x1	agree
-image_atomic_and	cube 32_UINT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_atomic_and
+image_atomic_and	cube 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_cmpswap	1d 32_UINT bilinear wrap dmask 0x3	agree
 image_atomic_cmpswap	1d array 32_UINT bilinear wrap dmask 0x3	agree
 image_atomic_cmpswap	2d 32_UINT bilinear wrap dmask 0x3	agree
 image_atomic_cmpswap	2d array 32_UINT bilinear wrap dmask 0x3	agree
 image_atomic_cmpswap	3d 32_UINT bilinear wrap dmask 0x3	agree
-image_atomic_cmpswap	cube 32_UINT bilinear wrap dmask 0x3	untranslated	at dword 23: unsupported form of image_atomic_cmpswap
+image_atomic_cmpswap	cube 32_UINT bilinear wrap dmask 0x3	agree
 image_atomic_dec	1d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_dec	1d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_dec	2d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_dec	2d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_dec	3d 32_UINT bilinear wrap dmask 0x1	agree
-image_atomic_dec	cube 32_UINT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_atomic_dec
-image_atomic_fcmpswap	1d 32_FLOAT bilinear wrap dmask 0x3	untranslated	at dword 23: unsupported instruction image_atomic_fcmpswap
-image_atomic_fcmpswap	1d array 32_FLOAT bilinear wrap dmask 0x3	untranslated	at dword 23: unsupported instruction image_atomic_fcmpswap
-image_atomic_fcmpswap	2d 32_FLOAT bilinear wrap dmask 0x3	untranslated	at dword 23: unsupported instruction image_atomic_fcmpswap
-image_atomic_fcmpswap	2d array 32_FLOAT bilinear wrap dmask 0x3	untranslated	at dword 23: unsupported instruction image_atomic_fcmpswap
-image_atomic_fcmpswap	3d 32_FLOAT bilinear wrap dmask 0x3	untranslated	at dword 23: unsupported instruction image_atomic_fcmpswap
-image_atomic_fcmpswap	cube 32_FLOAT bilinear wrap dmask 0x3	untranslated	at dword 23: unsupported instruction image_atomic_fcmpswap
-image_atomic_fmax	1d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_atomic_fmax
-image_atomic_fmax	1d array 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_atomic_fmax
-image_atomic_fmax	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_atomic_fmax
-image_atomic_fmax	2d array 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_atomic_fmax
-image_atomic_fmax	3d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_atomic_fmax
-image_atomic_fmax	cube 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_atomic_fmax
-image_atomic_fmin	1d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_atomic_fmin
-image_atomic_fmin	1d array 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_atomic_fmin
-image_atomic_fmin	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_atomic_fmin
-image_atomic_fmin	2d array 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_atomic_fmin
-image_atomic_fmin	3d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_atomic_fmin
-image_atomic_fmin	cube 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_atomic_fmin
+image_atomic_dec	cube 32_UINT bilinear wrap dmask 0x1	agree
+image_atomic_fcmpswap	1d 32_FLOAT bilinear wrap dmask 0x3	agree
+image_atomic_fcmpswap	1d array 32_FLOAT bilinear wrap dmask 0x3	agree
+image_atomic_fcmpswap	2d 32_FLOAT bilinear wrap dmask 0x3	agree
+image_atomic_fcmpswap	2d array 32_FLOAT bilinear wrap dmask 0x3	agree
+image_atomic_fcmpswap	3d 32_FLOAT bilinear wrap dmask 0x3	agree
+image_atomic_fcmpswap	cube 32_FLOAT bilinear wrap dmask 0x3	agree
+image_atomic_fmax	1d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_atomic_fmax	1d array 32_FLOAT bilinear wrap dmask 0x1	agree
+image_atomic_fmax	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_atomic_fmax	2d array 32_FLOAT bilinear wrap dmask 0x1	agree
+image_atomic_fmax	3d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_atomic_fmax	cube 32_FLOAT bilinear wrap dmask 0x1	agree
+image_atomic_fmin	1d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_atomic_fmin	1d array 32_FLOAT bilinear wrap dmask 0x1	agree
+image_atomic_fmin	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_atomic_fmin	2d array 32_FLOAT bilinear wrap dmask 0x1	agree
+image_atomic_fmin	3d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_atomic_fmin	cube 32_FLOAT bilinear wrap dmask 0x1	agree
 image_atomic_inc	1d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_inc	1d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_inc	2d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_inc	2d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_inc	3d 32_UINT bilinear wrap dmask 0x1	agree
-image_atomic_inc	cube 32_UINT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_atomic_inc
+image_atomic_inc	cube 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_or	1d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_or	1d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_or	2d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_or	2d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_or	3d 32_UINT bilinear wrap dmask 0x1	agree
-image_atomic_or	cube 32_UINT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_atomic_or
+image_atomic_or	cube 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_smax	1d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_smax	1d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_smax	2d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_smax	2d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_smax	3d 32_UINT bilinear wrap dmask 0x1	agree
-image_atomic_smax	cube 32_UINT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_atomic_smax
+image_atomic_smax	cube 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_smin	1d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_smin	1d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_smin	2d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_smin	2d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_smin	3d 32_UINT bilinear wrap dmask 0x1	agree
-image_atomic_smin	cube 32_UINT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_atomic_smin
+image_atomic_smin	cube 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_sub	1d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_sub	1d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_sub	2d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_sub	2d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_sub	3d 32_UINT bilinear wrap dmask 0x1	agree
-image_atomic_sub	cube 32_UINT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_atomic_sub
+image_atomic_sub	cube 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_swap	1d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_swap	1d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_swap	2d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_swap	2d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_swap	3d 32_UINT bilinear wrap dmask 0x1	agree
-image_atomic_swap	cube 32_UINT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_atomic_swap
+image_atomic_swap	cube 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_umax	1d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_umax	1d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_umax	2d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_umax	2d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_umax	3d 32_UINT bilinear wrap dmask 0x1	agree
-image_atomic_umax	cube 32_UINT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_atomic_umax
+image_atomic_umax	cube 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_umin	1d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_umin	1d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_umin	2d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_umin	2d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_umin	3d 32_UINT bilinear wrap dmask 0x1	agree
-image_atomic_umin	cube 32_UINT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_atomic_umin
+image_atomic_umin	cube 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_xor	1d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_xor	1d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_xor	2d 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_xor	2d array 32_UINT bilinear wrap dmask 0x1	agree
 image_atomic_xor	3d 32_UINT bilinear wrap dmask 0x1	agree
-image_atomic_xor	cube 32_UINT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_atomic_xor
-image_bvh64_intersect_ray	random rays at box and triangle nodes	differ	516 of 1024: 3 denormal or zero sign, 513 value
-image_bvh_intersect_ray	random rays at box and triangle nodes	differ	496 of 1024: 3 denormal or zero sign, 493 value
-image_gather4	2d 10_10_10_2_SINT bilinear wrap dmask 0x1	differ	1020 of 1024: 1020 value
-image_gather4	2d 10_10_10_2_SNORM bilinear wrap dmask 0x1	differ	1016 of 1024: 12 NaN bits, 1004 value
-image_gather4	2d 10_10_10_2_SSCALED bilinear wrap dmask 0x1	differ	1018 of 1024: 21 NaN bits, 997 value
-image_gather4	2d 10_10_10_2_UINT bilinear wrap dmask 0x1	differ	1023 of 1024: 1023 value
-image_gather4	2d 10_10_10_2_UNORM bilinear wrap dmask 0x1	differ	1022 of 1024: 7 NaN bits, 1015 value
-image_gather4	2d 10_10_10_2_USCALED bilinear wrap dmask 0x1	differ	1022 of 1024: 11 NaN bits, 1011 value
+image_atomic_xor	cube 32_UINT bilinear wrap dmask 0x1	agree
+image_bvh64_intersect_ray	random rays at box and triangle nodes	differ	511 of 1024: 3 denormal or zero sign, 508 value
+image_bvh_intersect_ray	random rays at box and triangle nodes	differ	490 of 1024: 3 denormal or zero sign, 487 value
+image_gather4	2d 10_10_10_2_SINT bilinear wrap dmask 0x1	agree
+image_gather4	2d 10_10_10_2_SNORM bilinear wrap dmask 0x1	agree
+image_gather4	2d 10_10_10_2_SSCALED bilinear wrap dmask 0x1	agree
+image_gather4	2d 10_10_10_2_UINT bilinear wrap dmask 0x1	agree
+image_gather4	2d 10_10_10_2_UNORM bilinear wrap dmask 0x1	agree
+image_gather4	2d 10_10_10_2_USCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 10_11_11_FLOAT bilinear wrap dmask 0x1	differ	65 of 1024: 31 NaN bits, 34 value
-image_gather4	2d 10_11_11_SINT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 10_11_11_SNORM bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 10_11_11_SSCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 10_11_11_UINT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 10_11_11_UNORM bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 10_11_11_USCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 11_11_10_FLOAT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 11_11_10_SINT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 11_11_10_SNORM bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 11_11_10_SSCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 11_11_10_UINT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 11_11_10_UNORM bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 11_11_10_USCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 10_11_11_SINT bilinear wrap dmask 0x1	agree
+image_gather4	2d 10_11_11_SNORM bilinear wrap dmask 0x1	agree
+image_gather4	2d 10_11_11_SSCALED bilinear wrap dmask 0x1	agree
+image_gather4	2d 10_11_11_UINT bilinear wrap dmask 0x1	agree
+image_gather4	2d 10_11_11_UNORM bilinear wrap dmask 0x1	agree
+image_gather4	2d 10_11_11_USCALED bilinear wrap dmask 0x1	agree
+image_gather4	2d 11_11_10_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4	2d 11_11_10_SINT bilinear wrap dmask 0x1	agree
+image_gather4	2d 11_11_10_SNORM bilinear wrap dmask 0x1	agree
+image_gather4	2d 11_11_10_SSCALED bilinear wrap dmask 0x1	agree
+image_gather4	2d 11_11_10_UINT bilinear wrap dmask 0x1	agree
+image_gather4	2d 11_11_10_UNORM bilinear wrap dmask 0x1	agree
+image_gather4	2d 11_11_10_USCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_16_16_16_SINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_16_16_16_SNORM bilinear wrap dmask 0x1	agree
-image_gather4	2d 16_16_16_16_SSCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 16_16_16_16_SSCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_16_16_16_UINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_16_16_16_UNORM bilinear wrap dmask 0x1	agree
-image_gather4	2d 16_16_16_16_USCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 16_16_16_16_USCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_16_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_16_SINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_16_SNORM bilinear wrap dmask 0x1	agree
-image_gather4	2d 16_16_SSCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 16_16_SSCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_16_UINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_16_UNORM bilinear wrap dmask 0x1	agree
-image_gather4	2d 16_16_USCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 16_16_USCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_SINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_SNORM bilinear wrap dmask 0x1	agree
-image_gather4	2d 16_SSCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 16_SSCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_UINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 16_UNORM bilinear wrap dmask 0x1	agree
-image_gather4	2d 16_USCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 24_8_UINT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 16_USCALED bilinear wrap dmask 0x1	agree
+image_gather4	2d 24_8_UINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 24_8_UNORM bilinear wrap dmask 0x1	agree
-image_gather4	2d 2_10_10_10_SINT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 2_10_10_10_SNORM bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 2_10_10_10_SSCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 2_10_10_10_UINT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 2_10_10_10_SINT bilinear wrap dmask 0x1	agree
+image_gather4	2d 2_10_10_10_SNORM bilinear wrap dmask 0x1	agree
+image_gather4	2d 2_10_10_10_SSCALED bilinear wrap dmask 0x1	agree
+image_gather4	2d 2_10_10_10_UINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 2_10_10_10_UNORM bilinear wrap dmask 0x1	agree
-image_gather4	2d 2_10_10_10_USCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 2_10_10_10_USCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 32_32_32_32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4	2d 32_32_32_32_SINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 32_32_32_32_UINT bilinear wrap dmask 0x1	agree
@@ -1982,24 +1982,25 @@ image_gather4	2d 32_32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4	2d 32_32_SINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 32_32_UINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 32_FLOAT bilinear wrap dmask 0x1	agree
-image_gather4	2d 32_FLOAT_CLAMP bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 32_FLOAT_CLAMP bilinear wrap dmask 0x1	agree
 image_gather4	2d 32_SINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 32_UINT bilinear wrap dmask 0x1	agree
-image_gather4	2d 4_4_4_4_UNORM bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 4_4_UNORM bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 5_5_5_1_UNORM bilinear wrap dmask 0x1	differ	966 of 1024: 55 NaN bits, 911 value
-image_gather4	2d 5_6_5_UNORM bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 5_9_9_9_FLOAT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 6E4_FLOAT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 7E3_FLOAT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 8_24_UINT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 8_24_UNORM bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 4_4_4_4_UNORM bilinear wrap dmask 0x1	agree
+image_gather4	2d 4_4_UNORM bilinear wrap dmask 0x1	agree
+image_gather4	2d 5_5_5_1_UNORM bilinear wrap dmask 0x1	agree
+image_gather4	2d 5_6_5_UNORM bilinear wrap dmask 0x1	agree
+image_gather4	2d 5_9_9_9_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4	2d 6E4_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4	2d 7E3_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4	2d 8_24_UINT bilinear wrap dmask 0x1	agree
+image_gather4	2d 8_24_UNORM bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_8_8_8_SINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_8_8_8_SNORM bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_8_8_8_SRGB bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 8_8_8_8_SSCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 8_8_8_8_SSCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_8_8_8_UINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_8_8_8_UNORM bilinear clamp to edge dmask 0x1	agree
+image_gather4	2d 8_8_8_8_UNORM bilinear clamp to edge dmask 0x1 unorm	agree
 image_gather4	2d 8_8_8_8_UNORM bilinear clamp to opaque black border dmask 0x1	agree
 image_gather4	2d 8_8_8_8_UNORM bilinear clamp to opaque white border dmask 0x1	agree
 image_gather4	2d 8_8_8_8_UNORM bilinear clamp to transparent black border dmask 0x1	agree
@@ -2009,26 +2010,28 @@ image_gather4	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1 unorm	differ	1024 of 1024: 1024 value
 image_gather4	2d 8_8_8_8_UNORM point compare greater or equal dmask 0x1	agree
 image_gather4	2d 8_8_8_8_UNORM point mag bilinear min dmask 0x1	agree
-image_gather4	2d 8_8_8_8_UNORM point mips wrap, lod bias +1.5 dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 8_8_8_8_UNORM point mips wrap, lod bias +1.5 dmask 0x1	agree
+image_gather4	2d 8_8_8_8_UNORM point mips wrap, lod bias +1.5 dmask 0x1 quad derivatives	agree
 image_gather4	2d 8_8_8_8_UNORM point mirror once dmask 0x1	agree
 image_gather4	2d 8_8_8_8_UNORM point unnormalized clamp dmask 0x1	agree
 image_gather4	2d 8_8_8_8_UNORM point wrap dmask 0x1	agree
-image_gather4	2d 8_8_8_8_UNORM trilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 8_8_8_8_USCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 8_8_8_8_UNORM trilinear wrap dmask 0x1	agree
+image_gather4	2d 8_8_8_8_UNORM trilinear wrap dmask 0x1 quad derivatives	agree
+image_gather4	2d 8_8_8_8_USCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_8_SINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_8_SNORM bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_8_SRGB bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 8_8_SSCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 8_8_SSCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_8_UINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_8_UNORM bilinear wrap dmask 0x1	agree
-image_gather4	2d 8_8_USCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 8_8_USCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_SINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_SNORM bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_SRGB bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d 8_SSCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 8_SSCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_UINT bilinear wrap dmask 0x1	agree
 image_gather4	2d 8_UNORM bilinear wrap dmask 0x1	agree
-image_gather4	2d 8_USCALED bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d 8_USCALED bilinear wrap dmask 0x1	agree
 image_gather4	2d BC1_SRGB bilinear wrap dmask 0x1	differ	1013 of 1024: 14 NaN bits, 999 value
 image_gather4	2d BC1_UNORM bilinear wrap dmask 0x1	agree
 image_gather4	2d BC2_SRGB bilinear wrap dmask 0x1	differ	1024 of 1024: 2 NaN bits, 1022 value
@@ -2043,10 +2046,10 @@ image_gather4	2d BC6_SFLOAT bilinear wrap dmask 0x1	agree
 image_gather4	2d BC6_UFLOAT bilinear wrap dmask 0x1	agree
 image_gather4	2d BC7_SRGB bilinear wrap dmask 0x1	differ	1024 of 1024: 1 NaN bits, 1023 value
 image_gather4	2d BC7_UNORM bilinear wrap dmask 0x1	agree
-image_gather4	2d X24_8_32_FLOAT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
-image_gather4	2d X24_8_32_UINT bilinear wrap dmask 0x1	differ	1024 of 1024: 1024 value
+image_gather4	2d X24_8_32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4	2d X24_8_32_UINT bilinear wrap dmask 0x1	agree
 image_gather4	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
-image_gather4	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4
+image_gather4	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	566 of 1024: 566 value
 image_gather4	draw texture: magnified 8x8 image_gather4 16_16_16_16_FLOAT bilinear clamp to edge to 32_32_32_32 float	agree
 image_gather4	draw texture: magnified 8x8 image_gather4 16_16_16_16_FLOAT bilinear opaque white border to 32_32_32_32 float	agree
 image_gather4	draw texture: magnified 8x8 image_gather4 16_16_16_16_FLOAT bilinear wrap to 32_32_32_32 float	agree
@@ -2059,26 +2062,26 @@ image_gather4	draw texture: magnified 8x8 image_gather4 8_8_8_8_UNORM bilinear c
 image_gather4	draw texture: magnified 8x8 image_gather4 8_8_8_8_UNORM bilinear opaque white border to 32_32_32_32 float	agree
 image_gather4	draw texture: magnified 8x8 image_gather4 8_8_8_8_UNORM bilinear wrap to 32_32_32_32 float	agree
 image_gather4	draw texture: magnified 8x8 image_gather4 8_8_8_8_UNORM point wrap to 32_32_32_32 float	agree
-image_gather4_b	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b
-image_gather4_b	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b
-image_gather4_b	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b
-image_gather4_b	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b
-image_gather4_b	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b
-image_gather4_b_cl	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_cl
-image_gather4_b_cl	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_cl
-image_gather4_b_cl	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_cl
-image_gather4_b_cl	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_cl
-image_gather4_b_cl	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_cl
-image_gather4_b_cl_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_cl_o
-image_gather4_b_cl_o	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_cl_o
-image_gather4_b_cl_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_cl_o
-image_gather4_b_cl_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_cl_o
-image_gather4_b_cl_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_cl_o
-image_gather4_b_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_o
-image_gather4_b_o	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_o
-image_gather4_b_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_o
-image_gather4_b_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_o
-image_gather4_b_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_b_o
+image_gather4_b	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_b	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_b	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_b	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_b	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	562 of 1024: 562 value
+image_gather4_b_cl	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_b_cl	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_b_cl	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_b_cl	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_b_cl	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	606 of 1024: 606 value
+image_gather4_b_cl_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_b_cl_o	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_b_cl_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_b_cl_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_b_cl_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	597 of 1024: 597 value
+image_gather4_b_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_b_o	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_b_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_b_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_b_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	607 of 1024: 607 value
 image_gather4_c	2d 10_10_10_2_SINT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 10_10_10_2_SNORM bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 10_10_10_2_SSCALED bilinear wrap dmask 0x1	agree
@@ -2113,14 +2116,17 @@ image_gather4_c	2d 16_16_SSCALED bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 16_16_UINT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 16_16_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 16_16_USCALED bilinear wrap dmask 0x1	agree
+image_gather4_c	2d 16_FLOAT bilinear compare less dmask 0x1	differ	704 of 1024: 38 NaN bits, 666 value
 image_gather4_c	2d 16_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 16_SINT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 16_SNORM bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 16_SSCALED bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 16_UINT bilinear wrap dmask 0x1	agree
+image_gather4_c	2d 16_UNORM bilinear compare less dmask 0x1	agree
 image_gather4_c	2d 16_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 16_USCALED bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 24_8_UINT bilinear wrap dmask 0x1	agree
+image_gather4_c	2d 24_8_UNORM bilinear compare less dmask 0x1	agree
 image_gather4_c	2d 24_8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 2_10_10_10_SINT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 2_10_10_10_SNORM bilinear wrap dmask 0x1	agree
@@ -2134,9 +2140,11 @@ image_gather4_c	2d 32_32_32_32_UINT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 32_32_32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 32_32_32_SINT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 32_32_32_UINT bilinear wrap dmask 0x1	agree
+image_gather4_c	2d 32_32_FLOAT bilinear compare less dmask 0x1	differ	681 of 1024: 35 NaN bits, 646 value
 image_gather4_c	2d 32_32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 32_32_SINT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 32_32_UINT bilinear wrap dmask 0x1	agree
+image_gather4_c	2d 32_FLOAT bilinear compare less dmask 0x1	agree
 image_gather4_c	2d 32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 32_FLOAT_CLAMP bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 32_SINT bilinear wrap dmask 0x1	agree
@@ -2149,6 +2157,7 @@ image_gather4_c	2d 5_9_9_9_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 6E4_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 7E3_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 8_24_UINT bilinear wrap dmask 0x1	agree
+image_gather4_c	2d 8_24_UNORM bilinear compare less dmask 0x1	agree
 image_gather4_c	2d 8_24_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 8_8_8_8_SINT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 8_8_8_8_SNORM bilinear wrap dmask 0x1	agree
@@ -2156,6 +2165,7 @@ image_gather4_c	2d 8_8_8_8_SRGB bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 8_8_8_8_SSCALED bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 8_8_8_8_UINT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 8_8_8_8_UNORM bilinear clamp to edge dmask 0x1	agree
+image_gather4_c	2d 8_8_8_8_UNORM bilinear clamp to edge dmask 0x1 unorm	agree
 image_gather4_c	2d 8_8_8_8_UNORM bilinear clamp to opaque black border dmask 0x1	agree
 image_gather4_c	2d 8_8_8_8_UNORM bilinear clamp to opaque white border dmask 0x1	agree
 image_gather4_c	2d 8_8_8_8_UNORM bilinear clamp to transparent black border dmask 0x1	agree
@@ -2183,6 +2193,7 @@ image_gather4_c	2d 8_SNORM bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 8_SRGB bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 8_SSCALED bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 8_UINT bilinear wrap dmask 0x1	agree
+image_gather4_c	2d 8_UNORM bilinear compare less dmask 0x1	differ	736 of 1024: 22 NaN bits, 714 value
 image_gather4_c	2d 8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_c	2d 8_USCALED bilinear wrap dmask 0x1	agree
 image_gather4_c	2d BC1_SRGB bilinear wrap dmask 0x1	agree
@@ -2199,113 +2210,116 @@ image_gather4_c	2d BC6_SFLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d BC6_UFLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d BC7_SRGB bilinear wrap dmask 0x1	agree
 image_gather4_c	2d BC7_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c	2d X24_8_32_FLOAT bilinear compare less dmask 0x1	agree
 image_gather4_c	2d X24_8_32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d X24_8_32_UINT bilinear wrap dmask 0x1	agree
 image_gather4_c	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
-image_gather4_c	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c
-image_gather4_c_b	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b
-image_gather4_c_b	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b
-image_gather4_c_b	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b
-image_gather4_c_b	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b
-image_gather4_c_b	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b
-image_gather4_c_b_cl	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_cl
-image_gather4_c_b_cl	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_cl
-image_gather4_c_b_cl	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_cl
-image_gather4_c_b_cl	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_cl
-image_gather4_c_b_cl	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_cl
-image_gather4_c_b_cl_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_cl_o
-image_gather4_c_b_cl_o	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_cl_o
-image_gather4_c_b_cl_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_cl_o
-image_gather4_c_b_cl_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_cl_o
-image_gather4_c_b_cl_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_cl_o
-image_gather4_c_b_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_o
-image_gather4_c_b_o	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_o
-image_gather4_c_b_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_o
-image_gather4_c_b_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_o
-image_gather4_c_b_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_b_o
-image_gather4_c_cl	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_cl
-image_gather4_c_cl	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_cl
-image_gather4_c_cl	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_cl
-image_gather4_c_cl	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_cl
-image_gather4_c_cl	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_cl
-image_gather4_c_cl_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_cl_o
-image_gather4_c_cl_o	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_cl_o
-image_gather4_c_cl_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_cl_o
-image_gather4_c_cl_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_cl_o
-image_gather4_c_cl_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_cl_o
-image_gather4_c_l	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_l
-image_gather4_c_l	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_l
-image_gather4_c_l	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_l
-image_gather4_c_l	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_l
-image_gather4_c_l	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_l
-image_gather4_c_l_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_l_o
-image_gather4_c_l_o	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_l_o
-image_gather4_c_l_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_l_o
-image_gather4_c_l_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_l_o
-image_gather4_c_l_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_l_o
+image_gather4_c	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_b	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_b	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_b	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_b	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_b	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_b_cl	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_b_cl	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_b_cl	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_b_cl	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_b_cl	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_b_cl_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_b_cl_o	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_b_cl_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_b_cl_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_b_cl_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_b_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_b_o	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_b_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_b_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_b_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_cl	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_cl	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_cl	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_cl	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_cl	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_cl_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_cl_o	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_cl_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_cl_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_cl_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_l	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_l	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_l	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_l	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_l	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_l_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_l_o	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_c_l_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_l_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_c_l_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_c_lz	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c_lz	2d 32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c_lz	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_c_lz	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
-image_gather4_c_lz	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_lz
+image_gather4_c_lz	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_c_lz_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c_lz_o	2d 32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c_lz_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_c_lz_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
-image_gather4_c_lz_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_lz_o
+image_gather4_c_lz_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_c_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c_o	2d 32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_c_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_c_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
-image_gather4_c_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_c_o
-image_gather4_cl	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_cl
-image_gather4_cl	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_cl
-image_gather4_cl	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_cl
-image_gather4_cl	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_cl
-image_gather4_cl	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_cl
-image_gather4_cl_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_cl_o
-image_gather4_cl_o	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_cl_o
-image_gather4_cl_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_cl_o
-image_gather4_cl_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_cl_o
-image_gather4_cl_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_cl_o
-image_gather4_l	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_l
-image_gather4_l	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_l
-image_gather4_l	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_l
-image_gather4_l	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_l
-image_gather4_l	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_l
-image_gather4_l_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_l_o
-image_gather4_l_o	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_l_o
-image_gather4_l_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_l_o
-image_gather4_l_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_l_o
-image_gather4_l_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_l_o
+image_gather4_c_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_cl	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_cl	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_cl	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_cl	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_cl	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	587 of 1024: 587 value
+image_gather4_cl_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_cl_o	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_cl_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_cl_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_cl_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	594 of 1024: 594 value
+image_gather4_l	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_l	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_l	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_l	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_l	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	621 of 1024: 621 value
+image_gather4_l_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_l_o	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4_l_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_l_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_l_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	559 of 1024: 559 value
 image_gather4_lz	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_lz	2d 32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_lz	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_lz	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
-image_gather4_lz	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_lz
+image_gather4_lz	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	577 of 1024: 577 value
 image_gather4_lz_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_lz_o	2d 32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_lz_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_lz_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
-image_gather4_lz_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_lz_o
+image_gather4_lz_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	598 of 1024: 598 value
 image_gather4_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_o	2d 32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_o	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_o	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
-image_gather4_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4_o
-image_gather4h	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_gather4h
-image_gather4h	2d 32_FLOAT bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_gather4h
-image_gather4h	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_gather4h
-image_gather4h	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_gather4h
-image_gather4h	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported instruction image_gather4h
-image_get_lod	1d 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported instruction image_get_lod
-image_get_lod	1d array 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported instruction image_get_lod
-image_get_lod	2d 16_16_16_16_FLOAT bilinear wrap	untranslated	at dword 23: unsupported instruction image_get_lod
-image_get_lod	2d 32_FLOAT bilinear wrap	untranslated	at dword 23: unsupported instruction image_get_lod
-image_get_lod	2d 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported instruction image_get_lod
-image_get_lod	2d array 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported instruction image_get_lod
-image_get_lod	3d 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported instruction image_get_lod
-image_get_lod	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported instruction image_get_lod
+image_gather4_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	591 of 1024: 591 value
+image_gather4h	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4h	2d 32_FLOAT bilinear wrap dmask 0x1	agree
+image_gather4h	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4h	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4h	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	untranslated	at dword 23: unsupported form of image_gather4h
+image_get_lod	1d 8_8_8_8_UNORM bilinear wrap	differ	404 of 1024: 404 NaN bits
+image_get_lod	1d array 8_8_8_8_UNORM bilinear wrap	differ	388 of 1024: 388 NaN bits
+image_get_lod	2d 16_16_16_16_FLOAT bilinear wrap	differ	300 of 1024: 300 NaN bits
+image_get_lod	2d 32_FLOAT bilinear wrap	differ	288 of 1024: 288 NaN bits
+image_get_lod	2d 8_8_8_8_UNORM bilinear wrap	differ	316 of 1024: 316 NaN bits
+image_get_lod	2d 8_8_8_8_UNORM point mips wrap, lod bias +1.5 quad derivatives	differ	412 of 1024: 4 NaN bits, 408 value
+image_get_lod	2d 8_8_8_8_UNORM trilinear wrap quad derivatives	differ	8 of 1024: 8 value
+image_get_lod	2d array 8_8_8_8_UNORM bilinear wrap	differ	296 of 1024: 296 NaN bits
+image_get_lod	3d 8_8_8_8_UNORM bilinear wrap	differ	576 of 1024: 576 NaN bits
+image_get_lod	cube 8_8_8_8_UNORM bilinear wrap	differ	688 of 1024: 688 NaN bits
 image_get_resinfo	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_get_resinfo	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_get_resinfo	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -2383,8 +2397,8 @@ image_load	2d 4_4_UNORM bilinear wrap	agree
 image_load	2d 5_5_5_1_UNORM bilinear wrap	agree
 image_load	2d 5_6_5_UNORM bilinear wrap	agree
 image_load	2d 5_9_9_9_FLOAT bilinear wrap	agree
-image_load	2d 6E4_FLOAT bilinear wrap	differ	896 of 1024: 896 value
-image_load	2d 7E3_FLOAT bilinear wrap	differ	893 of 1024: 893 value
+image_load	2d 6E4_FLOAT bilinear wrap	agree
+image_load	2d 7E3_FLOAT bilinear wrap	agree
 image_load	2d 8_24_UINT bilinear wrap	agree
 image_load	2d 8_24_UNORM bilinear wrap	agree
 image_load	2d 8_8_8_8_SINT bilinear wrap	agree
@@ -2437,11 +2451,11 @@ image_load	2d BC6_SFLOAT bilinear wrap	agree
 image_load	2d BC6_UFLOAT bilinear wrap	agree
 image_load	2d BC7_SRGB bilinear wrap	agree
 image_load	2d BC7_UNORM bilinear wrap	agree
-image_load	2d X24_8_32_FLOAT bilinear wrap	differ	913 of 1024: 913 value
-image_load	2d X24_8_32_UINT bilinear wrap	differ	910 of 1024: 910 value
+image_load	2d X24_8_32_FLOAT bilinear wrap	agree
+image_load	2d X24_8_32_UINT bilinear wrap	agree
 image_load	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_load	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: cube image access is not done yet
+image_load	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip	2d 10_10_10_2_SINT bilinear wrap	agree
@@ -2511,8 +2525,8 @@ image_load_mip	2d 4_4_UNORM bilinear wrap	agree
 image_load_mip	2d 5_5_5_1_UNORM bilinear wrap	agree
 image_load_mip	2d 5_6_5_UNORM bilinear wrap	agree
 image_load_mip	2d 5_9_9_9_FLOAT bilinear wrap	agree
-image_load_mip	2d 6E4_FLOAT bilinear wrap	differ	387 of 1024: 387 value
-image_load_mip	2d 7E3_FLOAT bilinear wrap	differ	390 of 1024: 390 value
+image_load_mip	2d 6E4_FLOAT bilinear wrap	agree
+image_load_mip	2d 7E3_FLOAT bilinear wrap	agree
 image_load_mip	2d 8_24_UINT bilinear wrap	agree
 image_load_mip	2d 8_24_UNORM bilinear wrap	agree
 image_load_mip	2d 8_8_8_8_SINT bilinear wrap	agree
@@ -2565,11 +2579,11 @@ image_load_mip	2d BC6_SFLOAT bilinear wrap	agree
 image_load_mip	2d BC6_UFLOAT bilinear wrap	agree
 image_load_mip	2d BC7_SRGB bilinear wrap	agree
 image_load_mip	2d BC7_UNORM bilinear wrap	agree
-image_load_mip	2d X24_8_32_FLOAT bilinear wrap	differ	377 of 1024: 377 value
-image_load_mip	2d X24_8_32_UINT bilinear wrap	differ	393 of 1024: 393 value
+image_load_mip	2d X24_8_32_FLOAT bilinear wrap	agree
+image_load_mip	2d X24_8_32_UINT bilinear wrap	agree
 image_load_mip	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_load_mip	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: cube image access is not done yet
+image_load_mip	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip_pck	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip_pck	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip_pck	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -2577,7 +2591,7 @@ image_load_mip_pck	2d 32_FLOAT bilinear wrap	agree
 image_load_mip_pck	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip_pck	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip_pck	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_load_mip_pck	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: cube image access is not done yet
+image_load_mip_pck	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip_pck_sgn	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip_pck_sgn	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip_pck_sgn	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -2585,7 +2599,7 @@ image_load_mip_pck_sgn	2d 32_FLOAT bilinear wrap	agree
 image_load_mip_pck_sgn	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip_pck_sgn	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load_mip_pck_sgn	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_load_mip_pck_sgn	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: cube image access is not done yet
+image_load_mip_pck_sgn	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_load_pck	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_load_pck	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load_pck	2d 10_10_10_2_SINT bilinear wrap	agree
@@ -2655,8 +2669,8 @@ image_load_pck	2d 4_4_UNORM bilinear wrap	agree
 image_load_pck	2d 5_5_5_1_UNORM bilinear wrap	agree
 image_load_pck	2d 5_6_5_UNORM bilinear wrap	agree
 image_load_pck	2d 5_9_9_9_FLOAT bilinear wrap	agree
-image_load_pck	2d 6E4_FLOAT bilinear wrap	differ	908 of 1024: 908 value
-image_load_pck	2d 7E3_FLOAT bilinear wrap	differ	908 of 1024: 908 value
+image_load_pck	2d 6E4_FLOAT bilinear wrap	agree
+image_load_pck	2d 7E3_FLOAT bilinear wrap	agree
 image_load_pck	2d 8_24_UINT bilinear wrap	agree
 image_load_pck	2d 8_24_UNORM bilinear wrap	agree
 image_load_pck	2d 8_8_8_8_SINT bilinear wrap	agree
@@ -2709,11 +2723,11 @@ image_load_pck	2d BC6_SFLOAT bilinear wrap	differ	916 of 1024: 118 NaN bits, 3 d
 image_load_pck	2d BC6_UFLOAT bilinear wrap	differ	904 of 1024: 100 NaN bits, 2 denormal or zero sign, 802 value
 image_load_pck	2d BC7_SRGB bilinear wrap	differ	899 of 1024: 899 value
 image_load_pck	2d BC7_UNORM bilinear wrap	differ	901 of 1024: 901 value
-image_load_pck	2d X24_8_32_FLOAT bilinear wrap	differ	902 of 1024: 902 NaN bits
-image_load_pck	2d X24_8_32_UINT bilinear wrap	differ	905 of 1024: 905 value
+image_load_pck	2d X24_8_32_FLOAT bilinear wrap	agree
+image_load_pck	2d X24_8_32_UINT bilinear wrap	agree
 image_load_pck	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load_pck	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_load_pck	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: cube image access is not done yet
+image_load_pck	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_load_pck_sgn	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_load_pck_sgn	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load_pck_sgn	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -2721,58 +2735,58 @@ image_load_pck_sgn	2d 32_FLOAT bilinear wrap	agree
 image_load_pck_sgn	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_load_pck_sgn	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load_pck_sgn	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_load_pck_sgn	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: cube image access is not done yet
+image_load_pck_sgn	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample	1d 8_8_8_8_UNORM bilinear wrap	differ	968 of 1024: 10 NaN bits, 958 value
 image_sample	1d array 8_8_8_8_UNORM bilinear wrap	differ	961 of 1024: 5 NaN bits, 956 value
-image_sample	2d 10_10_10_2_SINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 10_10_10_2_SNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 10_10_10_2_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 10_10_10_2_UINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 10_10_10_2_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 10_10_10_2_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 10_10_10_2_SINT bilinear wrap	agree
+image_sample	2d 10_10_10_2_SNORM bilinear wrap	differ	975 of 1024: 33 NaN bits, 942 value
+image_sample	2d 10_10_10_2_SSCALED bilinear wrap	differ	699 of 1024: 11 NaN bits, 688 value
+image_sample	2d 10_10_10_2_UINT bilinear wrap	agree
+image_sample	2d 10_10_10_2_UNORM bilinear wrap	differ	922 of 1024: 48 NaN bits, 874 value
+image_sample	2d 10_10_10_2_USCALED bilinear wrap	differ	677 of 1024: 25 NaN bits, 652 value
 image_sample	2d 10_11_11_FLOAT bilinear wrap	differ	928 of 1024: 154 NaN bits, 774 value
-image_sample	2d 10_11_11_SINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 10_11_11_SNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 10_11_11_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 10_11_11_UINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 10_11_11_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 10_11_11_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 11_11_10_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 11_11_10_SINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 11_11_10_SNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 11_11_10_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 11_11_10_UINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 11_11_10_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 11_11_10_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 10_11_11_SINT bilinear wrap	agree
+image_sample	2d 10_11_11_SNORM bilinear wrap	differ	979 of 1024: 67 NaN bits, 912 value
+image_sample	2d 10_11_11_SSCALED bilinear wrap	differ	665 of 1024: 49 NaN bits, 616 value
+image_sample	2d 10_11_11_UINT bilinear wrap	agree
+image_sample	2d 10_11_11_UNORM bilinear wrap	differ	843 of 1024: 112 NaN bits, 731 value
+image_sample	2d 10_11_11_USCALED bilinear wrap	differ	516 of 1024: 57 NaN bits, 459 value
+image_sample	2d 11_11_10_FLOAT bilinear wrap	differ	936 of 1024: 110 NaN bits, 826 value
+image_sample	2d 11_11_10_SINT bilinear wrap	agree
+image_sample	2d 11_11_10_SNORM bilinear wrap	differ	973 of 1024: 61 NaN bits, 912 value
+image_sample	2d 11_11_10_SSCALED bilinear wrap	differ	677 of 1024: 47 NaN bits, 630 value
+image_sample	2d 11_11_10_UINT bilinear wrap	agree
+image_sample	2d 11_11_10_UNORM bilinear wrap	differ	841 of 1024: 116 NaN bits, 725 value
+image_sample	2d 11_11_10_USCALED bilinear wrap	differ	545 of 1024: 58 NaN bits, 487 value
 image_sample	2d 16_16_16_16_FLOAT bilinear wrap	differ	578 of 1024: 128 NaN bits, 450 value
 image_sample	2d 16_16_16_16_SINT bilinear wrap	agree
 image_sample	2d 16_16_16_16_SNORM bilinear wrap	differ	924 of 1024: 61 NaN bits, 863 value
-image_sample	2d 16_16_16_16_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 16_16_16_16_SSCALED bilinear wrap	differ	583 of 1024: 88 NaN bits, 495 value
 image_sample	2d 16_16_16_16_UINT bilinear wrap	agree
 image_sample	2d 16_16_16_16_UNORM bilinear wrap	differ	799 of 1024: 103 NaN bits, 696 value
-image_sample	2d 16_16_16_16_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 16_16_16_16_USCALED bilinear wrap	differ	409 of 1024: 68 NaN bits, 341 value
 image_sample	2d 16_16_FLOAT bilinear wrap	differ	374 of 1024: 374 value
 image_sample	2d 16_16_SINT bilinear wrap	agree
 image_sample	2d 16_16_SNORM bilinear wrap	differ	764 of 1024: 764 value
-image_sample	2d 16_16_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 16_16_SSCALED bilinear wrap	differ	382 of 1024: 382 value
 image_sample	2d 16_16_UINT bilinear wrap	agree
 image_sample	2d 16_16_UNORM bilinear wrap	differ	523 of 1024: 523 value
-image_sample	2d 16_16_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 16_16_USCALED bilinear wrap	differ	230 of 1024: 230 value
 image_sample	2d 16_FLOAT bilinear wrap	differ	240 of 1024: 240 value
 image_sample	2d 16_SINT bilinear wrap	agree
 image_sample	2d 16_SNORM bilinear wrap	differ	510 of 1024: 510 value
-image_sample	2d 16_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 16_SSCALED bilinear wrap	differ	211 of 1024: 211 value
 image_sample	2d 16_UINT bilinear wrap	agree
 image_sample	2d 16_UNORM bilinear wrap	differ	328 of 1024: 328 value
-image_sample	2d 16_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 24_8_UINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 24_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 2_10_10_10_SINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 2_10_10_10_SNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 2_10_10_10_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 2_10_10_10_UINT bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 16_USCALED bilinear wrap	differ	121 of 1024: 121 value
+image_sample	2d 24_8_UINT bilinear wrap	agree
+image_sample	2d 24_8_UNORM bilinear wrap	differ	1019 of 1024: 1019 value
+image_sample	2d 2_10_10_10_SINT bilinear wrap	agree
+image_sample	2d 2_10_10_10_SNORM bilinear wrap	differ	973 of 1024: 48 NaN bits, 925 value
+image_sample	2d 2_10_10_10_SSCALED bilinear wrap	differ	674 of 1024: 21 NaN bits, 653 value
+image_sample	2d 2_10_10_10_UINT bilinear wrap	agree
 image_sample	2d 2_10_10_10_UNORM bilinear wrap	differ	949 of 1024: 48 NaN bits, 901 value
-image_sample	2d 2_10_10_10_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 2_10_10_10_USCALED bilinear wrap	differ	665 of 1024: 17 NaN bits, 648 value
 image_sample	2d 32_32_32_32_FLOAT bilinear wrap	differ	945 of 1024: 97 NaN bits, 848 value
 image_sample	2d 32_32_32_32_SINT bilinear wrap	agree
 image_sample	2d 32_32_32_32_UINT bilinear wrap	agree
@@ -2783,24 +2797,25 @@ image_sample	2d 32_32_FLOAT bilinear wrap	differ	760 of 1024: 760 value
 image_sample	2d 32_32_SINT bilinear wrap	agree
 image_sample	2d 32_32_UINT bilinear wrap	agree
 image_sample	2d 32_FLOAT bilinear wrap	differ	503 of 1024: 503 value
-image_sample	2d 32_FLOAT_CLAMP bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 32_FLOAT_CLAMP bilinear wrap	differ	505 of 1024: 505 value
 image_sample	2d 32_SINT bilinear wrap	agree
 image_sample	2d 32_UINT bilinear wrap	agree
-image_sample	2d 4_4_4_4_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 4_4_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 5_5_5_1_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 5_6_5_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 5_9_9_9_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 6E4_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 7E3_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 8_24_UINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 8_24_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 4_4_4_4_UNORM bilinear wrap	differ	945 of 1024: 35 NaN bits, 910 value
+image_sample	2d 4_4_UNORM bilinear wrap	differ	861 of 1024: 861 value
+image_sample	2d 5_5_5_1_UNORM bilinear wrap	differ	1000 of 1024: 17 NaN bits, 983 value
+image_sample	2d 5_6_5_UNORM bilinear wrap	differ	995 of 1024: 11 NaN bits, 984 value
+image_sample	2d 5_9_9_9_FLOAT bilinear wrap	differ	825 of 1024: 45 NaN bits, 780 value
+image_sample	2d 6E4_FLOAT bilinear wrap	differ	404 of 1024: 52 NaN bits, 352 value
+image_sample	2d 7E3_FLOAT bilinear wrap	differ	329 of 1024: 19 NaN bits, 310 value
+image_sample	2d 8_24_UINT bilinear wrap	agree
+image_sample	2d 8_24_UNORM bilinear wrap	differ	1022 of 1024: 1022 value
 image_sample	2d 8_8_8_8_SINT bilinear wrap	agree
 image_sample	2d 8_8_8_8_SNORM bilinear wrap	differ	994 of 1024: 21 NaN bits, 973 value
 image_sample	2d 8_8_8_8_SRGB bilinear wrap	differ	917 of 1024: 99 NaN bits, 818 value
-image_sample	2d 8_8_8_8_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 8_8_8_8_SSCALED bilinear wrap	differ	706 of 1024: 10 NaN bits, 696 value
 image_sample	2d 8_8_8_8_UINT bilinear wrap	agree
 image_sample	2d 8_8_8_8_UNORM bilinear clamp to edge	differ	283 of 1024: 9 NaN bits, 274 value
+image_sample	2d 8_8_8_8_UNORM bilinear clamp to edge unorm	differ	296 of 1024: 5 NaN bits, 291 value
 image_sample	2d 8_8_8_8_UNORM bilinear clamp to opaque black border	differ	293 of 1024: 11 NaN bits, 282 value
 image_sample	2d 8_8_8_8_UNORM bilinear clamp to opaque white border	differ	315 of 1024: 5 NaN bits, 310 value
 image_sample	2d 8_8_8_8_UNORM bilinear clamp to transparent black border	differ	277 of 1024: 11 NaN bits, 266 value
@@ -2811,26 +2826,28 @@ image_sample	2d 8_8_8_8_UNORM bilinear wrap dmask 0x5	differ	647 of 1024: 117 Na
 image_sample	2d 8_8_8_8_UNORM bilinear wrap unorm	differ	1022 of 1024: 1022 value
 image_sample	2d 8_8_8_8_UNORM point compare greater or equal	agree
 image_sample	2d 8_8_8_8_UNORM point mag bilinear min	differ	1024 of 1024: 1024 value
-image_sample	2d 8_8_8_8_UNORM point mips wrap, lod bias +1.5	differ	1024 of 1024: 1024 value
+image_sample	2d 8_8_8_8_UNORM point mips wrap, lod bias +1.5	agree
+image_sample	2d 8_8_8_8_UNORM point mips wrap, lod bias +1.5 quad derivatives	differ	9 of 1024: 9 value
 image_sample	2d 8_8_8_8_UNORM point mirror once	agree
 image_sample	2d 8_8_8_8_UNORM point unnormalized clamp	agree
 image_sample	2d 8_8_8_8_UNORM point wrap	agree
 image_sample	2d 8_8_8_8_UNORM trilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 8_8_8_8_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 8_8_8_8_UNORM trilinear wrap quad derivatives	differ	1024 of 1024: 1 NaN bits, 1023 value
+image_sample	2d 8_8_8_8_USCALED bilinear wrap	differ	678 of 1024: 24 NaN bits, 654 value
 image_sample	2d 8_8_SINT bilinear wrap	agree
 image_sample	2d 8_8_SNORM bilinear wrap	differ	941 of 1024: 941 value
 image_sample	2d 8_8_SRGB bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 8_8_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 8_8_SSCALED bilinear wrap	differ	631 of 1024: 631 value
 image_sample	2d 8_8_UINT bilinear wrap	agree
 image_sample	2d 8_8_UNORM bilinear wrap	differ	632 of 1024: 632 value
-image_sample	2d 8_8_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 8_8_USCALED bilinear wrap	differ	643 of 1024: 643 value
 image_sample	2d 8_SINT bilinear wrap	agree
 image_sample	2d 8_SNORM bilinear wrap	differ	752 of 1024: 752 value
 image_sample	2d 8_SRGB bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d 8_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 8_SSCALED bilinear wrap	differ	491 of 1024: 491 value
 image_sample	2d 8_UINT bilinear wrap	agree
 image_sample	2d 8_UNORM bilinear wrap	differ	504 of 1024: 504 value
-image_sample	2d 8_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	2d 8_USCALED bilinear wrap	differ	526 of 1024: 526 value
 image_sample	2d BC1_SRGB bilinear wrap	differ	1022 of 1024: 1 NaN bits, 1021 value
 image_sample	2d BC1_UNORM bilinear wrap	differ	860 of 1024: 66 NaN bits, 794 value
 image_sample	2d BC2_SRGB bilinear wrap	differ	1024 of 1024: 1024 value
@@ -2845,11 +2862,11 @@ image_sample	2d BC6_SFLOAT bilinear wrap	differ	502 of 1024: 71 NaN bits, 431 va
 image_sample	2d BC6_UFLOAT bilinear wrap	differ	440 of 1024: 77 NaN bits, 363 value
 image_sample	2d BC7_SRGB bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample	2d BC7_UNORM bilinear wrap	differ	924 of 1024: 70 NaN bits, 854 value
-image_sample	2d X24_8_32_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	2d X24_8_32_UINT bilinear wrap	differ	1020 of 1024: 1020 value
+image_sample	2d X24_8_32_FLOAT bilinear wrap	differ	430 of 1024: 430 value
+image_sample	2d X24_8_32_UINT bilinear wrap	agree
 image_sample	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample	cube 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample	cube 8_8_8_8_UNORM bilinear wrap	differ	1011 of 1024: 1011 value
 image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	agree
 image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT bilinear, mips point to 8_8_8_8 unorm	agree
 image_sample	draw texture: anisotropic 128x128 image_sample 16_16_16_16_FLOAT point, mips point to 32_32_32_32 float	differ	0 of 0: ; 16 stored dwords value
@@ -2953,29 +2970,29 @@ image_sample_b	2d 32_FLOAT bilinear wrap	differ	493 of 1024: 493 value
 image_sample_b	2d 8_8_8_8_UNORM bilinear wrap	differ	723 of 1024: 24 NaN bits, 699 value
 image_sample_b	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_b	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_b	cube 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_b	cube 8_8_8_8_UNORM bilinear wrap	differ	1017 of 1024: 1017 value
 image_sample_b	draw texture: minified 128x128 image_sample_b 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	agree
 image_sample_b	draw texture: minified 128x128 image_sample_b 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	0 of 0: ; 13723 stored dwords value
 image_sample_b	draw texture: minified 128x128 image_sample_b 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	0 of 0: ; 2436 stored dwords value
 image_sample_b	draw texture: minified 128x128 image_sample_b 8_8_8_8_SRGB trilinear to 32_32_32_32 float	differ	0 of 0: ; 16383 stored dwords value
 image_sample_b	draw texture: minified 128x128 image_sample_b 8_8_8_8_UNORM bilinear, mips point to 32_32_32_32 float	differ	0 of 0: ; 805 stored dwords value
 image_sample_b	draw texture: minified 128x128 image_sample_b 8_8_8_8_UNORM trilinear to 32_32_32_32 float	differ	0 of 0: ; 13055 stored dwords value
-image_sample_b_cl	1d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_b_cl	1d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_b_cl	1d 8_8_8_8_UNORM bilinear wrap	differ	956 of 1024: 8 NaN bits, 948 value
+image_sample_b_cl	1d array 8_8_8_8_UNORM bilinear wrap	differ	966 of 1024: 9 NaN bits, 957 value
 image_sample_b_cl	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_b_cl	2d 32_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_b_cl	2d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_b_cl	2d 32_FLOAT bilinear wrap	differ	78 of 1024: 78 value
+image_sample_b_cl	2d 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_b_cl	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_b_cl	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_b_cl	cube 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_b_cl_o	1d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_b_cl_o	1d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_b_cl	cube 8_8_8_8_UNORM bilinear wrap	differ	1009 of 1024: 1009 value
+image_sample_b_cl_o	1d 8_8_8_8_UNORM bilinear wrap	differ	967 of 1024: 6 NaN bits, 961 value
+image_sample_b_cl_o	1d array 8_8_8_8_UNORM bilinear wrap	differ	962 of 1024: 11 NaN bits, 951 value
 image_sample_b_cl_o	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_b_cl_o	2d 32_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_b_cl_o	2d 32_FLOAT bilinear wrap	differ	75 of 1024: 75 value
 image_sample_b_cl_o	2d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_b_cl_o	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_b_cl_o	2d array 8_8_8_8_UNORM bilinear wrap	differ	1022 of 1024: 1022 value
 image_sample_b_cl_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_b_cl_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_b_cl_o
+image_sample_b_cl_o	cube 8_8_8_8_UNORM bilinear wrap	differ	1018 of 1024: 1018 value
 image_sample_b_o	1d 8_8_8_8_UNORM bilinear wrap	differ	965 of 1024: 6 NaN bits, 959 value
 image_sample_b_o	1d array 8_8_8_8_UNORM bilinear wrap	differ	957 of 1024: 7 NaN bits, 950 value
 image_sample_b_o	2d 16_16_16_16_FLOAT bilinear wrap	differ	579 of 1024: 130 NaN bits, 449 value
@@ -2983,7 +3000,7 @@ image_sample_b_o	2d 32_FLOAT bilinear wrap	differ	503 of 1024: 503 value
 image_sample_b_o	2d 8_8_8_8_UNORM bilinear wrap	differ	692 of 1024: 12 NaN bits, 680 value
 image_sample_b_o	2d array 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_b_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_b_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_b_o
+image_sample_b_o	cube 8_8_8_8_UNORM bilinear wrap	differ	1014 of 1024: 1014 value
 image_sample_c	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3015,7 +3032,7 @@ image_sample_c_b_cl_o	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_b_cl_o	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_b_cl_o	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_b_cl_o	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_b_cl_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_b_cl_o
+image_sample_c_b_cl_o	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_b_o	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_b_o	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_b_o	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3023,7 +3040,7 @@ image_sample_c_b_o	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_b_o	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_b_o	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_b_o	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_b_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_b_o
+image_sample_c_b_o	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3031,7 +3048,7 @@ image_sample_c_cd	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_cd	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_cd	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_cd
+image_sample_c_cd	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3039,7 +3056,7 @@ image_sample_c_cd_cl	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_cd_cl	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_cd_cl	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_cd_cl
+image_sample_c_cd_cl	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_g16	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_g16	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_g16	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3047,7 +3064,7 @@ image_sample_c_cd_cl_g16	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_cd_cl_g16	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_g16	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_g16	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_cd_cl_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_cd_cl_g16
+image_sample_c_cd_cl_g16	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_o	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_o	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_o	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3055,7 +3072,7 @@ image_sample_c_cd_cl_o	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_cd_cl_o	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_o	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_o	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_cd_cl_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_cd_cl_o
+image_sample_c_cd_cl_o	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_o_g16	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_o_g16	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_o_g16	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3063,7 +3080,7 @@ image_sample_c_cd_cl_o_g16	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_cd_cl_o_g16	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_o_g16	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_cl_o_g16	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_cd_cl_o_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_cd_cl_o_g16
+image_sample_c_cd_cl_o_g16	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_g16	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_g16	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_g16	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3071,7 +3088,7 @@ image_sample_c_cd_g16	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_cd_g16	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_g16	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_g16	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_cd_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_cd_g16
+image_sample_c_cd_g16	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_o	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_o	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_o	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3079,7 +3096,7 @@ image_sample_c_cd_o	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_cd_o	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_o	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_o	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_cd_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_cd_o
+image_sample_c_cd_o	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_o_g16	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_o_g16	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_o_g16	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3087,7 +3104,7 @@ image_sample_c_cd_o_g16	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_cd_o_g16	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_o_g16	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cd_o_g16	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_cd_o_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_cd_o_g16
+image_sample_c_cd_o_g16	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cl	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cl	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cl	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3103,7 +3120,7 @@ image_sample_c_cl_o	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_cl_o	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cl_o	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_cl_o	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_cl_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_cl_o
+image_sample_c_cl_o	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3111,7 +3128,7 @@ image_sample_c_d	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_d	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_d	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_d
+image_sample_c_d	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3119,7 +3136,7 @@ image_sample_c_d_cl	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_d_cl	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_d_cl	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_d_cl
+image_sample_c_d_cl	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_g16	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_g16	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_g16	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3127,7 +3144,7 @@ image_sample_c_d_cl_g16	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_d_cl_g16	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_g16	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_g16	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_d_cl_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_d_cl_g16
+image_sample_c_d_cl_g16	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_o	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_o	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_o	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3135,7 +3152,7 @@ image_sample_c_d_cl_o	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_d_cl_o	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_o	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_o	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_d_cl_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_d_cl_o
+image_sample_c_d_cl_o	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_o_g16	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_o_g16	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_o_g16	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3143,7 +3160,7 @@ image_sample_c_d_cl_o_g16	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_d_cl_o_g16	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_o_g16	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_cl_o_g16	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_d_cl_o_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_d_cl_o_g16
+image_sample_c_d_cl_o_g16	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_g16	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_g16	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_g16	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3151,7 +3168,7 @@ image_sample_c_d_g16	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_d_g16	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_g16	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_g16	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_d_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_d_g16
+image_sample_c_d_g16	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_o	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_o	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_o	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3159,7 +3176,7 @@ image_sample_c_d_o	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_d_o	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_o	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_o	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_d_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_d_o
+image_sample_c_d_o	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_o_g16	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_o_g16	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_o_g16	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3167,7 +3184,7 @@ image_sample_c_d_o_g16	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_d_o_g16	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_o_g16	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_d_o_g16	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_d_o_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_d_o_g16
+image_sample_c_d_o_g16	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_l	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_l	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_l	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3183,7 +3200,7 @@ image_sample_c_l_o	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_l_o	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_l_o	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_l_o	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_l_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_l_o
+image_sample_c_l_o	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_lz	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_lz	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_lz	2d 10_10_10_2_SINT bilinear wrap	agree
@@ -3220,14 +3237,17 @@ image_sample_c_lz	2d 16_16_SSCALED bilinear wrap	agree
 image_sample_c_lz	2d 16_16_UINT bilinear wrap	agree
 image_sample_c_lz	2d 16_16_UNORM bilinear wrap	agree
 image_sample_c_lz	2d 16_16_USCALED bilinear wrap	agree
+image_sample_c_lz	2d 16_FLOAT bilinear compare less	differ	368 of 1024: 368 value
 image_sample_c_lz	2d 16_FLOAT bilinear wrap	agree
 image_sample_c_lz	2d 16_SINT bilinear wrap	agree
 image_sample_c_lz	2d 16_SNORM bilinear wrap	agree
 image_sample_c_lz	2d 16_SSCALED bilinear wrap	agree
 image_sample_c_lz	2d 16_UINT bilinear wrap	agree
+image_sample_c_lz	2d 16_UNORM bilinear compare less	differ	433 of 1024: 433 value
 image_sample_c_lz	2d 16_UNORM bilinear wrap	agree
 image_sample_c_lz	2d 16_USCALED bilinear wrap	agree
 image_sample_c_lz	2d 24_8_UINT bilinear wrap	agree
+image_sample_c_lz	2d 24_8_UNORM bilinear compare less	differ	749 of 1024: 749 value
 image_sample_c_lz	2d 24_8_UNORM bilinear wrap	agree
 image_sample_c_lz	2d 2_10_10_10_SINT bilinear wrap	agree
 image_sample_c_lz	2d 2_10_10_10_SNORM bilinear wrap	agree
@@ -3241,9 +3261,11 @@ image_sample_c_lz	2d 32_32_32_32_UINT bilinear wrap	agree
 image_sample_c_lz	2d 32_32_32_FLOAT bilinear wrap	agree
 image_sample_c_lz	2d 32_32_32_SINT bilinear wrap	agree
 image_sample_c_lz	2d 32_32_32_UINT bilinear wrap	agree
+image_sample_c_lz	2d 32_32_FLOAT bilinear compare less	differ	334 of 1024: 334 value
 image_sample_c_lz	2d 32_32_FLOAT bilinear wrap	agree
 image_sample_c_lz	2d 32_32_SINT bilinear wrap	agree
 image_sample_c_lz	2d 32_32_UINT bilinear wrap	agree
+image_sample_c_lz	2d 32_FLOAT bilinear compare less	differ	535 of 1024: 535 value
 image_sample_c_lz	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_lz	2d 32_FLOAT_CLAMP bilinear wrap	agree
 image_sample_c_lz	2d 32_SINT bilinear wrap	agree
@@ -3256,6 +3278,7 @@ image_sample_c_lz	2d 5_9_9_9_FLOAT bilinear wrap	agree
 image_sample_c_lz	2d 6E4_FLOAT bilinear wrap	agree
 image_sample_c_lz	2d 7E3_FLOAT bilinear wrap	agree
 image_sample_c_lz	2d 8_24_UINT bilinear wrap	agree
+image_sample_c_lz	2d 8_24_UNORM bilinear compare less	differ	733 of 1024: 733 value
 image_sample_c_lz	2d 8_24_UNORM bilinear wrap	agree
 image_sample_c_lz	2d 8_8_8_8_SINT bilinear wrap	agree
 image_sample_c_lz	2d 8_8_8_8_SNORM bilinear wrap	agree
@@ -3263,6 +3286,7 @@ image_sample_c_lz	2d 8_8_8_8_SRGB bilinear wrap	agree
 image_sample_c_lz	2d 8_8_8_8_SSCALED bilinear wrap	agree
 image_sample_c_lz	2d 8_8_8_8_UINT bilinear wrap	agree
 image_sample_c_lz	2d 8_8_8_8_UNORM bilinear clamp to edge	agree
+image_sample_c_lz	2d 8_8_8_8_UNORM bilinear clamp to edge unorm	agree
 image_sample_c_lz	2d 8_8_8_8_UNORM bilinear clamp to opaque black border	agree
 image_sample_c_lz	2d 8_8_8_8_UNORM bilinear clamp to opaque white border	agree
 image_sample_c_lz	2d 8_8_8_8_UNORM bilinear clamp to transparent black border	agree
@@ -3291,6 +3315,7 @@ image_sample_c_lz	2d 8_SNORM bilinear wrap	agree
 image_sample_c_lz	2d 8_SRGB bilinear wrap	agree
 image_sample_c_lz	2d 8_SSCALED bilinear wrap	agree
 image_sample_c_lz	2d 8_UINT bilinear wrap	agree
+image_sample_c_lz	2d 8_UNORM bilinear compare less	differ	525 of 1024: 525 value
 image_sample_c_lz	2d 8_UNORM bilinear wrap	agree
 image_sample_c_lz	2d 8_USCALED bilinear wrap	agree
 image_sample_c_lz	2d BC1_SRGB bilinear wrap	agree
@@ -3307,6 +3332,7 @@ image_sample_c_lz	2d BC6_SFLOAT bilinear wrap	agree
 image_sample_c_lz	2d BC6_UFLOAT bilinear wrap	agree
 image_sample_c_lz	2d BC7_SRGB bilinear wrap	agree
 image_sample_c_lz	2d BC7_UNORM bilinear wrap	agree
+image_sample_c_lz	2d X24_8_32_FLOAT bilinear compare less	differ	568 of 1024: 568 value
 image_sample_c_lz	2d X24_8_32_FLOAT bilinear wrap	agree
 image_sample_c_lz	2d X24_8_32_UINT bilinear wrap	agree
 image_sample_c_lz	2d array 8_8_8_8_UNORM bilinear wrap	agree
@@ -3319,7 +3345,7 @@ image_sample_c_lz_o	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_lz_o	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_lz_o	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_lz_o	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_lz_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_lz_o
+image_sample_c_lz_o	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_o	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_o	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_o	2d 16_16_16_16_FLOAT bilinear wrap	agree
@@ -3327,7 +3353,7 @@ image_sample_c_o	2d 32_FLOAT bilinear wrap	agree
 image_sample_c_o	2d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_o	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_c_o	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_sample_c_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_c_o
+image_sample_c_o	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_cd	1d 8_8_8_8_UNORM bilinear wrap	differ	951 of 1024: 8 NaN bits, 943 value
 image_sample_cd	1d array 8_8_8_8_UNORM bilinear wrap	differ	958 of 1024: 6 NaN bits, 952 value
 image_sample_cd	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
@@ -3335,7 +3361,7 @@ image_sample_cd	2d 32_FLOAT bilinear wrap	differ	92 of 1024: 92 value
 image_sample_cd	2d 8_8_8_8_UNORM bilinear wrap	differ	1021 of 1024: 1021 value
 image_sample_cd	2d array 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_cd	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cd	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_cd
+image_sample_cd	cube 8_8_8_8_UNORM bilinear wrap	differ	1016 of 1024: 1016 value
 image_sample_cd_cl	1d 8_8_8_8_UNORM bilinear wrap	differ	958 of 1024: 7 NaN bits, 951 value
 image_sample_cd_cl	1d array 8_8_8_8_UNORM bilinear wrap	differ	965 of 1024: 6 NaN bits, 959 value
 image_sample_cd_cl	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1 NaN bits, 1023 value
@@ -3343,7 +3369,7 @@ image_sample_cd_cl	2d 32_FLOAT bilinear wrap	differ	86 of 1024: 86 value
 image_sample_cd_cl	2d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_cl	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_cl	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cd_cl	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_cd_cl
+image_sample_cd_cl	cube 8_8_8_8_UNORM bilinear wrap	differ	1012 of 1024: 1012 value
 image_sample_cd_cl_g16	1d 8_8_8_8_UNORM bilinear wrap	differ	985 of 1024: 25 NaN bits, 960 value
 image_sample_cd_cl_g16	1d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_cl_g16	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
@@ -3351,15 +3377,15 @@ image_sample_cd_cl_g16	2d 32_FLOAT bilinear wrap	differ	82 of 1024: 82 value
 image_sample_cd_cl_g16	2d 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_cd_cl_g16	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1 NaN bits, 1023 value
 image_sample_cd_cl_g16	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cd_cl_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_cd_cl_g16
+image_sample_cd_cl_g16	cube 8_8_8_8_UNORM bilinear wrap	differ	1020 of 1024: 1020 value
 image_sample_cd_cl_o	1d 8_8_8_8_UNORM bilinear wrap	differ	962 of 1024: 5 NaN bits, 957 value
 image_sample_cd_cl_o	1d array 8_8_8_8_UNORM bilinear wrap	differ	955 of 1024: 5 NaN bits, 950 value
 image_sample_cd_cl_o	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_cl_o	2d 32_FLOAT bilinear wrap	differ	79 of 1024: 79 value
 image_sample_cd_cl_o	2d 8_8_8_8_UNORM bilinear wrap	differ	1022 of 1024: 1022 value
 image_sample_cd_cl_o	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cd_cl_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1 NaN bits, 1022 value
-image_sample_cd_cl_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_cd_cl_o
+image_sample_cd_cl_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_cd_cl_o	cube 8_8_8_8_UNORM bilinear wrap	differ	1018 of 1024: 1018 value
 image_sample_cd_cl_o_g16	1d 8_8_8_8_UNORM bilinear wrap	differ	982 of 1024: 9 NaN bits, 973 value
 image_sample_cd_cl_o_g16	1d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_cl_o_g16	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
@@ -3367,7 +3393,7 @@ image_sample_cd_cl_o_g16	2d 32_FLOAT bilinear wrap	differ	93 of 1024: 93 value
 image_sample_cd_cl_o_g16	2d 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_cd_cl_o_g16	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_cl_o_g16	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cd_cl_o_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_cd_cl_o_g16
+image_sample_cd_cl_o_g16	cube 8_8_8_8_UNORM bilinear wrap	differ	1019 of 1024: 1019 value
 image_sample_cd_g16	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_cd_g16	1d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_g16	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
@@ -3375,15 +3401,15 @@ image_sample_cd_g16	2d 32_FLOAT bilinear wrap	differ	94 of 1024: 94 value
 image_sample_cd_g16	2d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_g16	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_g16	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cd_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_cd_g16
+image_sample_cd_g16	cube 8_8_8_8_UNORM bilinear wrap	differ	1017 of 1024: 1017 value
 image_sample_cd_o	1d 8_8_8_8_UNORM bilinear wrap	differ	956 of 1024: 11 NaN bits, 945 value
 image_sample_cd_o	1d array 8_8_8_8_UNORM bilinear wrap	differ	972 of 1024: 9 NaN bits, 963 value
 image_sample_cd_o	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1 NaN bits, 1023 value
 image_sample_cd_o	2d 32_FLOAT bilinear wrap	differ	73 of 1024: 73 value
 image_sample_cd_o	2d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_o	2d array 8_8_8_8_UNORM bilinear wrap	differ	1022 of 1024: 1022 value
-image_sample_cd_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1022 of 1024: 1022 value
-image_sample_cd_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_cd_o
+image_sample_cd_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_cd_o	cube 8_8_8_8_UNORM bilinear wrap	differ	1020 of 1024: 1020 value
 image_sample_cd_o_g16	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_cd_o_g16	1d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_o_g16	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1 NaN bits, 1023 value
@@ -3391,23 +3417,23 @@ image_sample_cd_o_g16	2d 32_FLOAT bilinear wrap	differ	84 of 1024: 84 value
 image_sample_cd_o_g16	2d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_o_g16	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cd_o_g16	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cd_o_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_cd_o_g16
-image_sample_cl	1d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cl	1d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_cd_o_g16	cube 8_8_8_8_UNORM bilinear wrap	differ	1022 of 1024: 1022 value
+image_sample_cl	1d 8_8_8_8_UNORM bilinear wrap	differ	950 of 1024: 6 NaN bits, 944 value
+image_sample_cl	1d array 8_8_8_8_UNORM bilinear wrap	differ	972 of 1024: 10 NaN bits, 962 value
 image_sample_cl	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cl	2d 32_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_cl	2d 32_FLOAT bilinear wrap	differ	88 of 1024: 88 value
 image_sample_cl	2d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cl	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cl	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cl	cube 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cl_o	1d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cl_o	1d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_cl	cube 8_8_8_8_UNORM bilinear wrap	differ	1020 of 1024: 1020 value
+image_sample_cl_o	1d 8_8_8_8_UNORM bilinear wrap	differ	961 of 1024: 5 NaN bits, 956 value
+image_sample_cl_o	1d array 8_8_8_8_UNORM bilinear wrap	differ	973 of 1024: 8 NaN bits, 965 value
 image_sample_cl_o	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cl_o	2d 32_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_cl_o	2d 32_FLOAT bilinear wrap	differ	76 of 1024: 76 value
 image_sample_cl_o	2d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cl_o	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_cl_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_cl_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_cl_o
+image_sample_cl_o	cube 8_8_8_8_UNORM bilinear wrap	differ	1019 of 1024: 1019 value
 image_sample_d	1d 8_8_8_8_UNORM bilinear wrap	differ	960 of 1024: 6 NaN bits, 954 value
 image_sample_d	1d array 8_8_8_8_UNORM bilinear wrap	differ	961 of 1024: 7 NaN bits, 954 value
 image_sample_d	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
@@ -3415,7 +3441,7 @@ image_sample_d	2d 32_FLOAT bilinear wrap	differ	91 of 1024: 91 value
 image_sample_d	2d 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_d	2d array 8_8_8_8_UNORM bilinear wrap	differ	1022 of 1024: 1022 value
 image_sample_d	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_d	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_d
+image_sample_d	cube 8_8_8_8_UNORM bilinear wrap	differ	1020 of 1024: 1020 value
 image_sample_d_cl	1d 8_8_8_8_UNORM bilinear wrap	differ	965 of 1024: 16 NaN bits, 949 value
 image_sample_d_cl	1d array 8_8_8_8_UNORM bilinear wrap	differ	964 of 1024: 5 NaN bits, 959 value
 image_sample_d_cl	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
@@ -3423,7 +3449,7 @@ image_sample_d_cl	2d 32_FLOAT bilinear wrap	differ	73 of 1024: 73 value
 image_sample_d_cl	2d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_d_cl	2d array 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_d_cl	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_d_cl	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_d_cl
+image_sample_d_cl	cube 8_8_8_8_UNORM bilinear wrap	differ	1015 of 1024: 1015 value
 image_sample_d_cl_g16	1d 8_8_8_8_UNORM bilinear wrap	differ	981 of 1024: 21 NaN bits, 960 value
 image_sample_d_cl_g16	1d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_d_cl_g16	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1 NaN bits, 1023 value
@@ -3431,15 +3457,15 @@ image_sample_d_cl_g16	2d 32_FLOAT bilinear wrap	differ	87 of 1024: 87 value
 image_sample_d_cl_g16	2d 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_d_cl_g16	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_d_cl_g16	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_d_cl_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_d_cl_g16
+image_sample_d_cl_g16	cube 8_8_8_8_UNORM bilinear wrap	differ	1016 of 1024: 1016 value
 image_sample_d_cl_o	1d 8_8_8_8_UNORM bilinear wrap	differ	962 of 1024: 8 NaN bits, 954 value
 image_sample_d_cl_o	1d array 8_8_8_8_UNORM bilinear wrap	differ	967 of 1024: 7 NaN bits, 960 value
 image_sample_d_cl_o	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_d_cl_o	2d 32_FLOAT bilinear wrap	differ	72 of 1024: 72 value
 image_sample_d_cl_o	2d 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
-image_sample_d_cl_o	2d array 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
-image_sample_d_cl_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
-image_sample_d_cl_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_d_cl_o
+image_sample_d_cl_o	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_d_cl_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_d_cl_o	cube 8_8_8_8_UNORM bilinear wrap	differ	1015 of 1024: 1015 value
 image_sample_d_cl_o_g16	1d 8_8_8_8_UNORM bilinear wrap	differ	966 of 1024: 8 NaN bits, 958 value
 image_sample_d_cl_o_g16	1d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_d_cl_o_g16	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1 NaN bits, 1023 value
@@ -3447,7 +3473,7 @@ image_sample_d_cl_o_g16	2d 32_FLOAT bilinear wrap	differ	68 of 1024: 68 value
 image_sample_d_cl_o_g16	2d 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_d_cl_o_g16	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_d_cl_o_g16	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_d_cl_o_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_d_cl_o_g16
+image_sample_d_cl_o_g16	cube 8_8_8_8_UNORM bilinear wrap	differ	1019 of 1024: 1019 value
 image_sample_d_g16	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_d_g16	1d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_d_g16	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1 NaN bits, 1023 value
@@ -3455,7 +3481,7 @@ image_sample_d_g16	2d 32_FLOAT bilinear wrap	differ	63 of 1024: 63 value
 image_sample_d_g16	2d 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_d_g16	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_d_g16	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_d_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_d_g16
+image_sample_d_g16	cube 8_8_8_8_UNORM bilinear wrap	differ	1019 of 1024: 1019 value
 image_sample_d_o	1d 8_8_8_8_UNORM bilinear wrap	differ	956 of 1024: 8 NaN bits, 948 value
 image_sample_d_o	1d array 8_8_8_8_UNORM bilinear wrap	differ	947 of 1024: 5 NaN bits, 942 value
 image_sample_d_o	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 1 NaN bits, 1023 value
@@ -3463,7 +3489,7 @@ image_sample_d_o	2d 32_FLOAT bilinear wrap	differ	79 of 1024: 79 value
 image_sample_d_o	2d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_d_o	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_d_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_d_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_d_o
+image_sample_d_o	cube 8_8_8_8_UNORM bilinear wrap	differ	1015 of 1024: 1015 value
 image_sample_d_o_g16	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_sample_d_o_g16	1d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_d_o_g16	2d 16_16_16_16_FLOAT bilinear wrap	differ	1024 of 1024: 2 NaN bits, 1022 value
@@ -3471,58 +3497,58 @@ image_sample_d_o_g16	2d 32_FLOAT bilinear wrap	differ	86 of 1024: 86 value
 image_sample_d_o_g16	2d 8_8_8_8_UNORM bilinear wrap	differ	1022 of 1024: 1022 value
 image_sample_d_o_g16	2d array 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_d_o_g16	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_d_o_g16	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_d_o_g16
+image_sample_d_o_g16	cube 8_8_8_8_UNORM bilinear wrap	differ	1014 of 1024: 1014 value
 image_sample_l	1d 8_8_8_8_UNORM bilinear wrap	differ	956 of 1024: 11 NaN bits, 945 value
 image_sample_l	1d array 8_8_8_8_UNORM bilinear wrap	differ	964 of 1024: 9 NaN bits, 955 value
-image_sample_l	2d 10_10_10_2_SINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 10_10_10_2_SNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 10_10_10_2_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 10_10_10_2_UINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 10_10_10_2_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 10_10_10_2_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 10_10_10_2_SINT bilinear wrap	agree
+image_sample_l	2d 10_10_10_2_SNORM bilinear wrap	differ	973 of 1024: 40 NaN bits, 933 value
+image_sample_l	2d 10_10_10_2_SSCALED bilinear wrap	differ	684 of 1024: 17 NaN bits, 667 value
+image_sample_l	2d 10_10_10_2_UINT bilinear wrap	agree
+image_sample_l	2d 10_10_10_2_UNORM bilinear wrap	differ	933 of 1024: 68 NaN bits, 865 value
+image_sample_l	2d 10_10_10_2_USCALED bilinear wrap	differ	674 of 1024: 13 NaN bits, 661 value
 image_sample_l	2d 10_11_11_FLOAT bilinear wrap	differ	926 of 1024: 147 NaN bits, 779 value
-image_sample_l	2d 10_11_11_SINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 10_11_11_SNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 10_11_11_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 10_11_11_UINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 10_11_11_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 10_11_11_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 11_11_10_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 11_11_10_SINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 11_11_10_SNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 11_11_10_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 11_11_10_UINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 11_11_10_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 11_11_10_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 10_11_11_SINT bilinear wrap	agree
+image_sample_l	2d 10_11_11_SNORM bilinear wrap	differ	959 of 1024: 63 NaN bits, 896 value
+image_sample_l	2d 10_11_11_SSCALED bilinear wrap	differ	675 of 1024: 52 NaN bits, 623 value
+image_sample_l	2d 10_11_11_UINT bilinear wrap	agree
+image_sample_l	2d 10_11_11_UNORM bilinear wrap	differ	848 of 1024: 113 NaN bits, 735 value
+image_sample_l	2d 10_11_11_USCALED bilinear wrap	differ	546 of 1024: 60 NaN bits, 486 value
+image_sample_l	2d 11_11_10_FLOAT bilinear wrap	differ	915 of 1024: 117 NaN bits, 798 value
+image_sample_l	2d 11_11_10_SINT bilinear wrap	agree
+image_sample_l	2d 11_11_10_SNORM bilinear wrap	differ	979 of 1024: 55 NaN bits, 924 value
+image_sample_l	2d 11_11_10_SSCALED bilinear wrap	differ	665 of 1024: 58 NaN bits, 607 value
+image_sample_l	2d 11_11_10_UINT bilinear wrap	agree
+image_sample_l	2d 11_11_10_UNORM bilinear wrap	differ	842 of 1024: 92 NaN bits, 750 value
+image_sample_l	2d 11_11_10_USCALED bilinear wrap	differ	531 of 1024: 60 NaN bits, 471 value
 image_sample_l	2d 16_16_16_16_FLOAT bilinear wrap	differ	610 of 1024: 136 NaN bits, 474 value
 image_sample_l	2d 16_16_16_16_SINT bilinear wrap	agree
 image_sample_l	2d 16_16_16_16_SNORM bilinear wrap	differ	955 of 1024: 66 NaN bits, 889 value
-image_sample_l	2d 16_16_16_16_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 16_16_16_16_SSCALED bilinear wrap	differ	574 of 1024: 71 NaN bits, 503 value
 image_sample_l	2d 16_16_16_16_UINT bilinear wrap	agree
 image_sample_l	2d 16_16_16_16_UNORM bilinear wrap	differ	774 of 1024: 95 NaN bits, 679 value
-image_sample_l	2d 16_16_16_16_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 16_16_16_16_USCALED bilinear wrap	differ	400 of 1024: 64 NaN bits, 336 value
 image_sample_l	2d 16_16_FLOAT bilinear wrap	differ	393 of 1024: 393 value
 image_sample_l	2d 16_16_SINT bilinear wrap	agree
 image_sample_l	2d 16_16_SNORM bilinear wrap	differ	741 of 1024: 741 value
-image_sample_l	2d 16_16_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 16_16_SSCALED bilinear wrap	differ	374 of 1024: 374 value
 image_sample_l	2d 16_16_UINT bilinear wrap	agree
 image_sample_l	2d 16_16_UNORM bilinear wrap	differ	518 of 1024: 518 value
-image_sample_l	2d 16_16_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 16_16_USCALED bilinear wrap	differ	228 of 1024: 228 value
 image_sample_l	2d 16_FLOAT bilinear wrap	differ	220 of 1024: 220 value
 image_sample_l	2d 16_SINT bilinear wrap	agree
 image_sample_l	2d 16_SNORM bilinear wrap	differ	522 of 1024: 522 value
-image_sample_l	2d 16_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 16_SSCALED bilinear wrap	differ	204 of 1024: 204 value
 image_sample_l	2d 16_UINT bilinear wrap	agree
 image_sample_l	2d 16_UNORM bilinear wrap	differ	322 of 1024: 322 value
-image_sample_l	2d 16_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 24_8_UINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 24_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 2_10_10_10_SINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 2_10_10_10_SNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 2_10_10_10_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 2_10_10_10_UINT bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 16_USCALED bilinear wrap	differ	131 of 1024: 131 value
+image_sample_l	2d 24_8_UINT bilinear wrap	agree
+image_sample_l	2d 24_8_UNORM bilinear wrap	differ	1019 of 1024: 1019 value
+image_sample_l	2d 2_10_10_10_SINT bilinear wrap	agree
+image_sample_l	2d 2_10_10_10_SNORM bilinear wrap	differ	968 of 1024: 53 NaN bits, 915 value
+image_sample_l	2d 2_10_10_10_SSCALED bilinear wrap	differ	678 of 1024: 22 NaN bits, 656 value
+image_sample_l	2d 2_10_10_10_UINT bilinear wrap	agree
 image_sample_l	2d 2_10_10_10_UNORM bilinear wrap	differ	937 of 1024: 52 NaN bits, 885 value
-image_sample_l	2d 2_10_10_10_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 2_10_10_10_USCALED bilinear wrap	differ	680 of 1024: 36 NaN bits, 644 value
 image_sample_l	2d 32_32_32_32_FLOAT bilinear wrap	differ	942 of 1024: 100 NaN bits, 842 value
 image_sample_l	2d 32_32_32_32_SINT bilinear wrap	agree
 image_sample_l	2d 32_32_32_32_UINT bilinear wrap	agree
@@ -3533,24 +3559,25 @@ image_sample_l	2d 32_32_FLOAT bilinear wrap	differ	737 of 1024: 737 value
 image_sample_l	2d 32_32_SINT bilinear wrap	agree
 image_sample_l	2d 32_32_UINT bilinear wrap	agree
 image_sample_l	2d 32_FLOAT bilinear wrap	differ	503 of 1024: 503 value
-image_sample_l	2d 32_FLOAT_CLAMP bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 32_FLOAT_CLAMP bilinear wrap	differ	501 of 1024: 501 value
 image_sample_l	2d 32_SINT bilinear wrap	agree
 image_sample_l	2d 32_UINT bilinear wrap	agree
-image_sample_l	2d 4_4_4_4_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 4_4_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 5_5_5_1_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 5_6_5_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 5_9_9_9_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 6E4_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 7E3_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 8_24_UINT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 8_24_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 4_4_4_4_UNORM bilinear wrap	differ	966 of 1024: 26 NaN bits, 940 value
+image_sample_l	2d 4_4_UNORM bilinear wrap	differ	837 of 1024: 837 value
+image_sample_l	2d 5_5_5_1_UNORM bilinear wrap	differ	1008 of 1024: 13 NaN bits, 995 value
+image_sample_l	2d 5_6_5_UNORM bilinear wrap	differ	1004 of 1024: 11 NaN bits, 993 value
+image_sample_l	2d 5_9_9_9_FLOAT bilinear wrap	differ	860 of 1024: 50 NaN bits, 810 value
+image_sample_l	2d 6E4_FLOAT bilinear wrap	differ	406 of 1024: 53 NaN bits, 353 value
+image_sample_l	2d 7E3_FLOAT bilinear wrap	differ	328 of 1024: 22 NaN bits, 306 value
+image_sample_l	2d 8_24_UINT bilinear wrap	agree
+image_sample_l	2d 8_24_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_l	2d 8_8_8_8_SINT bilinear wrap	agree
 image_sample_l	2d 8_8_8_8_SNORM bilinear wrap	differ	997 of 1024: 29 NaN bits, 968 value
 image_sample_l	2d 8_8_8_8_SRGB bilinear wrap	differ	904 of 1024: 102 NaN bits, 802 value
-image_sample_l	2d 8_8_8_8_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 8_8_8_8_SSCALED bilinear wrap	differ	694 of 1024: 7 NaN bits, 687 value
 image_sample_l	2d 8_8_8_8_UINT bilinear wrap	agree
 image_sample_l	2d 8_8_8_8_UNORM bilinear clamp to edge	differ	293 of 1024: 2 NaN bits, 291 value
+image_sample_l	2d 8_8_8_8_UNORM bilinear clamp to edge unorm	differ	300 of 1024: 10 NaN bits, 290 value
 image_sample_l	2d 8_8_8_8_UNORM bilinear clamp to opaque black border	differ	318 of 1024: 8 NaN bits, 310 value
 image_sample_l	2d 8_8_8_8_UNORM bilinear clamp to opaque white border	differ	331 of 1024: 6 NaN bits, 325 value
 image_sample_l	2d 8_8_8_8_UNORM bilinear clamp to transparent black border	differ	337 of 1024: 7 NaN bits, 330 value
@@ -3566,21 +3593,21 @@ image_sample_l	2d 8_8_8_8_UNORM point mirror once	agree
 image_sample_l	2d 8_8_8_8_UNORM point unnormalized clamp	differ	2 of 1024: 2 value
 image_sample_l	2d 8_8_8_8_UNORM point wrap	agree
 image_sample_l	2d 8_8_8_8_UNORM trilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 8_8_8_8_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 8_8_8_8_USCALED bilinear wrap	differ	704 of 1024: 18 NaN bits, 686 value
 image_sample_l	2d 8_8_SINT bilinear wrap	agree
 image_sample_l	2d 8_8_SNORM bilinear wrap	differ	917 of 1024: 917 value
 image_sample_l	2d 8_8_SRGB bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 8_8_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 8_8_SSCALED bilinear wrap	differ	649 of 1024: 649 value
 image_sample_l	2d 8_8_UINT bilinear wrap	agree
 image_sample_l	2d 8_8_UNORM bilinear wrap	differ	614 of 1024: 614 value
-image_sample_l	2d 8_8_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 8_8_USCALED bilinear wrap	differ	636 of 1024: 636 value
 image_sample_l	2d 8_SINT bilinear wrap	agree
 image_sample_l	2d 8_SNORM bilinear wrap	differ	789 of 1024: 789 value
 image_sample_l	2d 8_SRGB bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d 8_SSCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 8_SSCALED bilinear wrap	differ	516 of 1024: 516 value
 image_sample_l	2d 8_UINT bilinear wrap	agree
 image_sample_l	2d 8_UNORM bilinear wrap	differ	515 of 1024: 515 value
-image_sample_l	2d 8_USCALED bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	2d 8_USCALED bilinear wrap	differ	501 of 1024: 501 value
 image_sample_l	2d BC1_SRGB bilinear wrap	differ	1022 of 1024: 1022 value
 image_sample_l	2d BC1_UNORM bilinear wrap	differ	894 of 1024: 69 NaN bits, 825 value
 image_sample_l	2d BC2_SRGB bilinear wrap	differ	1024 of 1024: 1024 value
@@ -3595,11 +3622,11 @@ image_sample_l	2d BC6_SFLOAT bilinear wrap	differ	452 of 1024: 72 NaN bits, 380 
 image_sample_l	2d BC6_UFLOAT bilinear wrap	differ	489 of 1024: 100 NaN bits, 389 value
 image_sample_l	2d BC7_SRGB bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_l	2d BC7_UNORM bilinear wrap	differ	915 of 1024: 72 NaN bits, 843 value
-image_sample_l	2d X24_8_32_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	2d X24_8_32_UINT bilinear wrap	differ	1020 of 1024: 1020 value
+image_sample_l	2d X24_8_32_FLOAT bilinear wrap	differ	467 of 1024: 467 value
+image_sample_l	2d X24_8_32_UINT bilinear wrap	agree
 image_sample_l	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_l	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l	cube 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_l	cube 8_8_8_8_UNORM bilinear wrap	differ	1017 of 1024: 1017 value
 image_sample_l	draw texture: minified 128x128 image_sample_l 16_16_16_16_FLOAT bilinear, mips point to 32_32_32_32 float	agree
 image_sample_l	draw texture: minified 128x128 image_sample_l 16_16_16_16_FLOAT trilinear to 32_32_32_32 float	differ	0 of 0: ; 12055 stored dwords value
 image_sample_l	draw texture: minified 128x128 image_sample_l 8_8_8_8_SRGB bilinear, mips point to 32_32_32_32 float	differ	0 of 0: ; 2356 stored dwords value
@@ -3613,7 +3640,7 @@ image_sample_l_o	2d 32_FLOAT bilinear wrap	differ	483 of 1024: 483 value
 image_sample_l_o	2d 8_8_8_8_UNORM bilinear wrap	differ	679 of 1024: 9 NaN bits, 670 value
 image_sample_l_o	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_l_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_l_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_l_o
+image_sample_l_o	cube 8_8_8_8_UNORM bilinear wrap	differ	1010 of 1024: 1010 value
 image_sample_lz	1d 8_8_8_8_UNORM bilinear wrap	differ	966 of 1024: 9 NaN bits, 957 value
 image_sample_lz	1d array 8_8_8_8_UNORM bilinear wrap	differ	957 of 1024: 8 NaN bits, 949 value
 image_sample_lz	2d 16_16_16_16_FLOAT bilinear wrap	differ	592 of 1024: 134 NaN bits, 458 value
@@ -3621,7 +3648,7 @@ image_sample_lz	2d 32_FLOAT bilinear wrap	differ	499 of 1024: 499 value
 image_sample_lz	2d 8_8_8_8_UNORM bilinear wrap	differ	723 of 1024: 14 NaN bits, 709 value
 image_sample_lz	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_lz	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_lz	cube 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
+image_sample_lz	cube 8_8_8_8_UNORM bilinear wrap	differ	1015 of 1024: 1015 value
 image_sample_lz_o	1d 8_8_8_8_UNORM bilinear wrap	differ	950 of 1024: 7 NaN bits, 943 value
 image_sample_lz_o	1d array 8_8_8_8_UNORM bilinear wrap	differ	968 of 1024: 3 NaN bits, 965 value
 image_sample_lz_o	2d 16_16_16_16_FLOAT bilinear wrap	differ	569 of 1024: 114 NaN bits, 455 value
@@ -3629,7 +3656,7 @@ image_sample_lz_o	2d 32_FLOAT bilinear wrap	differ	509 of 1024: 509 value
 image_sample_lz_o	2d 8_8_8_8_UNORM bilinear wrap	differ	694 of 1024: 14 NaN bits, 680 value
 image_sample_lz_o	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_lz_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_lz_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_lz_o
+image_sample_lz_o	cube 8_8_8_8_UNORM bilinear wrap	differ	1015 of 1024: 1015 value
 image_sample_o	1d 8_8_8_8_UNORM bilinear wrap	differ	963 of 1024: 5 NaN bits, 958 value
 image_sample_o	1d array 8_8_8_8_UNORM bilinear wrap	differ	951 of 1024: 7 NaN bits, 944 value
 image_sample_o	2d 16_16_16_16_FLOAT bilinear wrap	differ	597 of 1024: 119 NaN bits, 478 value
@@ -3637,7 +3664,7 @@ image_sample_o	2d 32_FLOAT bilinear wrap	differ	498 of 1024: 498 value
 image_sample_o	2d 8_8_8_8_UNORM bilinear wrap	differ	690 of 1024: 12 NaN bits, 678 value
 image_sample_o	2d array 8_8_8_8_UNORM bilinear wrap	differ	1023 of 1024: 1023 value
 image_sample_o	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
-image_sample_o	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: unsupported form of image_sample_o
+image_sample_o	cube 8_8_8_8_UNORM bilinear wrap	differ	1010 of 1024: 1010 value
 image_store	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_store	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_store	2d 10_10_10_2_SINT bilinear wrap	agree
@@ -3653,28 +3680,28 @@ image_store	2d 10_11_11_SSCALED bilinear wrap	agree
 image_store	2d 10_11_11_UINT bilinear wrap	agree
 image_store	2d 10_11_11_UNORM bilinear wrap	agree
 image_store	2d 10_11_11_USCALED bilinear wrap	agree
-image_store	2d 11_11_10_FLOAT bilinear wrap	differ	112 of 1024: 38 NaN bits, 74 value; 112 stored dwords value
+image_store	2d 11_11_10_FLOAT bilinear wrap	agree
 image_store	2d 11_11_10_SINT bilinear wrap	agree
 image_store	2d 11_11_10_SNORM bilinear wrap	agree
 image_store	2d 11_11_10_SSCALED bilinear wrap	agree
 image_store	2d 11_11_10_UINT bilinear wrap	agree
 image_store	2d 11_11_10_UNORM bilinear wrap	agree
 image_store	2d 11_11_10_USCALED bilinear wrap	agree
-image_store	2d 16_16_16_16_FLOAT bilinear wrap	differ	12 of 1024: 7 NaN bits, 5 value; 12 stored dwords value
+image_store	2d 16_16_16_16_FLOAT bilinear wrap	agree
 image_store	2d 16_16_16_16_SINT bilinear wrap	agree
 image_store	2d 16_16_16_16_SNORM bilinear wrap	agree
 image_store	2d 16_16_16_16_SSCALED bilinear wrap	agree
 image_store	2d 16_16_16_16_UINT bilinear wrap	agree
 image_store	2d 16_16_16_16_UNORM bilinear wrap	agree
 image_store	2d 16_16_16_16_USCALED bilinear wrap	agree
-image_store	2d 16_16_FLOAT bilinear wrap	differ	4 of 1024: 4 value; 4 stored dwords value
+image_store	2d 16_16_FLOAT bilinear wrap	agree
 image_store	2d 16_16_SINT bilinear wrap	agree
 image_store	2d 16_16_SNORM bilinear wrap	agree
 image_store	2d 16_16_SSCALED bilinear wrap	agree
 image_store	2d 16_16_UINT bilinear wrap	agree
 image_store	2d 16_16_UNORM bilinear wrap	agree
 image_store	2d 16_16_USCALED bilinear wrap	agree
-image_store	2d 16_FLOAT bilinear wrap	differ	5 of 1024: 5 value; 5 stored dwords value
+image_store	2d 16_FLOAT bilinear wrap	agree
 image_store	2d 16_SINT bilinear wrap	agree
 image_store	2d 16_SNORM bilinear wrap	agree
 image_store	2d 16_SSCALED bilinear wrap	agree
@@ -3706,9 +3733,9 @@ image_store	2d 4_4_4_4_UNORM bilinear wrap	agree
 image_store	2d 4_4_UNORM bilinear wrap	agree
 image_store	2d 5_5_5_1_UNORM bilinear wrap	agree
 image_store	2d 5_6_5_UNORM bilinear wrap	agree
-image_store	2d 5_9_9_9_FLOAT bilinear wrap	differ	87 of 1024: 25 NaN bits, 62 value; 87 stored dwords value
-image_store	2d 6E4_FLOAT bilinear wrap	differ	735 of 1024: 112 NaN bits, 623 value; 959 stored dwords value
-image_store	2d 7E3_FLOAT bilinear wrap	differ	727 of 1024: 117 NaN bits, 610 value; 1024 stored dwords value
+image_store	2d 5_9_9_9_FLOAT bilinear wrap	agree
+image_store	2d 6E4_FLOAT bilinear wrap	agree
+image_store	2d 7E3_FLOAT bilinear wrap	agree
 image_store	2d 8_24_UINT bilinear wrap	agree
 image_store	2d 8_24_UNORM bilinear wrap	agree
 image_store	2d 8_8_8_8_SINT bilinear wrap	agree
@@ -3747,13 +3774,13 @@ image_store	2d 8_SSCALED bilinear wrap	agree
 image_store	2d 8_UINT bilinear wrap	agree
 image_store	2d 8_UNORM bilinear wrap	agree
 image_store	2d 8_USCALED bilinear wrap	agree
-image_store	2d X24_8_32_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
-image_store	2d X24_8_32_UINT bilinear wrap	differ	1024 of 1024: 1024 value
+image_store	2d X24_8_32_FLOAT bilinear wrap	agree
+image_store	2d X24_8_32_UINT bilinear wrap	agree
 image_store	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_store	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_store	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: cube image access is not done yet
+image_store	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_store_mip	1d 8_8_8_8_UNORM bilinear wrap	agree
-image_store_mip	1d array 8_8_8_8_UNORM bilinear wrap	differ	189 of 1024: 30 NaN bits, 159 value; 796 stored dwords value
+image_store_mip	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_store_mip	2d 10_10_10_2_SINT bilinear wrap	agree
 image_store_mip	2d 10_10_10_2_SNORM bilinear wrap	agree
 image_store_mip	2d 10_10_10_2_SSCALED bilinear wrap	agree
@@ -3767,28 +3794,28 @@ image_store_mip	2d 10_11_11_SSCALED bilinear wrap	agree
 image_store_mip	2d 10_11_11_UINT bilinear wrap	agree
 image_store_mip	2d 10_11_11_UNORM bilinear wrap	agree
 image_store_mip	2d 10_11_11_USCALED bilinear wrap	agree
-image_store_mip	2d 11_11_10_FLOAT bilinear wrap	differ	63 of 1024: 21 NaN bits, 42 value; 63 stored dwords value
+image_store_mip	2d 11_11_10_FLOAT bilinear wrap	agree
 image_store_mip	2d 11_11_10_SINT bilinear wrap	agree
 image_store_mip	2d 11_11_10_SNORM bilinear wrap	agree
 image_store_mip	2d 11_11_10_SSCALED bilinear wrap	agree
 image_store_mip	2d 11_11_10_UINT bilinear wrap	agree
 image_store_mip	2d 11_11_10_UNORM bilinear wrap	agree
 image_store_mip	2d 11_11_10_USCALED bilinear wrap	agree
-image_store_mip	2d 16_16_16_16_FLOAT bilinear wrap	differ	8 of 1024: 2 NaN bits, 6 value; 8 stored dwords value
+image_store_mip	2d 16_16_16_16_FLOAT bilinear wrap	agree
 image_store_mip	2d 16_16_16_16_SINT bilinear wrap	agree
 image_store_mip	2d 16_16_16_16_SNORM bilinear wrap	agree
 image_store_mip	2d 16_16_16_16_SSCALED bilinear wrap	agree
 image_store_mip	2d 16_16_16_16_UINT bilinear wrap	agree
 image_store_mip	2d 16_16_16_16_UNORM bilinear wrap	agree
 image_store_mip	2d 16_16_16_16_USCALED bilinear wrap	agree
-image_store_mip	2d 16_16_FLOAT bilinear wrap	differ	6 of 1024: 6 value; 6 stored dwords value
+image_store_mip	2d 16_16_FLOAT bilinear wrap	agree
 image_store_mip	2d 16_16_SINT bilinear wrap	agree
 image_store_mip	2d 16_16_SNORM bilinear wrap	agree
 image_store_mip	2d 16_16_SSCALED bilinear wrap	agree
 image_store_mip	2d 16_16_UINT bilinear wrap	agree
 image_store_mip	2d 16_16_UNORM bilinear wrap	agree
 image_store_mip	2d 16_16_USCALED bilinear wrap	agree
-image_store_mip	2d 16_FLOAT bilinear wrap	differ	2 of 1024: 2 value; 2 stored dwords value
+image_store_mip	2d 16_FLOAT bilinear wrap	agree
 image_store_mip	2d 16_SINT bilinear wrap	agree
 image_store_mip	2d 16_SNORM bilinear wrap	agree
 image_store_mip	2d 16_SSCALED bilinear wrap	agree
@@ -3820,9 +3847,9 @@ image_store_mip	2d 4_4_4_4_UNORM bilinear wrap	agree
 image_store_mip	2d 4_4_UNORM bilinear wrap	agree
 image_store_mip	2d 5_5_5_1_UNORM bilinear wrap	agree
 image_store_mip	2d 5_6_5_UNORM bilinear wrap	agree
-image_store_mip	2d 5_9_9_9_FLOAT bilinear wrap	differ	56 of 1024: 17 NaN bits, 39 value; 56 stored dwords value
-image_store_mip	2d 6E4_FLOAT bilinear wrap	differ	454 of 1024: 60 NaN bits, 394 value; 851 stored dwords value
-image_store_mip	2d 7E3_FLOAT bilinear wrap	differ	440 of 1024: 60 NaN bits, 380 value; 602 stored dwords value
+image_store_mip	2d 5_9_9_9_FLOAT bilinear wrap	agree
+image_store_mip	2d 6E4_FLOAT bilinear wrap	agree
+image_store_mip	2d 7E3_FLOAT bilinear wrap	agree
 image_store_mip	2d 8_24_UINT bilinear wrap	agree
 image_store_mip	2d 8_24_UNORM bilinear wrap	agree
 image_store_mip	2d 8_8_8_8_SINT bilinear wrap	agree
@@ -3861,19 +3888,19 @@ image_store_mip	2d 8_SSCALED bilinear wrap	agree
 image_store_mip	2d 8_UINT bilinear wrap	agree
 image_store_mip	2d 8_UNORM bilinear wrap	agree
 image_store_mip	2d 8_USCALED bilinear wrap	agree
-image_store_mip	2d X24_8_32_FLOAT bilinear wrap	differ	577 of 1024: 577 value
-image_store_mip	2d X24_8_32_UINT bilinear wrap	differ	603 of 1024: 603 value
-image_store_mip	2d array 8_8_8_8_UNORM bilinear wrap	differ	192 of 1024: 29 NaN bits, 163 value; 12305 stored dwords value
+image_store_mip	2d X24_8_32_FLOAT bilinear wrap	agree
+image_store_mip	2d X24_8_32_UINT bilinear wrap	agree
+image_store_mip	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_store_mip	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_store_mip	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: cube image access is not done yet
+image_store_mip	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_store_mip_pck	1d 8_8_8_8_UNORM bilinear wrap	agree
-image_store_mip_pck	1d array 8_8_8_8_UNORM bilinear wrap	differ	259 of 1024: 259 value; 779 stored dwords value
-image_store_mip_pck	2d 16_16_16_16_FLOAT bilinear wrap	differ	67 of 1024: 37 NaN bits, 30 value
+image_store_mip_pck	1d array 8_8_8_8_UNORM bilinear wrap	agree
+image_store_mip_pck	2d 16_16_16_16_FLOAT bilinear wrap	agree
 image_store_mip_pck	2d 32_FLOAT bilinear wrap	agree
 image_store_mip_pck	2d 8_8_8_8_UNORM bilinear wrap	agree
-image_store_mip_pck	2d array 8_8_8_8_UNORM bilinear wrap	differ	270 of 1024: 270 value; 12333 stored dwords value
+image_store_mip_pck	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_store_mip_pck	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_store_mip_pck	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: cube image access is not done yet
+image_store_mip_pck	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_store_pck	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_store_pck	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_store_pck	2d 10_10_10_2_SINT bilinear wrap	agree
@@ -3896,21 +3923,21 @@ image_store_pck	2d 11_11_10_SSCALED bilinear wrap	agree
 image_store_pck	2d 11_11_10_UINT bilinear wrap	agree
 image_store_pck	2d 11_11_10_UNORM bilinear wrap	agree
 image_store_pck	2d 11_11_10_USCALED bilinear wrap	agree
-image_store_pck	2d 16_16_16_16_FLOAT bilinear wrap	differ	130 of 1024: 53 NaN bits, 77 value
+image_store_pck	2d 16_16_16_16_FLOAT bilinear wrap	agree
 image_store_pck	2d 16_16_16_16_SINT bilinear wrap	agree
 image_store_pck	2d 16_16_16_16_SNORM bilinear wrap	agree
 image_store_pck	2d 16_16_16_16_SSCALED bilinear wrap	agree
 image_store_pck	2d 16_16_16_16_UINT bilinear wrap	agree
 image_store_pck	2d 16_16_16_16_UNORM bilinear wrap	agree
 image_store_pck	2d 16_16_16_16_USCALED bilinear wrap	agree
-image_store_pck	2d 16_16_FLOAT bilinear wrap	differ	58 of 1024: 58 value
+image_store_pck	2d 16_16_FLOAT bilinear wrap	agree
 image_store_pck	2d 16_16_SINT bilinear wrap	agree
 image_store_pck	2d 16_16_SNORM bilinear wrap	agree
 image_store_pck	2d 16_16_SSCALED bilinear wrap	agree
 image_store_pck	2d 16_16_UINT bilinear wrap	agree
 image_store_pck	2d 16_16_UNORM bilinear wrap	agree
 image_store_pck	2d 16_16_USCALED bilinear wrap	agree
-image_store_pck	2d 16_FLOAT bilinear wrap	differ	33 of 1024: 33 value
+image_store_pck	2d 16_FLOAT bilinear wrap	agree
 image_store_pck	2d 16_SINT bilinear wrap	agree
 image_store_pck	2d 16_SNORM bilinear wrap	agree
 image_store_pck	2d 16_SSCALED bilinear wrap	agree
@@ -3943,8 +3970,8 @@ image_store_pck	2d 4_4_UNORM bilinear wrap	agree
 image_store_pck	2d 5_5_5_1_UNORM bilinear wrap	agree
 image_store_pck	2d 5_6_5_UNORM bilinear wrap	agree
 image_store_pck	2d 5_9_9_9_FLOAT bilinear wrap	agree
-image_store_pck	2d 6E4_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value; 1024 stored dwords value
-image_store_pck	2d 7E3_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value; 1024 stored dwords value
+image_store_pck	2d 6E4_FLOAT bilinear wrap	agree
+image_store_pck	2d 7E3_FLOAT bilinear wrap	agree
 image_store_pck	2d 8_24_UINT bilinear wrap	agree
 image_store_pck	2d 8_24_UNORM bilinear wrap	agree
 image_store_pck	2d 8_8_8_8_SINT bilinear wrap	agree
@@ -3987,7 +4014,7 @@ image_store_pck	2d X24_8_32_FLOAT bilinear wrap	hung
 image_store_pck	2d X24_8_32_UINT bilinear wrap	hung
 image_store_pck	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_store_pck	3d 8_8_8_8_UNORM bilinear wrap	agree
-image_store_pck	cube 8_8_8_8_UNORM bilinear wrap	untranslated	at dword 23: cube image access is not done yet
+image_store_pck	cube 8_8_8_8_UNORM bilinear wrap	agree
 s_abs_i32	base	agree
 s_absdiff_i32	base	agree
 s_add_i32	base	agree
