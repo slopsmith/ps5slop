@@ -3,21 +3,23 @@
 //! space changes in an area of its own). Names were found by hashing
 //! guesses; argument orders are read off titles' calls, so they are
 //! unverified. Commands are kept on the host, by the guest address of the
-//! command buffer object (whose layout we never touch), and run
-//! synchronously at submission.
+//! command buffer object (whose layout we never touch). APR submissions run
+//! on a host worker thread in order; AMM ones and those that return a
+//! result run at submission.
 
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::os::unix::fs::FileExt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use crate::dmem::sce_error;
 use crate::errno::{EINVAL, ENOENT, ESRCH};
 use crate::pthread::lock;
 use crate::vfs::{ImageFile, Target};
-use crate::{CallError, Env, Function, Outcome};
-use memory::Prot;
+use crate::{CallError, Env, Function, Kernel, Outcome};
+use memory::{Memory, Prot};
 
 /// What an unresolved path gets as its id (SharpProspero's docs).
 const FILE_ID_INVALID: u32 = 0xFFFF_FFFF;
@@ -103,6 +105,33 @@ pub struct Apr {
     /// The rest of submitted buffers that wait for a counter, oldest first.
     parked: Mutex<Vec<VecDeque<Command>>>,
     submissions: AtomicU64,
+    /// Submitted buffers the worker thread has not finished, oldest first.
+    queue: Mutex<Queue>,
+    queue_changed: Condvar,
+}
+
+/// APR submissions run on a host worker, in order, as the hardware runs
+/// them while the title goes on: a title's main thread submits reads.
+#[derive(Default)]
+struct Queue {
+    jobs: VecDeque<Vec<Command>>,
+    busy: bool,
+    started: bool,
+}
+
+/// What running commands needs: the guest's memory and the kernel.
+struct Exec<'a> {
+    mem: &'a Memory,
+    kernel: &'a Kernel,
+}
+
+impl<'a> Exec<'a> {
+    fn of(env: &'a Env) -> Self {
+        Exec {
+            mem: env.mem,
+            kernel: env.kernel,
+        }
+    }
 }
 
 pub static FUNCTIONS: &[Function] = &[
@@ -487,7 +516,7 @@ fn amm_submit(env: &mut Env) -> Result<Outcome, CallError> {
     let Some(buffer) = buffer else {
         return ret(ESRCH);
     };
-    let errno = run(env, buffer, (size / COMMAND_SIZE) as usize)?;
+    let errno = run(&Exec::of(env), buffer, (size / COMMAND_SIZE) as usize)?;
     ret(errno)
 }
 
@@ -519,10 +548,11 @@ fn virtual_address_ranges(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// `(buffer, priority, result, id)`: runs the commands now, writes a zero
-/// result (status and error offset, 32 bits each) and a submission id.
+/// `(buffer, priority, result, id)`: runs the commands now, after those queued,
+/// and writes a zero result (status, error offset: u32 each) and an id.
 fn submit_and_get_result(env: &mut Env) -> Result<Outcome, CallError> {
-    let errno = run(env, env.arg(0), usize::MAX)?;
+    drain(env);
+    let errno = run(&Exec::of(env), env.arg(0), usize::MAX)?;
     if errno != 0 {
         return kernel_ret(env, errno);
     }
@@ -537,20 +567,87 @@ fn submit_and_get_result(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// `(buffer, priority)`: runs the commands now.
+/// `(buffer, priority)`: queues the commands for the worker thread.
 fn submit(env: &mut Env) -> Result<Outcome, CallError> {
-    let errno = run(env, env.arg(0), usize::MAX)?;
-    kernel_ret(env, errno)
+    let Some(commands) = lock(&env.kernel.apr.buffers).get(&env.arg(0)).cloned() else {
+        return kernel_ret(env, ESRCH);
+    };
+    tracing::debug!("submit {:#x}: {} commands", env.arg(0), commands.len());
+    let apr = &env.kernel.apr;
+    let mut q = lock(&apr.queue);
+    q.jobs.push_back(commands);
+    if !q.started {
+        q.started = true;
+        let kernel = env.kernel.this();
+        std::thread::Builder::new()
+            .name("apr".into())
+            .spawn(move || worker(&kernel))
+            .expect("the APR thread starts");
+    }
+    apr.queue_changed.notify_all();
+    ret(0)
+}
+
+fn worker(kernel: &Kernel) {
+    let apr = &kernel.apr;
+    loop {
+        let job = {
+            let mut q = lock(&apr.queue);
+            loop {
+                if let Some(job) = q.jobs.pop_front() {
+                    q.busy = true;
+                    break job;
+                }
+                if kernel.has_exited() {
+                    return;
+                }
+                q = apr
+                    .queue_changed
+                    .wait_timeout(q, Duration::from_millis(100))
+                    .map_or_else(|e| e.into_inner().0, |(q, _)| q);
+            }
+        };
+        let mem = kernel.memory();
+        let exec = Exec { mem: &mem, kernel };
+        match run_commands(&exec, job) {
+            Ok(0) => {}
+            Ok(errno) => tracing::warn!("APR submission failed with errno {errno}"),
+            Err(e) => tracing::error!("APR submission failed: {e}"),
+        }
+        let mut q = lock(&apr.queue);
+        q.busy = false;
+        apr.queue_changed.notify_all();
+    }
+}
+
+/// Waits until every queued submission ran, unless the process ends or a
+/// save state parks the threads (it drains the queue itself).
+fn drain(env: &Env) {
+    let apr = &env.kernel.apr;
+    let mut q = lock(&apr.queue);
+    while (q.busy || !q.jobs.is_empty()) && !env.kernel.has_exited() && !env.kernel.park_requested()
+    {
+        jit::blocking();
+        q = apr
+            .queue_changed
+            .wait_timeout(q, Duration::from_millis(50))
+            .map_or_else(|e| e.into_inner().0, |(q, _)| q);
+    }
 }
 
 /// Runs the first `count` commands of `buffer`, then any parked batch its
 /// counter signals let go on.
-fn run(env: &Env, buffer: u64, count: usize) -> Result<i32, CallError> {
+fn run(env: &Exec, buffer: u64, count: usize) -> Result<i32, CallError> {
     let Some(commands) = lock(&env.kernel.apr.buffers).get(&buffer).cloned() else {
         return Ok(ESRCH);
     };
     tracing::debug!("submit {buffer:#x}: {} commands", commands.len().min(count));
-    let errno = run_batch(env, commands.into_iter().take(count).collect())?;
+    run_commands(env, commands.into_iter().take(count).collect())
+}
+
+/// Runs `commands`, then any parked batch their counters let go on.
+fn run_commands(env: &Exec, commands: Vec<Command>) -> Result<i32, CallError> {
+    let errno = run_batch(env, commands.into())?;
     if errno != 0 {
         return Ok(errno);
     }
@@ -571,7 +668,7 @@ fn run(env: &Env, buffer: u64, count: usize) -> Result<i32, CallError> {
 
 /// Runs `batch` until it ends or waits for a counter that has not reached
 /// its value; the rest is then parked.
-fn run_batch(env: &Env, mut batch: VecDeque<Command>) -> Result<i32, CallError> {
+fn run_batch(env: &Exec, mut batch: VecDeque<Command>) -> Result<i32, CallError> {
     while let Some(c) = batch.pop_front() {
         match c {
             Command::Read {
@@ -626,7 +723,7 @@ fn run_batch(env: &Env, mut batch: VecDeque<Command>) -> Result<i32, CallError> 
 
 /// Reads `len` bytes of `file` at `offset` to `dest`; false if there is no
 /// such file.
-fn read(env: &Env, file: u32, dest: u64, len: u64, offset: u64) -> Result<bool, CallError> {
+fn read(env: &Exec, file: u32, dest: u64, len: u64, offset: u64) -> Result<bool, CallError> {
     let id = file;
     let file = lock(&env.kernel.apr.files).get(file as usize).cloned();
     let Some(file) = file else {
@@ -653,7 +750,7 @@ fn read(env: &Env, file: u32, dest: u64, len: u64, offset: u64) -> Result<bool, 
 
 /// Pieces keep their pages: fresh host pages for ranges this large make
 /// every vCPU and GPU window map them again.
-fn amm_change(env: &Env, c: Command, va: u64, len: u64) -> Result<(), memory::MapError> {
+fn amm_change(env: &Exec, c: Command, va: u64, len: u64) -> Result<(), memory::MapError> {
     let inside = |area: (u64, u64)| va >= area.0 && va + len <= area.0 + area.1;
     if !inside(AMM_AREA) && !inside(AMM_MULTIMAP_AREA) {
         return Err(memory::MapError::OutOfRange);
@@ -664,9 +761,10 @@ fn amm_change(env: &Env, c: Command, va: u64, len: u64) -> Result<(), memory::Ma
     }
 }
 
-/// `sceKernelAprWaitCommandBuffer(...)`: submissions finish before they
-/// return, so there is nothing to wait for.
-fn wait(_: &mut Env) -> Result<Outcome, CallError> {
+/// `sceKernelAprWaitCommandBuffer(...)`: waits for every submission, not
+/// only the one named.
+fn wait(env: &mut Env) -> Result<Outcome, CallError> {
+    drain(env);
     ret(0)
 }
 
@@ -728,7 +826,20 @@ impl savestate::Decode for Command {
 }
 
 impl Apr {
+    /// Waits for the worker to run every queued submission, so a save state
+    /// holds no reads in flight.
+    fn idle(&self) {
+        let mut q = lock(&self.queue);
+        while q.busy || !q.jobs.is_empty() {
+            q = self
+                .queue_changed
+                .wait_timeout(q, Duration::from_millis(50))
+                .map_or_else(|e| e.into_inner().0, |(q, _)| q);
+        }
+    }
+
     pub(crate) fn save_amm(&self, e: &mut savestate::Encoder) {
+        self.idle();
         let parked: Vec<Vec<Command>> = lock(&self.parked)
             .iter()
             .map(|b| b.iter().copied().collect())
@@ -747,6 +858,7 @@ impl Apr {
     }
 
     pub(crate) fn save(&self, e: &mut savestate::Encoder) {
+        self.idle();
         e.put(&*lock(&self.paths))
             .put(&*lock(&self.buffers))
             .put(&self.submissions.load(Ordering::Relaxed));
@@ -794,6 +906,26 @@ mod tests {
     const SIZES: u64 = AREA + 0x210;
     const FAILED: u64 = AREA + 0x220;
     const TCB: u64 = AREA + 0x1000;
+
+    #[test]
+    fn queued_submissions_run_in_order_and_a_wait_sees_them_done() {
+        use crate::test_env::{call, with_env};
+        const DONE: u64 = 0x40_3000;
+        with_env(0x40_0000, |env, mem| {
+            let (first, second) = (0x40_2000, 0x40_2100);
+            call(env, construct, &[first]);
+            call(env, wait_counter, &[first, 7, 0, 1]);
+            call(env, write_address, &[first, DONE, 2]);
+            call(env, construct, &[second]);
+            call(env, write_address, &[second, DONE + 8, 1]);
+            call(env, signal, &[second, 7, 0, 1]);
+            call(env, submit, &[first]);
+            call(env, submit, &[second]);
+            call(env, wait, &[]);
+            assert_eq!(mem.read_u64(DONE + 8).unwrap(), 1);
+            assert_eq!(mem.read_u64(DONE).unwrap(), 2);
+        });
+    }
 
     #[test]
     fn a_missing_path_fails_with_errno_set() {
