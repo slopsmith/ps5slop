@@ -47,6 +47,25 @@ const PROLOGUE: [u32; 23] = [
     0x7E2C_030F, // v_mov_b32_e32 v22, v15
     0x7E2E_030F, // v_mov_b32_e32 v23, v15
 ];
+/// Replaces the T# load of [`PROLOGUE`] (its words 14 and 15): the T# comes
+/// from a table of [`TABLE_ENTRIES`] T#s at [`TABLE`], whose V# sits at
+/// `DESC + 0x40`, picked by the group id.
+const TABLE_LOAD: [u32; 8] = [
+    0xF408_0D00,
+    0xFA08_0040, // s_load_dwordx4 s[52:55], s[0:1], 0x80040
+    0x8F38_8504, // s_lshl_b32 s56, s4, 5
+    0x8738_FF38,
+    0x0000_0060, // s_and_b32 s56, s56, 0x60
+    0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+    0xF42C_0A1A,
+    0x7000_0000, // s_buffer_load_dwordx8 s[40:47], s[52:55], s56
+];
+/// The table's T#s; the V#'s range covers all but the last, which reads as
+/// zeros.
+const TABLE_ENTRIES: u32 = 4;
+const TABLE: u64 = DESC + 0x100;
+/// Formats of the textures the table's T#s describe.
+const TABLE_FORMATS: [&str; 3] = ["8_8_8_8_UNORM", "32_FLOAT", "16_16_16_16_FLOAT"];
 const WAIT_STORES: u32 = 0xBBFD_0000;
 const EPILOGUE: [u32; 10] = [
     0xBF8C_3F70, // s_waitcnt vmcnt(0)
@@ -552,6 +571,7 @@ fn case(
     samp: usize,
     dmask: u32,
     coords: Coords,
+    indexed: bool,
 ) -> Option<Case> {
     let unorm = coords == Coords::Texels;
     let args = args(op.name, dim);
@@ -579,6 +599,9 @@ fn case(
         dim
     };
     let mut code = PROLOGUE.to_vec();
+    if indexed {
+        code.splice(14..16, TABLE_LOAD);
+    }
     code.extend(inst);
     if store {
         code.push(WAIT_STORES);
@@ -593,6 +616,9 @@ fn case(
         Coords::Random => {}
         Coords::Texels => variant += " unorm",
         Coords::Quads => variant += " quad derivatives",
+    }
+    if indexed {
+        variant = format!("{} T# from a table indexed per wave", dim.name);
     }
     let seed = format!("{} {variant}", op.name);
     let integer = !uses_sampler(op.name);
@@ -618,6 +644,10 @@ fn case(
     table.extend(sampler(samp));
     let table: Vec<u8> = table.iter().flat_map(|w| w.to_le_bytes()).collect();
     write_pages(&mut case.input, DESC, &table);
+    if indexed {
+        indexed_table(&mut case, dim, levels);
+        return Some(case);
+    }
     let bytes = texture_bytes(dim, bits, fname.starts_with("BC"), levels);
     let mut rng = Rng::new(&format!("texture {fname} {}", dim.name));
     let half = fname.starts_with("16");
@@ -630,6 +660,41 @@ fn case(
         case.checked = (TEXTURE, bytes);
     }
     Some(case)
+}
+
+/// Writes the table [`TABLE_LOAD`] reads, its V# and the textures its T#s
+/// describe, one after another from [`TEXTURE`].
+fn indexed_table(case: &mut Case, dim: Dim, levels: u32) {
+    let mut entries = Vec::new();
+    let mut at = TEXTURE;
+    for name in TABLE_FORMATS {
+        let (_, fcode, bits, _) = FORMATS[format(name)];
+        entries.extend(descriptor_at(at, dim, fcode, levels));
+        let bytes = texture_bytes(dim, bits, false, levels);
+        let mut rng = Rng::new(&format!("table texture {name} {}", dim.name));
+        let float = name.contains("FLOAT");
+        write_pages(
+            &mut case.input,
+            at,
+            &texels(bytes, float, name.starts_with("16"), &mut rng),
+        );
+        at = (at + bytes as u64).next_multiple_of(0x1_0000);
+    }
+    entries.resize(8 * TABLE_ENTRIES as usize, 0);
+    let words: Vec<u8> = entries.iter().flat_map(|w| w.to_le_bytes()).collect();
+    write_pages(&mut case.input, TABLE, &words);
+    let range = 32 * (TABLE_ENTRIES - 1);
+    const DST_SEL_XYZW: u32 = 4 | 5 << 3 | 6 << 6 | 7 << 9;
+    const FORMAT_32_FLOAT: u32 = 22 << 12;
+    const RESOURCE_LEVEL: u32 = 1 << 24;
+    let vsharp = [
+        TABLE as u32,
+        (TABLE >> 32) as u32,
+        range,
+        DST_SEL_XYZW | FORMAT_32_FLOAT | RESOURCE_LEVEL,
+    ];
+    let vsharp: Vec<u8> = vsharp.iter().flat_map(|w| w.to_le_bytes()).collect();
+    write_pages(&mut case.input, DESC + 0x40, &vsharp);
 }
 
 fn format(name: &str) -> usize {
@@ -652,6 +717,16 @@ const SWEEP: [&str; 11] = [
     "image_sample_c_lz",
     "image_gather4",
     "image_gather4_c",
+];
+
+/// Opcodes that also run with their T# loaded from a table at an offset
+/// known only at run time ([`TABLE_LOAD`]).
+const INDEXED: [&str; 5] = [
+    "image_load",
+    "image_sample_l",
+    "image_sample_lz",
+    "image_gather4_lz",
+    "image_get_resinfo",
 ];
 
 /// Opcodes that also run over quads whose LOD is known ([`Coords::Quads`]).
@@ -837,17 +912,20 @@ fn image_cases() -> Vec<Case> {
             0xF
         };
         for dim in dims(op.name) {
-            out.extend(case(op, dim, base, 0, dmask, Coords::Random));
+            out.extend(case(op, dim, base, 0, dmask, Coords::Random, false));
         }
         if !atomic {
             for f in [r32_float, rgba16_float] {
-                out.extend(case(op, two_d, f, 0, dmask, Coords::Random));
+                out.extend(case(op, two_d, f, 0, dmask, Coords::Random, false));
             }
         }
         if QUADS.contains(&op.name) {
             for s in [TRILINEAR, POINT_MIPS] {
-                out.extend(case(op, two_d, base, s, dmask, Coords::Quads));
+                out.extend(case(op, two_d, base, s, dmask, Coords::Quads, false));
             }
+        }
+        if INDEXED.contains(&op.name) {
+            out.extend(case(op, two_d, base, 0, dmask, Coords::Random, true));
         }
         if COMPARED.contains(&op.name) {
             for f in DEPTH_FORMATS {
@@ -858,6 +936,7 @@ fn image_cases() -> Vec<Case> {
                     COMPARE_LESS,
                     dmask,
                     Coords::Random,
+                    false,
                 ));
             }
         }
@@ -865,15 +944,15 @@ fn image_cases() -> Vec<Case> {
             let writes = op.name.starts_with("image_store");
             let storable = |f: usize| !(writes && FORMATS[f].0.starts_with("BC"));
             for f in (0..FORMATS.len()).filter(|&f| f != base && storable(f)) {
-                out.extend(case(op, two_d, f, 0, dmask, Coords::Random));
+                out.extend(case(op, two_d, f, 0, dmask, Coords::Random, false));
             }
             for s in 1..SAMPLERS.len() {
-                out.extend(case(op, two_d, base, s, dmask, Coords::Random));
+                out.extend(case(op, two_d, base, s, dmask, Coords::Random, false));
             }
-            out.extend(case(op, two_d, base, 0, 0x5, Coords::Random));
+            out.extend(case(op, two_d, base, 0, 0x5, Coords::Random, false));
             // Unnormalized coordinates need a clamping sampler (Vulkan's rule).
             let clamp = if uses_sampler(op.name) { 4 } else { 0 };
-            out.extend(case(op, two_d, base, clamp, dmask, Coords::Texels));
+            out.extend(case(op, two_d, base, clamp, dmask, Coords::Texels, false));
         }
     }
     out
@@ -947,9 +1026,17 @@ mod tests {
     #[test]
     fn image_tests_decode_to_what_they_test() {
         let text = |n: &str, d: usize| {
-            case(by_name(n).unwrap(), DIMS[d], 0, 0, 0xF, Coords::Random)
-                .unwrap()
-                .text
+            case(
+                by_name(n).unwrap(),
+                DIMS[d],
+                0,
+                0,
+                0xF,
+                Coords::Random,
+                false,
+            )
+            .unwrap()
+            .text
         };
         assert_eq!(
             text("image_sample", 1),

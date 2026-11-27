@@ -67,7 +67,21 @@ impl<'a> Tx<'a> {
                 (st.get(r as usize + 1).cloned().flatten() == Some(lo.advance(4))).then_some(lo)
             };
             let mut new: BTreeMap<u16, Option<Source>> = BTreeMap::new();
+            let known = |r: u16| match st.get(r as usize) {
+                Some(Some(Source::Constant(v))) if v.len() == 1 => Some(v[0]),
+                _ => constant(inst, r),
+            };
+            let folded = match inst.kind {
+                Kind::Sop1 { ssrc0, .. } => known(ssrc0).and_then(|a| fold(inst.op.name, a, 0)),
+                Kind::Sop2 { ssrc0, ssrc1, .. } if inst.op.name != "s_addc_u32" => known(ssrc0)
+                    .zip(known(ssrc1))
+                    .and_then(|(a, b)| fold(inst.op.name, a, b)),
+                _ => None,
+            };
             match inst.kind {
+                Kind::Sop1 { sdst, .. } | Kind::Sop2 { sdst, .. } if folded.is_some() => {
+                    new.insert(sdst as u16, folded.map(|v| Source::Constant(vec![v])));
+                }
                 Kind::Sop1 { sdst, ssrc0 } if inst.op.name == "s_mov_b32" && ssrc0 < SGPR_COUNT => {
                     new.insert(sdst as u16, st[ssrc0 as usize].clone());
                 }
@@ -132,6 +146,7 @@ impl<'a> Tx<'a> {
                                             s,
                                             Source::Buffer { .. }
                                                 | Source::Memory { .. }
+                                                | Source::Indexed { .. }
                                                 | Source::UserSgpr(_)
                                         )
                                     })
@@ -159,12 +174,14 @@ impl<'a> Tx<'a> {
                 {
                     let shift = (ssrc1 - src::ZERO) as u8;
                     let scaled = match &st[ssrc0 as usize] {
-                        Some(of @ (Source::UserSgpr(_) | Source::Buffer { .. })) => {
-                            Some(Source::Scaled {
-                                of: Box::new(of.clone()),
-                                shift,
-                            })
-                        }
+                        Some(
+                            of @ (Source::UserSgpr(_)
+                            | Source::Buffer { .. }
+                            | Source::Memory { .. }),
+                        ) => Some(Source::Scaled {
+                            of: Box::new(of.clone()),
+                            shift,
+                        }),
                         _ => None,
                     };
                     new.insert(sdst as u16, scaled);
@@ -231,18 +248,25 @@ impl<'a> Tx<'a> {
                         },
                         _ => None,
                     };
-                    if let (Some(v), Some(index)) = (vsharp, index) {
-                        let n = smem_dwords(inst.op.name);
-                        for k in 0..n {
-                            new.insert(
-                                sdata as u16 + k,
-                                Some(Source::Buffer {
-                                    buffer: Box::new(v.clone()),
-                                    offset: (offset as u32).wrapping_add(4 * k as u32),
-                                    index: index.clone(),
-                                }),
-                            );
-                        }
+                    let n = smem_dwords(inst.op.name);
+                    for k in 0..n {
+                        let offset = (offset as u32).wrapping_add(4 * k as u32);
+                        let source = match (&vsharp, &index) {
+                            (Some(v), Some(index)) => Source::Buffer {
+                                buffer: Box::new(v.clone()),
+                                offset,
+                                index: index.clone(),
+                            },
+                            // An offset only the run time knows: a table
+                            // of descriptors indexed per wave.
+                            (Some(v), None) => Source::Indexed {
+                                buffer: Box::new(v.clone()),
+                                offset,
+                                load: pc as u32,
+                            },
+                            _ => break,
+                        };
+                        new.insert(sdata as u16 + k, Some(source));
                     }
                 }
                 Kind::Smem {
@@ -321,4 +345,33 @@ impl<'a> Tx<'a> {
         }
         before
     }
+}
+
+/// The result of a 32-bit scalar instruction on constant operands, for the
+/// instructions programs build descriptor dwords with.
+fn fold(name: &str, a: u32, b: u32) -> Option<u32> {
+    Some(match name {
+        "s_mov_b32" => a,
+        "s_not_b32" => !a,
+        "s_brev_b32" => a.reverse_bits(),
+        "s_lshl_b32" => a << (b & 31),
+        "s_lshr_b32" => a >> (b & 31),
+        "s_ashr_i32" => ((a as i32) >> (b & 31)) as u32,
+        "s_and_b32" => a & b,
+        "s_or_b32" => a | b,
+        "s_xor_b32" => a ^ b,
+        "s_andn2_b32" => a & !b,
+        "s_orn2_b32" => a | !b,
+        "s_add_u32" | "s_add_i32" => a.wrapping_add(b),
+        "s_sub_u32" | "s_sub_i32" => a.wrapping_sub(b),
+        "s_mul_i32" => a.wrapping_mul(b),
+        "s_lshl1_add_u32" => (a << 1).wrapping_add(b),
+        "s_lshl2_add_u32" => (a << 2).wrapping_add(b),
+        "s_lshl3_add_u32" => (a << 3).wrapping_add(b),
+        "s_lshl4_add_u32" => (a << 4).wrapping_add(b),
+        "s_pack_ll_b32_b16" => a & 0xFFFF | b << 16,
+        "s_pack_lh_b32_b16" => a & 0xFFFF | b & 0xFFFF_0000,
+        "s_pack_hh_b32_b16" => a >> 16 | b & 0xFFFF_0000,
+        _ => return None,
+    })
 }

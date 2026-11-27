@@ -199,11 +199,21 @@ pub enum Source {
         offset: u32,
         index: Option<(Box<Source>, u8)>,
     },
-    /// One dword (a user SGPR or a buffer dword) shifted left, used as a
+    /// One dword (a user SGPR, a buffer dword or a dword in memory) shifted left, used as a
     /// buffer load offset.
     Scaled { of: Box<Source>, shift: u8 },
     /// Dwords the program builds from constants.
     Constant(Vec<u32>),
+    /// The dwords sit `offset` bytes, plus an SGPR known only at run time,
+    /// into the buffer the V# at `buffer` describes: a table of descriptors
+    /// indexed per wave. `load` is the dword offset of the
+    /// `s_buffer_load_dword*` that read them; in a [`Resource::Texture`]
+    /// it is 0 and `offset` is the offset modulo 32 (see [`binding::HEAPS`]).
+    Indexed {
+        buffer: Box<Source>,
+        offset: u32,
+        load: u32,
+    },
 }
 
 impl Source {
@@ -232,6 +242,15 @@ impl Source {
                 v.get(bytes as usize / 4..)
                     .map_or(Vec::new(), <[u32]>::to_vec),
             ),
+            Source::Indexed {
+                buffer,
+                offset,
+                load,
+            } => Source::Indexed {
+                buffer: buffer.clone(),
+                offset: offset.wrapping_add(bytes),
+                load: *load,
+            },
         }
     }
 }
@@ -392,6 +411,14 @@ pub mod binding {
     pub const FIRST_VERTEX: u32 = 26;
     /// The first of the [`super::MAX_CONSTANTS`] `constant uint* cbN` buffers.
     pub const CONSTANTS: u32 = 1;
+    /// The first of up to [`super::MAX_HEAPS`] tables of Metal texture
+    /// handles (`MTLResourceID`s), one per texture slot whose T# comes from
+    /// a [`super::Source::Indexed`] table, in slot order. Entry `i` is the
+    /// T# `32 * i` bytes past the first one at the table's `offset % 32`;
+    /// the slot's first word in [`TEXTURE_WORDS`] holds the number of
+    /// entries, the last of which reads as nothing (an index past the
+    /// table picks it).
+    pub const HEAPS: u32 = 17;
 }
 
 /// `CB_COLOR_INFO.BLEND_CLAMP` on a unorm or sRGB target, for a
@@ -439,6 +466,10 @@ pub const MAX_CONSTANTS: usize = 16;
 pub const MESH_MAX_VERTICES: u16 = 256;
 pub const MESH_MAX_PRIMITIVES: u16 = 512;
 pub const MESH_MAX_BYTES: usize = 32 << 10;
+
+/// Texture slots whose T# comes from a table indexed at run time
+/// ([`binding::HEAPS`]).
+pub const MAX_HEAPS: usize = 6;
 
 /// Backward branches a vertex or pixel invocation may take before it gives up: a
 /// GPU hang makes macOS ignore all of the process's later Metal work.
@@ -557,6 +588,19 @@ fn translate_expanded(
         dry.run()?;
     }
     let syms = dry.sgpr_sources();
+    // T#s loaded from tables indexed at run time stay in their SGPRs: the
+    // program reads dwords 1 and 3 there, and the load's offset picks the texture.
+    let mut heap_loads = BTreeSet::new();
+    for (pc, inst) in &dry.insts {
+        if let Kind::Mimg(m) = &inst.kind
+            && let Some(Some(Source::Indexed { load, .. })) =
+                syms.get(pc).and_then(|st| st.get(m.srsrc as usize))
+        {
+            heap_loads.insert(*load as usize);
+            dry.sgpr_reads
+                .extend([m.srsrc as u16 + 1, m.srsrc as u16 + 3]);
+        }
+    }
     let mut tx = Tx::new(req, insts);
     tx.runs = exp.runs;
     tx.syms = Some(syms);
@@ -569,6 +613,7 @@ fn translate_expanded(
         .filter(|(_, t)| t.3 == Access::Atomic)
         .fold(0, |m, (i, _)| m | 1 << i);
     tx.bits_textures = bits;
+    tx.heap_loads = heap_loads;
     tx.read_write_textures = dry
         .textures
         .iter()
@@ -687,6 +732,9 @@ struct Tx<'a> {
     quad_lane: bool,
     /// Texture slots image atomics use, from the first pass.
     atomic_textures: u32,
+    /// Scalar loads of T#s from tables indexed at run time (found in the
+    /// first pass): each keeps the byte offset it read at in `hoffN`.
+    heap_loads: BTreeSet<usize>,
     /// Texture slots both read and written, from the first pass.
     read_write_textures: u32,
     /// T# registers some instruction accesses as bits (first pass); other raw
@@ -822,6 +870,7 @@ impl<'a> Tx<'a> {
             addtid_aligned128: true,
             quad_lane: false,
             atomic_textures: 0,
+            heap_loads: BTreeSet::new(),
             read_write_textures: 0,
             bits_textures: Vec::new(),
             simd_lane: false,

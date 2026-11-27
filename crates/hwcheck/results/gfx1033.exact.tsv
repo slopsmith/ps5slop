@@ -2334,6 +2334,7 @@ image_gather4_l_o	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	559 of 1024:
 image_gather4_lz	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_lz	2d 32_FLOAT bilinear wrap dmask 0x1	agree
 image_gather4_lz	2d 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
+image_gather4_lz	2d T# from a table indexed per wave	agree
 image_gather4_lz	2d array 8_8_8_8_UNORM bilinear wrap dmask 0x1	agree
 image_gather4_lz	cube 8_8_8_8_UNORM bilinear wrap dmask 0x1	differ	577 of 1024: 577 value
 image_gather4_lz_o	2d 16_16_16_16_FLOAT bilinear wrap dmask 0x1	agree
@@ -2366,6 +2367,7 @@ image_get_resinfo	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_get_resinfo	2d 16_16_16_16_FLOAT bilinear wrap	agree
 image_get_resinfo	2d 32_FLOAT bilinear wrap	agree
 image_get_resinfo	2d 8_8_8_8_UNORM bilinear wrap	agree
+image_get_resinfo	2d T# from a table indexed per wave	agree
 image_get_resinfo	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_get_resinfo	3d 8_8_8_8_UNORM bilinear wrap	agree
 image_get_resinfo	cube 8_8_8_8_UNORM bilinear wrap	agree
@@ -2492,6 +2494,7 @@ image_load	2d BC6_SFLOAT bilinear wrap	agree
 image_load	2d BC6_UFLOAT bilinear wrap	agree
 image_load	2d BC7_SRGB bilinear wrap	agree
 image_load	2d BC7_UNORM bilinear wrap	agree
+image_load	2d T# from a table indexed per wave	agree
 image_load	2d X24_8_32_FLOAT bilinear wrap	agree
 image_load	2d X24_8_32_UINT bilinear wrap	agree
 image_load	2d array 8_8_8_8_UNORM bilinear wrap	agree
@@ -3663,6 +3666,7 @@ image_sample_l	2d BC6_SFLOAT bilinear wrap	differ	452 of 1024: 72 NaN bits, 380 
 image_sample_l	2d BC6_UFLOAT bilinear wrap	differ	489 of 1024: 100 NaN bits, 389 value
 image_sample_l	2d BC7_SRGB bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_l	2d BC7_UNORM bilinear wrap	differ	915 of 1024: 72 NaN bits, 843 value
+image_sample_l	2d T# from a table indexed per wave	differ	458 of 1024: 45 NaN bits, 413 value
 image_sample_l	2d X24_8_32_FLOAT bilinear wrap	differ	467 of 1024: 467 value
 image_sample_l	2d X24_8_32_UINT bilinear wrap	agree
 image_sample_l	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
@@ -3687,6 +3691,7 @@ image_sample_lz	1d array 8_8_8_8_UNORM bilinear wrap	differ	957 of 1024: 8 NaN b
 image_sample_lz	2d 16_16_16_16_FLOAT bilinear wrap	differ	592 of 1024: 134 NaN bits, 458 value
 image_sample_lz	2d 32_FLOAT bilinear wrap	differ	499 of 1024: 499 value
 image_sample_lz	2d 8_8_8_8_UNORM bilinear wrap	differ	723 of 1024: 14 NaN bits, 709 value
+image_sample_lz	2d T# from a table indexed per wave	differ	442 of 1024: 39 NaN bits, 403 value
 image_sample_lz	2d array 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_lz	3d 8_8_8_8_UNORM bilinear wrap	differ	1024 of 1024: 1024 value
 image_sample_lz	cube 8_8_8_8_UNORM bilinear wrap	differ	1015 of 1024: 1015 value

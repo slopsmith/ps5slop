@@ -181,6 +181,7 @@ impl<'a> Tx<'a> {
                 binding::GUARD
             ));
         }
+        let mut heap_locals = String::new();
         for (i, &(_, kind, _, access, _)) in self.textures.iter().enumerate() {
             let base = match kind {
                 TextureKind::Tex2d => "texture2d",
@@ -194,6 +195,17 @@ impl<'a> Tx<'a> {
                 Access::Write => format!("{base}<{elem}, access::write>"),
                 Access::ReadWrite | Access::Atomic => format!("{base}<{elem}, access::read_write>"),
             };
+            if let Some(h) = self.heap_slots().position(|s| s == i) {
+                out.push_str(&format!("struct Heap{i} {{ {ty} t; }};\n"));
+                params.push(format!("constant Heap{i}* h{i}"));
+                args.push(format!("h{i}"));
+                entry_params.push(format!(
+                    "constant Heap{i}* h{i} [[buffer({})]]",
+                    binding::HEAPS as usize + h
+                ));
+                heap_locals.push_str(&format!("    {ty} t{i} = h{i}[0].t;\n"));
+                continue;
+            }
             params.push(format!("{ty} t{i}"));
             args.push(format!("t{i}"));
             entry_params.push(format!("{ty} t{i} [[texture({i})]]"));
@@ -246,6 +258,7 @@ impl<'a> Tx<'a> {
                 init.push_str(&format!("    s{r} = user[{i}];\n"));
             }
         }
+        init.push_str(&heap_locals);
         if self.addtid_local {
             init.push_str("    uint addtid_lds[ADDTID_SLOTS] = {};\n");
         }

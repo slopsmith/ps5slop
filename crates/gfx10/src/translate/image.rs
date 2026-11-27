@@ -36,23 +36,57 @@ impl<'a> Tx<'a> {
         view: View,
     ) -> Result<usize, TranslateError> {
         let source = self.descriptor_source(pc, srsrc, 8)?;
+        // One slot per table and phase in it, whichever load read the T#.
+        let (source, heap) = match source {
+            Source::Indexed {
+                buffer,
+                offset,
+                load,
+            } => (
+                Source::Indexed {
+                    buffer,
+                    offset: offset % 32,
+                    load: 0,
+                },
+                Some((offset % 32, load)),
+            ),
+            s => (s, None),
+        };
+        if heap.is_some() && access != Access::Sample {
+            return Err(err(pc, "image written through a T# from an indexed table"));
+        }
         let bits = self.bits_textures.contains(&(srsrc, kind));
         let view = if view == View::Raw && bits {
             View::Bits
         } else {
             view
         };
-        let t = match self
-            .textures
-            .iter()
-            .position(|x| x.0 == srsrc && x.1 == kind && x.2 == source && x.4 == view)
-        {
+        let t = match self.textures.iter().position(|x| {
+            (x.0 == srsrc || heap.is_some()) && x.1 == kind && x.2 == source && x.4 == view
+        }) {
             Some(t) => t,
             None => {
+                if heap.is_some() && self.heap_slots().count() == MAX_HEAPS {
+                    return Err(err(pc, "too many T#s from indexed tables"));
+                }
                 self.textures.push((srsrc, kind, source, access, view));
                 self.textures.len() - 1
             }
         };
+        if let Some((phase, load)) = heap {
+            // The T# the load read picks the texture handle; its dwords 1 and 3
+            // stay in their SGPRs for the program to read.
+            self.textures[t].0 = srsrc;
+            self.s(srsrc + 1);
+            self.s(srsrc + 3);
+            let off = format!("hoff{load}");
+            self.regs.insert(off.clone());
+            self.regs.insert(format!("hnull{t}"));
+            let n = binding::TEXTURE_WORDS + 2 * t as u32;
+            self.line(&format!(
+                "{{ uint i = min(({off} - {phase}u) >> 5u, user[{n}] - 1u); t{t} = h{t}[i].t; hnull{t} = uint(i + 1u == user[{n}]); }}"
+            ));
+        }
         let entry = &mut self.textures[t];
         entry.3 = match (entry.3, access) {
             (a, b) if a == b => a,
@@ -64,6 +98,24 @@ impl<'a> Tx<'a> {
             (a, _) => a,
         };
         Ok(t)
+    }
+
+    /// Texture slots whose T# comes from a table indexed at run time.
+    pub(super) fn heap_slots(&self) -> impl Iterator<Item = usize> + '_ {
+        self.textures
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| matches!(t.2, Source::Indexed { .. }))
+            .map(|(i, _)| i)
+    }
+
+    /// Dword 1 (`k` 0) or 3 (`k` 1) of texture slot `t`'s T#.
+    pub(super) fn tword(&mut self, t: usize, k: u16) -> String {
+        if matches!(self.textures[t].2, Source::Indexed { .. }) {
+            self.s(self.textures[t].0 + 1 + 2 * k)
+        } else {
+            format!("user[{}]", binding::TEXTURE_WORDS + 2 * t as u32 + k as u32)
+        }
     }
 
     pub(super) fn mimg(&mut self, pc: usize, name: &str, m: &Mimg) -> Result<(), TranslateError> {
@@ -377,14 +429,14 @@ impl<'a> Tx<'a> {
         };
         if let Some(lod) = filter_lod {
             self.filters = true;
+            let tw = self.tword(t, 0);
             s = format!(
                 "float4 r; {{ uint4 sw = uint4(user[{w}], user[{}], user[{}], user[{}]); \
-                 if (filters8(sw)) r = sample8(t{t}, {coord}, {lod}, sw, user[{tw}]); \
+                 if (filters8(sw)) r = sample8(t{t}, {coord}, {lod}, sw, {tw}); \
                  else r = t{t}.sample(smp{sm}, {coord}{level}); }}",
                 w + 1,
                 w + 2,
                 w + 3,
-                tw = binding::TEXTURE_WORDS + 2 * t as u32,
             );
         }
         let (uv, slice) = match coord.split_once(", uint(") {
@@ -401,13 +453,12 @@ impl<'a> Tx<'a> {
             s = self.gather(pc, name, m, kind, t, sm, &coord, c, &raw, offset, lod)?;
         } else if coded && !get_lod {
             let lod = lod.or(deriv_lod).unwrap_or_else(|| "0.0f".into());
-            let tw = binding::TEXTURE_WORDS + 2 * t as u32;
+            let (t1, t3) = (self.tword(t, 0), self.tword(t, 1));
             s = format!(
-                "float4 r = sample_coded(t{t}, {slice}, {uv}, {lod}, uint4(user[{w}], user[{}], user[{}], user[{}]), user[{tw}], user[{}]);",
+                "float4 r = sample_coded(t{t}, {slice}, {uv}, {lod}, uint4(user[{w}], user[{}], user[{}], user[{}]), {t1}, {t3});",
                 w + 1,
                 w + 2,
                 w + 3,
-                tw + 1
             );
         } else if get_lod {
             // The LOD clamped to the sampler's range and the levels, then as
@@ -512,16 +563,15 @@ impl<'a> Tx<'a> {
             c[0],
             c[1],
             read = if coded {
-                let tw = binding::TEXTURE_WORDS + 2 * t as u32;
+                let (t1, t3) = (self.tword(t, 0), self.tword(t, 1));
                 format!(
-                    "gather_coded(t{t}, {}, gl, gx, gy, user[{}], {comp}u, user[{tw}], user[{}])",
+                    "gather_coded(t{t}, {}, gl, gx, gy, user[{}], {comp}u, {t1}, {t3})",
                     if slice.is_empty() {
                         "0u"
                     } else {
                         slice.trim_end_matches(", ")
                     },
                     w + 3,
-                    tw + 1
                 )
             } else {
                 format!(
@@ -660,7 +710,7 @@ impl<'a> Tx<'a> {
         if (coded || pck) && m.d16 {
             return Err(err(pc, format!("unsupported form of {name}")));
         }
-        let w = binding::TEXTURE_WORDS + 2 * t as u32;
+        let (t1, t3) = (self.tword(t, 0), self.tword(t, 1));
         // The `_pck` forms move the element's dwords, one VGPR per DMASK bit.
         let dwords = m.dmask.count_ones() as usize;
         if store {
@@ -703,7 +753,7 @@ impl<'a> Tx<'a> {
             } else {
                 String::new()
             };
-            let storable = format!("image_storable((user[{w}] >> 20) & 0x1ffu) && ");
+            let storable = format!("image_storable(({t1} >> 20) & 0x1ffu) && ");
             let (encode, when) = if pck {
                 ("image_pack", String::new())
             } else if coded {
@@ -713,7 +763,7 @@ impl<'a> Tx<'a> {
             };
             let when = format!("if ({when}{inside}) ");
             self.guard(&format!(
-                "{when}t{t}.write({encode}({elem}4({}), user[{w}]), {coord}, {lvl});{fence}",
+                "{when}t{t}.write({encode}({elem}4({}), {t1}), {coord}, {lvl});{fence}",
                 comps.join(", ")
             ));
         } else {
@@ -721,14 +771,14 @@ impl<'a> Tx<'a> {
                 format!("{elem}4 r = {elem}4(0); if ({inside}) r = t{t}.read({coord}, {lvl});");
             if pck {
                 let sgn = name.ends_with("_sgn");
-                write!(s, " r = image_unpack(r, user[{w}], {sgn});").unwrap();
+                write!(s, " r = image_unpack(r, {t1}, {sgn});").unwrap();
             } else if coded {
-                write!(s, " r = image_decode(r, user[{w}], user[{}]);", w + 1).unwrap();
+                write!(s, " r = image_decode(r, {t1}, {t3});").unwrap();
             } else {
                 if elem == "float" {
-                    write!(s, " r = image_srgb(r, user[{w}]);").unwrap();
+                    write!(s, " r = image_srgb(r, {t1});").unwrap();
                 }
-                write!(s, " r = image_sel(r, user[{w}], user[{}]);", w + 1).unwrap();
+                write!(s, " r = image_sel(r, {t1}, {t3});").unwrap();
             }
             let comps: Vec<usize> = if pck {
                 (0..dwords).collect()
@@ -896,8 +946,14 @@ impl<'a> Tx<'a> {
             TextureKind::Tex2d if one_d => ("0u".into(), "0u".into()),
             TextureKind::Tex2d => (h, "0u".into()),
         };
+        // A T# past the end of its table reads as zeros, sizes and levels too.
+        let levels = if matches!(self.textures[t].2, Source::Indexed { .. }) {
+            format!("hnull{t} != 0u ? 0u : t{t}.get_num_mip_levels()")
+        } else {
+            format!("t{t}.get_num_mip_levels()")
+        };
         let mut s = format!(
-            "uint l = {lod}; uint n = t{t}.get_num_mip_levels(); uint4 r = uint4(l < n ? uint3({w}, {y}, {z}) : uint3(0u), n);"
+            "uint l = {lod}; uint n = {levels}; uint4 r = uint4(l < n ? uint3({w}, {y}, {z}) : uint3(0u), n);"
         );
         let mut d = m.vdata as u16;
         for i in 0..4 {

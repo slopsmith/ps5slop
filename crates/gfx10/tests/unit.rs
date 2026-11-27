@@ -1132,6 +1132,54 @@ fn samplers_indexed_by_a_buffer_dword_resolve() {
 }
 
 #[test]
+fn a_sampler_built_by_arithmetic_on_constants_is_a_constant() {
+    let code = [
+        0x8F0E_9885, // s_lshl_b32 s14, 5, 24
+        0xBE8F_0B81, // s_brev_b32 s15, 1
+        0xB00C_0092, // s_movk_i32 s12, 0x92
+        0x920D_8C8C, // s_bfm_b32 s13, 12, 12
+        0xF080_0F08,
+        0x0064_0000, // image_sample v[0:3], v[0:1], s[16:23], s[12:15] dmask:0xf dim:2D
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 24, 24 << 1);
+    assert!(t.resources.contains(&Resource::Sampler {
+        slot: 0,
+        source: Source::Constant(vec![0x92, 0xFF_F000, 0x500_0000, 0x8000_0000]),
+    }));
+    compile(&t.msl);
+}
+
+#[test]
+fn a_texture_loaded_at_a_run_time_offset_is_picked_from_a_table() {
+    let code = [
+        0x7E04_0502, // v_readfirstlane_b32 s2, v2
+        0x8F02_8502, // s_lshl_b32 s2, s2, 5
+        0xF42C_0402,
+        0x0400_0040, // s_buffer_load_dwordx8 s[16:23], s[4:7], s2 offset:0x40
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xF080_0F08,
+        0x0064_0000, // image_sample v[0:3], v[0:1], s[16:23], s[12:15] dmask:0xf dim:2D
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 24, 24 << 1);
+    assert!(t.resources.contains(&Resource::Texture {
+        slot: 0,
+        source: Source::Indexed {
+            buffer: Box::new(Source::UserSgpr(4)),
+            offset: 0,
+            load: 0,
+        },
+        kind: TextureKind::Tex2d,
+        access: Access::Sample,
+        view: View::Sampled,
+    }));
+    assert!(t.msl.contains("constant Heap0* h0 [[buffer(17)]]"));
+    assert!(t.msl.contains("hoff2 = s2 + 64u;"));
+    compile(&t.msl);
+}
+
+#[test]
 fn a_descriptor_dword_masked_with_constants_through_another_register_keeps_its_origin() {
     let code = [
         0x876A_FF17,

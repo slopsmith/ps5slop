@@ -208,7 +208,7 @@ Drawing PS4 titles would need the driver's real packet builders, a gfx7 (GCN) de
 ## Known gaps
 
 - **NGG programs that build their own geometry** run as Metal mesh functions when they are mesh shaders (one input point per subgroup). Other NGG programs that use LDS (geometry shaders, culling vertex shaders) do not translate. Indexed mesh draws are skipped.
-- **Ray tracing** is emulated in software inside the shader (`image_bvh_intersect_ray` over the game's own BVH nodes, see [shaders.md](shaders.md)). That stays only while no title needs more; ray tracing is to move to Metal's ray tracing (acceleration structures built from the game's BVHs or rebuilt from their geometry), not to a better software traversal. Bindless hit shading (textures picked by a run-time index) does not translate.
+- **Ray tracing** is emulated in software inside the shader (`image_bvh_intersect_ray` over the game's own BVH nodes, see [shaders.md](shaders.md)). That stays only while no title needs more; ray tracing is to move to Metal's ray tracing (acceleration structures built from the game's BVHs or rebuilt from their geometry), not to a better software traversal.
 - Multi-draw indirect packets are counted, not drawn. GDS ordered append and GWS are not modelled. `RELEASE_MEM` data select 5 (GDS to memory) is ignored, and register sources and destinations of `COPY_DATA` and `WRITE_DATA` are dropped (and reported).
 - Depth swizzle modes have no equation, so depth-layout images that nothing rendered read as zeros. Stencil-only targets are not made.
 - Rendered pixels never reach guest memory, so a title that reads a render target on the CPU sees stale data.

@@ -16,7 +16,16 @@ pub(super) struct Bound {
     pub(super) samplers: Vec<(usize, Retained<ProtocolObject<dyn MTLSamplerState>>)>,
     /// Constant buffers: binding index, buffer and offset.
     constants: Vec<(usize, Retained<Buffer>, usize)>,
+    /// Tables of texture handles (`binding::HEAPS`): binding index, buffer
+    /// and offset.
+    heaps: Vec<(usize, Retained<Buffer>, usize)>,
+    /// Textures programs reach only through `heaps`.
+    resident: Vec<Retained<Texture>>,
 }
+
+/// Entries of a table of T#s a program indexes at run time that are bound;
+/// an index past them reads nothing.
+const MAX_HEAP_ENTRIES: usize = 1 << 14;
 
 /// Where a program's resources are bound: one stage of an encoder.
 #[derive(Clone, Copy)]
@@ -64,8 +73,13 @@ impl Slot<'_> {
 
     /// Makes `b` resident for programs that reach it only through GPU addresses.
     fn reach(self, b: &Buffer) {
-        let r = ProtocolObject::from_ref(b);
-        let usage = MTLResourceUsage::Read | MTLResourceUsage::Write;
+        self.make_resident(
+            ProtocolObject::from_ref(b),
+            MTLResourceUsage::Read | MTLResourceUsage::Write,
+        );
+    }
+
+    fn make_resident(self, r: &ProtocolObject<dyn MTLResource>, usage: MTLResourceUsage) {
         match self {
             Slot::Vertex(e) => e.useResource_usage_stages(r, usage, MTLRenderStages::Vertex),
             Slot::Mesh(e) => e.useResource_usage_stages(r, usage, MTLRenderStages::Mesh),
@@ -137,7 +151,7 @@ impl Metal {
                         .collect()
                 })
             }
-            Source::Scaled { .. } => None,
+            Source::Scaled { .. } | Source::Indexed { .. } => None,
             Source::Constant(v) => v.get(..n).map(<[u32]>::to_vec),
         }
     }
@@ -158,6 +172,8 @@ impl Metal {
             textures: Vec::new(),
             samplers: Vec::new(),
             constants: Vec::new(),
+            heaps: Vec::new(),
+            resident: Vec::new(),
         };
         if program.translated.gds {
             bound.gds = Some(self.gds_buffer()?);
@@ -187,6 +203,30 @@ impl Metal {
         }
         for r in &program.translated.resources {
             match *r {
+                Resource::Texture {
+                    slot,
+                    source:
+                        Source::Indexed {
+                            ref buffer, offset, ..
+                        },
+                    kind,
+                    view,
+                    ..
+                } => {
+                    let index = binding::HEAPS as usize + bound.heaps.len();
+                    let (buffer, at, textures) =
+                        self.texture_heap(host, user, buffer, offset, kind, view)?;
+                    let count = textures.len() as u32;
+                    self.note(|| {
+                        format!(
+                            "program {:#x} t{slot} {kind:?} from a table of {count}",
+                            program.address
+                        )
+                    });
+                    bound.heaps.push((index, buffer, at));
+                    bound.resident.extend(textures);
+                    bound.texture_words.push((slot as usize, [count, 0]));
+                }
                 Resource::Texture {
                     slot,
                     ref source,
@@ -248,19 +288,9 @@ impl Metal {
                         }
                     } else if image.address == 0 || image.kind < 8 {
                         self.null_texture(kind)
-                    } else if image_format(image.format).is_none()
-                        && view == View::Sampled
-                        && program.coded_textures >> slot & 1 == 0
-                    {
-                        None
-                    } else if view == View::Bits {
-                        self.image(host, image, kind)
-                            .and_then(|t| bits_view(t, image.format))
-                    } else if view == View::Raw || program.coded_textures >> slot & 1 != 0 {
-                        self.image(host, image, kind).and_then(without_srgb)
                     } else {
-                        self.image(host, image, kind)
-                            .and_then(|t| self.swizzled(t, channel_selects(&image)))
+                        let coded = program.coded_textures >> slot & 1 != 0;
+                        self.read_view(host, image, kind, view, coded)
                     };
                     let Some(tex) = tex else {
                         let how = match access {
@@ -339,6 +369,97 @@ impl Metal {
         Some(bound)
     }
 
+    /// A texture slot's view of `image` for sampling or reading; `coded`
+    /// for a format the program converts.
+    fn read_view(
+        &mut self,
+        host: &dyn Host,
+        image: Image,
+        kind: TextureKind,
+        view: View,
+        coded: bool,
+    ) -> Option<Retained<Texture>> {
+        if image_format(image.format).is_none() && view == View::Sampled && !coded {
+            None
+        } else if view == View::Bits {
+            self.image(host, image, kind)
+                .and_then(|t| bits_view(t, image.format))
+        } else if view == View::Raw || coded {
+            self.image(host, image, kind).and_then(without_srgb)
+        } else {
+            self.image(host, image, kind)
+                .and_then(|t| self.swizzled(t, channel_selects(&image)))
+        }
+    }
+
+    /// The table of texture handles for a slot whose T#s come from the
+    /// buffer the V# at `buffer` describes, `phase` bytes past a multiple of
+    /// 32 (see `binding::HEAPS`): its buffer and offset, and the textures in
+    /// it. T#s the slot's float view cannot read (integer formats, formats
+    /// the program would convert, layouts not supported) read as nothing.
+    fn texture_heap(
+        &mut self,
+        host: &dyn Host,
+        user: &[u32],
+        buffer: &Source,
+        phase: u32,
+        kind: TextureKind,
+        view: View,
+    ) -> Option<(Retained<Buffer>, usize, Vec<Retained<Texture>>)> {
+        let v = self.descriptor(host, user, buffer, 4)?;
+        let base = v[0] as u64 | (v[1] as u64 & 0xFFFF) << 32;
+        let stride = (v[1] >> 16 & 0x3FFF) as u64;
+        let bytes = if stride == 0 {
+            v[2] as u64
+        } else {
+            v[2] as u64 * stride
+        };
+        let entries = (bytes.saturating_sub(phase as u64) / 32) as usize;
+        if entries > MAX_HEAP_ENTRIES {
+            diag::problems::record(
+                diag::problems::Kind::UnsupportedFormat,
+                format!("table of {entries} T#s"),
+                format!("{base:#x}"),
+            );
+        }
+        let entries = entries.min(MAX_HEAP_ENTRIES);
+        let mut raw = vec![0u8; entries * 32];
+        if !host.read(base + phase as u64, &mut raw) {
+            raw.fill(0);
+        }
+        let null = self.null_texture(kind)?;
+        let mut textures = Vec::with_capacity(entries + 1);
+        for e in raw.as_chunks::<32>().0 {
+            let d: Vec<u32> = e
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| u32::from_le_bytes(*c))
+                .collect();
+            let image = Image::read(&d);
+            let float = image_format(image.format).is_some_and(|f| number(f.0) == Number::Float);
+            let t = if image.address == 0 || image.kind < 8 || !float {
+                None
+            } else {
+                self.read_view(host, image, kind, view, false)
+            };
+            textures.push(t.unwrap_or_else(|| null.clone()));
+        }
+        textures.push(null);
+        let (table, at) = self.scratch(8 * textures.len())?;
+        // SAFETY: `scratch` gave 8 bytes per texture at `at`, which no GPU
+        // work uses yet.
+        let out = unsafe { table.contents().as_ptr().cast::<u8>().add(at) };
+        for (i, t) in textures.iter().enumerate() {
+            // SAFETY: an `MTLResourceID` is one 64-bit handle, which Metal
+            // reads from an argument buffer as a texture.
+            let id: u64 = unsafe { std::mem::transmute(t.gpuResourceID()) };
+            // SAFETY: as above, `i` is below the textures given room for.
+            unsafe { out.add(8 * i).cast::<u64>().write_unaligned(id) };
+        }
+        Some((table, at, textures))
+    }
+
     pub(super) fn apply(enc: Slot, bound: &Bound, user: &[u32]) {
         let at = binding::SAMPLER_WORDS as usize;
         let mut data = [0u32; binding::USER_WORDS as usize];
@@ -383,6 +504,12 @@ impl Metal {
         }
         for (index, b, offset) in &bound.constants {
             enc.buffer(b, *offset, *index);
+        }
+        for (index, b, offset) in &bound.heaps {
+            enc.buffer(b, *offset, *index);
+        }
+        for t in &bound.resident {
+            enc.make_resident(ProtocolObject::from_ref(&**t), MTLResourceUsage::Read);
         }
     }
 

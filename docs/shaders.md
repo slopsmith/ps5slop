@@ -122,15 +122,16 @@ Where each T#, S# and constant-buffer base comes from is found by a forward data
 
 - user SGPRs, followed through moves;
 - memory reached by a chain of `s_load_dword*` with immediate offsets from a pointer in user SGPRs (`Source::Memory`);
-- `s_buffer_load_dword*` through a V# found that way, at an immediate offset plus, optionally, a dword shifted left (`Source::Buffer`, `Source::Scaled`), which is how some titles pick a sampler by index;
-- dwords built from constants (`s_mov`, `s_movk`, `s_bfm_b32/b64`; a 32-bit literal in `s_mov_b64` is taken as zero-extended).
+- `s_buffer_load_dword*` through a V# found that way, at an immediate offset plus, optionally, a dword (a user SGPR, or one loaded from memory or a buffer) shifted left (`Source::Buffer`, `Source::Scaled`), which is how some titles pick a sampler by index;
+- `s_buffer_load_dword*` through such a V# at an offset known only at run time (`Source::Indexed`): a table of descriptors indexed per wave, see below;
+- dwords built from constants (`s_mov`, `s_movk`, `s_bfm_b32/b64`, and 32-bit scalar arithmetic, shifts and bit operations on constants, folded; a 32-bit literal in `s_mov_b64` is taken as zero-extended).
 
 VCC is tracked too, and forgotten only after instructions that can write it (VOPC without an explicit destination, carry ops, explicit VCC destinations, lane reads into VCC; not `v_cmpx`, which writes only EXEC on GFX10). A register whose origin differs between paths, or that anything else wrote, is unknown, and an image instruction using it fails translation.
 
 - **Masked descriptor dwords keep their origin.** An OR or AND of a descriptor dword with anything that is not itself a descriptor dword (a constant, a run-time mask, through VCC or in place) keeps the dword's origin, and the changed bits are dropped: the descriptor is bound as it is in memory. Titles set per-quad sampler bits or rewrite a T#'s type field this way, and failing the whole program skipped its draws; an approximate sample is closer than none. Risk: a masked value used as an index would keep its unmasked origin.
 - **Samplers get one slot per distinct source**, whatever register they were loaded into, since Metal has only 16 sampler slots and some programs load the same samplers into several registers. Textures keep per-register slots.
 - **Integer textures**: slot numbers do not depend on the integer masks, so the renderer can translate once, read the descriptors, and translate again with `uint_textures`/`sint_textures`.
-- Textures picked by a run-time index (bindless) are not supported.
+- **T#s from tables indexed at run time** (GTA VI loads them by a light's or decal's index, or by `v_readfirstlane` in a waterfall loop) are read, not written. The renderer binds one table of Metal texture handles per slot (`binding::HEAPS`, Metal 3 argument buffers holding `MTLResourceID`s): one entry per 32 bytes of the buffer the V# describes, up to `num_records` and at most 16,384 entries, plus a last one that reads as nothing. The load keeps the offset it read at, and before each image instruction the program picks `t{slot}` from the table by it, reading the T#'s dwords 1 and 3 from the SGPRs it loaded. An offset past the table, or a T# the slot cannot read (an integer format, a format Metal lacks, a layout not supported), reads zeros and sizes of 0, as a T# past the V#'s range does on hardware (measured with `image_load`, `image_sample_l`, `image_sample_lz`, `image_gather4_lz` and `image_get_resinfo` through a table indexed by the group id). Assumed: an offset that is not the T# phase plus a multiple of 32 does not occur. Not done: samplers from such tables, and stores and atomics through them. Every texture of a table is created and made resident for each dispatch that binds it; what that costs on a large table is not measured.
 
 ### Constant buffers
 

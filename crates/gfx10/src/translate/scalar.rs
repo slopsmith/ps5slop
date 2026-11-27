@@ -659,6 +659,14 @@ impl<'a> Tx<'a> {
             _ => return Err(err(pc, format!("unsupported instruction {name}"))),
         };
         let dests = sdata..sdata + n;
+        if self.heap_loads.contains(&pc) {
+            let so = if soffset == src::NULL {
+                "0u".to_string()
+            } else {
+                self.s(soffset)
+            };
+            self.line(&format!("hoff{pc} = {so} + {}u;", offset as u32));
+        }
         if let Some(read) = &self.read_anywhere
             && dests.end <= SGPR_COUNT
             && !dests.clone().any(|r| read.contains(&r))
