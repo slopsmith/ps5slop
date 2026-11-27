@@ -125,6 +125,7 @@ pub static STUBS: &[Function] = &[
     f("sceAjmBatchJobDecode", job_decode),
     f("sceAjmBatchJobDecodeSplit", job_decode_split),
     f("sceAjmBatchJobSetGaplessDecode", job_set_gapless),
+    f("sceAjmBatchJobClearContext", job_clear_context),
     f("sceAjmBatchJobGetCodecInfo", job_codec_info),
     f("sceAjmBatchStart", batch_start),
     f("sceAjmBatchWait", batch_wait),
@@ -236,6 +237,23 @@ fn job_set_gapless(env: &mut Env) -> Result<Outcome, CallError> {
         return ret(ERROR_JOB_CREATION);
     }
     write_status(env, env.arg(4), status(env.arg(1)))?;
+    ret(0)
+}
+
+/// `sceAjmBatchJobClearContext(info, instance, result)`: the instance starts
+/// a new stream with its flags kept.
+fn job_clear_context(env: &mut Env) -> Result<Outcome, CallError> {
+    if !append_job(env, env.arg(0), JOB_CONTROL_SIZE)? {
+        return ret(ERROR_JOB_CREATION);
+    }
+    let instance = env.arg(1) as u32;
+    if let Some(inst) = INSTANCES.lock().unwrap().get_mut(&instance) {
+        *inst = Instance {
+            flags: inst.flags,
+            ..Default::default()
+        };
+    }
+    write_status(env, env.arg(2), status(env.arg(1)))?;
     ret(0)
 }
 
@@ -474,26 +492,22 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_split_job_decodes_the_joined_input_across_its_outputs() {
+    const AREA: u64 = 0x40_0000;
+    const BATCH: u64 = AREA;
+    const INFO: u64 = AREA + 0x1000;
+    const LISTS: u64 = AREA + 0x1100;
+    const RESULT: u64 = AREA + 0x1200;
+    const ID: u64 = AREA + 0x1300;
+    const STACK: u64 = AREA + 0x2000;
+    const INPUT: u64 = AREA + 0x4000;
+    const OUTPUT: u64 = AREA + 0x10_0000;
+
+    /// Runs `test` with an `Env` over 2 MiB of guest memory at [`AREA`].
+    fn with_env(test: impl FnOnce(&mut Env, &memory::Memory)) {
         use crate::{Cpu, Hle, Kernel, Thread, TlsTemplate, Vfs};
         use memory::{Memory, PAGE_SIZE, Prot};
-        const AREA: u64 = 0x40_0000;
-        const BATCH: u64 = AREA;
-        const INFO: u64 = AREA + 0x1000;
-        const LISTS: u64 = AREA + 0x1100;
-        const RESULT: u64 = AREA + 0x1200;
-        const ID: u64 = AREA + 0x1300;
-        const STACK: u64 = AREA + 0x2000;
-        const INPUT: u64 = AREA + 0x4000;
-        const OUTPUT: u64 = AREA + 0x10_0000;
-        let mp3 = include_bytes!("ajm/testdata/sine-1khz.mp3");
-        let mut whole = Instance::default();
-        let expected = decode_mp3(&mut whole, mp3, 1 << 20).pcm;
-
         let mem = Memory::new(1 << 40).unwrap();
         mem.map(AREA, 0x20_0000, Prot::RW, "test").unwrap();
-        mem.write(INPUT, mp3).unwrap();
         let hle = Hle::new();
         hle.map(&mem).unwrap();
         let kernel = Kernel::new(
@@ -514,43 +528,72 @@ mod tests {
                 tcb: AREA + PAGE_SIZE,
             },
         };
-        let call = |env: &mut Env, f: crate::HostFn, args: &[u64]| {
-            for (k, &a) in args.iter().enumerate() {
-                env.cpu.regs[[7, 6, 2, 1, 8, 9][k]] = a;
-            }
-            assert!(matches!(f(env), Ok(Outcome::Return(0))));
-        };
-        call(&mut env, instance_create, &[0, u64::from(CODEC_MP3), 0, ID]);
-        call(&mut env, batch_initialize, &[BATCH, 0x1000, INFO]);
-        let id = mem.read_u64(ID).unwrap() & 0xFFFF_FFFF;
-        let half = mp3.len() as u64 / 2;
-        let out_half = expected.len() as u64 / 2 + 6;
-        for (k, (at, len)) in [
-            (INPUT, half),
-            (INPUT + half, mp3.len() as u64 - half),
-            (OUTPUT, out_half),
-            (OUTPUT + 0x8_0000, 1 << 18),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            mem.write_u64(LISTS + 16 * k as u64, at).unwrap();
-            mem.write_u64(LISTS + 16 * k as u64 + 8, len).unwrap();
-        }
-        mem.write_u64(STACK + 8, RESULT).unwrap();
-        env.cpu.regs[4] = STACK;
-        call(
-            &mut env,
-            job_decode_split,
-            &[INFO, id, LISTS, 2, LISTS + 32, 2],
-        );
+        test(&mut env, &mem);
+    }
 
-        let mut out = vec![0u8; expected.len()];
-        mem.read(OUTPUT, &mut out[..out_half as usize]).unwrap();
-        mem.read(OUTPUT + 0x8_0000, &mut out[out_half as usize..])
-            .unwrap();
-        assert!(out == expected, "split output differs from a whole decode");
-        let written = mem.read_u64(RESULT + 8).unwrap() >> 32;
-        assert_eq!(written as usize, expected.len());
+    fn call(env: &mut Env, f: crate::HostFn, args: &[u64]) {
+        for (k, &a) in args.iter().enumerate() {
+            env.cpu.regs[[7, 6, 2, 1, 8, 9][k]] = a;
+        }
+        assert!(matches!(f(env), Ok(Outcome::Return(0))));
+    }
+
+    #[test]
+    fn clearing_the_context_drops_a_partial_frame() {
+        with_env(|env, mem| {
+            call(env, instance_create, &[0, u64::from(CODEC_MP3), 7, ID]);
+            call(env, batch_initialize, &[BATCH, 0x1000, INFO]);
+            let id = mem.read_u64(ID).unwrap() & 0xFFFF_FFFF;
+            INSTANCES
+                .lock()
+                .unwrap()
+                .get_mut(&(id as u32))
+                .unwrap()
+                .pending = vec![1, 2, 3];
+            call(env, job_clear_context, &[INFO, id, RESULT]);
+            let instances = INSTANCES.lock().unwrap();
+            let inst = &instances[&(id as u32)];
+            assert!(inst.pending.is_empty());
+            assert_eq!(inst.flags, 7);
+            assert_eq!(mem.read_u64(RESULT).unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn a_split_job_decodes_the_joined_input_across_its_outputs() {
+        let mp3 = include_bytes!("ajm/testdata/sine-1khz.mp3");
+        let mut whole = Instance::default();
+        let expected = decode_mp3(&mut whole, mp3, 1 << 20).pcm;
+        with_env(|env, mem| {
+            mem.write(INPUT, mp3).unwrap();
+            call(env, instance_create, &[0, u64::from(CODEC_MP3), 0, ID]);
+            call(env, batch_initialize, &[BATCH, 0x1000, INFO]);
+            let id = mem.read_u64(ID).unwrap() & 0xFFFF_FFFF;
+            let half = mp3.len() as u64 / 2;
+            let out_half = expected.len() as u64 / 2 + 6;
+            for (k, (at, len)) in [
+                (INPUT, half),
+                (INPUT + half, mp3.len() as u64 - half),
+                (OUTPUT, out_half),
+                (OUTPUT + 0x8_0000, 1 << 18),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                mem.write_u64(LISTS + 16 * k as u64, at).unwrap();
+                mem.write_u64(LISTS + 16 * k as u64 + 8, len).unwrap();
+            }
+            mem.write_u64(STACK + 8, RESULT).unwrap();
+            env.cpu.regs[4] = STACK;
+            call(env, job_decode_split, &[INFO, id, LISTS, 2, LISTS + 32, 2]);
+
+            let mut out = vec![0u8; expected.len()];
+            mem.read(OUTPUT, &mut out[..out_half as usize]).unwrap();
+            mem.read(OUTPUT + 0x8_0000, &mut out[out_half as usize..])
+                .unwrap();
+            assert!(out == expected, "split output differs from a whole decode");
+            let written = mem.read_u64(RESULT + 8).unwrap() >> 32;
+            assert_eq!(written as usize, expected.len());
+        });
     }
 }
