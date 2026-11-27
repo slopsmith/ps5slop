@@ -8,6 +8,7 @@ pub static STUBS: &[Function] = &[
     f("sceAcmContextDestroy", ok),
     f("sceAcmBatchStartBuffers", ok),
     f("sceAcmBatchWait", ok),
+    f("#KovqaFbmtsM", ok),
 ];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {

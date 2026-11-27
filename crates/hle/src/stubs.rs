@@ -568,6 +568,13 @@ pub static STUBS: &[Function] = &[
         "libSceNpEntitlementAccess",
         "sceNpEntitlementAccessInitialize",
     ),
+    Function {
+        library: "libSceNpEntitlementAccess",
+        name: "#y7JD1gfwyfA",
+        func: write_zero_u32::<0>,
+    },
+    zero("libSceNpUniversalDataSystem", "#lbPlT4+QVcE"),
+    zero("libSceFont", "sceFontCharacterGetBidiLevel"),
     id("libSceNpManager", "sceNpRegisterStateCallbackA"),
     zero("libSceNpManager", "sceNpCheckCallback"),
     zero("libSceNpManager", "sceNpSetNpTitleId"),
