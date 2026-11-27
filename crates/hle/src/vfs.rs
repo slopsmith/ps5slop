@@ -332,13 +332,15 @@ impl Vfs {
             if !(rest.is_empty() || rest.starts_with('/')) {
                 return None;
             }
-            let rest = Path::new(rest.trim_start_matches('/'));
-            if rest
-                .components()
-                .any(|c| !matches!(c, Component::Normal(_)))
-            {
-                return None;
+            let mut parts = PathBuf::new();
+            for c in Path::new(rest).components() {
+                match c {
+                    Component::Normal(part) => parts.push(part),
+                    Component::RootDir | Component::CurDir => {}
+                    Component::ParentDir | Component::Prefix(_) => return None,
+                }
             }
+            let rest = parts.as_path();
             Some(match &m.backing {
                 Backing::Host(host) => Target::Host(host.join(rest), m.writable),
                 Backing::Image(fs) => {
@@ -463,6 +465,10 @@ mod tests {
         assert_eq!(
             get(b"/data/log.txt"),
             Some(("/saves/X/log.txt".into(), true))
+        );
+        assert_eq!(
+            get(b"/app0/./data/./x.rpf"),
+            Some(("/titles/X/data/x.rpf".into(), false))
         );
         assert_eq!(get(b"/app0/../etc/passwd"), None);
         assert_eq!(get(b"/data/../../etc"), None);
