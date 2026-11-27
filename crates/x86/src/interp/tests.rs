@@ -711,3 +711,17 @@ fn lddqu_loads_from_unaligned_addresses() {
     assert_eq!(cpu.xmm[2], [q(0), q(1), 0, 0]);
     assert_eq!(cpu.xmm[3], [q(0), q(1), q(2), q(3)]);
 }
+
+#[test]
+fn cache_line_write_backs_change_nothing() {
+    let (mut cpu, mem) = machine(
+        "mov ebx, 0x30000; clwb [rbx]; clflushopt [rbx + 0x40]",
+        &[
+            0xbb, 0x00, 0x00, 0x03, 0x00, 0x66, 0x0f, 0xae, 0x33, 0x66, 0x0f, 0xae, 0x7b, 0x40,
+        ],
+    );
+    let before = cpu.clone();
+    steps(&mut cpu, &mem, 3);
+    assert_eq!(cpu.regs[RBX], DATA);
+    assert_eq!(cpu.rflags, before.rflags);
+}

@@ -981,6 +981,7 @@ impl Ctx<'_> {
                 (5..=7, Loc::Reg(_)) | (7, Loc::Mem(_)) => {}
                 _ => return Ok(false),
             },
+            (Pfx::P66, 0xae) if matches!((i.ext(), self.rm()), (6 | 7, Loc::Mem(_))) => {}
             _ => return Ok(false),
         }
         Ok(true)

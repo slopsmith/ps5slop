@@ -246,6 +246,9 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         {
             (false, none)
         }
+        (Map::M0F, 0xae) if i.opsize_prefix && matches!(i.ext(), 6 | 7) && i.mem.is_some() => {
+            (false, none)
+        }
         (Map::M0F, 0xa3 | 0xab | 0xb3 | 0xbb) if i.osize() >= 4 => (false, both),
         (Map::M0F, 0xba) if i.ext() >= 4 && i.osize() >= 4 => (false, both),
         (Map::Primary, 0x99) => (false, none),
@@ -837,7 +840,7 @@ impl Translator {
             (Map::Primary, 0xa4..=0xa7 | 0xaa..=0xaf) => self.string(i),
             (Map::M0F38, 0xf0 | 0xf1) => self.movbe_crc32(i, next),
             (Map::M0F, 0xae) => {
-                if i.ext() == 6 {
+                if i.ext() == 6 && i.mem.is_none() {
                     self.a.dmb(0xb);
                 }
             }

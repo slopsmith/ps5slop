@@ -579,6 +579,7 @@ impl OpcodeKey {
                     (6, false, 0) => "mfence",
                     (7, false, 0) => "sfence",
                     (7, true, 0) => "clflush",
+                    (6, true, 1) => "clwb",
                     (7, true, 1) => "clflushopt",
                     _ => return None,
                 },

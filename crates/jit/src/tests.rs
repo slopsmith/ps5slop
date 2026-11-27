@@ -1678,6 +1678,15 @@ const MXCSR: &[u8] = &[
 ];
 
 #[test]
+fn cache_line_write_backs_translate() {
+    assert_all_translated(&[
+        0x66, 0x0f, 0xae, 0x33, // clwb byte ptr [rbx]
+        0x66, 0x0f, 0xae, 0x7b, 0x40, // clflushopt byte ptr [rbx + 0x40]
+        0xff, 0xd5, // call rbp
+    ]);
+}
+
+#[test]
 fn mxcsr_loads_and_stores_match_the_interpreter() {
     assert_all_translated(MXCSR);
     let mut data = vec![0u8; 0x60];
