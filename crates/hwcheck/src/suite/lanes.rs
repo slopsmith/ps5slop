@@ -1,8 +1,9 @@
 //! Tests of vector instructions that read or write other lanes or registers
 //! picked at run time: `v_readlane_b32`, `v_readfirstlane_b32`,
 //! `v_writelane_b32`, `v_permlane16_b32`, `v_permlanex16_b32`,
-//! `v_swap_b32`, the `v_movrel*` family and `ds_swizzle_b32`, each with
-//! several lane selects, EXEC masks or M0 values set just before it.
+//! `v_swap_b32`, the `v_movrel*` and `s_movrel*` families and
+//! `ds_swizzle_b32`, each with several lane selects, EXEC masks or M0 values
+//! set just before it.
 
 use gfx10::opinfo::{OpInfo, by_name};
 
@@ -180,6 +181,47 @@ pub fn cases() -> Vec<Case> {
         ));
     }
     out.extend(swizzles());
+    out.extend(sgpr_movrels());
+    out
+}
+
+/// `s_movrel*` with s24 to s35 and VCC holding distinct values; v10 and v11
+/// show the registers the move read or wrote. VCC is a lane mask again
+/// before the mask is stored, since lanes keep only their own mask bit.
+fn sgpr_movrels() -> Vec<Case> {
+    const VCC_LO: u32 = 106;
+    // v_cmp_ne_u32_e64 vcc, 0, v7, as the program's prologue sets it.
+    const VCC_FROM_V7: [u32; 2] = [0xD4C5_006A, 0x0002_0E80];
+    let mut values: Vec<u32> = (0..12).flat_map(|i| s_mov(24 + i, 0x1000 + i)).collect();
+    values.extend(s_mov(S22, 0xABCD_0022));
+    values.extend(s_mov(S23, 0xABCD_0023));
+    values.extend(s_mov(VCC_LO, 0x5A5A_0106));
+    let sop1 = |name: &str, sdst: u32, ssrc0: u32| {
+        let op = by_name(name).expect("in the opcode table");
+        vec![0xBE80_0000 | sdst << 16 | (op.code as u32) << 8 | ssrc0]
+    };
+    let cases: [(&str, u32, u32, u32, [u32; 2]); 10] = [
+        ("s_movrels_b32", SDST, 24, 0, [SDST, SDST]),
+        ("s_movrels_b32", SDST, 24, 3, [SDST, SDST]),
+        ("s_movrels_b32", SDST, 100, 6, [SDST, SDST]),
+        ("s_movrels_b64", SDST, 24, 4, [SDST, SDST + 1]),
+        ("s_movreld_b32", 24, S22, 0, [24, 25]),
+        ("s_movreld_b32", 24, S22, 3, [27, 24]),
+        ("s_movreld_b64", 24, S22, 4, [28, 29]),
+        ("s_movreld_b64", 100, S22, 6, [VCC_LO, VCC_LO + 1]),
+        ("s_movrelsd_2_b32", 24, 26, 5 << 16 | 2, [29, 28]),
+        ("s_movrelsd_2_b32", 24, 26, 1 << 16 | 7, [25, 33]),
+    ];
+    let mut out = Vec::new();
+    for (name, sdst, ssrc0, m0, [a, b]) in cases {
+        out.extend(test(
+            name,
+            format!("m0 {m0:#x}, dst {sdst}, src {ssrc0}"),
+            [values.clone(), s_mov(M0, m0)].concat(),
+            sop1(name, sdst, ssrc0),
+            [&[v_mov(VDST, a), v_mov(VDST + 1, b)][..], &VCC_FROM_V7].concat(),
+        ));
+    }
     out
 }
 
@@ -287,6 +329,17 @@ mod tests {
         assert_eq!(
             text("ds_swizzle_b32", "rotate right 5 mask 3"),
             "ds_swizzle_b32 v10, v1 offset:swizzle(ROTATE,1,5)"
+        );
+        assert_eq!(
+            text("s_movrelsd_2_b32", "m0 0x50002, dst 24, src 26"),
+            "s_movrelsd_2_b32 s24, s26"
+        );
+        assert_eq!(
+            cases
+                .iter()
+                .filter(|c| c.opcode.starts_with("s_movrel"))
+                .count(),
+            10
         );
         assert_eq!(
             cases

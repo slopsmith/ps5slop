@@ -51,6 +51,7 @@ The oracle is `llvm-mc --disassemble -mcpu=gfx1013` from the dev shell; `tests/l
 - Cross-lane instructions map to Metal's quad and SIMD-group functions: DPP (quad permutations, row shifts and rotates, mirrors, `row_share`, `row_xmask`, DPP8), `v_permlane16`/`permlanex16`, `ds_bpermute_b32`, `ds_swizzle_b32`, and `v_readlane` of a constant lane all become `quad_*` or `simd_shuffle`/`simd_broadcast` within the 32-lane Metal SIMD group. Rows of 16 line up with the hardware's. Outside lockstep programs nothing crosses lane 31.
 - `ds_swizzle_b32` follows the ISA guide's pseudo-code in all four modes (quad permutation, and/or/xor bitmask, rotate with its mask, FFT), each within groups of 32 lanes; a lane whose source lane is inactive reads 0. All measured on gfx1033, also with inactive source lanes and in a lockstep program. The guide's rotate examples with a mask do not fit its pseudo-code; the hardware follows the pseudo-code.
 - `v_writelane`/`v_readlane` with a constant lane that the program writes first are SGPR spills: one variable per (register, lane).
+- `s_movrels`, `s_movreld` and `s_movrelsd_2` index SGPRs by M0 through a `switch` over s0 to s105 and VCC, the range the ISA guide allows; other indices read 0 and write nothing. An indexed write ends what the source pass knows about every SGPR. Measured on gfx1033, VCC included.
 
 ### Lockstep waves
 
@@ -203,7 +204,7 @@ Image loads and stores follow the hardware's conversions, measured with the hard
 `crates/hwcheck` checks translated instructions against a real AMD GPU. Each test is one program around one instruction, over many lanes or waves of operands: edge cases of each operand's type paired with each other, then seeded random values. `ps5slop-hwcheck gen` builds the suites (`crates/hwcheck/src/suite/`):
 
 - Vector ALU: every VOP1, VOP2, VOPC, VOP3 and VOP3P opcode with plain operands, in its own encoding, as VOP3, with neg and abs, clamp and omod, op_sel, DPP16, DPP8, SDWA, a literal and inline constants, and float instructions under each float mode (`FLOAT_MODE` rounding and denormals, IEEE mode, DX10 clamp). Each lane stores its result and its own bit of the mask written and of EXEC, since masks are per thread outside lockstep programs.
-- Lane-crossing: `v_readlane`, `v_writelane`, `v_readfirstlane` under several EXEC masks, `v_permlane16`/`x16`, `v_swap_b32`, the `v_movrel*` family, `ds_swizzle_b32` in every mode.
+- Lane-crossing: `v_readlane`, `v_writelane`, `v_readfirstlane` under several EXEC masks, `v_permlane16`/`x16`, `v_swap_b32`, the `v_movrel*` and `s_movrel*` families, `ds_swizzle_b32` in every mode.
 - Scalar ALU (SOP1, SOP2, SOPC, SOPK) and scalar loads, including buffer loads through descriptors of varied size, stride and out-of-bounds mode; one record per wave, with SCC.
 - LDS: every DS load, store, atomic, two-address form and permute.
 - Vector memory: MUBUF, MTBUF, GLOBAL and FLAT loads, stores and atomics, over buffer descriptors of varied format, stride, size, swizzle, destination select and out-of-bounds mode. Stores are compared as the memory they leave.

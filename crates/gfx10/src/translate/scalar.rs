@@ -21,6 +21,9 @@ impl<'a> Tx<'a> {
         lit: Option<u32>,
     ) -> Result<(), TranslateError> {
         let b64 = name.ends_with("_b64");
+        if name.starts_with("s_movrel") {
+            return self.sgpr_movrel(pc, name, sdst, s0, lit);
+        }
         if name == "s_cmov_b32" {
             let a = self.src32(s0, lit, pc)?;
             self.regs.insert("scc".into());
@@ -206,6 +209,76 @@ impl<'a> Tx<'a> {
         } else {
             self.line(&format!("{d} = {e};"));
         }
+        Ok(())
+    }
+
+    // M0 indexes s0 to s105 and VCC; the ISA guide calls indices past them
+    // illegal, and here they read 0 and write nothing.
+    fn sgpr_movrel(
+        &mut self,
+        pc: usize,
+        name: &str,
+        sdst: u16,
+        s0: u16,
+        lit: Option<u32>,
+    ) -> Result<(), TranslateError> {
+        const LAST: u16 = 107;
+        let words = if name.ends_with("_b64") { 2 } else { 1 };
+        let m0 = self.s(124);
+        let (from, to) = if name == "s_movrelsd_2_b32" {
+            (
+                format!("({m0} & 0x3ffu)"),
+                format!("(({m0} >> 16) & 0x3ffu)"),
+            )
+        } else {
+            (m0.clone(), m0)
+        };
+        let indexed_src = name != "s_movreld_b32" && name != "s_movreld_b64";
+        let indexed_dst = name != "s_movrels_b32" && name != "s_movrels_b64";
+        if (indexed_src && s0 + words - 1 > LAST) || (indexed_dst && sdst + words - 1 > LAST) {
+            return Err(err(pc, format!("{name} indexing past VCC")));
+        }
+        let mut stmt = String::from("{ ");
+        let mut values = Vec::new();
+        for k in 0..words {
+            let value = if indexed_src {
+                let cases: String = (0..=LAST)
+                    .map(|c| format!("case {c}u: mv{k} = {}; break; ", self.s(c)))
+                    .collect();
+                format!("switch ({from} + {}u) {{ {cases}default: break; }}", s0 + k)
+            } else if words == 2 {
+                format!("({}) >> {}", self.src64(s0, lit, pc)?, 32 * k)
+            } else {
+                self.src32(s0, lit, pc)?
+            };
+            if indexed_src {
+                write!(stmt, "uint mv{k} = 0u; {value} ").unwrap();
+            } else {
+                write!(stmt, "uint mv{k} = uint({value}); ").unwrap();
+            }
+            values.push(format!("mv{k}"));
+        }
+        for (k, value) in values.iter().enumerate() {
+            let k = k as u16;
+            if indexed_dst {
+                let cases: String = (0..=LAST)
+                    .map(|c| {
+                        self.written(c);
+                        format!("case {c}u: {} = {value}; break; ", self.sreg(c))
+                    })
+                    .collect();
+                write!(
+                    stmt,
+                    "switch ({to} + {}u) {{ {cases}default: break; }} ",
+                    sdst + k
+                )
+                .unwrap();
+            } else if let Some(d) = self.sdst(sdst + k) {
+                write!(stmt, "{d} = {value}; ").unwrap();
+            }
+        }
+        stmt.push('}');
+        self.line(&stmt);
         Ok(())
     }
 

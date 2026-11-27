@@ -4664,6 +4664,16 @@ s_movk_i32	simm16 0x1234	agree
 s_movk_i32	simm16 0x7fff	agree
 s_movk_i32	simm16 0x8000	agree
 s_movk_i32	simm16 0xffff	agree
+s_movreld_b32	m0 0x0, dst 24, src 22	agree
+s_movreld_b32	m0 0x3, dst 24, src 22	agree
+s_movreld_b64	m0 0x4, dst 24, src 22	agree
+s_movreld_b64	m0 0x6, dst 100, src 22	agree
+s_movrels_b32	m0 0x0, dst 20, src 24	agree
+s_movrels_b32	m0 0x3, dst 20, src 24	agree
+s_movrels_b32	m0 0x6, dst 20, src 100	agree
+s_movrels_b64	m0 0x4, dst 20, src 24	agree
+s_movrelsd_2_b32	m0 0x10007, dst 24, src 26	agree
+s_movrelsd_2_b32	m0 0x50002, dst 24, src 26	agree
 s_mul_hi_i32	base	agree
 s_mul_hi_u32	base	agree
 s_mul_i32	base	agree
