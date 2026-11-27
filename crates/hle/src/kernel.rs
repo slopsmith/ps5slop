@@ -59,6 +59,11 @@ pub static FUNCTIONS: &[Function] = &[
     },
     Function {
         library: "libkernel",
+        name: "sceKernelMtypeprotect",
+        func: sce_mtypeprotect,
+    },
+    Function {
+        library: "libkernel",
         name: "write",
         func: crate::file::write,
     },
@@ -166,25 +171,31 @@ fn sce_munmap(env: &mut Env) -> Result<Outcome, CallError> {
 
 /// `mprotect(addr, len, prot)`, with the CPU bits of `prot`.
 fn mprotect(env: &mut Env) -> Result<Outcome, CallError> {
-    match protect(env) {
+    match protect(env, env.arg(2)) {
         Ok(()) => Ok(Outcome::Return(0)),
         Err(_) => env.fail(errno::EINVAL),
     }
 }
 
 fn sce_mprotect(env: &mut Env) -> Result<Outcome, CallError> {
-    match protect(env) {
+    sce_protect(env, env.arg(2))
+}
+
+/// `(addr, len, memory type, prot)`: the memory type only steers caching on
+/// the console, so it is dropped.
+fn sce_mtypeprotect(env: &mut Env) -> Result<Outcome, CallError> {
+    sce_protect(env, env.arg(3))
+}
+
+fn sce_protect(env: &Env, p: u64) -> Result<Outcome, CallError> {
+    match protect(env, p) {
         Ok(()) => Ok(Outcome::Return(0)),
         Err(_) => Ok(Outcome::Return(crate::dmem::sce_error(errno::EINVAL))),
     }
 }
 
-fn protect(env: &Env) -> Result<(), memory::MapError> {
-    let (addr, len, p) = (
-        env.arg(0),
-        env.arg(1).next_multiple_of(PAGE_SIZE),
-        env.arg(2),
-    );
+fn protect(env: &Env, p: u64) -> Result<(), memory::MapError> {
+    let (addr, len) = (env.arg(0), env.arg(1).next_multiple_of(PAGE_SIZE));
     let gpu = p & 0x30 != 0;
     let prot = Prot::new(
         p & (PROT_READ | PROT_WRITE) != 0 || gpu,
