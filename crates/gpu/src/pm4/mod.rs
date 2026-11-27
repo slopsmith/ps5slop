@@ -281,6 +281,16 @@ fn read_u64(host: &dyn Host, addr: u64) -> u64 {
     u64::from_le_bytes(b)
 }
 
+/// Length in dwords of the type-3 packet starting with `header`. A NOP with
+/// count 0x3FFF is a one-dword pad (Mesa's `PKT3_NOP_PAD`).
+pub const fn packet_dwords(header: u32) -> u32 {
+    if header >> 8 & 0x3F_FFFF == 0x3F_FF10 {
+        1
+    } else {
+        ((header >> 16) & 0x3FFF) + 2
+    }
+}
+
 fn addr(lo: u32, hi: u32) -> u64 {
     lo as u64 | (hi as u64) << 32
 }
@@ -311,7 +321,7 @@ impl Processor {
                     at += 1;
                     continue;
                 }
-                let len = (((header >> 16) & 0x3FFF) + 2) as usize;
+                let len = packet_dwords(header) as usize;
                 if at + len > words.len() {
                     return Err(Error::Truncated { addr: here, header });
                 }

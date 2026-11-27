@@ -17,7 +17,7 @@ pub mod replay;
 pub mod tiling;
 pub mod timing;
 
-pub use pm4::{Processor, Saved, Stats, trace_sync_event};
+pub use pm4::{Processor, Saved, Stats, packet_dwords, trace_sync_event};
 
 /// The register banks as a draw sees them.
 pub struct State<'a> {

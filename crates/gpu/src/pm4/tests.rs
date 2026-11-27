@@ -650,3 +650,17 @@ fn indirect_draws_with_no_instances_draw_nothing() {
         }
     ));
 }
+
+#[test]
+fn a_nop_with_the_largest_count_is_one_dword() {
+    let (host, _) = run(&[
+        0xFFFF_1000,
+        0xFFFF_1000,
+        header(5, IT_WRITE_DATA, 0),
+        5 << 8,
+        0x900,
+        0,
+        0x2A,
+    ]);
+    assert_eq!(word(&host, 0x900), 0x2A);
+}

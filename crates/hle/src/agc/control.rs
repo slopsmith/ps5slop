@@ -173,7 +173,7 @@ const fn tag(header: u32) -> u32 {
 /// carry it, a type-2 filler is one dword.
 const fn packet_dwords(header: u32) -> u32 {
     if header >> 30 == 3 {
-        ((header >> 16) & 0x3FFF) + 2
+        gpu::packet_dwords(header)
     } else {
         1
     }
