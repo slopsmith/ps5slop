@@ -419,6 +419,35 @@ fn check(t: &mut Tally, words: &[u32], wave64: bool) {
     }
 }
 
+/// Every `ds_swizzle_b32` offset prints as LLVM prints it.
+#[test]
+fn swizzle_offsets_match_llvm() {
+    if !have_llvm_mc() {
+        eprintln!("skipped: no llvm-mc");
+        return;
+    }
+    let op = opinfo::by_name("ds_swizzle_b32").unwrap().code as u32;
+    let words: Vec<u32> = (0..=0xFFFFu32)
+        .flat_map(|off| [0xD800_0000 | op << 18 | off, 0x0A00_0001])
+        .collect();
+    let theirs = llvm(&words, true).expect("llvm-mc takes every offset");
+    assert_eq!(theirs.len(), 0x10000);
+    let differ: Vec<String> = words
+        .chunks(2)
+        .zip(&theirs)
+        .filter_map(|(w, l)| {
+            let mine = print(&decode(w).unwrap(), Syntax { wave64: true });
+            (mine != *l).then(|| format!("{:#06x}: ours `{mine}` llvm `{l}`", w[0] & 0xFFFF))
+        })
+        .collect();
+    assert!(
+        differ.is_empty(),
+        "{} differ: {:#?}",
+        differ.len(),
+        &differ[..differ.len().min(10)]
+    );
+}
+
 /// Random encodings per format: known opcodes with random fields, and random opcode numbers.
 #[test]
 fn generated_encodings_match_llvm() {

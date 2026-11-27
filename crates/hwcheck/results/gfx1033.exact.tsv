@@ -988,6 +988,31 @@ ds_sub_u32	offset 0x0	agree
 ds_sub_u32	offset 0x18	agree
 ds_sub_u64	offset 0x0	agree
 ds_sub_u64	offset 0x18	agree
+ds_swizzle_b32	and 0x15 or 0xa xor 3	agree
+ds_swizzle_b32	and 0x15 or 0xa xor 3, lanes 6, 7, 14, 15, ... off	agree
+ds_swizzle_b32	broadcast x8 lane 5	agree
+ds_swizzle_b32	fft 0	agree
+ds_swizzle_b32	fft 0, lanes 6, 7, 14, 15, ... off	agree
+ds_swizzle_b32	fft 0x10	agree
+ds_swizzle_b32	fft 0x10, lanes 6, 7, 14, 15, ... off	agree
+ds_swizzle_b32	fft 0x1f	agree
+ds_swizzle_b32	fft 0x1f, lanes 6, 7, 14, 15, ... off	agree
+ds_swizzle_b32	fft 5	agree
+ds_swizzle_b32	quad perm 1 1 3 0	agree
+ds_swizzle_b32	quad perm 1 1 3 0, lanes 6, 7, 14, 15, ... off, lockstep	agree
+ds_swizzle_b32	quad perm 3 2 1 0	agree
+ds_swizzle_b32	quad perm 3 2 1 0, lanes 6, 7, 14, 15, ... off	agree
+ds_swizzle_b32	quad perm 3 2 1 0, lanes 6, 7, 14, 15, ... off, lockstep	agree
+ds_swizzle_b32	reverse x32	agree
+ds_swizzle_b32	rotate left 1	agree
+ds_swizzle_b32	rotate left 1, lanes 6, 7, 14, 15, ... off	agree
+ds_swizzle_b32	rotate left 17 mask 0x14	agree
+ds_swizzle_b32	rotate left 3 mask 1	agree
+ds_swizzle_b32	rotate right 1	agree
+ds_swizzle_b32	rotate right 5 mask 3	agree
+ds_swizzle_b32	rotate right 5 mask 3, lanes 6, 7, 14, 15, ... off, lockstep	agree
+ds_swizzle_b32	swap x1	agree
+ds_swizzle_b32	swap x1, lanes 6, 7, 14, 15, ... off	agree
 ds_wrap_rtn_b32	offset 0x0	agree
 ds_wrap_rtn_b32	offset 0x18	agree
 ds_write2_b32	offset0 0 offset1 1	agree

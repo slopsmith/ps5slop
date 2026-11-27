@@ -1,5 +1,5 @@
-//! LDS tests: every DS load, store, atomic, two-address form, swizzle and
-//! permute, in one-wave groups with 4 KiB of LDS. Each lane fills its
+//! LDS tests: every DS load, store, atomic, two-address form and permute
+//! (`ds_swizzle_b32` is with the lane-crossing tests), in one-wave groups with 4 KiB of LDS. Each lane fills its
 //! 64-byte LDS slot from its record, runs the instruction at a random
 //! address (lanes collide on purpose, so atomics and their order are
 //! tested too), then stores what the instruction returned and its slot.
@@ -80,14 +80,16 @@ struct Shape {
     returns: bool,
     /// Two addresses from `offset0` and `offset1` (`read2`, `write2`, `wrxchg2`).
     two: bool,
-    /// Lanes exchange values (swizzle, permute): the address is a lane.
+    /// Lanes exchange values (permute): the address is a lane.
     lanes: bool,
     /// The address comes from M0 rather than a VGPR (append, consume, addtid).
     m0: bool,
 }
 
 fn shape(name: &str) -> Option<Shape> {
-    const SKIP: [&str; 6] = ["gws", "ordered", "src2", "nop", "barrier", "condxchg"];
+    const SKIP: [&str; 7] = [
+        "gws", "ordered", "src2", "nop", "barrier", "condxchg", "swizzle",
+    ];
     if SKIP.iter().any(|s| name.contains(s)) {
         return None;
     }
@@ -104,7 +106,7 @@ fn shape(name: &str) -> Option<Shape> {
         1
     };
     let two = name.contains("2_") || name.contains("2st64");
-    let lanes = name.contains("swizzle") || name.contains("permute");
+    let lanes = name.contains("permute");
     let m0 = ["append", "consume", "addtid"]
         .iter()
         .any(|n| name.contains(n));
@@ -159,16 +161,13 @@ pub fn unsupported(op: &OpInfo) -> Option<&'static str> {
         return Some("not an LDS instruction");
     }
     if shape(op.name).is_none() {
-        return Some("GDS, GWS, M0 or a 10.1-only form, tested by hand");
+        return Some("GDS, GWS, M0, a 10.1-only form or a swizzle, tested elsewhere or by hand");
     }
     None
 }
 
 /// Offsets tested: `(offset0, offset1)`, a 16-bit offset when not `two`.
-fn offsets(s: Shape, name: &str) -> Vec<(u32, u32)> {
-    if name.contains("swizzle") {
-        return vec![(0x1B, 0x80), (0x1F, 0x04), (0x78, 0x00)];
-    }
+fn offsets(s: Shape) -> Vec<(u32, u32)> {
     if s.two {
         return vec![(0, 1), (3, 7)];
     }
@@ -288,7 +287,7 @@ pub fn cases() -> Vec<Case> {
     let mut out = Vec::new();
     for op in all().iter().filter(|op| unsupported(op).is_none()) {
         let s = shape(op.name).expect("checked by unsupported");
-        for (o0, o1) in offsets(s, op.name) {
+        for (o0, o1) in offsets(s) {
             out.extend(case(op, o0, o1));
         }
     }

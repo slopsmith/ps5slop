@@ -1,13 +1,13 @@
 //! Tests of vector instructions that read or write other lanes or registers
 //! picked at run time: `v_readlane_b32`, `v_readfirstlane_b32`,
 //! `v_writelane_b32`, `v_permlane16_b32`, `v_permlanex16_b32`,
-//! `v_swap_b32` and the `v_movrel*` family, each with several lane
-//! selects, EXEC masks or M0 values set just before it.
+//! `v_swap_b32`, the `v_movrel*` family and `ds_swizzle_b32`, each with
+//! several lane selects, EXEC masks or M0 values set just before it.
 
 use gfx10::opinfo::{OpInfo, by_name};
 
-use super::BASE_MODE;
-use super::valu::{Body, around};
+use super::valu::{Body, GROUPS, IN_WORDS, around};
+use super::{BASE_MODE, Rng};
 use crate::Case;
 
 const V1: u32 = 257;
@@ -179,6 +179,78 @@ pub fn cases() -> Vec<Case> {
             vec![v_mov(11, V1)],
         ));
     }
+    out.extend(swizzles());
+    out
+}
+
+/// `ds_swizzle_b32` in every mode, also with lanes off whose values other
+/// lanes read, and in a lockstep program (a `v_readlane_b32` after it).
+fn swizzles() -> Vec<Case> {
+    const OFFSETS: [(&str, u32); 15] = [
+        ("quad perm 3 2 1 0", 0x801B),
+        ("quad perm 1 1 3 0", 0x8035),
+        ("swap x1", 0x041F),
+        ("reverse x32", 0x7C1F),
+        ("broadcast x8 lane 5", 0x00B8),
+        ("and 0x15 or 0xa xor 3", 0x0D55),
+        ("rotate left 1", 0xC020),
+        ("rotate right 1", 0xC420),
+        ("rotate left 3 mask 1", 0xC061),
+        ("rotate right 5 mask 3", 0xC4A3),
+        ("rotate left 17 mask 0x14", 0xC234),
+        ("fft 0", 0xE000),
+        ("fft 0x10", 0xE010),
+        ("fft 5", 0xE005),
+        ("fft 0x1f", 0xE01F),
+    ];
+    // Lanes with bits 1 and 2 set are off: v_and_b32 v28, 6, v0;
+    // v_cmpx_ne_u32 6, v28.
+    const SOME_LANES_OFF: [u32; 2] = [0x3638_0086, 0x7DAA_3886];
+    const S_WAITCNT_LGKM: u32 = 0xBF8C_C07F;
+    // v_readlane_b32 s30, v1, s31
+    const READLANE: [u32; 2] = [0xD760_001E, 0x0000_3F01];
+    let Some(op) = by_name("ds_swizzle_b32") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (name, offset) in OFFSETS {
+        let inst = vec![
+            0xD800_0000 | (op.code as u32) << 18 | offset,
+            VDST << 24 | (V1 - 256),
+        ];
+        let partial = name.starts_with("swap")
+            || name.ends_with("3 2 1 0")
+            || name == "rotate left 1"
+            || name.starts_with("fft 0")
+            || name.starts_with("and");
+        let mut runs = vec![(name.to_string(), Vec::new(), vec![S_WAITCNT_LGKM])];
+        if partial {
+            runs.push((
+                format!("{name}, lanes 6, 7, 14, 15, ... off"),
+                SOME_LANES_OFF.to_vec(),
+                vec![S_WAITCNT_LGKM],
+            ));
+        }
+        if name.starts_with("quad") || name.starts_with("rotate right 5") {
+            runs.push((
+                format!("{name}, lanes 6, 7, 14, 15, ... off, lockstep"),
+                SOME_LANES_OFF.to_vec(),
+                [&[S_WAITCNT_LGKM][..], &READLANE].concat(),
+            ));
+        }
+        for (variant, setup, after) in runs {
+            let mut rng = Rng::new(&format!("{} {variant}", op.name));
+            let inputs = (0..GROUPS as usize * 64 * IN_WORDS)
+                .map(|_| rng.next() as u32)
+                .collect();
+            let body = Body {
+                setup: &setup,
+                inst: &inst,
+                after: &after,
+            };
+            out.extend(around(op, variant, body, false, BASE_MODE, Some(inputs)));
+        }
+    }
     out
 }
 
@@ -212,5 +284,16 @@ mod tests {
         assert!(cases.iter().any(|c| c.opcode == "v_readfirstlane_b32"));
         assert!(cases.iter().any(|c| c.opcode == "v_swap_b32"));
         assert!(cases.iter().any(|c| c.opcode == "v_swaprel_b32"));
+        assert_eq!(
+            text("ds_swizzle_b32", "rotate right 5 mask 3"),
+            "ds_swizzle_b32 v10, v1 offset:swizzle(ROTATE,1,5)"
+        );
+        assert_eq!(
+            cases
+                .iter()
+                .filter(|c| c.opcode == "ds_swizzle_b32")
+                .count(),
+            25
+        );
     }
 }

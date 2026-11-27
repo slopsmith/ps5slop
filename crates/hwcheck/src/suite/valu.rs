@@ -14,7 +14,7 @@ use crate::Case;
 
 /// Groups of one wave64 per test.
 pub const GROUPS: u32 = 32;
-const IN_WORDS: usize = 8;
+pub(super) const IN_WORDS: usize = 8;
 const OUT_NAMES: [&str; 8] = ["dst", "dst+1", "mask", "-", "exec", "-", "-", "-"];
 
 // Assembled with `llvm-mc -mcpu=gfx1013 -mattr=+wavefrontsize64`.

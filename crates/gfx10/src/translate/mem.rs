@@ -754,6 +754,20 @@ impl<'a> Tx<'a> {
             self.line("}");
             return Ok(());
         }
+        if name == "ds_swizzle_b32" && !gds && self.req.stage != Stage::Vertex {
+            // Every mode stays within groups of 32 lanes, as a Metal SIMD group does.
+            let [src, _, _, vdst] = regs;
+            let (v, d) = (self.v(src), self.v(vdst));
+            let from = swizzle_source(offset0 as u16 | (offset1 as u16) << 8);
+            let on = self.mask_on(126);
+            self.simd_lane = true;
+            self.line(&format!(
+                "{{ ushort sj = {from}; uint sv = simd_shuffle({v}, sj); bool son = simd_shuffle(uint({on}), sj) != 0u;"
+            ));
+            self.guard(&format!("{d} = son ? sv : 0u;"));
+            self.line("}");
+            return Ok(());
+        }
         if !gds
             && self.req.stage != Stage::Compute
             && matches!(name, "ds_write_addtid_b32" | "ds_read_addtid_b32")
@@ -1195,6 +1209,38 @@ fn logic_op(target: u8, value: &str, rop: u8, logic: u8) -> String {
         "uint4 s = {src}; uint4 d = {dst}; uint4 r = ({combined}) & {mask:#x}u; o.c{target} = {out};"
     )
 }
+/// The lane `ds_swizzle_b32` reads, within the 32-lane group, for the lane in
+/// `slane`, by the modes of the ISA guide's pseudo-code.
+fn swizzle_source(offset: u16) -> String {
+    let field = |shift: u16| u32::from(offset >> shift & 0x1F);
+    if offset >= 0xE000 {
+        let mask = field(0);
+        format!(
+            "ushort(((reverse_bits(uint(slane)) >> 27) >> {}u) | (uint(slane) & {mask}u))",
+            mask.count_ones()
+        )
+    } else if offset >= 0xC000 {
+        let mask = field(0);
+        let rotate = if offset & 0x400 != 0 {
+            32 - field(5)
+        } else {
+            field(5)
+        };
+        format!(
+            "ushort(((uint(slane) & {mask}u) | ((uint(slane) + {rotate}u) & {:#x}u)) & 31u)",
+            !mask
+        )
+    } else if offset & 0x8000 != 0 {
+        format!(
+            "ushort((uint(slane) & 28u) | (({:#x}u >> ((uint(slane) & 3u) << 1)) & 3u))",
+            offset & 0xFF
+        )
+    } else {
+        let (and, or, xor) = (field(0), field(5), field(10));
+        format!("ushort(((uint(slane) & {and}u) | {or}u) ^ {xor}u)")
+    }
+}
+
 /// The `lds_rmw64` code of a 64-bit LDS atomic (its name without `ds_` and `_rtn`).
 fn lds64_op(op: &str) -> Option<u32> {
     Some(match op {

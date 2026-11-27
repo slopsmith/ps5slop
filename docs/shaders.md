@@ -48,7 +48,8 @@ The oracle is `llvm-mc --disassemble -mcpu=gfx1013` from the dev shell; `tests/l
 - **Outside lockstep programs a scalar write of EXEC keeps only bit 0** and clears `exec_hi`. Reason: `s_wqm_b64` or `s_mov_b64 exec, -1` would otherwise set bits for lanes that, in this model, are other threads, and waterfall loops (`v_readfirstlane`, `v_cmpx`, `s_andn2_b64 ... exec`) then never run out of lanes. Risk: code that compares EXEC with a full mask sees a partial wave; none found.
 - Every vector instruction and export runs under the lane's EXEC bit; consecutive vector instructions share one `if`.
 - **Wave32 programs** are detected by `*_saveexec_b32` or 32-bit scalar writes of `exec_lo`; there a VALU compare or carry-out writes one SGPR, not a pair.
-- Cross-lane instructions map to Metal's quad and SIMD-group functions: DPP (quad permutations, row shifts and rotates, mirrors, `row_share`, `row_xmask`, DPP8), `v_permlane16`/`permlanex16`, `ds_bpermute_b32`, and `v_readlane` of a constant lane all become `quad_*` or `simd_shuffle`/`simd_broadcast` within the 32-lane Metal SIMD group. Rows of 16 line up with the hardware's. Outside lockstep programs nothing crosses lane 31.
+- Cross-lane instructions map to Metal's quad and SIMD-group functions: DPP (quad permutations, row shifts and rotates, mirrors, `row_share`, `row_xmask`, DPP8), `v_permlane16`/`permlanex16`, `ds_bpermute_b32`, `ds_swizzle_b32`, and `v_readlane` of a constant lane all become `quad_*` or `simd_shuffle`/`simd_broadcast` within the 32-lane Metal SIMD group. Rows of 16 line up with the hardware's. Outside lockstep programs nothing crosses lane 31.
+- `ds_swizzle_b32` follows the ISA guide's pseudo-code in all four modes (quad permutation, and/or/xor bitmask, rotate with its mask, FFT), each within groups of 32 lanes; a lane whose source lane is inactive reads 0. All measured on gfx1033, also with inactive source lanes and in a lockstep program. The guide's rotate examples with a mask do not fit its pseudo-code; the hardware follows the pseudo-code.
 - `v_writelane`/`v_readlane` with a constant lane that the program writes first are SGPR spills: one variable per (register, lane).
 
 ### Lockstep waves
@@ -179,7 +180,7 @@ Image loads and stores follow the hardware's conversions, measured with the hard
 
 ## Known approximations and gaps
 
-- Ballots, `ds_swizzle`, and cross-lane operations that span all 64 lanes outside lockstep programs are not translated.
+- Ballots and cross-lane operations that span all 64 lanes outside lockstep programs are not translated.
 - Depth-compare samples compare one filtered sample instead of filtering four compared ones (no PCF); `image_gather4_c` compares each gathered texel. Integer textures are sampled through the sampler like float ones, which Metal allows only unfiltered.
 - `a16` sampling, `image_gather4h` on cubes and the `a16` form of `image_bvh_intersect_ray` do not translate. Gathers on cubes read the base level. Texel offsets on samples shift the coordinates by offset / size.
 - `image_store` writes 0 to components `dmask` leaves out.
@@ -201,9 +202,9 @@ Image loads and stores follow the hardware's conversions, measured with the hard
 `crates/hwcheck` checks translated instructions against a real AMD GPU. Each test is one program around one instruction, over many lanes or waves of operands: edge cases of each operand's type paired with each other, then seeded random values. `ps5slop-hwcheck gen` builds the suites (`crates/hwcheck/src/suite/`):
 
 - Vector ALU: every VOP1, VOP2, VOPC, VOP3 and VOP3P opcode with plain operands, in its own encoding, as VOP3, with neg and abs, clamp and omod, op_sel, DPP16, DPP8, SDWA, a literal and inline constants, and float instructions under each float mode (`FLOAT_MODE` rounding and denormals, IEEE mode, DX10 clamp). Each lane stores its result and its own bit of the mask written and of EXEC, since masks are per thread outside lockstep programs.
-- Lane-crossing: `v_readlane`, `v_writelane`, `v_readfirstlane` under several EXEC masks, `v_permlane16`/`x16`, `v_swap_b32`, the `v_movrel*` family.
+- Lane-crossing: `v_readlane`, `v_writelane`, `v_readfirstlane` under several EXEC masks, `v_permlane16`/`x16`, `v_swap_b32`, the `v_movrel*` family, `ds_swizzle_b32` in every mode.
 - Scalar ALU (SOP1, SOP2, SOPC, SOPK) and scalar loads, including buffer loads through descriptors of varied size, stride and out-of-bounds mode; one record per wave, with SCC.
-- LDS: every DS load, store, atomic, two-address form, swizzle and permute.
+- LDS: every DS load, store, atomic, two-address form and permute.
 - Vector memory: MUBUF, MTBUF, GLOBAL and FLAT loads, stores and atomics, over buffer descriptors of varied format, stride, size, swizzle, destination select and out-of-bounds mode. Stores are compared as the memory they leave.
 - Images: every MIMG load, store, atomic, sample, gather and query on every image dimension it allows, over linear textures in memory; one opcode of each family runs over every GFX10 image format (the list is generated from Mesa's register database by `tools/gen_formats.py`) and a set of samplers (filters, wrap modes, border colours, unnormalized coordinates, depth compare, mips, LOD bias). Stores are read back with `image_load`.
 - Flow and machine state: every branch under conditions a wave agrees on and ones lanes disagree on, the `s_*_saveexec` family (the 32-bit forms also in wave32 dispatches), `s_getpc_b64`, `s_setreg` on the float mode, and instructions that must leave results alone (waits, nops, priority, prefetch, cache invalidates, `s_endpgm`).

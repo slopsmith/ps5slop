@@ -1524,25 +1524,39 @@ fn ds_shape(name: &str) -> DsShape {
     }
 }
 
+// LLVM's macro for a `ds_swizzle_b32` offset; offsets no macro fits print
+// as a number, and rotates drop their mask.
 fn swizzle(off: u16) -> String {
-    if off & 0x8000 != 0 {
+    let field = |shift: u16| off >> shift & 0x1F;
+    let (and, or, xor) = (field(0), field(5), field(10));
+    let group = 32 - and;
+    if off & 0xFF00 == 0x8000 {
         let s: Vec<String> = (0..4).map(|i| format!("{}", off >> (2 * i) & 3)).collect();
         format!("swizzle(QUAD_PERM,{})", s.join(","))
+    } else if off & 0xE000 == 0xE000 {
+        format!("swizzle(FFT,{and})")
+    } else if off & 0xE000 == 0xC000 {
+        format!("swizzle(ROTATE,{},{or})", off >> 10 & 1)
+    } else if off & 0x8000 != 0 {
+        off.to_string()
+    } else if and == 0x1F && or == 0 && xor.count_ones() == 1 {
+        format!("swizzle(SWAP,{xor})")
+    } else if and == 0x1F && or == 0 && xor > 0 && (xor + 1).is_power_of_two() {
+        format!("swizzle(REVERSE,{})", xor + 1)
+    } else if group > 1 && group.is_power_of_two() && or < group && xor == 0 {
+        format!("swizzle(BROADCAST,{group},{or})")
     } else {
-        format!("swizzle(BITMASK_PERM,\"{}\")", bitmask_perm(off))
+        format!("swizzle(BITMASK_PERM,\"{}\")", bitmask_perm(and, or, xor))
     }
 }
 
-fn bitmask_perm(off: u16) -> String {
-    let and = off & 0x1F;
-    let or = off >> 5 & 0x1F;
-    let xor = off >> 10 & 0x1F;
+fn bitmask_perm(and: u16, or: u16, xor: u16) -> String {
     (0..5)
         .rev()
         .map(|i| match (and >> i & 1, or >> i & 1, xor >> i & 1) {
-            (0, 0, _) => '0',
-            (0, 1, _) => '1',
-            (1, _, 1) => 'i',
+            (_, 1, 0) | (0, 0, 1) => '1',
+            (_, 1, 1) | (0, 0, 0) => '0',
+            (1, 0, 1) => 'i',
             _ => 'p',
         })
         .collect()
