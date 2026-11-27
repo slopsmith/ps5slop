@@ -95,7 +95,7 @@ pub static FUNCTIONS: &[Function] = &[
 
 /// Placeholders: they answer without doing the real work, and say so on
 /// stderr when called.
-pub static STUBS: &[Function] = &[f("sceAgcGetIsTrinityMode", ok)];
+pub static STUBS: &[Function] = &[f("sceAgcGetIsTrinityMode", ok), f("#W0WEyog0f74", ok)];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {
     Function {
