@@ -232,6 +232,7 @@ impl Process {
         if let Some(p) = proc_param {
             kernel.set_proc_param(p);
         }
+        kernel.set_process_args(PROCESS_ARGS);
         for info in module_infos {
             kernel.add_module(info);
         }

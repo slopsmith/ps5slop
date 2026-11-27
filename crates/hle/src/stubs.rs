@@ -135,6 +135,8 @@ fn new_id(_: &mut Env) -> Result<Outcome, CallError> {
 pub static FUNCTIONS: &[Function] = &[
     // We are a base PS4, not a PS4 Pro, to PS4 titles.
     zero("libkernel", "sceKernelIsNeoMode"),
+    // Nor a PS5 Pro ("Trinity") to PS5 titles.
+    zero("libkernel", "sceKernelHasTrinityMode"),
     Function {
         library: "libSceAppContent",
         name: "sceAppContentTemporaryDataMount2",

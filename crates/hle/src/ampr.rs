@@ -80,8 +80,9 @@ pub static FUNCTIONS: &[Function] = &[
     f(
         "libkernel",
         "sceKernelAprSubmitCommandBufferAndGetResult",
-        submit,
+        submit_and_get_result,
     ),
+    f("libkernel", "sceKernelAprSubmitCommandBuffer", submit),
     f("libkernel", "sceKernelAprWaitCommandBuffer", wait),
     f("libSceAmpr", "sceAmprCommandBufferConstructor", construct),
     f(
@@ -320,11 +321,33 @@ fn write_address(env: &mut Env) -> Result<Outcome, CallError> {
     ret(0)
 }
 
-/// `(buffer, priority, result, id)`: runs the reads now, writes a zero
+/// `(buffer, priority, result, id)`: runs the commands now, writes a zero
 /// result (status and error offset, 32 bits each) and a submission id.
+fn submit_and_get_result(env: &mut Env) -> Result<Outcome, CallError> {
+    let errno = run(env, env.arg(0))?;
+    if errno != 0 {
+        return ret(errno);
+    }
+    let (result, id) = (env.arg(2), env.arg(3));
+    if result != 0 {
+        env.mem.write(result, &[0; 8])?;
+    }
+    if id != 0 {
+        let n = env.kernel.apr.submissions.fetch_add(1, Ordering::Relaxed) as u32;
+        env.mem.write(id, &n.to_le_bytes())?;
+    }
+    ret(0)
+}
+
+/// `(buffer, priority)`: runs the commands now.
 fn submit(env: &mut Env) -> Result<Outcome, CallError> {
-    let Some(commands) = lock(&env.kernel.apr.buffers).get(&env.arg(0)).cloned() else {
-        return ret(ESRCH);
+    let errno = run(env, env.arg(0))?;
+    ret(errno)
+}
+
+fn run(env: &Env, buffer: u64) -> Result<i32, CallError> {
+    let Some(commands) = lock(&env.kernel.apr.buffers).get(&buffer).cloned() else {
+        return Ok(ESRCH);
     };
     for c in commands {
         let (file, dest, len, offset) = match c {
@@ -342,7 +365,7 @@ fn submit(env: &mut Env) -> Result<Outcome, CallError> {
         let id = file;
         let file = lock(&env.kernel.apr.files).get(file as usize).cloned();
         let Some(file) = file else {
-            return ret(EINVAL);
+            return Ok(EINVAL);
         };
         let mut buf = vec![0u8; len as usize];
         let mut done = 0;
@@ -361,15 +384,7 @@ fn submit(env: &mut Env) -> Result<Outcome, CallError> {
         }
         env.mem.write(dest, &buf[..done])?;
     }
-    let (result, id) = (env.arg(2), env.arg(3));
-    if result != 0 {
-        env.mem.write(result, &[0; 8])?;
-    }
-    if id != 0 {
-        let n = env.kernel.apr.submissions.fetch_add(1, Ordering::Relaxed) as u32;
-        env.mem.write(id, &n.to_le_bytes())?;
-    }
-    ret(0)
+    Ok(0)
 }
 
 /// `sceKernelAprWaitCommandBuffer(...)`: submissions finish before they

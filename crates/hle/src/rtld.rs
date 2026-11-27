@@ -44,6 +44,9 @@ pub struct Rtld {
     proc_param: Mutex<u64>,
     /// Guest block behind `sceLibcHeapGetTraceInfo`'s pointers, or 0.
     heap_trace: Mutex<u64>,
+    /// The entry point's argument block `{ argc; argv[] }`, or 0. Set at
+    /// every boot, so it is not part of save states.
+    args: Mutex<u64>,
 }
 
 pub static FUNCTIONS: &[Function] = &[
@@ -52,6 +55,9 @@ pub static FUNCTIONS: &[Function] = &[
     f("_sceKernelSetThreadAtexitReport", set_atexit_report),
     f("sceKernelGetProcParam", get_proc_param),
     f("sceKernelGetModuleInfoForUnwind", module_info_for_unwind),
+    f("sceKernelGetModuleInfoFromAddr", module_info_from_addr),
+    f("getargc", getargc),
+    f("getargv", getargv),
     f("sceKernelLoadStartModule", load_start_module),
     f("sceKernelDlsym", dlsym),
     f("_sceKernelRtldSetApplicationHeapAPI", set_heap_api),
@@ -60,7 +66,15 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelGetSanitizerNewReplace", no_sanitizer),
     f("sceKernelGetSanitizerNewReplaceExternal", no_sanitizer),
     f("sceKernelIsAddressSanitizerEnabled", no_sanitizer),
+    f("_sceKernelRtldThreadAtexitIncrement", thread_atexit_count),
+    f("_sceKernelRtldThreadAtexitDecrement", thread_atexit_count),
 ];
+
+/// `(dso handle, ...)`: libc counts a module's pending `thread_local`
+/// destructors with these; modules never unload here, so nothing to keep.
+fn thread_atexit_count(_: &mut Env) -> Result<Outcome, CallError> {
+    Ok(Outcome::Return(0))
+}
 
 /// Functions of libSceLibcInternalExt that Sony's libc calls while it starts.
 pub static LIBC_EXT: &[Function] = &[Function {
@@ -166,6 +180,51 @@ pub(crate) fn module_info_for_unwind(env: &mut Env) -> Result<Outcome, CallError
     Ok(Outcome::Return(0))
 }
 
+/// `(addr, flags, info)`, shadPS4's 0x1A8-byte `OrbisKernelModuleInfoEx`
+/// layout. TLS, init and fini stay zero; only the code segment is listed.
+fn module_info_from_addr(env: &mut Env) -> Result<Outcome, CallError> {
+    let (addr, info) = (env.arg(0), env.arg(2));
+    let found = lock(&env.kernel.rtld.modules)
+        .iter()
+        .enumerate()
+        .find(|(_, m)| (m.start..m.end).contains(&addr))
+        .map(|(k, m)| (k, m.clone()));
+    let Some((id, m)) = found else {
+        return Ok(Outcome::Return(crate::dmem::sce_error(crate::errno::ESRCH)));
+    };
+    const SIZE: usize = 0x1A8;
+    let mut b = vec![0u8; SIZE];
+    b[0..8].copy_from_slice(&(SIZE as u64).to_le_bytes());
+    let name = m.name.as_bytes();
+    let n = name.len().min(255);
+    b[8..8 + n].copy_from_slice(&name[..n]);
+    b[0x108..0x10C].copy_from_slice(&(id as u32).to_le_bytes());
+    b[0x148..0x150].copy_from_slice(&m.eh_frame_hdr.to_le_bytes());
+    b[0x150..0x158].copy_from_slice(&m.eh_frame.0.to_le_bytes());
+    b[0x15C..0x160].copy_from_slice(&(m.eh_frame.1 as u32).to_le_bytes());
+    b[0x160..0x168].copy_from_slice(&m.text.0.to_le_bytes());
+    b[0x168..0x16C].copy_from_slice(&(m.text.1 as u32).to_le_bytes());
+    b[0x16C..0x170].copy_from_slice(&5u32.to_le_bytes());
+    b[0x1A0..0x1A4].copy_from_slice(&1u32.to_le_bytes());
+    env.mem.write(info, &b)?;
+    Ok(Outcome::Return(0))
+}
+
+/// `getargc()`: the argument count the entry point got.
+fn getargc(env: &mut Env) -> Result<Outcome, CallError> {
+    let args = *lock(&env.kernel.rtld.args);
+    if args == 0 {
+        return Ok(Outcome::Return(0));
+    }
+    Ok(Outcome::Return(env.mem.read_u64(args)? as u32 as u64))
+}
+
+/// `getargv()`: the argument vector the entry point got.
+fn getargv(env: &mut Env) -> Result<Outcome, CallError> {
+    let args = *lock(&env.kernel.rtld.args);
+    Ok(Outcome::Return(if args == 0 { 0 } else { args + 8 }))
+}
+
 /// `sceKernelLoadStartModule(path, args, argp, flags, opt, result)`: the
 /// handle of the loaded module with that file name. Modules are loaded and
 /// linked at start; one the executable does not need is started here, after
@@ -259,6 +318,11 @@ impl crate::Kernel {
     /// Records where the executable's process parameters are.
     pub fn set_proc_param(&self, addr: u64) {
         *lock(&self.rtld.proc_param) = addr;
+    }
+
+    /// Records the entry point's argument block, for `getargc` and `getargv`.
+    pub fn set_process_args(&self, addr: u64) {
+        *lock(&self.rtld.args) = addr;
     }
 }
 
