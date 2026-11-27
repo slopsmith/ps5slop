@@ -1333,6 +1333,7 @@ impl Cpu {
         vcpu.set_sys_reg(sysreg::CPACR_EL1, 3 << 20)?;
         vcpu.set_sys_reg(sysreg::SCTLR_EL1, SCTLR)?;
         vcpu.set_sys_reg(sysreg::ACTLR_EL1, TSO)?;
+        vcpu.set_vtimer_offset(0)?;
         vcpu.set_reg(
             reg::X0 + translate::LOOKUP.0 as u32,
             layout::va(layout::LOOKUP),

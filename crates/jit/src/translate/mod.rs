@@ -12,6 +12,7 @@ pub use tier2::{Tier2, region};
 pub use vector::CTX;
 
 const DF_OFFSET: i32 = crate::layout::DF_OFFSET as i32;
+const CLOCK_BASE: i32 = crate::layout::CLOCK_BASE as i32;
 
 /// Exits translated code takes, as `hvc` numbers; x16 holds the guest RIP.
 pub const HVC_MISS: u16 = 1;
@@ -194,7 +195,7 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
             (false, both)
         }
         (Map::Primary, 0xf6 | 0xf7) if i.ext() == 0 => (false, writes),
-        (Map::Primary, 0xf7) if matches!(i.ext(), 4 | 5) && i.osize() >= 4 => (false, writes),
+        (Map::Primary, 0xf6 | 0xf7) if matches!(i.ext(), 4 | 5) => (false, writes),
         (Map::Primary, 0xf6 | 0xf7) if matches!(i.ext(), 6 | 7) => (false, none),
         (Map::Primary, 0xfe | 0xff) if i.ext() <= 1 => (false, both),
         (Map::M0F, 0xb0 | 0xb1) if i.mem.is_some() => (false, writes),
@@ -223,7 +224,10 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
             (false, none)
         }
         (Map::M0F38, 0xf6) if adx => (false, both),
-        (Map::M0F, 0x01) if matches!(i.modrm, Some(0xfa | 0xfb)) => (false, none),
+        (Map::M0F, 0x01) if matches!(i.modrm, Some(0xf9..=0xfb)) => (false, none),
+        (Map::M0F, 0x31) => (false, none),
+        (Map::Primary, 0x9b) => (false, none),
+        (Map::Primary, 0xd2 | 0xd3) if i.ext() <= 1 => (false, both),
         (Map::M0F, 0xa4) if i.osize() >= 4 => match i.imm as u32 & (i.osize() as u32 * 8 - 1) {
             0 => (false, none),
             _ => (false, writes),
@@ -723,12 +727,16 @@ impl Translator {
                 self.a.mov_imm(Size::X, B, i.imm as u64 & mask(size));
                 self.alu(Alu::And, size, flags);
             }
-            (Map::Primary, 0xf7) if matches!(i.ext(), 4 | 5) => self.mul_wide(i, next, flags),
+            (Map::Primary, 0xf6 | 0xf7) if matches!(i.ext(), 4 | 5) => {
+                self.mul_wide(i, next, flags)
+            }
             (Map::Primary, 0xf6 | 0xf7) if matches!(i.ext(), 6 | 7) => self.div(i, next),
             (Map::Primary, 0xd2 | 0xd3) if i.ext() >= 4 => self.shift_cl(i, next, flags),
             (Map::Primary, 0xc0 | 0xd0) => self.narrow_shift(i, next, flags),
             (Map::Primary, 0xc1 | 0xd1) if i.osize() == 2 => self.narrow_shift(i, next, flags),
-            (Map::Primary, 0xc1 | 0xd1 | 0xd3) if i.ext() <= 1 => self.rotate(i, next, flags),
+            (Map::Primary, 0xc1 | 0xd1 | 0xd2 | 0xd3) if i.ext() <= 1 => {
+                self.rotate(i, next, flags)
+            }
             (Map::Primary, 0x86 | 0x87 | 0x91..=0x97) => self.xchg(i, next),
             (Map::M0F, 0xb0 | 0xb1 | 0xc0 | 0xc1) => self.atomic(i, next, flags),
             (Map::M0F, 0xc7) => self.cmpxchg16b(i, next),
@@ -850,6 +858,9 @@ impl Translator {
             (Map::M0F38, 0xf0 | 0xf1) => self.movbe_crc32(i, next),
             (Map::M0F38, 0xf6) => self.adx(i, next, flags),
             (Map::M0F, 0x01) if i.modrm == Some(0xfb) => self.a.isb(),
+            (Map::M0F, 0x01) if i.modrm == Some(0xf9) => self.rdtsc(true),
+            (Map::M0F, 0x31) => self.rdtsc(false),
+            (Map::Primary, 0x9b) => {}
             (Map::M0F, 0x01) => {}
             (Map::M0F, 0xa4) => self.shld(i, next, flags),
             (Map::M0F, 0xae) => {
@@ -1311,12 +1322,40 @@ impl Translator {
         }
     }
 
-    /// One-operand MUL and IMUL: RDX:RAX = RAX * r/m.
+    /// One-operand MUL and IMUL: RDX:RAX = RAX * r/m (AX = AL * r/m8).
     fn mul_wide(&mut self, i: &Insn, next: u64, flags: bool) {
-        let size = i.osize();
+        let size = if i.op == 0xf6 { 1 } else { i.osize() };
         let signed = i.ext() == 5;
         self.get_rm(i, size, next);
         let (hi, a) = (OLD_NZCV, &mut self.a);
+        if size < 4 {
+            let bits = size as u32 * 8;
+            let extend = |a: &mut Asm, d: Reg, s: Reg| match (size, signed) {
+                (1, true) => a.sxtb(Size::W, d, s),
+                (1, false) => a.uxtb(d, s),
+                (_, true) => a.sxth(Size::W, d, s),
+                (_, false) => a.uxth(d, s),
+            };
+            extend(a, U, r(0));
+            extend(a, A, A);
+            a.mul(Size::W, T, U, A);
+            if flags {
+                if signed {
+                    extend(a, B, T);
+                    a.cmp(Size::W, T, B);
+                } else {
+                    a.lsr_imm(Size::W, hi, T, bits);
+                    a.cmp_imm(Size::W, hi, 0);
+                }
+                self.imul_flags(size);
+            }
+            self.a.bfi(Size::X, r(0), T, 0, 16);
+            if size == 2 {
+                self.a.lsr_imm(Size::W, hi, T, 16);
+                self.a.bfi(Size::X, r(2), hi, 0, 16);
+            }
+            return;
+        }
         if size == 8 {
             a.mul(Size::X, T, r(0), A);
             if signed {
@@ -1562,26 +1601,63 @@ impl Translator {
         a.mov(Size::X, r(2), high);
     }
 
+    /// RDTSC and RDTSCP (ECX = 0): `savestate::clock`'s guest time, from
+    /// the counter `mach_absolute_time` reads and the base kept in the context block.
+    fn rdtsc(&mut self, rdtscp: bool) {
+        let (numer, denom) = savestate::clock::timebase();
+        let a = &mut self.a;
+        a.isb();
+        a.mrs(T, a64::sysreg::CNTVCT_EL0);
+        if numer != 1 {
+            a.mov_imm(Size::X, U, numer as u64);
+            a.mul(Size::X, T, T, U);
+        }
+        if denom != 1 {
+            a.mov_imm(Size::X, U, denom as u64);
+            a.udiv(Size::X, T, T, U);
+        }
+        a.ldr(Width::X, U, CTX, CLOCK_BASE);
+        a.add(Size::X, T, T, U);
+        a.mov(Size::W, r(0), T);
+        a.lsr_imm(Size::X, r(2), T, 32);
+        if rdtscp {
+            a.mov_imm(Size::X, r(1), 0);
+        }
+    }
+
     /// ROL and ROR by 1, a constant or CL: only CF and OF change, and
-    /// nothing does for a count of 0.
+    /// nothing does for a count of 0. 8- and 16-bit rotates by 1 or a
+    /// constant are [`Self::narrow_shift`]'s.
     fn rotate(&mut self, i: &Insn, next: u64, flags: bool) {
-        let size = i.osize();
+        let size = if i.op == 0xd2 { 1 } else { i.osize() };
         let s = sz(size);
         let bits = size as u32 * 8;
         let rol = i.ext() == 0;
         self.get_rm(i, size, next);
         let skip = self.a.label();
         let mut counted = true;
-        if i.op == 0xd3 {
-            assert!(
-                self.a
-                    .logic_imm(Logic::And, Size::X, B, r(1), bits as u64 - 1)
-            );
+        let by_cl = i.op >= 0xd2;
+        if by_cl {
+            let a = &mut self.a;
+            let count_mask = if size == 8 { 63 } else { 31 };
+            assert!(a.logic_imm(Logic::And, Size::X, B, r(1), count_mask));
+            let mut src = A;
+            if bits < 32 {
+                // A 32-bit rotate of the operand repeated is the narrow rotate.
+                a.logic_shift(Logic::Orr, false, Size::W, T, A, A, Shift::Lsl, bits);
+                if bits == 8 {
+                    a.logic_shift(Logic::Orr, false, Size::W, T, T, T, Shift::Lsl, 16);
+                }
+                src = T;
+            }
             if rol {
-                self.a.neg(s, U, B);
-                self.a.rorv(s, T, A, U);
+                a.neg(s, U, B);
+                a.rorv(s, T, src, U);
             } else {
-                self.a.rorv(s, T, A, B);
+                a.rorv(s, T, src, B);
+            }
+            if bits < 32 {
+                assert!(a.logic_imm(Logic::And, Size::X, T, T, mask(size)));
             }
         } else {
             let n = if i.op == 0xd1 {
@@ -1598,7 +1674,7 @@ impl Translator {
             return;
         }
         let (old, cf, a) = (OLD_NZCV, OLD_AF, &mut self.a);
-        if i.op == 0xd3 {
+        if by_cl {
             a.cbz(Size::X, B, skip);
         }
         a.mrs(old, a64::sysreg::NZCV);
@@ -1966,7 +2042,12 @@ impl Translator {
     fn imul_flags(&mut self, size: u8) {
         let a = &mut self.a;
         a.cset(Size::X, U, Cond::Ne);
-        a.tst(sz(size), T, T);
+        if size < 4 {
+            a.lsl_imm(Size::W, B, T, 32 - size as u32 * 8);
+            a.tst(Size::W, B, B);
+        } else {
+            a.tst(sz(size), T, T);
+        }
         a.mrs(B, a64::sysreg::NZCV);
         a.bfi(Size::X, B, U, 28, 1);
         assert!(a.logic_imm(Logic::Eor, Size::X, U, U, 1));

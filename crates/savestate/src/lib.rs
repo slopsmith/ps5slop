@@ -4,7 +4,7 @@
 //! integers, lengths as `u64`, fields in declaration order. There is no
 //! self-description: a change to anything encoded changes [`FORMAT`].
 //!
-//! Also here, because every crate that reads a clock needs it: the offset
+//! Also here, because every crate that reads a clock needs it: the base
 //! that keeps the guest's wall clock continuous across a save and a load.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};

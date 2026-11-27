@@ -22,8 +22,9 @@ pub const MAX_VCPUS: usize = 64;
 /// ones, so a string step is `(size ^ df) - df`), then the x87 state (R0-R7
 /// as doubles, and the status word, control word and tag bits as 64-bit
 /// slots), then the FPCR that MXCSR gives, room to keep FPSR while x87
-/// code runs with the host's default FPCR, and MXCSR without the exception
-/// flags FPSR has gathered since.
+/// code runs with the host's default FPCR, MXCSR without the exception
+/// flags FPSR has gathered since, and the guest clock's base
+/// (`savestate::clock::base`, copied at every entry).
 pub const CONTEXTS: usize = 0x6_0000;
 pub const CONTEXT_SIZE: usize = 0x400;
 pub const YMM_SIZE: usize = 0x200;
@@ -35,6 +36,7 @@ pub const X87_FTAG: usize = 0x258;
 pub const FPCR_SSE: usize = 0x260;
 pub const FPSR_KEPT: usize = 0x268;
 pub const MXCSR: usize = 0x270;
+pub const CLOCK_BASE: usize = 0x278;
 /// Two pools the TTBR0 tables are built in, alternately, so one can be
 /// rebuilt while vCPUs still walk the other. Each holds 8,192 tables: a
 /// fragmented map needs one per 2 MiB that is not wholly mapped, and GTA V's
@@ -59,6 +61,6 @@ pub const fn ipa(offset: usize) -> u64 {
 }
 
 const _: () = assert!(STACKS + MAX_VCPUS * STACK_SIZE <= CONTEXTS);
-const _: () = assert!(MXCSR + 8 <= CONTEXT_SIZE);
+const _: () = assert!(CLOCK_BASE + 8 <= CONTEXT_SIZE);
 const _: () = assert!(CONTEXTS + MAX_VCPUS * CONTEXT_SIZE <= TABLES[0].0);
 const _: () = assert!(TABLES[1].1 <= CODE_CACHE && CODE_CACHE_END <= LOOKUP);

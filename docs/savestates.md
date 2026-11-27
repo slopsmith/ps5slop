@@ -31,7 +31,7 @@ Our own small binary encoding (`crates/savestate`: little-endian fields in order
 
 Not kept, rebuilt after a load: JIT translations, Metal pipelines and compiled programs, textures read from guest memory, GPU memory windows. Audio already queued for the device is dropped, and WAVE recordings do not go on.
 
-**Clocks.** Every wall-clock read the guest can make (`clock_gettime` realtime, `gettimeofday`, `time`, `rdtsc`, `sceKernelReadTsc`, RTC ticks, GPU timestamps) goes through `savestate::clock`, which a load sets to go on from the saved time, so a state loaded hours later does not see hours pass in one frame. Uptime clocks (kernel, VideoOut, pad) are set back the same way.
+**Clocks.** Every wall-clock read the guest can make (`clock_gettime` realtime, `gettimeofday`, `time`, `rdtsc`, `sceKernelReadTsc`, RTC ticks, GPU timestamps) goes through `savestate::clock`, which a load sets to go on from the saved time, so a state loaded hours later does not see hours pass in one frame. That clock is a base plus the host's monotonic counter (`mach_absolute_time`), so translated `rdtsc` can compute it inside the VM; it does not follow changes to the host's clock and stands still while the Mac sleeps. Uptime clocks (kernel, VideoOut, pad) are set back the same way.
 
 ## Refused
 

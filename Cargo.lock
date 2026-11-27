@@ -779,6 +779,7 @@ dependencies = [
  "hvf",
  "libc",
  "memory",
+ "savestate",
  "tracing",
  "x86",
 ]
@@ -1647,6 +1648,7 @@ dependencies = [
 name = "savestate"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "zstd",
 ]
 

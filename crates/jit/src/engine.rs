@@ -578,6 +578,7 @@ impl Engine {
             self.fpcr_dirty = false;
         }
         self.put(crate::layout::MXCSR, x.mxcsr as u64);
+        self.put(crate::layout::CLOCK_BASE, savestate::clock::base());
         for (k, &v) in x.st.iter().enumerate() {
             self.put(crate::layout::X87_ST + 8 * k, v);
         }

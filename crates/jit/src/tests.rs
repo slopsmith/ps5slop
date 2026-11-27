@@ -2381,3 +2381,245 @@ fn sha256_instructions_match_the_interpreter() {
     assert_all_translated(SHA_NI);
     same_as_interpreter(SHA_NI, &sign_edge_data());
 }
+
+/// One case of a narrow-operand test: RAX, RCX, RDX, RSI, then RBX for the
+/// operation alone (`None` keeps the scratch pointer).
+type NarrowCase = (u64, u64, u64, u64, Option<u64>);
+
+/// Runs `op` once per case and per RFLAGS value, with `[rbx]` = RAX and
+/// `[rbx + 8]` = RDX, recording RFLAGS, RAX, RDX, RCX, RBX and RSI.
+fn narrow_op_matches_the_interpreter(op: &[u8], cases: &[NarrowCase]) {
+    let mut code = scratch_and_results();
+    for &(rax, rcx, rdx, rsi, rbx) in cases {
+        for rflags in [0x002, 0x8d7] {
+            for (prefix, v) in [(0xb8, rax), (0xb9, rcx), (0xba, rdx), (0xbe, rsi)] {
+                code.extend_from_slice(&[0x48, prefix]);
+                code.extend_from_slice(&v.to_le_bytes());
+            }
+            code.extend_from_slice(&[0x48, 0x89, 0x03]); // mov [rbx], rax
+            code.extend_from_slice(&[0x48, 0x89, 0x53, 0x08]); // mov [rbx + 8], rdx
+            if let Some(v) = rbx {
+                code.extend_from_slice(&[0x48, 0xbb]);
+                code.extend_from_slice(&v.to_le_bytes());
+            }
+            set_rflags(&mut code, rflags);
+            code.extend_from_slice(op);
+            code.extend_from_slice(&[
+                0x9c, // pushfq
+                0x41, 0x5f, // pop r15
+                0x4d, 0x89, 0x3e, // mov [r14], r15
+                0x49, 0x89, 0x46, 0x08, // mov [r14 + 8], rax
+                0x49, 0x89, 0x56, 0x10, // mov [r14 + 16], rdx
+                0x49, 0x89, 0x4e, 0x18, // mov [r14 + 24], rcx
+                0x49, 0x89, 0x5e, 0x20, // mov [r14 + 32], rbx
+                0x49, 0x89, 0x76, 0x28, // mov [r14 + 40], rsi
+                0x49, 0x83, 0xc6, 0x30, // add r14, 48
+            ]);
+            if rbx.is_some() {
+                code.push(0xbb);
+                code.extend_from_slice(&(CODE as u32 + 0xf80).to_le_bytes());
+            }
+        }
+    }
+    code.extend_from_slice(&[0xff, 0xd5]);
+    assert!(code.len() <= 0x800, "code size {}", code.len());
+    assert!(cases.len() * 2 * 48 <= 0x780);
+    assert_all_translated(op);
+    same_as_interpreter(&code, &[]);
+}
+
+#[test]
+fn byte_and_word_rotates_by_cl_match_the_interpreter() {
+    let forms: &[(&[u8], bool)] = &[
+        (&[0xd2, 0xc0], false),       // rol al, cl
+        (&[0xd2, 0xc8], false),       // ror al, cl
+        (&[0xd2, 0xc4], false),       // rol ah, cl
+        (&[0xd2, 0xcf], true),        // ror bh, cl
+        (&[0xd2, 0xc6], false),       // rol dh, cl
+        (&[0xd2, 0xcd], false),       // ror ch, cl
+        (&[0x40, 0xd2, 0xc6], false), // rol sil, cl
+        (&[0xd2, 0x03], false),       // rol byte [rbx], cl
+        (&[0xd2, 0x4b, 0x08], false), // ror byte [rbx + 8], cl
+        (&[0x66, 0xd3, 0xc0], false), // rol ax, cl
+        (&[0x66, 0xd3, 0x0b], false), // ror word [rbx], cl
+    ];
+    for &(op, uses_rbx) in forms {
+        let cases: Vec<NarrowCase> = [0u64, 1, 7, 8, 9, 31, 32, 33, 0xff]
+            .iter()
+            .map(|&n| {
+                (
+                    0x1122_3344_5566_a596,
+                    0x7766_5544_3322_3c00 | n,
+                    0x99aa_bbcc_ddee_7f81,
+                    0xfedc_ba98_7654_3296,
+                    uses_rbx.then_some(0x0102_0304_0506_c3f0),
+                )
+            })
+            .collect();
+        narrow_op_matches_the_interpreter(op, &cases);
+    }
+}
+
+#[test]
+fn byte_and_word_multiplies_match_the_interpreter() {
+    let forms: &[(&[u8], bool)] = &[
+        (&[0xf6, 0xe1], false),       // mul cl
+        (&[0xf6, 0xe9], false),       // imul cl
+        (&[0xf6, 0xe4], false),       // mul ah
+        (&[0xf6, 0xef], true),        // imul bh
+        (&[0xf6, 0xe6], false),       // mul dh
+        (&[0x40, 0xf6, 0xe6], false), // mul sil
+        (&[0xf6, 0x23], false),       // mul byte [rbx]
+        (&[0xf6, 0x6b, 0x08], false), // imul byte [rbx + 8]
+        (&[0x66, 0xf7, 0xe1], false), // mul cx
+        (&[0x66, 0xf7, 0xe9], false), // imul cx
+        (&[0x66, 0xf7, 0x2b], false), // imul word [rbx]
+    ];
+    let pairs: [(u64, u64); 9] = [
+        (0x00, 0x5a),
+        (0xff, 0xff),
+        (0x80, 0x80),
+        (0x10, 0x10),
+        (0x7f, 0x01),
+        (0xff, 0x01),
+        (0x0b, 0x0b),
+        (0x0c, 0x0b),
+        (0x80, 0xff),
+    ];
+    for &(op, uses_rbx) in forms {
+        let cases: Vec<NarrowCase> = pairs
+            .iter()
+            .map(|&(x, y)| {
+                (
+                    0x1122_3344_5566_0000 | y << 8 | x,
+                    0x7766_5544_3322_0000 | y << 8 | y,
+                    0x99aa_bbcc_ddee_0000 | y << 8 | y,
+                    0xfedc_ba98_7654_3200 | y,
+                    uses_rbx.then_some(0x0102_0304_0506_0000 | y << 8),
+                )
+            })
+            .collect();
+        narrow_op_matches_the_interpreter(op, &cases);
+    }
+}
+
+#[test]
+fn byte_division_by_zero_and_overflow_go_to_the_interpreter() {
+    let programs: &[&[u8]] = &[
+        &[0x66, 0xb8, 0xe8, 0x03, 0xb1, 0x00, 0xf6, 0xf1, 0xff, 0xd5], // ax = 1000; div 0
+        &[0x66, 0xb8, 0x00, 0x10, 0xb1, 0x02, 0xf6, 0xf1, 0xff, 0xd5], // 0x1000 / 2
+        &[0x66, 0xb8, 0xe8, 0x03, 0xb1, 0x00, 0xf6, 0xf9, 0xff, 0xd5], // idiv 0
+        &[0x66, 0xb8, 0x00, 0x80, 0xb1, 0xff, 0xf6, 0xf9, 0xff, 0xd5], // -32768 / -1
+    ];
+    let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
+    for code in programs {
+        assert_all_translated(code);
+        let (mem, mut want) = program(code);
+        let want_exit = x86::run(&mut want, &mem, 100);
+        assert!(
+            matches!(
+                want_exit,
+                x86::Exit::Fault {
+                    kind: x86::CpuFault::DivideError,
+                    ..
+                }
+            ),
+            "{want_exit:?}"
+        );
+        let (mem, mut got) = program(code);
+        assert_eq!(run(&mut got, &mem, &|| false), want_exit);
+        assert_eq!((got.regs, got.rip), (want.regs, want.rip));
+    }
+}
+
+#[test]
+fn fwait_matches_the_interpreter() {
+    let code = [0x9b, 0x9b, 0xff, 0xd5]; // fwait; fwait; call rbp
+    assert_all_translated(&code[..2]);
+    same_as_interpreter(&code, &[]);
+}
+
+/// Runs `code` in the JIT and returns the CPU and the guest clock read just
+/// before and just after.
+fn run_timed(code: &[u8]) -> (x86::Cpu, Memory, u64, u64) {
+    let (mem, mut cpu) = program(code);
+    let before = savestate::clock::unix_nanos();
+    assert_eq!(run(&mut cpu, &mem, &|| false), x86::Exit::Trap(TRAP));
+    let after = savestate::clock::unix_nanos();
+    (cpu, mem, before, after)
+}
+
+/// `rdtscp` and `rdtsc` with RAX, RDX and RCX all ones before, keeping the
+/// first result in R9 (EAX) and R10 (EDX).
+const TSC_READS: &[u8] = &[
+    0x48, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff, // mov rax, -1
+    0x48, 0xc7, 0xc2, 0xff, 0xff, 0xff, 0xff, // mov rdx, -1
+    0x48, 0xc7, 0xc1, 0xff, 0xff, 0xff, 0xff, // mov rcx, -1
+    0x0f, 0x01, 0xf9, // rdtscp
+    0x49, 0x89, 0xc1, // mov r9, rax
+    0x49, 0x89, 0xd2, // mov r10, rdx
+    0x48, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff, // mov rax, -1
+    0x48, 0xc7, 0xc2, 0xff, 0xff, 0xff, 0xff, // mov rdx, -1
+    0x0f, 0x31, // rdtsc
+    0xff, 0xd5, // call rbp
+];
+
+#[test]
+fn rdtsc_and_rdtscp_read_the_guest_clock_and_zero_the_upper_halves() {
+    let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
+    assert_all_translated(&TSC_READS[..TSC_READS.len() - 2]);
+    let (cpu, _, before, after) = run_timed(TSC_READS);
+    for r in [9, 10, RAX, RDX] {
+        assert_eq!(cpu.regs[r] >> 32, 0, "upper half of r{r}");
+    }
+    assert_eq!(cpu.regs[RCX], 0);
+    let first = cpu.regs[10] << 32 | cpu.regs[9];
+    let second = cpu.regs[RDX] << 32 | cpu.regs[RAX];
+    assert!(
+        before <= first && first <= second && second <= after,
+        "{before} {first} {second} {after}"
+    );
+    assert!(after - before < 50_000_000);
+}
+
+#[test]
+fn time_stamps_stay_monotonic_across_translated_code_and_the_interpreter() {
+    let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
+    let mut code = scratch_and_results();
+    code.extend_from_slice(&[0x41, 0xb8, 0x3c, 0x00, 0x00, 0x00]); // mov r8d, 60
+    let top = code.len();
+    for read in [&[0x0f, 0x31][..], &[0x0f, 0x01, 0xf9]] {
+        code.extend_from_slice(read);
+        code.extend_from_slice(&[
+            0x48, 0xc1, 0xe2, 0x20, // shl rdx, 32
+            0x48, 0x09, 0xd0, // or rax, rdx
+            0x49, 0x89, 0x06, // mov [r14], rax
+            0x49, 0x83, 0xc6, 0x08, // add r14, 8
+        ]);
+    }
+    code.extend_from_slice(&[0xd1, 0xd7]); // rcl edi, 1 (interpreted)
+    code.extend_from_slice(&[0x41, 0xff, 0xc8]); // dec r8d
+    code.extend_from_slice(&[0x75, (top as isize - code.len() as isize - 2) as u8]); // jnz top
+    code.extend_from_slice(&[0xff, 0xd5]);
+    let (_, mem, before, after) = run_timed(&code);
+    let mut last = before;
+    for k in 0..120 {
+        let t = mem.read_u64(CODE + 0x800 + 8 * k).unwrap();
+        assert!(last <= t, "read {k}: {t} after {last}");
+        last = t;
+    }
+    assert!(last <= after);
+}
+
+#[test]
+fn time_stamps_follow_a_moved_guest_clock() {
+    let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
+    let hour = std::time::Duration::from_secs(3600);
+    let host = savestate::clock::unix();
+    savestate::clock::set_unix(host - hour);
+    let (cpu, _, before, after) = run_timed(TSC_READS);
+    savestate::clock::set_unix(savestate::clock::unix() + hour);
+    let t = cpu.regs[RDX] << 32 | cpu.regs[RAX];
+    assert!(before <= t && t <= after, "{before} {t} {after}");
+    assert!(t < host.as_nanos() as u64);
+}
