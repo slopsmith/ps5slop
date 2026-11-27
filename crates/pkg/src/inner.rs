@@ -138,9 +138,10 @@ impl ReadAt for InnerImage {
         {
             return Err(invalid("read past the end of the inner image"));
         }
-        let mut done = 0;
-        while done < buf.len() {
-            let pos = offset + done as u64;
+        let mut pieces = Vec::new();
+        let mut rest = buf;
+        let mut pos = offset;
+        while !rest.is_empty() {
             let region = self
                 .layout
                 .region_at(pos)
@@ -150,15 +151,103 @@ impl ReadAt for InnerImage {
             let index = in_region / BLOCK_SIZE;
             let within = (in_region % BLOCK_SIZE) as usize;
             let block_end = (start + (index + 1) * BLOCK_SIZE).min(end);
-            let n = ((block_end - pos) as usize).min(buf.len() - done);
-            if sparse {
-                buf[done..done + n].fill(0);
-            } else {
+            let n = ((block_end - pos) as usize).min(rest.len());
+            let (piece, tail) = rest.split_at_mut(n);
+            pieces.push(Piece {
+                block: (!sparse).then_some((region, index)),
+                within,
+                out: piece,
+            });
+            rest = tail;
+            pos += n as u64;
+        }
+        fill_in_parallel(&mut pieces, |p| self.fill(p))
+    }
+}
+
+/// Runs `fill` on every piece, on several threads when there are enough
+/// pieces to be worth it; the first error is returned.
+fn fill_in_parallel<P: Send>(
+    pieces: &mut [P],
+    fill: impl Fn(&mut P) -> Result<()> + Sync,
+) -> Result<()> {
+    let workers = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(pieces.len() / PARALLEL_BLOCKS_PER_WORKER);
+    if workers <= 1 {
+        return pieces.iter_mut().try_for_each(fill);
+    }
+    let next = Mutex::new(pieces.iter_mut());
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    loop {
+                        let Some(p) = next.lock().unwrap().next() else {
+                            return Ok(());
+                        };
+                        fill(p)?;
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .try_for_each(|w| w.join().expect("block decoder panicked"))
+    })
+}
+
+/// Reads of at least this many blocks per extra thread decode in parallel.
+const PARALLEL_BLOCKS_PER_WORKER: usize = 4;
+
+/// The part of a read that one block (or a sparse stretch) supplies.
+struct Piece<'a> {
+    block: Option<(usize, u64)>,
+    within: usize,
+    out: &'a mut [u8],
+}
+
+impl InnerImage {
+    fn fill(&self, p: &mut Piece) -> Result<()> {
+        match p.block {
+            None => p.out.fill(0),
+            Some((region, index)) => {
                 let block = self.block(region, index)?;
-                buf[done..done + n].copy_from_slice(&block[within..within + n]);
+                let n = p.out.len();
+                p.out.copy_from_slice(&block[p.within..p.within + n]);
             }
-            done += n;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parallel_fills_reach_every_piece_and_report_an_error() {
+        let mut buf = vec![0u8; 1000];
+        let mut pieces: Vec<(usize, &mut [u8])> = buf.chunks_mut(10).enumerate().collect();
+        fill_in_parallel(&mut pieces, |(i, out)| {
+            out.fill(*i as u8 + 1);
+            Ok(())
+        })
+        .unwrap();
+        assert!(
+            buf.chunks(10)
+                .enumerate()
+                .all(|(i, c)| c.iter().all(|&b| b == i as u8 + 1))
+        );
+
+        let mut pieces: Vec<usize> = (0..100).collect();
+        let failed = fill_in_parallel(&mut pieces, |i| {
+            if *i == 57 {
+                Err(invalid("block 57"))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(failed.is_err());
     }
 }

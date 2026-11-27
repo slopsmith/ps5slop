@@ -109,7 +109,7 @@ fn run(cli: Cli) -> pkg::Result<()> {
             let app = Package::open(&package)?.app_pfs(&passcode_or_default(passcode)?)?;
             let src = app.open_file(app.lookup(&path)?.inode)?;
             let mut out = std::io::stdout().lock();
-            let mut buf = vec![0u8; 1 << 20];
+            let mut buf = vec![0u8; 64 << 20];
             let mut at = 0;
             while at < src.len() {
                 let n = (src.len() - at).min(buf.len() as u64) as usize;
