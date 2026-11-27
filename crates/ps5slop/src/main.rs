@@ -229,6 +229,7 @@ fn main() -> ExitCode {
                 hle::trace_calls(Some(f), filter.clone());
             }
             let kernel_for_report = booted.kernel.clone();
+            let kernel_for_fault = booted.kernel.clone();
             let report_path = config.run.report.clone();
             ps5slop::at_exit(move || {
                 kernel_for_report.finish_captures();
@@ -252,6 +253,12 @@ fn main() -> ExitCode {
                 }
             });
             let result = run(booted, headless, label, capture_tag);
+            if let Err(ps5slop::Error::Thread(_)) = &result {
+                tracing::error!(
+                    "threads when the run ended:\n{}",
+                    ps5slop::control::thread_table(&kernel_for_fault)
+                );
+            }
             ps5slop::run_at_exit();
             result
         });

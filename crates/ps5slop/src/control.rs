@@ -165,25 +165,7 @@ fn run(kernel: &Arc<Kernel>, line: &str) -> String {
             Some(addr) => sym(kernel, addr),
             None => "usage: sym ADDR".into(),
         },
-        "threads" => kernel
-            .threads()
-            .iter()
-            .map(|t| {
-                format!(
-                    "{:#x} {:<24} {} calls {:>9}  last {} from {}",
-                    t.tcb,
-                    t.name.as_deref().unwrap_or("-"),
-                    if t.running { "running" } else { "ended  " },
-                    t.calls,
-                    kernel
-                        .hle
-                        .describe(t.stub)
-                        .unwrap_or_else(|| format!("{:#x}", t.stub)),
-                    sym(kernel, t.caller)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
+        "threads" => thread_table(kernel),
         "watch" => match (num(it.next()), num(it.next())) {
             (Some(addr), Some(len)) if len > 0 => match jit::watch(addr, addr + len) {
                 Ok(()) => format!("watching {addr:#x}..{:#x}", addr + len),
@@ -500,6 +482,30 @@ fn find(mem: &memory::Memory, pattern: &[u8], lo: u64, hi: u64) -> String {
     } else {
         found.join("\n")
     }
+}
+
+/// One line per guest thread: name, state, host calls, the last host
+/// function and its caller.
+pub fn thread_table(kernel: &Kernel) -> String {
+    kernel
+        .threads()
+        .iter()
+        .map(|t| {
+            format!(
+                "{:#x} {:<24} {} calls {:>9}  last {} from {}",
+                t.tcb,
+                t.name.as_deref().unwrap_or("-"),
+                if t.running { "running" } else { "ended  " },
+                t.calls,
+                kernel
+                    .hle
+                    .describe(t.stub)
+                    .unwrap_or_else(|| format!("{:#x}", t.stub)),
+                sym(kernel, t.caller)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn sym(kernel: &Kernel, addr: u64) -> String {

@@ -48,7 +48,7 @@ Every `ps5slop run` listens on a Unix socket, `ps5slop-PID.sock` in the temporar
 - **GPU:** `gputrace N`, `gpusnap DIR [FIRST]`, `gpucapture [PATH]`, `metalcapture [PATH]`, `gpuskip [ADDR...]`, `gpureload`.
 - **Run:** `profile`, `rates`, `problems`, `save PATH`, `quit`.
 
-A guest fault prints the return addresses along the frame-pointer chain (module and offset). `PS5SLOP_HOLD_ON_FAULT` keeps a faulting thread waiting instead of ending the process, so the socket can still read memory at the moment of the fault; a held guest keeps all its memory, so do not leave it.
+A guest fault prints the return addresses along the frame-pointer chain (module and offset), and a fault that ends the run also prints the `threads` table, so a title's own watchdog crash shows what the watched thread was blocked in. `PS5SLOP_HOLD_ON_FAULT` keeps a faulting thread waiting instead of ending the process, so the socket can still read memory at the moment of the fault; a held guest keeps all its memory, so do not leave it.
 
 ## Write watchpoints
 
