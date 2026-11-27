@@ -157,20 +157,23 @@ impl Metal {
             bound.gds = Some(self.gds_buffer()?);
         }
         if program.translated.guest_memory {
-            let Some(m) = self.guest_window(host, user, program.address) else {
-                diag::problems::record(
-                    diag::problems::Kind::MemoryWindow,
-                    "no guest memory window",
-                    format!("{:#x}", program.address),
-                );
-                self.report(
-                    tracing::Level::ERROR,
-                    format!(
-                        "no guest memory window for the program at {:#x}, user data {user:x?}",
-                        program.address
-                    ),
-                );
-                return None;
+            let m = match self.guest_window(host, user, program.address) {
+                Some(m) => m,
+                None => {
+                    diag::problems::record(
+                        diag::problems::Kind::MemoryWindow,
+                        "no guest memory window, ran with memory reading 0",
+                        format!("{:#x}", program.address),
+                    );
+                    self.report(
+                        tracing::Level::ERROR,
+                        format!(
+                            "no guest memory window for the program at {:#x}, user data {user:x?}; it runs with memory reading 0",
+                            program.address
+                        ),
+                    );
+                    self.no_window()?
+                }
             };
             let win = m.win;
             self.note(|| format!("program {:#x} windows {win:x?}", program.address));

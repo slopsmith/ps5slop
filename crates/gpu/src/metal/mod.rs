@@ -198,6 +198,8 @@ pub struct Metal {
     scratch: Option<(Retained<Buffer>, usize)>,
     /// The global data share, made on first use.
     gds: Option<Retained<Buffer>>,
+    /// What a program gets bound when no guest memory window could be made.
+    no_window: Option<Retained<Buffer>>,
     /// Pixel inputs each (vertex, pixel) program pair lacks, by program ids.
     missing_inputs: HashMap<(u64, u64), Vec<u32>>,
     generation: u64,
@@ -337,6 +339,7 @@ impl Metal {
             missing_inputs: HashMap::new(),
             scratch: None,
             gds: None,
+            no_window: None,
             generation: 0,
             targets: HashMap::new(),
             blank_targets: HashMap::new(),

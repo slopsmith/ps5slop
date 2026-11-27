@@ -3,7 +3,7 @@
 use super::*;
 
 /// Guest memory is wrapped in windows of about this size.
-const WINDOW: u64 = 64 << 20;
+pub(super) const WINDOW: u64 = 64 << 20;
 
 const PAGE: u64 = 0x4000;
 /// Unmapped space in the GPU area that the low area window does not grow
@@ -12,6 +12,14 @@ const PAGE: u64 = 0x4000;
 pub(super) const AREA_GAP: u64 = 2 << 30;
 /// The step area windows grow in.
 const AREA_STEP: u64 = 1 << 30;
+/// Extents outside the GPU area larger than this get windows only near the
+/// addresses that point into them: the AMM areas are 64 GiB reservations
+/// mapped sparsely, and a window over a whole one is past what Metal gives.
+const SPARSE: u64 = 2 << 30;
+/// How far past a pointer into a sparse extent its window reaches.
+const REACH: u64 = 256 << 20;
+/// The most a window near pointers into a sparse extent covers.
+pub(super) const NEAR_MAX: u64 = 1 << 30;
 
 pub(super) struct Window {
     pub(super) start: u64,
@@ -312,6 +320,9 @@ impl Metal {
     /// pointers and before unaligned ones. The area windows reach every region
     /// in the area that the user data or those descriptors point into; the
     /// high one, when needed, takes the third window from other regions.
+    /// Regions over [`SPARSE`] outside the GPU area count only near what points
+    /// into them. A window that cannot be made leaves its slot to the others;
+    /// `None` when none could be made.
     pub(super) fn guest_window(
         &mut self,
         host: &dyn Host,
@@ -321,12 +332,24 @@ impl Metal {
         let max = self.device.maxBufferLength() as u64 & !(PAGE - 1);
         let area = host.gpu_area();
         let in_area = |a: u64| area.is_some_and(|(s, e)| s <= a && a < e);
-        let mut best = host.extent(code);
-        // (start, end, above 4 GiB, rank): 2 for aligned pointers in the user
-        // data, 1 for V# bases in tables it points to, 0 for unaligned ones.
-        let mut pointed: Vec<(u64, u64, bool, u8)> = Vec::new();
-        if let Some((lo, hi)) = best {
-            pointed.push((lo, hi, lo >> 32 != 0, 2));
+        let near = |(lo, hi): (u64, u64), at: u64, reach: u64| {
+            if hi - lo <= SPARSE || in_area(lo) {
+                return (lo, hi);
+            }
+            let start = (at & !(WINDOW - 1)).max(lo);
+            let stop = at
+                .saturating_add(reach.clamp(1, NEAR_MAX))
+                .next_multiple_of(WINDOW)
+                .min(hi);
+            (start, stop)
+        };
+        // (start, end, above 4 GiB, rank, from the code or user data): rank 2
+        // for aligned pointers in the user data, 1 for V# bases in tables it
+        // points to, 0 for unaligned ones.
+        let mut pointed: Vec<(u64, u64, bool, u8, bool)> = Vec::new();
+        if let Some(e) = host.extent(code) {
+            let (lo, hi) = near(e, code, REACH);
+            pointed.push((lo, hi, lo >> 32 != 0, 2, true));
         }
         let mut tables = Vec::new();
         let mut area_spans: Vec<(u64, u64)> = Vec::new();
@@ -335,16 +358,15 @@ impl Metal {
                 pair[0] as u64 | (pair[1] as u64) << 32,
                 pair[0] as u64 | ((pair[1] & 0xFFFF) as u64) << 32,
             ] {
-                if let Some((lo, hi)) = host.extent(ptr) {
+                if let Some(e) = host.extent(ptr) {
+                    let (lo, hi) = near(e, ptr, REACH);
                     if in_area(lo) {
                         area_spans.push((lo, hi));
                     }
-                    pointed.push((lo, hi, ptr >> 32 != 0, if ptr % 4 == 0 { 2 } else { 0 }));
-                    if best.is_none_or(|(l, h)| hi - lo > h - l) {
-                        best = Some((lo, hi));
-                    }
+                    let rank = if ptr % 4 == 0 { 2 } else { 0 };
+                    pointed.push((lo, hi, ptr >> 32 != 0, rank, true));
                     if pair[1] >> 16 == 0 && ptr >> 32 != 0 && ptr % 16 == 0 {
-                        tables.push((ptr, hi));
+                        tables.push((ptr, e.1));
                     }
                 }
             }
@@ -356,21 +378,43 @@ impl Metal {
                 continue;
             }
             for q in words[..n].as_chunks::<16>().0 {
-                let d =
-                    |i: usize| u32::from_le_bytes(q[4 * i..4 * i + 4].try_into().unwrap_or([0; 4]));
-                let base = d(0) as u64 | ((d(1) & 0xFFFF) as u64) << 32;
-                if base >> 32 == 0 || d(2) == 0 {
+                let v: [u32; 4] = std::array::from_fn(|i| {
+                    u32::from_le_bytes(q[4 * i..4 * i + 4].try_into().unwrap_or([0; 4]))
+                });
+                let (base, reach) = buffer_range(&v, true);
+                if base >> 32 == 0 || v[2] == 0 {
                     continue;
                 }
-                if let Some((lo, hi)) = host.extent(base) {
+                if let Some(e) = host.extent(base) {
                     if in_area(base) {
-                        area_spans.push((lo, hi));
+                        area_spans.push(e);
                     } else {
-                        pointed.push((lo, hi, true, 1));
+                        let (lo, hi) = near(e, base, reach - base);
+                        pointed.push((lo, hi, true, 1, false));
                     }
                 }
             }
         }
+        pointed.sort_unstable_by_key(|p| (p.0, p.1));
+        let mut merged: Vec<(u64, u64, bool, u8, bool)> = Vec::new();
+        for p in pointed {
+            match merged.last_mut() {
+                Some(m) if p.0 < m.1 && (p.1 <= m.1 || p.1 - m.0 <= NEAR_MAX + WINDOW) => {
+                    m.1 = m.1.max(p.1);
+                    m.2 |= p.2;
+                    m.3 = m.3.max(p.3);
+                    m.4 |= p.4;
+                }
+                _ => merged.push(p),
+            }
+        }
+        let pointed: Vec<(u64, u64, bool, u8)> =
+            merged.iter().map(|&(l, h, w, r, _)| (l, h, w, r)).collect();
+        let best = merged
+            .iter()
+            .filter(|m| m.4)
+            .max_by_key(|m| (m.1 - m.0, m.0 <= code && code < m.1))
+            .map(|m| (m.0, m.1));
         let outside = pointed
             .iter()
             .filter(|&&(l, _, _, _)| !in_area(l))
@@ -443,7 +487,11 @@ impl Metal {
                 other.and_then(|r| region(self, r)),
             ),
         };
-        let (buffer, base) = first?;
+        let ((buffer, base), second, third) = match (first, second, third) {
+            (Some(f), s, t) => (f, s, t),
+            (None, Some(s), t) => (s, None, t),
+            (None, None, t) => (t?, None, None),
+        };
         let (ro, ro_end) = outside.and_then(|(lo, _)| host.image(lo)).unwrap_or((0, 0));
         let mut win = [
             base,
@@ -474,6 +522,23 @@ impl Metal {
             second,
             third,
             win,
+        })
+    }
+
+    /// Guest memory for a program no window could be made for: none of its
+    /// addresses lie in a window, so reads give 0 and stores are dropped.
+    pub(super) fn no_window(&mut self) -> Option<Memory> {
+        if self.no_window.is_none() {
+            self.no_window = Some(
+                self.device
+                    .newBufferWithLength_options(16, MTLResourceOptions::StorageModeShared)?,
+            );
+        }
+        Some(Memory {
+            buffer: self.no_window.clone()?,
+            second: None,
+            third: None,
+            win: [0; 10],
         })
     }
 

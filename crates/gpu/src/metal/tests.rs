@@ -10,6 +10,8 @@ struct Mem {
     area: Option<(u64, u64)>,
     /// Mapped regions; empty means one region over the whole allocation.
     regions: Vec<(u64, u64)>,
+    /// Memory with no host pointer, so no window can be made over it.
+    unbacked: Option<(u64, u64)>,
 }
 
 impl Mem {
@@ -32,6 +34,7 @@ impl Mem {
             image: None,
             area: None,
             regions: Vec::new(),
+            unbacked: None,
         }
     }
 }
@@ -39,6 +42,12 @@ impl Mem {
 impl Host for Mem {
     fn read(&self, addr: u64, buf: &mut [u8]) -> bool {
         let _ = &self.bytes;
+        if addr
+            .checked_add(buf.len() as u64)
+            .is_none_or(|end| end > self.len)
+        {
+            return false;
+        }
         // SAFETY: tests stay inside the mapping.
         unsafe {
             std::ptr::copy_nonoverlapping(self.base.add(addr as usize), buf.as_mut_ptr(), buf.len())
@@ -46,6 +55,12 @@ impl Host for Mem {
         true
     }
     fn write(&self, addr: u64, data: &[u8]) -> bool {
+        if addr
+            .checked_add(data.len() as u64)
+            .is_none_or(|end| end > self.len)
+        {
+            return false;
+        }
         // SAFETY: tests stay inside the mapping.
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), self.base.add(addr as usize), data.len())
@@ -76,6 +91,9 @@ impl Host for Mem {
         end <= self.len
     }
     fn host_pointer(&self, addr: u64) -> Option<*mut u8> {
+        if self.unbacked.is_some_and(|(s, e)| s <= addr && addr < e) {
+            return None;
+        }
         // SAFETY: inside the mapping.
         Some(unsafe { self.base.add(addr as usize) })
     }
@@ -1004,6 +1022,153 @@ fn a_program_reads_a_table_in_a_third_region() {
     p.run(&mem, 0x2000, packets.len() as u32).unwrap();
     p.finish(&mem);
     assert_eq!(word(&mem, out), 0x5EED);
+}
+
+/// Memory laid out like the AMM areas: a reservation far larger than what
+/// programs point into.
+fn sparse_memory() -> Mem {
+    let mut mem = Mem::new(0x2_0000_0000);
+    mem.regions = vec![
+        (0, 0x100_0000),
+        (0x800_0000, 0x1000_0000),
+        (0x1_0000_0000, 0x2_0000_0000),
+    ];
+    mem
+}
+
+#[test]
+fn a_program_pointing_into_a_huge_sparse_extent_reads_it() {
+    let (code, out, table) = (0x1000, 0x800_0000, 0x1_8000_0010);
+    let program = [
+        LOAD_X4_BOTH_WAYS[1],
+        &[
+            0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+            0x7E02_0208, // v_mov_b32 v1, s8
+            0xE070_0000,
+            0x8001_0100, // buffer_store_dword v1, off, s[4:7], 0
+            0xBF81_0000, // s_endpgm
+        ],
+    ]
+    .concat();
+    let Some(metal) = Metal::new() else {
+        return;
+    };
+    let mem = sparse_memory();
+    for (i, w) in program.iter().enumerate() {
+        mem.write(code + 4 * i as u64, &w.to_le_bytes());
+    }
+    mem.write(table, &0x5EED_u32.to_le_bytes());
+    let user = [
+        &[table as u32, (table >> 32) as u32, 0, 0][..],
+        &buffer(out)[..],
+    ]
+    .concat();
+    let packets = [compute_setup(code, &user), DISPATCH_ONE.to_vec()].concat();
+    let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+    mem.write(0x2000, &bytes);
+    let mut p = crate::pm4::Processor::default();
+    p.backend = Some(Box::new(metal));
+    p.run(&mem, 0x2000, packets.len() as u32).unwrap();
+    p.finish(&mem);
+    assert_eq!(word(&mem, out), 0x5EED);
+}
+
+#[test]
+fn windows_into_a_huge_sparse_extent_stay_near_what_points_there() {
+    let Some(mut metal) = Metal::new() else {
+        return;
+    };
+    let mut mem = sparse_memory();
+    mem.area = Some((0x800_0000, 0x1000_0000));
+    let (low, high, through_table, table) = (
+        0x1_2000_0040u64,
+        0x1_C000_0000u64,
+        0x1_CFFF_F000u64,
+        0x1_2000_1000u64,
+    );
+    let v_sharp = [through_table as u32, (through_table >> 32) as u32, 0x100, 0];
+    let bytes: Vec<u8> = v_sharp.iter().flat_map(|d| d.to_le_bytes()).collect();
+    mem.write(table, &bytes);
+    let user = [
+        low as u32,
+        (low >> 32) as u32,
+        high as u32,
+        (high >> 32) as u32,
+        table as u32,
+        (table >> 32) as u32,
+    ];
+    let memory = metal
+        .guest_window(&mem, &user, 0x1000)
+        .expect("windows for the program");
+    let windows = [(0, 1), (2, 3), (7, 8)].map(|(s, e)| (memory.win[s], memory.win[e]));
+    for (s, e) in windows {
+        assert!(e - s <= NEAR_MAX + WINDOW, "{:x?}", memory.win);
+    }
+    let covered = |at: u64| windows.iter().any(|&(s, e)| s <= at && at < e);
+    for at in [low, high, through_table] {
+        assert!(covered(at), "{at:#x} in {:x?}", memory.win);
+    }
+}
+
+#[test]
+fn a_window_metal_cannot_make_leaves_the_program_its_other_memory() {
+    let store: [u32; 4] = [
+        0x7E02_0204, // v_mov_b32 v1, s4
+        0xE070_0000,
+        0x8000_0100, // buffer_store_dword v1, off, s[0:3], 0
+        0xBF81_0000, // s_endpgm
+    ];
+    let (code, out, refused) = (0x1000, 0x800_0000, 0x1000_0000);
+    let mut results = Vec::new();
+    for pointed in [0, refused] {
+        let Some(metal) = Metal::new() else {
+            return;
+        };
+        let mut mem = Mem::new(0x2000_0000);
+        mem.regions = vec![(0, 0x100_0000), (out, refused), (refused, 0x2000_0000)];
+        mem.unbacked = Some((refused, 0x2000_0000));
+        for (i, w) in store.iter().enumerate() {
+            mem.write(code + 4 * i as u64, &w.to_le_bytes());
+        }
+        let user = [&buffer(out)[..], &[0x1234, pointed as u32, 0][..]].concat();
+        let packets = [compute_setup(code, &user), DISPATCH_ONE.to_vec()].concat();
+        let bytes: Vec<u8> = packets.iter().flat_map(|d| d.to_le_bytes()).collect();
+        mem.write(0x2000, &bytes);
+        let mut p = crate::pm4::Processor::default();
+        p.backend = Some(Box::new(metal));
+        p.run(&mem, 0x2000, packets.len() as u32).unwrap();
+        p.finish(&mem);
+        results.push(word(&mem, out));
+    }
+    assert_eq!(results, [0x1234, 0x1234]);
+}
+
+#[test]
+fn an_image_deep_in_a_huge_sparse_extent_is_read() {
+    let Some(mut metal) = Metal::new() else {
+        return;
+    };
+    let mem = sparse_memory();
+    let at = 0x1_C123_0000;
+    mem.write(at, &[0x3f; 64]);
+    let image = Image {
+        address: at,
+        format: 22, // R32Float
+        width: 4,
+        height: 4,
+        swizzle: [4, 5, 6, 7],
+        tile: Some(TileMode::Linear),
+        raw_tile: 0,
+        kind: 9,
+        base_level: 0,
+        last_level: 0,
+        depth: 1,
+        base_array: 0,
+    };
+    let tex = metal
+        .image(&mem, image, TextureKind::Tex2d)
+        .expect("the image is read");
+    assert_eq!(first_texel(&mut metal, &tex), [0x3f; 4]);
 }
 
 const LOAD_X4: [u32; 2] = [0xF408_0200, 0xFA00_0000]; // s_load_dwordx4 s[8:11], s[0:1], 0x0
