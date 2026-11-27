@@ -787,15 +787,33 @@ fn float4_outputs(msl: &str) -> Option<Vec<&str>> {
     )
 }
 
+// The fourth corner is opposite the vertex across the longest edge: the
+// right angle of a screen-aligned rectangle, whichever vertex it is (gfx1033).
 fn rect_source(msl: &str) -> Option<String> {
     let (params, args) = body_call(msl)?;
     let fields = float4_outputs(msl)?;
     let combine: String = fields
         .iter()
-        .map(|f| format!("    o.{f} = b.{f} + c.{f} - a.{f};\n"))
+        .map(|f| format!("    o.{f} = q.{f} + r.{f} - p.{f};\n"))
         .collect();
     Some(format!(
-        "{msl}\nvertex VsOut gen5_vs_rect(uint rv [[vertex_id]], uint first_iid [[instance_id]], uint rect_offset [[base_instance]], {params}) {{\n    uint iid = first_iid - rect_offset;\n    uint base = rect_offset + rv / 6 * 3;\n    uint k = (0x231210u >> ((rv % 6) * 4)) & 0xFu;\n    if (k < 3) return gen5_vs_body(base + k, iid{args});\n    VsOut a = gen5_vs_body(base, iid{args});\n    VsOut b = gen5_vs_body(base + 1, iid{args});\n    VsOut c = gen5_vs_body(base + 2, iid{args});\n    VsOut o = a;\n{combine}    return o;\n}}\n"
+        "{msl}
+vertex VsOut gen5_vs_rect(uint rv [[vertex_id]], uint first_iid [[instance_id]], uint rect_offset [[base_instance]], {params}) {{
+    uint iid = first_iid - rect_offset;
+    uint base = rect_offset + rv / 6 * 3;
+    uint k = rv % 6;
+    if (k < 3) return gen5_vs_body(base + k, iid{args});
+    VsOut v[3] = {{gen5_vs_body(base, iid{args}), gen5_vs_body(base + 1, iid{args}), gen5_vs_body(base + 2, iid{args})}};
+    float2 s0 = v[0].pos.xy / v[0].pos.w, s1 = v[1].pos.xy / v[1].pos.w, s2 = v[2].pos.xy / v[2].pos.w;
+    float d0 = distance_squared(s1, s2), d1 = distance_squared(s2, s0), d2 = distance_squared(s0, s1);
+    uint right = d0 >= d1 && d0 >= d2 ? 0u : d1 >= d2 ? 1u : 2u;
+    VsOut p = v[right], q = v[(right + 1) % 3], r = v[(right + 2) % 3];
+    if (k == 3) return q;
+    if (k == 5) return r;
+    VsOut o = p;
+{combine}    return o;
+}}
+"
     ))
 }
 

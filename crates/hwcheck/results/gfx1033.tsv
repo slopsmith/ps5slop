@@ -795,7 +795,8 @@ draw interpolate	persp center 8_8_8_8 unorm	differ	3326 target dwords value
 draw primitive	line strip	differ	0 of 0: ; 3 stored dwords value
 draw primitive	lines	differ	0 of 0: ; 3 stored dwords value
 draw primitive	points	agree
-draw primitive	rectangles	differ	0 of 0: ; 3335 stored dwords value
+draw primitive	rectangles	differ	0 of 0: ; 3625 stored dwords value
+draw primitive	screen-aligned rectangles, right angle at each vertex	agree
 draw primitive	triangle fan	agree
 draw primitive	triangle strip	agree
 draw primitive	wide line ends, x-major	agree
@@ -1677,7 +1678,8 @@ exp	draw input: PerspSample to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dw
 exp	draw primitive: line strip	differ	0 of 0: ; 3 stored dwords value
 exp	draw primitive: lines	differ	0 of 0: ; 3 stored dwords value
 exp	draw primitive: points	agree
-exp	draw primitive: rectangles	differ	0 of 0: ; 3335 stored dwords value
+exp	draw primitive: rectangles	differ	0 of 0: ; 3625 stored dwords value
+exp	draw primitive: screen-aligned rectangles, right angle at each vertex	agree
 exp	draw primitive: triangle fan	agree
 exp	draw primitive: triangle strip	agree
 exp	draw primitive: wide line ends, x-major	agree
@@ -9281,7 +9283,8 @@ v_interp_p1_f32	draw input: PerspSample to 32_32_32_32 float	differ	0 of 0: ; 55
 v_interp_p1_f32	draw primitive: line strip	differ	0 of 0: ; 3 stored dwords value
 v_interp_p1_f32	draw primitive: lines	differ	0 of 0: ; 3 stored dwords value
 v_interp_p1_f32	draw primitive: points	agree
-v_interp_p1_f32	draw primitive: rectangles	differ	0 of 0: ; 3335 stored dwords value
+v_interp_p1_f32	draw primitive: rectangles	differ	0 of 0: ; 3625 stored dwords value
+v_interp_p1_f32	draw primitive: screen-aligned rectangles, right angle at each vertex	agree
 v_interp_p1_f32	draw primitive: triangle fan	agree
 v_interp_p1_f32	draw primitive: triangle strip	agree
 v_interp_p1_f32	draw primitive: wide line ends, x-major	agree
@@ -9805,7 +9808,8 @@ v_interp_p2_f32	draw input: PerspSample to 32_32_32_32 float	differ	0 of 0: ; 55
 v_interp_p2_f32	draw primitive: line strip	differ	0 of 0: ; 3 stored dwords value
 v_interp_p2_f32	draw primitive: lines	differ	0 of 0: ; 3 stored dwords value
 v_interp_p2_f32	draw primitive: points	agree
-v_interp_p2_f32	draw primitive: rectangles	differ	0 of 0: ; 3335 stored dwords value
+v_interp_p2_f32	draw primitive: rectangles	differ	0 of 0: ; 3625 stored dwords value
+v_interp_p2_f32	draw primitive: screen-aligned rectangles, right angle at each vertex	agree
 v_interp_p2_f32	draw primitive: triangle fan	agree
 v_interp_p2_f32	draw primitive: triangle strip	agree
 v_interp_p2_f32	draw primitive: wide line ends, x-major	agree

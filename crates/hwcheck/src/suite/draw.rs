@@ -1186,6 +1186,25 @@ pub fn cases() -> Vec<Case> {
         d.primitive = prim;
         out.push(case(d));
     }
+    let mut d = Draw::new(
+        "draw primitive",
+        "screen-aligned rectangles, right angle at each vertex".into(),
+        Interp::PerspCenter,
+        Out::F32,
+        vec![
+            edge(4.0, 4.0),
+            edge(28.0, 4.0),
+            edge(4.0, 20.0),
+            edge(36.0, 4.0),
+            edge(36.0, 28.0),
+            edge(60.0, 28.0),
+            edge(56.0, 60.0),
+            edge(8.0, 36.0),
+            edge(56.0, 36.0),
+        ],
+    );
+    d.primitive = 17;
+    out.push(case(d));
     for (name, transpose) in [("x-major", false), ("y-major", true)] {
         let mut d = Draw::new(
             "draw primitive",
