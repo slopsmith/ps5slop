@@ -88,6 +88,9 @@ pub static FUNCTIONS: &[Function] = &[
     f("#dbOlWdppb4o", shader::create_interpolant_mapping2),
     f("sceAgcCreatePrimState", shader::create_prim_state),
     f("sceAgcUpdatePrimState", shader::update_prim_state),
+    // SharpEmu's `sceAgcGetFusedShaderSize` and `sceAgcFuseShaderHalves`.
+    f("#dolOmWH+huQ", shader::fused_shader_size),
+    f("#fd5Bp5tGTgo", shader::fuse_shader_halves),
 ];
 
 /// Placeholders: they answer without doing the real work, and say so on

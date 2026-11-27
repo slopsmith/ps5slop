@@ -29,6 +29,7 @@ Shader files as some titles ship them (seen in Balatro's `shaders/*.ags`). Every
 - `.shader_text` holds the machine code from offset 0, then padding and a trailer from the magic `sl00` to the string `barefoot` and a 32-bit hash (equal to the checksum SH register's value). No header field holds the code size; `Ags::code()` cuts at `sl00`.
 - `.shader_header` starts with the AGC shader header `sceAgcCreateShader` takes (magic `0x34333231`). Its pointer fields are relative to the field itself, as `crates/hle/src/agc/shader.rs` relocates them, and point to `(register, value)` tables for SH and context registers.
 - Every shader seen is wave64.
+- Geometry and hull shaders can come in two halves (types "front" and "back"), which a title fuses at run time with two unnamed libSceAgc functions (SharpEmu calls them `sceAgcGetFusedShaderSize` and `sceAgcFuseShaderHalves`; GTA VI uses them). The fused shader is the back half's header and SH registers with the front half's resource needs and checksums merged in and its program address set to the front half's code. The front half is expected to run first and continue into the back half; the translator does not follow that yet, so a fused shader runs only its front half (unverified on hardware, from SharpEmu's port).
 
 ## Decoder and printer
 

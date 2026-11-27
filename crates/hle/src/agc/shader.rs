@@ -21,6 +21,8 @@ const NUM_INPUT_SEMANTICS: u64 = 0x50;
 const NUM_OUTPUT_SEMANTICS: u64 = 0x56;
 const TYPE: u64 = 0x5A;
 const NUM_SH_REGISTERS: u64 = 0x5C;
+/// Size of a shader header.
+const HEADER_SIZE: usize = 0x60;
 
 /// Shader types.
 const COMPUTE: u8 = 0;
@@ -451,4 +453,318 @@ pub(super) fn create_interpolant_mapping2(env: &mut Env) -> Result<Outcome, Call
         .collect();
     env.mem.write(out, &bytes)?;
     ret(0)
+}
+
+/// SH registers a fused shader takes over from its halves.
+const SPI_SHADER_PGM_CHKSUM_GS: u32 = 0x80;
+const SPI_SHADER_PGM_CHKSUM_HS: u32 = 0x100;
+const SPI_SHADER_PGM_RSRC1_GS: u32 = 0x8A;
+const SPI_SHADER_PGM_RSRC1_HS: u32 = 0x10A;
+/// Wave32 bits of `VGT_SHADER_STAGES_EN`, which both halves must agree on.
+const STAGES_GS_W32: u32 = 1 << 22;
+const STAGES_HS_W32: u32 = 1 << 21;
+
+/// Whether `front` and `back` are the two halves of one geometry or hull
+/// shader, and if so, whether it is a geometry pair.
+fn fused_pair(env: &Env, front: u64, back: u64) -> Result<Option<bool>, CallError> {
+    Ok(
+        match (read_u8(env, front + TYPE)?, read_u8(env, back + TYPE)?) {
+            (GS_FRONT, GS_BACK) => Some(true),
+            (HS_FRONT, HS_BACK) => Some(false),
+            _ => None,
+        },
+    )
+}
+
+/// SharpEmu's `sceAgcGetFusedShaderSize(out, front, back)`: the size and
+/// alignment of the memory `sceAgcFuseShaderHalves` copies the back half's
+/// SH registers into.
+pub(super) fn fused_shader_size(env: &mut Env) -> Result<Outcome, CallError> {
+    let (out, front, back) = (env.arg(0), env.arg(1), env.arg(2));
+    if out == 0 || front == 0 || back == 0 || fused_pair(env, front, back)?.is_none() {
+        return ret(ERROR_INVALID_ARGUMENT);
+    }
+    let count = read_u8(env, back + NUM_SH_REGISTERS)? as u64;
+    env.mem.write_u64(out, count * 8)?;
+    env.mem.write_u64(out + 8, 4)?;
+    ret(0)
+}
+
+/// The `n`th (register, value) pair for SH register `reg` in `count` pairs
+/// at `regs`.
+fn find_register(
+    env: &Env,
+    regs: u64,
+    count: u64,
+    reg: u32,
+    n: usize,
+) -> Result<Option<u64>, CallError> {
+    if regs == 0 {
+        return Ok(None);
+    }
+    let mut seen = 0;
+    for k in 0..count {
+        if read_u32(env, regs + 8 * k)? == reg {
+            if seen == n {
+                return Ok(Some(regs + 8 * k));
+            }
+            seen += 1;
+        }
+    }
+    Ok(None)
+}
+
+/// Replaces the field `mask << shift` of `into` with the larger of its value
+/// and `from`'s.
+fn max_field(into: u32, from: u32, shift: u32, mask: u32) -> u32 {
+    let m = ((into >> shift) & mask).max((from >> shift) & mask);
+    (into & !(mask << shift)) | (m << shift)
+}
+
+/// Merges the front half's `SPI_SHADER_PGM_RSRC1/2` into the fused copy.
+fn merge_resources(
+    env: &Env,
+    front: u64,
+    regs: u64,
+    count: u64,
+    geometry: bool,
+) -> Result<(), CallError> {
+    let rsrc1 = if geometry {
+        SPI_SHADER_PGM_RSRC1_GS
+    } else {
+        SPI_SHADER_PGM_RSRC1_HS
+    };
+    let front_regs = env.mem.read_u64(front + SH_REGISTERS)?;
+    let front_count = read_u8(env, front + NUM_SH_REGISTERS)? as u64;
+    let pairs = |r: u64, c: u64| -> Result<Option<(u64, u64)>, CallError> {
+        Ok(find_register(env, r, c, rsrc1, 0)?.zip(find_register(env, r, c, rsrc1 + 1, 0)?))
+    };
+    let (Some((f1, f2)), Some((b1, b2))) = (pairs(front_regs, front_count)?, pairs(regs, count)?)
+    else {
+        return Ok(());
+    };
+    let (front1, front2) = (read_u32(env, f1 + 4)?, read_u32(env, f2 + 4)?);
+    let (back1, back2) = (read_u32(env, b1 + 4)?, read_u32(env, b2 + 4)?);
+    let front_private = ((front1 & 0x3F) + 1) * 4;
+    let back_private = ((back1 & 0x3F) + 1) * 4;
+    let front_total = front_private + (front2 >> 28) * 8;
+    let back_total = back_private + (back2 >> 28) * 8;
+    let most = front_total.max(back_total);
+    let shared = if front_private.max(back_private) >= most {
+        0
+    } else {
+        (most - front_total.min(back_total) + 7) / 64
+    };
+    let merged1 = max_field(back1, front1, 0, 0x3F);
+    let merged1 = max_field(merged1, front1, if geometry { 29 } else { 28 }, 3);
+    let mut merged2 = (back2 & 0x0FFF_FFFF) | ((shared & 15) << 28);
+    if geometry {
+        merged2 = max_field(merged2, front2, 16, 3);
+        merged2 = (merged2 & !(1 << 18)) | (front2 & (1 << 18));
+    }
+    const FRONT_OWNED: u32 = 0x0800_003E;
+    merged2 = (merged2 & !FRONT_OWNED) | (front2 & FRONT_OWNED);
+    write_u32(env, b1 + 4, merged1)?;
+    write_u32(env, b2 + 4, merged2)
+}
+
+/// SharpEmu's `sceAgcFuseShaderHalves(fused, front, back, memory)`: one
+/// shader from the two halves of a geometry or hull shader. It is the back
+/// half's header with its SH registers copied to `memory`, the front half's
+/// resource needs and checksums merged in, and the program address set to
+/// the front half's code, which runs first. The renderer does not yet run
+/// the back half after it.
+pub(super) fn fuse_shader_halves(env: &mut Env) -> Result<Outcome, CallError> {
+    let (fused, front, back, memory) = (env.arg(0), env.arg(1), env.arg(2), env.arg(3));
+    if fused == 0 || front == 0 || back == 0 {
+        return ret(ERROR_INVALID_ARGUMENT);
+    }
+    let Some(geometry) = fused_pair(env, front, back)? else {
+        return ret(ERROR_INVALID_ARGUMENT);
+    };
+    let (front_specials, back_specials) = (
+        env.mem.read_u64(front + SPECIALS)?,
+        env.mem.read_u64(back + SPECIALS)?,
+    );
+    if front_specials != 0 && back_specials != 0 {
+        let w32 = if geometry {
+            STAGES_GS_W32
+        } else {
+            STAGES_HS_W32
+        };
+        let front_stages = read_u32(env, front_specials + SPECIAL_STAGES_EN + 4)?;
+        let back_stages = read_u32(env, back_specials + SPECIAL_STAGES_EN + 4)?;
+        if (front_stages ^ back_stages) & w32 != 0 {
+            return ret(ERROR_INVALID_ARGUMENT);
+        }
+    }
+    let back_regs = env.mem.read_u64(back + SH_REGISTERS)?;
+    let count = read_u8(env, back + NUM_SH_REGISTERS)? as u64;
+    let front_code = env.mem.read_u64(front + CODE)?;
+    let mut header = [0u8; HEADER_SIZE];
+    env.mem.read(back, &mut header)?;
+    env.mem.write(fused, &header)?;
+    let regs = if memory != 0 && back_regs != 0 && count != 0 {
+        let mut bytes = vec![0u8; count as usize * 8];
+        env.mem.read(back_regs, &mut bytes)?;
+        env.mem.write(memory, &bytes)?;
+        memory
+    } else {
+        back_regs
+    };
+    env.mem
+        .write(fused + TYPE, &[if geometry { GS } else { HS }])?;
+    env.mem.write_u64(fused + USER_DATA, 0)?;
+    env.mem.write_u64(fused + SH_REGISTERS, regs)?;
+    merge_resources(env, front, regs, count, geometry)?;
+    let checksum = if geometry {
+        SPI_SHADER_PGM_CHKSUM_GS
+    } else {
+        SPI_SHADER_PGM_CHKSUM_HS
+    };
+    let front_regs = env.mem.read_u64(front + SH_REGISTERS)?;
+    let front_count = read_u8(env, front + NUM_SH_REGISTERS)? as u64;
+    for n in 0..2 {
+        if let (Some(to), Some(from)) = (
+            find_register(env, regs, count, checksum, n)?,
+            find_register(env, front_regs, front_count, checksum, n)?,
+        ) {
+            write_u32(env, to + 4, read_u32(env, from + 4)?)?;
+        }
+    }
+    let lo = if geometry { ES_PGM.0 } else { LS_PGM.0 };
+    if let Some(at) = find_register(env, regs, count, lo, 0)?
+        && at + 8 < regs + count * 8
+        && read_u32(env, at + 8)? == lo + 1
+    {
+        let hi = read_u32(env, at + 12)?;
+        write_u32(env, at + 4, (front_code >> 8) as u32)?;
+        write_u32(
+            env,
+            at + 12,
+            (hi & 0xFFFF_FF00) | ((front_code >> 40) & 0xFF) as u32,
+        )?;
+    }
+    ret(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use memory::{Memory, PAGE_SIZE, Prot};
+
+    use super::*;
+    use crate::{Cpu, Hle, Kernel, Thread, TlsTemplate, Vfs};
+
+    const AREA: u64 = 0x30_0000;
+    const FRONT: u64 = AREA;
+    const BACK: u64 = AREA + 0x100;
+    const FUSED: u64 = AREA + 0x200;
+    const FRONT_REGS: u64 = AREA + 0x300;
+    const BACK_REGS: u64 = AREA + 0x400;
+    const COPY: u64 = AREA + 0x500;
+    const FRONT_CODE: u64 = 0x12_3456_7890_0000;
+    const BACK_CODE: u64 = 0x99_8877_6600;
+
+    fn header(mem: &Memory, at: u64, kind: u8, code: u64, regs: u64, pairs: &[(u32, u32)]) {
+        mem.write_u64(at + CODE, code).unwrap();
+        mem.write_u64(at + SH_REGISTERS, regs).unwrap();
+        mem.write(at + TYPE, &[kind]).unwrap();
+        mem.write(at + NUM_SH_REGISTERS, &[pairs.len() as u8])
+            .unwrap();
+        for (k, &(reg, value)) in pairs.iter().enumerate() {
+            let bytes = [reg.to_le_bytes(), value.to_le_bytes()].concat();
+            mem.write(regs + 8 * k as u64, &bytes).unwrap();
+        }
+    }
+
+    fn pair(mem: &Memory, at: u64) -> (u32, u32) {
+        let mut b = [0u8; 8];
+        mem.read(at, &mut b).unwrap();
+        (
+            u32::from_le_bytes(b[..4].try_into().unwrap()),
+            u32::from_le_bytes(b[4..].try_into().unwrap()),
+        )
+    }
+
+    fn call(f: crate::HostFn, kernel: &Kernel, args: &[u64]) -> u64 {
+        let mut cpu = Cpu::default();
+        const ORDER: [usize; 4] = [7, 6, 2, 1];
+        for (k, &a) in args.iter().enumerate() {
+            cpu.regs[ORDER[k]] = a;
+        }
+        let mem = kernel.memory();
+        let mut env = Env {
+            cpu: &mut cpu,
+            mem: &mem,
+            kernel,
+            thread: Thread { tcb: 0 },
+        };
+        match f(&mut env) {
+            Ok(Outcome::Return(r)) => r,
+            _ => panic!("call failed"),
+        }
+    }
+
+    #[test]
+    fn fusing_geometry_halves_keeps_the_back_and_starts_at_the_front() {
+        let mem = Memory::new(1 << 40).unwrap();
+        mem.map(AREA, PAGE_SIZE, Prot::RW, "shaders").unwrap();
+        header(
+            &mem,
+            FRONT,
+            GS_FRONT,
+            FRONT_CODE,
+            FRONT_REGS,
+            &[
+                (SPI_SHADER_PGM_RSRC1_GS, 0x0000_0009),
+                (SPI_SHADER_PGM_RSRC1_GS + 1, 0x2000_0002),
+                (SPI_SHADER_PGM_CHKSUM_GS, 0xF00D),
+            ],
+        );
+        let back_pairs = [
+            (ES_PGM.0, 0),
+            (ES_PGM.1, 0xAB00),
+            (SPI_SHADER_PGM_RSRC1_GS, 0x0000_0003),
+            (SPI_SHADER_PGM_RSRC1_GS + 1, 0x1000_0000),
+            (SPI_SHADER_PGM_CHKSUM_GS, 0xBEEF),
+        ];
+        header(&mem, BACK, GS_BACK, BACK_CODE, BACK_REGS, &back_pairs);
+        let hle = Hle::new();
+        hle.map(&mem).unwrap();
+        let kernel = Kernel::new(
+            hle,
+            mem,
+            TlsTemplate::default(),
+            Box::new(std::io::sink()),
+            Box::new(std::io::sink()),
+            Vfs::default(),
+        );
+        let mem = kernel.memory();
+
+        let size_out = AREA + 0x600;
+        assert_eq!(
+            call(fused_shader_size, &kernel, &[size_out, FRONT, BACK]),
+            0
+        );
+        assert_eq!(mem.read_u64(size_out).unwrap(), 8 * back_pairs.len() as u64);
+        assert_eq!(
+            call(fused_shader_size, &kernel, &[size_out, BACK, FRONT]),
+            ERROR_INVALID_ARGUMENT
+        );
+
+        assert_eq!(
+            call(fuse_shader_halves, &kernel, &[FUSED, FRONT, BACK, COPY]),
+            0
+        );
+        let mut kind = [0u8];
+        mem.read(FUSED + TYPE, &mut kind).unwrap();
+        assert_eq!(kind[0], GS);
+        assert_eq!(mem.read_u64(FUSED + CODE).unwrap(), BACK_CODE);
+        assert_eq!(mem.read_u64(FUSED + SH_REGISTERS).unwrap(), COPY);
+        assert_eq!(pair(&mem, COPY), (ES_PGM.0, (FRONT_CODE >> 8) as u32));
+        assert_eq!(pair(&mem, COPY + 8), (ES_PGM.1, 0xAB34));
+        assert_eq!(pair(&mem, COPY + 16).1 & 0x3F, 9);
+        assert_eq!(pair(&mem, COPY + 32).1, 0xF00D);
+        assert_eq!(pair(&mem, BACK_REGS + 32).1, 0xBEEF);
+    }
 }

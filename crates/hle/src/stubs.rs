@@ -396,8 +396,6 @@ pub static STUBS: &[Function] = &[
     zero("libSceJson2", "#6l3Bv2gysNc"),
     zero("libSceJson2", "#00oCq0RwSAY"),
     zero("libSceNpCppWebApi", "#oTirsxQpqj0"),
-    zero("libSceAgc", "#dolOmWH+huQ"),
-    zero("libSceAgc", "#fd5Bp5tGTgo"),
     zero("libSceCommonDialog", "sceCommonDialogInitialize"),
     zero("libSceWebBrowserDialog", "sceWebBrowserDialogInitialize"),
     zero("libSceWebBrowserDialog", "sceWebBrowserDialogTerminate"),
