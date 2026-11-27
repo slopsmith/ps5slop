@@ -227,6 +227,9 @@ impl Ctx<'_> {
         if i.vex.is_none() && i.map == Map::M0F38 && matches!(i.op, 0xf0 | 0xf1) {
             return self.movbe_crc32();
         }
+        if i.vex.is_none() && i.map == Map::M0F38 && i.op == 0xf6 {
+            return self.adx();
+        }
         if self.pfx() != Pfx::P66 {
             return none();
         }
@@ -1108,6 +1111,23 @@ impl Ctx<'_> {
             let v = self.get(i.reg, size);
             self.store(a, size, swap(v))?;
         }
+        Ok(true)
+    }
+
+    /// ADCX (66) and ADOX (F3): an add with carry that reads and writes only
+    /// CF or only OF.
+    fn adx(&mut self) -> Res<bool> {
+        let i = self.insn;
+        let flag = match self.pfx() {
+            Pfx::P66 => CF,
+            Pfx::F3 => OF,
+            _ => return none(),
+        };
+        let size = if i.rex_w() { 8 } else { 4 };
+        let (a, b) = (self.get(i.reg, size), self.read(self.rm(), size)?);
+        let sum = a as u128 + b as u128 + self.cpu.flag(flag) as u128;
+        self.set(i.reg, size, sum as u64 & alu::mask(size));
+        self.cpu.set_flag(flag, sum >> (size as u32 * 8) != 0);
         Ok(true)
     }
 

@@ -252,7 +252,11 @@ impl Ctx<'_> {
             Map::Primary => self.primary()?,
             Map::M0F => self.map0f()?,
             Map::M0F38 | Map::M0F3A => {
-                if !self.ext()? {
+                let done = match self.crypto()? {
+                    Some(done) => done,
+                    None => self.ext()?,
+                };
+                if !done {
                     return self.unimplemented();
                 }
                 Exit::Continue
@@ -758,6 +762,16 @@ impl Ctx<'_> {
                 self.rdtsc();
                 self.cpu.regs[RCX] = 0;
             }
+            // MONITORX arms nothing; MWAITX may wake at once, as the
+            // hardware may for any reason.
+            0x01 if i.modrm == Some(0xfa) => {}
+            0x01 if i.modrm == Some(0xfb) => std::thread::yield_now(),
+            0x01 if i.modrm == Some(0xfc) => {
+                let line = self.cpu.regs[RAX] & !63;
+                for k in 0..8 {
+                    self.store(line + 8 * k, 8, 0)?;
+                }
+            }
             0x40..=0x4f => {
                 let v = self.read(self.rm(), osz)?;
                 if self.cpu.condition(i.op & 0xf) {
@@ -976,6 +990,7 @@ impl Ctx<'_> {
     }
 }
 
+mod crypto;
 mod ext;
 mod sse;
 mod x87;

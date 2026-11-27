@@ -214,6 +214,10 @@ fn skip_list(root: &Path) -> BTreeMap<String, String> {
         };
         out.entry(name).or_insert_with(|| reason.to_owned());
     }
+    for name in ["VEX/vpclmulqdq_256.asm", "modrm_oob/VEX.asm"] {
+        out.entry(normalise(name))
+            .or_insert_with(|| "needs VPCLMULQDQ, which Zen 2 lacks".into());
+    }
     out
 }
 

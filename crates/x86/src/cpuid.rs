@@ -39,8 +39,8 @@ pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
             u32::from_le_bytes(*b"enti"),
         ),
         (0x8000_0001, _) => {
-            // LAHF/SAHF ABM(LZCNT) SSE4A MisalignSSE PREFETCHW
-            let ecx = bits(&[0, 5, 6, 7, 8]);
+            // LAHF/SAHF ABM(LZCNT) SSE4A MisalignSSE PREFETCHW MWAITX
+            let ecx = bits(&[0, 5, 6, 7, 8, 29]);
             // SYSCALL NX MMXEXT FFXSR RDTSCP LM
             let edx = bits(&[11, 20, 22, 25, 27, 29]);
             (0x0087_0f10, 0, ecx, edx)

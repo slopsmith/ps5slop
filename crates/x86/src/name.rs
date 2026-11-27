@@ -1065,7 +1065,47 @@ impl OpcodeKey {
                     }
                 }
                 0x96..=0xbf if v => fma_mnemonic(self.op, w)?,
-                0xd8..=0xdf => "aes",
+                0xc8 if !v => "sha1nexte",
+                0xc9 if !v => "sha1msg1",
+                0xca if !v => "sha1msg2",
+                0xcb if !v => "sha256rnds2",
+                0xcc if !v => "sha256msg1",
+                0xcd if !v => "sha256msg2",
+                0xdb => {
+                    if v {
+                        "vaesimc"
+                    } else {
+                        "aesimc"
+                    }
+                }
+                0xdc => {
+                    if v {
+                        "vaesenc"
+                    } else {
+                        "aesenc"
+                    }
+                }
+                0xdd => {
+                    if v {
+                        "vaesenclast"
+                    } else {
+                        "aesenclast"
+                    }
+                }
+                0xde => {
+                    if v {
+                        "vaesdec"
+                    } else {
+                        "aesdec"
+                    }
+                }
+                0xdf => {
+                    if v {
+                        "vaesdeclast"
+                    } else {
+                        "aesdeclast"
+                    }
+                }
                 0xf0 | 0xf1 => match p {
                     3 => "crc32",
                     0 | 1 => "movbe",
@@ -1280,6 +1320,7 @@ impl OpcodeKey {
                         "pcmpistri"
                     }
                 }
+                0xcc if !v => "sha1rnds4",
                 0xdf => {
                     if v {
                         "vaeskeygenassist"

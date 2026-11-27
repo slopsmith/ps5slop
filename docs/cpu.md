@@ -4,7 +4,7 @@ How the game's x86-64 code runs on Apple Silicon: the decoder and interpreter in
 
 ## What has to run
 
-User-mode x86-64 as a Zen 2 runs it: integer code with REX, SSE to SSE4.2, SSE4a, AVX, AVX2, FMA3, BMI1/2, F16C, LZCNT, POPCNT, MOVBE, and x87 where compilers still emit it (`long double` in C++ runtimes). No privileged instructions and no segmentation beyond the FS and GS bases (FS is the thread pointer). Games run dozens of threads, so the memory model matters: x86 is TSO, ARM is weaker.
+User-mode x86-64 as a Zen 2 runs it: integer code with REX, SSE to SSE4.2, SSE4a, AVX, AVX2, FMA3, BMI1/2, ADX, F16C, LZCNT, POPCNT, MOVBE, AES-NI, PCLMULQDQ, SHA, CLZERO, MONITORX/MWAITX, and x87 where compilers still emit it (`long double` in C++ runtimes). No privileged instructions and no segmentation beyond the FS and GS bases (FS is the thread pointer). Games run dozens of threads, so the memory model matters: x86 is TSO, ARM is weaker.
 
 The PS5's own CPUID values are unknown. That the PS5 CPU is a Zen 2 derivative is public knowledge; the exact feature set is assumed.
 
@@ -34,9 +34,10 @@ Rules that matter when you change it:
 - **`rcp*` and `rsqrt*`** are computed exactly and rounded to f32. Hardware gives a ~12-bit approximation, so low bits differ from hardware; programs that depend on the exact approximation would see a difference.
 - **CPUID reports a Zen 2 core** (family 17h) with all of Zen 2's features, bit positions from AMD's public CPUID specification, implemented or not. Reason: a program then hits the missing instruction and we see it, instead of quietly taking a slower path.
 - **`rdtsc`/`rdtscp`** return nanoseconds since the Unix epoch; `rdtscp` reports processor 0.
+- **MONITORX/MWAITX**: the monitor arms nothing and MWAITX yields the host thread and returns, an early wake-up the hardware may also give. They run in the interpreter, so a title that spins on them pays a JIT exit per wait.
 - **Undefined flags.** Where the SDM leaves a flag undefined, the interpreter picks a value and the JIT must pick the same one (see [jit.md](jit.md)).
 
-Not implemented: MMX (`0F` vector opcodes without a prefix), AES, PCLMULQDQ, SHA, x87 BCD (`fbld`, `fbstp`), and a few rare x87 forms. EVEX and XOP decode as unsupported (Zen 2 has neither). Unimplemented instructions are reported by readable name and encoding.
+Not implemented: MMX (`0F` vector opcodes without a prefix), x87 BCD (`fbld`, `fbstp`), and a few rare x87 forms. EVEX and XOP decode as unsupported (Zen 2 has neither). Unimplemented instructions are reported by readable name and encoding.
 
 ## Oracles
 
