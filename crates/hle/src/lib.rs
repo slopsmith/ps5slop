@@ -545,6 +545,10 @@ impl Hle {
                     args += &format!("\n  arg {n} -> {}", hex.join(" "));
                 }
             }
+            let frames = crate::process::return_addresses(env.mem, env.cpu.regs[RBP]);
+            if !frames.is_empty() {
+                args += &format!("\n  callers by frame pointer: {}", frames.join(" "));
+            }
         }
         tracing::warn!(
             target: "hle::stub",

@@ -26,7 +26,7 @@ Every environment variable ps5slop reads; this is the one list, and other docs l
 | `PS5SLOP_DUMP_TARGETS` | Records render targets and textures for `targets` from the start; with `--dump-frame`, also writes every frame texture as `OUT.ADDR.ppm` |
 | `PS5SLOP_HOLD_ON_FAULT` | A thread that faults waits instead of ending the process, so the control socket can still read memory |
 | `PS5SLOP_NAMES=FILE` | Names (one per line) hashed to label NIDs in reports |
-| `PS5SLOP_UNIMPLEMENTED_ZERO[=dump]` | Unimplemented imports return 0 and log instead of stopping; `dump` adds the bytes behind each argument |
+| `PS5SLOP_UNIMPLEMENTED_ZERO[=dump]` | Unimplemented imports return 0 and log instead of stopping; `dump` adds the bytes behind each argument and the callers found by frame pointer |
 
 ## JIT
 

@@ -85,7 +85,7 @@ impl From<MapError> for ThreadError {
 
 /// The return addresses along the frame-pointer chain from `rbp`, each
 /// with its region and offset, until the chain leaves mapped memory.
-fn return_addresses(mem: &Memory, mut rbp: u64) -> Vec<String> {
+pub(crate) fn return_addresses(mem: &Memory, mut rbp: u64) -> Vec<String> {
     let regions = mem.regions();
     let mut out = Vec::new();
     while out.len() < 16 && rbp != 0 {
