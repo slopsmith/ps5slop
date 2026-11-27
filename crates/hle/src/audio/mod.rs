@@ -34,7 +34,7 @@ const QUEUED_FRAMES: usize = 2048;
 /// Longest a writer waits for the device before dropping what it queued.
 const DEVICE_STALL: Duration = Duration::from_millis(250);
 
-pub use out2::FUNCTIONS as OUT2_FUNCTIONS;
+pub use out2::{FUNCTIONS as OUT2_FUNCTIONS, STUBS as OUT2_STUBS};
 
 pub use input::FUNCTIONS as INPUT_FUNCTIONS;
 pub(crate) use input::{load as load_input, save as save_input};

@@ -617,6 +617,7 @@ fn placeholders() -> impl Iterator<Item = &'static Function> {
         .chain(gnm::STUBS)
         .chain(videoout::STUBS)
         .chain(audio::PROPAGATION_STUBS)
+        .chain(audio::OUT2_STUBS)
         .chain(avplayer::STUBS)
 }
 

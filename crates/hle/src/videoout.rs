@@ -231,6 +231,7 @@ pub static STUBS: &[Function] = &[
     f("sceVideoOutGetOutputStatus", output_status),
     f("sceVideoOutConfigureOutput", with_handle),
     f("sceVideoOutUnregisterBuffers", with_handle),
+    f("#pA8xxaySl7A", with_handle),
 ];
 
 const fn f(name: &'static str, func: crate::HostFn) -> Function {

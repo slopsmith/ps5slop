@@ -115,6 +115,13 @@ pub static FUNCTIONS: &[Function] = &[
     ),
 ];
 
+/// Placeholders: they answer without doing the real work, and say so on
+/// stderr when called.
+pub static STUBS: &[Function] = &[
+    f("sceAudioOut2ContextSetAttributes", ok),
+    f("#TViD1EZXkNI", ok),
+];
+
 const PORT_STATE_SIZE: usize = 0x40;
 /// `SceAudioOut2PortState`'s output: connected to the primary output.
 const PORT_STATE_PRIMARY: u16 = 0x01;
