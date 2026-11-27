@@ -371,6 +371,9 @@ pub struct Machine {
     pool_next: [usize; 2],
     /// Ranges whose host pages were replaced since the last sync.
     fresh: Vec<(u64, u64)>,
+    /// A full sync was started and has not finished, so the change ranges
+    /// taken for it are gone and only a full comparison is right.
+    full_pending: bool,
     vcpus: [Option<VcpuKicker>; layout::MAX_VCPUS],
     code_next: usize,
     blocks: HashMap<u64, BlockInfo>,
@@ -408,6 +411,38 @@ pub struct Machine {
 unsafe impl Send for Machine {}
 
 static MACHINE: OnceLock<Result<Mutex<Machine>, Error>> = OnceLock::new();
+
+/// A range to mirror: its bounds, the slices of `Machine::mapped` and
+/// `Machine::mirrored` it replaces, and what replaces them.
+struct Window {
+    lo: u64,
+    hi: u64,
+    mapped: std::ops::Range<usize>,
+    access: std::ops::Range<usize>,
+    new_access: Vec<(u64, u64, bool)>,
+    spans: Vec<memory::RegionSpan>,
+}
+
+/// Regions the VM maps: readable or writable, not traps.
+fn usable(r: &memory::RegionSpan) -> bool {
+    !r.trap && (r.prot.allows(memory::Access::Read) || r.prot.allows(memory::Access::Write))
+}
+
+/// Whether a writable range of `old` stays mapped read-only in `regions`.
+fn loses_write(
+    old: &[(u64, u64, bool)],
+    new: &[(u64, u64, bool)],
+    regions: &[memory::RegionSpan],
+) -> bool {
+    let (removed, _) = sorted_diff(old, new);
+    removed.iter().filter(|&&(_, _, w)| w).any(|&(s, e, _)| {
+        let first = regions.partition_point(|r| r.end <= s);
+        regions[first..]
+            .iter()
+            .take_while(|r| r.start < e)
+            .any(|r| r.prot.allows(memory::Access::Read) && !r.prot.allows(memory::Access::Write))
+    })
+}
 
 /// What is only in `old` and what is only in `new`, both sorted.
 fn sorted_diff<T: Ord + Copy>(old: &[T], new: &[T]) -> (Vec<T>, Vec<T>) {
@@ -558,6 +593,7 @@ impl Machine {
             mirrored: Vec::new(),
             pool_next: [0; 2],
             fresh: Vec::new(),
+            full_pending: false,
             vcpus: [None; layout::MAX_VCPUS],
             code_next: cache::code_start(0),
             blocks: HashMap::new(),
@@ -603,13 +639,21 @@ impl Machine {
             self.forget_code();
         }
         self.fresh.extend(mem.take_fresh());
+        let changes = mem.take_changes();
+        if same_space
+            && !self.full_pending
+            && let Some(windows) = changes
+            && self.sync_windows(mem, windows)?
+        {
+            SHARED.generation.store(generation.1, Ordering::SeqCst);
+            self.generation = Some(generation);
+            return Ok(true);
+        }
+        self.full_pending = true;
         let regions: Vec<_> = mem
             .region_spans()
             .into_iter()
-            .filter(|r| {
-                !r.trap
-                    && (r.prot.allows(memory::Access::Read) || r.prot.allows(memory::Access::Write))
-            })
+            .filter(usable)
             .collect();
         let access: Vec<(u64, u64, bool)> = regions
             .iter()
@@ -626,6 +670,7 @@ impl Machine {
         if in_place && self.update_mappings(&access) {
             SHARED.generation.store(generation.1, sc);
             self.generation = Some(generation);
+            self.full_pending = false;
             return Ok(true);
         }
         if SHARED.users[pool].load(sc) > 0 {
@@ -651,8 +696,142 @@ impl Machine {
         SHARED.id.store(generation.0 as u64, sc);
         SHARED.generation.store(generation.1, sc);
         self.generation = Some(generation);
+        self.full_pending = false;
         self.kick_running();
         Ok(true)
+    }
+
+    /// Mirrors only the regions overlapping `windows`; false, with nothing
+    /// changed, when the full path is needed.
+    fn sync_windows(&mut self, mem: &Memory, mut windows: Vec<(u64, u64)>) -> Result<bool, Error> {
+        windows.extend(self.fresh.iter().copied());
+        windows.sort_unstable();
+        let mut plans: Vec<Window> = Vec::new();
+        for (mut lo, mut hi) in windows {
+            loop {
+                if let Some(last) = plans.last()
+                    && lo < last.hi
+                {
+                    (lo, hi) = (lo.min(last.lo), hi.max(last.hi));
+                    plans.pop();
+                    continue;
+                }
+                let plan = self.plan_window(mem, lo, hi);
+                if (plan.lo, plan.hi) == (lo, hi) {
+                    plans.push(plan);
+                    break;
+                }
+                (lo, hi) = (plan.lo, plan.hi);
+            }
+        }
+        if plans
+            .iter()
+            .any(|w| loses_write(&self.mirrored[w.access.clone()], &w.new_access, &w.spans))
+        {
+            return Ok(false);
+        }
+        let pool = SHARED.active.load(Ordering::SeqCst);
+        let root = SHARED.roots[pool].load(Ordering::SeqCst);
+        let fresh = std::mem::take(&mut self.fresh);
+        let stale = |&(s, e): &(u64, u64)| fresh.iter().any(|&(fs, fe)| fs < e && s < fe);
+        for w in plans.into_iter().rev() {
+            let old = &self.mapped[w.mapped.clone()];
+            let (dropped, kept): (Vec<_>, Vec<_>) = old.iter().partition(|r| stale(r));
+            let wanted: Vec<(u64, u64)> = w.spans.iter().map(|r| (r.start, r.end)).collect();
+            let (gone, added) = sorted_diff(&kept, &wanted);
+            for (start, end) in dropped.into_iter().chain(gone) {
+                self.vm.unmap(start, (end - start) as usize)?;
+            }
+            for (start, end) in added {
+                // SAFETY: as in `map_stage2`.
+                unsafe {
+                    let host = mem.host_base().add(start as usize);
+                    self.vm
+                        .map(host, start, (end - start) as usize, hvf::mem::RWX)?
+                };
+            }
+            self.mapped.splice(w.mapped, wanted);
+            let (gone, added) = sorted_diff(&self.mirrored[w.access.clone()], &w.new_access);
+            let mut t = tables::Tables::resume(
+                self.runtime.as_mut_slice(),
+                pool,
+                root,
+                self.pool_next[pool],
+            );
+            for (start, end, _) in gone {
+                t.unmap(start, end);
+            }
+            for (start, end, write) in added {
+                if !t.map(start, end, write) {
+                    tracing::error!("the VM's page table pool is full");
+                    return Err(Error(-2));
+                }
+            }
+            self.pool_next[pool] = t.next();
+            self.mirrored.splice(w.access, w.new_access);
+        }
+        if !self.watched.is_empty() {
+            self.protect_watched(hvf::mem::READ | hvf::mem::EXEC);
+        }
+        Ok(true)
+    }
+
+    /// What mirroring `[lo, hi)` takes; its bounds grow to every region and
+    /// mirrored range that overlaps it, old or new.
+    fn plan_window(&self, mem: &Memory, lo: u64, hi: u64) -> Window {
+        let spans: Vec<_> = mem
+            .region_spans_in(lo, hi)
+            .into_iter()
+            .filter(usable)
+            .collect();
+        let first = self.mapped.partition_point(|&(_, e)| e <= lo);
+        let mapped = first..first + self.mapped[first..].partition_point(|&(s, _)| s < hi);
+        let first = self.mirrored.partition_point(|&(_, e, _)| e <= lo);
+        let access = first..first + self.mirrored[first..].partition_point(|&(s, _, _)| s < hi);
+        let starts = spans
+            .first()
+            .map(|r| r.start)
+            .into_iter()
+            .chain(
+                self.mapped
+                    .get(mapped.clone())
+                    .and_then(|m| m.first())
+                    .map(|m| m.0),
+            )
+            .chain(
+                self.mirrored
+                    .get(access.clone())
+                    .and_then(|m| m.first())
+                    .map(|m| m.0),
+            );
+        let ends = spans
+            .last()
+            .map(|r| r.end)
+            .into_iter()
+            .chain(
+                self.mapped
+                    .get(mapped.clone())
+                    .and_then(|m| m.last())
+                    .map(|m| m.1),
+            )
+            .chain(
+                self.mirrored
+                    .get(access.clone())
+                    .and_then(|m| m.last())
+                    .map(|m| m.1),
+            );
+        let new_access = spans
+            .iter()
+            .map(|r| (r.start, r.end, r.prot.allows(memory::Access::Write)))
+            .collect();
+        Window {
+            lo: starts.fold(lo, u64::min),
+            hi: ends.fold(hi, u64::max),
+            mapped,
+            access,
+            new_access,
+            spans,
+        }
     }
 
     /// Brings the stage-2 mappings in line with `regions`, mapping again the
@@ -697,16 +876,7 @@ impl Machine {
     /// Whether a writable address in the active tables stays mapped read-only
     /// in `regions`; only then must vCPUs flush (see `docs/jit.md`).
     fn reduces_access(&self, regions: &[memory::RegionSpan], access: &[(u64, u64, bool)]) -> bool {
-        let (removed, _) = sorted_diff(&self.mirrored, access);
-        removed.iter().filter(|&&(_, _, w)| w).any(|&(s, e, _)| {
-            let first = regions.partition_point(|r| r.end <= s);
-            regions[first..]
-                .iter()
-                .take_while(|r| r.start < e)
-                .any(|r| {
-                    r.prot.allows(memory::Access::Read) && !r.prot.allows(memory::Access::Write)
-                })
-        })
+        loses_write(&self.mirrored, access, regions)
     }
 
     /// Changes the active tables in place to map `access`; false if the pool

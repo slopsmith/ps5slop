@@ -104,6 +104,71 @@ fn unmapped_and_read_only_memory_faults_after_a_sync() {
 }
 
 #[test]
+fn syncs_of_changed_ranges_leave_the_vm_as_a_full_sync_would() {
+    const PAGES: u64 = 128;
+    const BASE: u64 = 0x100_0000;
+    let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
+    let mem = guest();
+    let mut m = machine().unwrap();
+    m.sync(&mem).unwrap();
+    let pc = m.load_code(0x1000, &increment());
+    let mut cpu = Cpu::new(&mut m).unwrap().unwrap();
+    let mut model: Vec<Option<Prot>> = vec![None; PAGES as usize];
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut next = |n: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % n
+    };
+    for round in 0..600 {
+        let first = next(PAGES);
+        let count = 1 + next(8.min(PAGES - first));
+        let (addr, len) = (BASE + first * PAGE_SIZE, count * PAGE_SIZE);
+        let range = first as usize..(first + count) as usize;
+        let prot = [Prot::READ, Prot::RW][next(2) as usize];
+        match next(3) {
+            0 => {
+                let offset = next(32) * PAGE_SIZE;
+                mem.map_physical(addr, len, prot, "direct", offset, 1 << 24)
+                    .unwrap();
+                model[range].fill(Some(prot));
+            }
+            1 => {
+                let _ = mem.unmap_range(addr, len);
+                model[range].fill(None);
+            }
+            _ if model[range.clone()].iter().all(Option::is_some) => {
+                mem.protect_range(addr, len, prot).unwrap();
+                model[range].fill(Some(prot));
+            }
+            _ => continue,
+        }
+        assert!(m.sync(&mem).unwrap(), "round {round}");
+        if round % 50 != 49 {
+            continue;
+        }
+        for (k, want) in model.iter().enumerate() {
+            let at = BASE + k as u64 * PAGE_SIZE;
+            cpu.set_reg(0, at).unwrap();
+            let exit = cpu.run(&m, pc).unwrap();
+            let wrote = exit == Exit::Hvc(7);
+            assert_eq!(
+                wrote,
+                *want == Some(Prot::RW),
+                "round {round} page {k}: {exit:?}"
+            );
+        }
+    }
+    let windowed = (m.mapped.clone(), m.mirrored.clone());
+    m.generation = None;
+    m.full_pending = true;
+    assert!(m.sync(&mem).unwrap());
+    assert_eq!(windowed, (m.mapped.clone(), m.mirrored.clone()));
+    cpu.release(&mut m);
+}
+
+#[test]
 fn memory_mapped_again_with_the_same_bounds_reaches_the_vm() {
     let _vm = VM.lock().unwrap_or_else(|e| e.into_inner());
     let mem = guest();

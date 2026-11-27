@@ -193,11 +193,15 @@ pub fn on_change(f: fn(&Memory)) {
 
 const HISTORY: usize = 4096;
 
+/// Change ranges kept for [`Memory::take_changes`] before it gives up on them.
+const MAX_CHANGES: usize = 256;
+
 /// Removes `[start, end)` from a set of ranges, trimming those that stick out.
 fn cut_ranges(ranges: &mut BTreeMap<u64, u64>, start: u64, end: u64) {
     let hit: Vec<(u64, u64)> = ranges
         .range(..end)
-        .filter(|&(_, &e)| e > start)
+        .rev()
+        .take_while(|&(_, &e)| e > start)
         .map(|(&s, &e)| (s, e))
         .collect();
     for (s, e) in hit {
@@ -214,7 +218,8 @@ fn cut_ranges(ranges: &mut BTreeMap<u64, u64>, start: u64, end: u64) {
 fn cut_physical(ranges: &mut BTreeMap<u64, (u64, u64)>, start: u64, end: u64) {
     let hit: Vec<(u64, (u64, u64))> = ranges
         .range(..end)
-        .filter(|&(_, &(e, _))| e > start)
+        .rev()
+        .take_while(|&(_, &(e, _))| e > start)
         .map(|(&s, &v)| (s, v))
         .collect();
     for (s, (e, delta)) in hit {
@@ -282,6 +287,9 @@ struct Shared {
     misaligned_atomics: Mutex<()>,
     /// Ranges whose host pages were replaced since the last [`Memory::take_fresh`].
     fresh: Mutex<Vec<(u64, u64)>>,
+    /// Ranges whose regions changed since the last [`Memory::take_changes`];
+    /// `None` when that is not known range by range.
+    changes: Mutex<Option<Vec<(u64, u64)>>>,
     /// The same, numbered, for readers that keep their own place (see
     /// [`Memory::replaced_since`]).
     replaced: Mutex<std::collections::VecDeque<(u64, u64, u64)>>,
@@ -401,6 +409,7 @@ impl Memory {
                 generation: AtomicU64::new(0),
                 misaligned_atomics: Mutex::new(()),
                 fresh: Mutex::new(Vec::new()),
+                changes: Mutex::new(None),
                 replaced: Mutex::new(std::collections::VecDeque::new()),
                 replaced_next: AtomicU64::new(0),
                 backed: Mutex::new(BTreeMap::new()),
@@ -505,7 +514,21 @@ impl Memory {
         (addr < r.end).then(|| format!("{start:#x}..{:#x} {:?} {}", r.end, r.prot, r.name))
     }
 
-    fn changed(&self) {
+    fn changed(&self, addr: u64, len: u64) {
+        {
+            let mut changes = self
+                .shared
+                .changes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(list) = changes.as_mut() {
+                if list.len() < MAX_CHANGES {
+                    list.push((addr, addr.saturating_add(len)));
+                } else {
+                    *changes = None;
+                }
+            }
+        }
         self.shared.generation.fetch_add(1, Ordering::Release);
         if let Some(f) = ON_CHANGE.get() {
             f(self);
@@ -716,7 +739,7 @@ impl Memory {
         );
         drop(regions);
         self.note("map", addr, len, Some(prot));
-        self.changed();
+        self.changed(addr, len);
         Ok(())
     }
 
@@ -740,7 +763,7 @@ impl Memory {
         self.host_fresh(addr, len)?;
         drop(regions);
         self.note("map over", addr, len, Some(prot));
-        self.changed();
+        self.changed(addr, len);
         Ok(())
     }
 
@@ -787,7 +810,7 @@ impl Memory {
         self.host_replace(addr, len, Some((fd, offset)))?;
         drop(regions);
         self.note("map physical", addr, len, Some(prot));
-        self.changed();
+        self.changed(addr, len);
         Ok(())
     }
 
@@ -835,7 +858,7 @@ impl Memory {
         );
         drop(regions);
         self.note("map physical", addr, len, Some(prot));
-        self.changed();
+        self.changed(addr, len);
         Ok(addr)
     }
 
@@ -853,7 +876,8 @@ impl Memory {
             .unwrap_or_else(|e| e.into_inner());
         let hits: Vec<(u64, u64)> = dirty
             .range(..end)
-            .filter(|&(_, &e)| e > offset)
+            .rev()
+            .take_while(|&(_, &e)| e > offset)
             .map(|(&s, &e)| (s.max(offset), e.min(end)))
             .collect();
         cut_ranges(&mut dirty, offset, end);
@@ -911,7 +935,7 @@ impl Memory {
         self.release(addr, len)?;
         drop(regions);
         self.note("unmap", addr, len, None);
-        self.changed();
+        self.changed(addr, len);
         Ok(())
     }
 
@@ -921,11 +945,13 @@ impl Memory {
         self.check_range(addr, len)?;
         let end = addr + len;
         let mut regions = self.regions_write();
-        let inside: Vec<(u64, Region)> = regions
+        let mut inside: Vec<(u64, Region)> = regions
             .range(..end)
-            .filter(|(s, r)| r.end > addr && **s < end)
+            .rev()
+            .take_while(|(_, r)| r.end > addr)
             .map(|(&s, r)| (s, r.clone()))
             .collect();
+        inside.reverse();
         if inside.iter().any(|(_, r)| r.trap) {
             return Err(MapError::Overlaps);
         }
@@ -936,7 +962,7 @@ impl Memory {
         }
         drop(regions);
         self.note("protect", addr, len, Some(prot));
-        self.changed();
+        self.changed(addr, len);
         Ok(())
     }
 
@@ -948,7 +974,7 @@ impl Memory {
         self.release(addr, len)?;
         drop(regions);
         self.note("unmap", addr, len, None);
-        self.changed();
+        self.changed(addr, len);
         Ok(())
     }
 
@@ -963,7 +989,7 @@ impl Memory {
         let len = r.end - addr;
         drop(regions);
         self.note("protect", addr, len, Some(prot));
-        self.changed();
+        self.changed(addr, len);
         Ok(())
     }
 
@@ -1036,7 +1062,7 @@ impl Memory {
         );
         drop(regions);
         self.note("map", addr, len, Some(prot));
-        self.changed();
+        self.changed(addr, len);
         Ok(addr)
     }
 
@@ -1173,6 +1199,45 @@ impl Memory {
         fence(Ordering::Acquire);
         self.copy_out(addr, buf);
         Ok(())
+    }
+
+    /// The ranges whose regions changed since the last call, merged and
+    /// sorted; `None` when only a full comparison can tell (the first call,
+    /// or too many changes in between).
+    pub fn take_changes(&self) -> Option<Vec<(u64, u64)>> {
+        let mut changes = self
+            .shared
+            .changes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut list = changes.replace(Vec::new())?;
+        list.sort_unstable();
+        let mut merged: Vec<(u64, u64)> = Vec::with_capacity(list.len());
+        for (s, e) in list {
+            match merged.last_mut() {
+                Some(last) if s <= last.1 => last.1 = last.1.max(e),
+                _ => merged.push((s, e)),
+            }
+        }
+        Some(merged)
+    }
+
+    /// The regions that overlap `[start, end)`, whole, like [`Memory::region_spans`].
+    pub fn region_spans_in(&self, start: u64, end: u64) -> Vec<RegionSpan> {
+        let regions = self.regions_read();
+        let mut spans: Vec<RegionSpan> = regions
+            .range(..end)
+            .rev()
+            .take_while(|(_, r)| r.end > start)
+            .map(|(&s, r)| RegionSpan {
+                start: s,
+                end: r.end,
+                prot: r.prot,
+                trap: r.trap,
+            })
+            .collect();
+        spans.reverse();
+        spans
     }
 
     /// The mapped regions, like [`Memory::regions`] without their names.
@@ -1514,7 +1579,8 @@ impl Memory {
 fn carve(regions: &mut BTreeMap<u64, Region>, start: u64, end: u64) -> Result<(), MapError> {
     let hit: Vec<u64> = regions
         .range(..end)
-        .filter(|(_, r)| r.end > start)
+        .rev()
+        .take_while(|(_, r)| r.end > start)
         .map(|(&s, _)| s)
         .collect();
     if hit.iter().any(|s| regions[s].trap) {
@@ -1575,6 +1641,68 @@ fn cas128(p: *mut u8, expected: u128, new: u128) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn random_maps_unmaps_and_protections_match_a_page_model() {
+        const PAGES: u64 = 256;
+        let base = 0x100_0000;
+        let mem = Memory::new(1 << 32).unwrap();
+        let mut model: Vec<Option<(Prot, u64)>> = vec![None; PAGES as usize];
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        for _ in 0..2000 {
+            let first = next(PAGES);
+            let count = 1 + next(PAGES.min(16).min(PAGES - first));
+            let (addr, len) = (base + first * PAGE_SIZE, count * PAGE_SIZE);
+            let prot = [Prot::READ, Prot::RW][next(2) as usize];
+            let range = first as usize..(first + count) as usize;
+            match next(4) {
+                0 => {
+                    let offset = next(64) * PAGE_SIZE;
+                    mem.map_physical(addr, len, prot, "direct", offset, 1 << 24)
+                        .unwrap();
+                    for (k, page) in model[range].iter_mut().enumerate() {
+                        *page = Some((prot, offset + k as u64 * PAGE_SIZE));
+                    }
+                }
+                1 => {
+                    let _ = mem.unmap_range(addr, len);
+                    model[range].fill(None);
+                }
+                _ => {
+                    if model[range.clone()].iter().all(Option::is_some) {
+                        mem.protect_range(addr, len, prot).unwrap();
+                        for page in &mut model[range] {
+                            page.as_mut().unwrap().0 = prot;
+                        }
+                    }
+                }
+            }
+        }
+        let spans = mem.region_spans();
+        for (k, want) in model.iter().enumerate() {
+            let at = base + k as u64 * PAGE_SIZE;
+            let got = spans.iter().find(|r| r.start <= at && at < r.end);
+            assert_eq!(got.map(|r| r.prot), want.map(|w| w.0), "page {k}");
+        }
+        assert!(spans.windows(2).all(|w| w[0].end <= w[1].start));
+        let on = mem.shared.on_physical.lock().unwrap();
+        for (k, want) in model.iter().enumerate() {
+            let Some((_, offset)) = want else { continue };
+            let at = base + k as u64 * PAGE_SIZE;
+            let got = on
+                .range(..=at)
+                .next_back()
+                .filter(|(_, (e, _))| at < *e)
+                .map(|(_, (_, delta))| at.wrapping_add(*delta));
+            assert_eq!(got, Some(*offset), "physical offset of page {k}");
+        }
+    }
 
     #[test]
     fn saved_regions_make_the_same_address_space_again() {

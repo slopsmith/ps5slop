@@ -86,8 +86,9 @@ impl DirectMemory {
         let mut allocated = lock(&self.allocated);
         let hit: Vec<(u64, u64, i32)> = allocated
             .range(..end)
+            .rev()
             .map(|(&a, &(l, k))| (a, l, k))
-            .filter(|&(a, l, _)| a + l > start)
+            .take_while(|&(a, l, _)| a + l > start)
             .collect();
         for (a, l, k) in hit {
             allocated.remove(&a);
@@ -104,7 +105,8 @@ impl DirectMemory {
     fn covers(&self, start: u64, len: u64) -> bool {
         let allocated = lock(&self.allocated);
         let mut at = start;
-        for (&a, &(l, _)) in allocated.range(..start + len) {
+        let from = allocated.range(..=start).next_back().map_or(0, |(&a, _)| a);
+        for (&a, &(l, _)) in allocated.range(from..start + len) {
             if a + l <= at {
                 continue;
             }
@@ -228,7 +230,8 @@ impl DirectMemory {
 fn cut(ranges: &mut BTreeMap<u64, (u64, u64)>, start: u64, end: u64) {
     let hit: Vec<(u64, (u64, u64))> = ranges
         .range(..end)
-        .filter(|&(_, &(e, _))| e > start)
+        .rev()
+        .take_while(|&(_, &(e, _))| e > start)
         .map(|(&s, &v)| (s, v))
         .collect();
     for (s, (e, delta)) in hit {

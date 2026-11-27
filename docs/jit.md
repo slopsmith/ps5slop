@@ -23,7 +23,8 @@ Every change to guest regions (`mmap`, `munmap`, protection changes) bumps `Memo
 
 How a sync works (`Machine::sync`):
 
-- Stage 2 is brought in line with the region list (sorted diffs, not sets). Ranges whose host pages were replaced (`Memory::take_fresh`, see [memory.md](memory.md)) are mapped again, because stage 2 still points at the old pages.
+- Only the regions overlapping what changed are compared: `Memory` records the range of each change (`Memory::take_changes`), and each range grows to the whole regions and mirrored ranges it touches, old and new. Stage 2 and the tables are brought in line with those regions by sorted diffs and the slices spliced in. Reason: GTA VI maps direct memory in 64 KiB pieces, tens of thousands of times at start-up, and comparing the whole region list each time made every map cost a millisecond and stalled the title for over 30 s. The whole list is compared on the first sync of an address space, after more than 256 changes between syncs, and when a writable range becomes read-only.
+- Ranges whose host pages were replaced (`Memory::take_fresh`, see [memory.md](memory.md)) are mapped again, because stage 2 still points at the old pages.
 - Most changes edit the active TTBR0 tables in place while vCPUs run on them, with no TLB flush or kick. This is safe because new entries go from invalid to valid (invalid entries are never cached), and a vCPU that still holds a removed entry reaches the same IPA (stage 1 is the identity), where stage 2, which HVF updates for every vCPU, maps the current pages or nothing. A stage-2 fault is handled by the host, which interprets the instruction.
 - Only a change that leaves a writable address mapped read-only takes the slow path: tables rebuilt in the other pool, TLB epoch bumped, running vCPUs kicked (`hv_vcpus_exit`) so they flush on entry.
 
