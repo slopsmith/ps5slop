@@ -84,6 +84,13 @@ The exact form follows the float mode of the stage's `PGM_RSRC1` (FLOAT_MODE, DX
 - `v_rcp`, `v_rsq`, `v_sqrt`, `v_exp`, `v_log`, `v_sin` and `v_cos` take Metal's functions with the hardware's special cases. AMD's approximations are not documented, and their f32 results differ from hardware's in the last bit or so for many inputs.
 - Where the reference GPU differs from the ISA guide's pseudo-code (`v_div_scale_f32`, `v_div_fmas_f32`, `v_mullit_f32`, `v_div_fixup_*`), the hardware's results are followed; the helpers' comments say how. f16 values are widened by integer operations, because Metal was seen to keep a widened half at half precision.
 
+f64 instructions are always exact, whatever `PS5SLOP_FLOAT_EXACT` says: Metal has no doubles, so `double_prelude.metal` computes IEEE binary64 on bit patterns in 64-bit integers, with exact significands of up to 128 bits, rounded once. Titles rarely use f64, so its cost hardly matters. It follows the f64 fields of the float mode (round mode and denormals, shared with f16), IEEE mode and DX10 clamp, under the same NaN, min and max, output modifier and clamp rules as f32. Checked against the reference GPU, including operands around the scaling thresholds of the division steps and `v_trig_preop_f64`:
+
+- `v_trig_preop_f64` reads a 2/pi table of 1183 bits. The ISA guide says 1201, but the hardware returned zeros past bit 1183.
+- `v_div_scale_f64` and `v_div_fmas_f64` work as the f32 forms do on hardware, with the f64 widths: an exponent difference of 768 and a scale of 2^128. `v_div_scale_f64` returns a NaN source unquieted. When the quotient underflows, `v_div_fixup_f64` returns the smallest denormal under a round mode away from zero.
+- `v_rcp_f64` and `v_sqrt_f64` return correctly rounded results, `v_rsq_f64` the reciprocal of the rounded square root. The hardware returns about 35 significant fraction bits with a relative error of up to about 2^-24, by a rule that is not known, so most of their results differ in the low bits; zeros, infinities, NaNs, negative sources and denormals agree. Code that uses them, such as LLVM's expansions of f64 division and square root, refines the estimate with FMAs and should reach the same final result either way; that is not checked.
+- `v_cvt_f32_f64` rounds under the f32 round mode. The tests set both round fields alike, so which one the hardware reads is not checked.
+
 
 ### Control flow
 
@@ -205,7 +212,7 @@ Image loads and stores follow the hardware's conversions, measured with the hard
 
 `crates/hwcheck` checks translated instructions against a real AMD GPU. Each test is one program around one instruction, over many lanes or waves of operands: edge cases of each operand's type paired with each other, then seeded random values. `ps5slop-hwcheck gen` builds the suites (`crates/hwcheck/src/suite/`):
 
-- Vector ALU: every VOP1, VOP2, VOPC, VOP3 and VOP3P opcode with plain operands, in its own encoding, as VOP3, with neg and abs, clamp and omod, op_sel, DPP16, DPP8, SDWA, a literal and inline constants, and float instructions under each float mode (`FLOAT_MODE` rounding and denormals, IEEE mode, DX10 clamp). Each lane stores its result and its own bit of the mask written and of EXEC, since masks are per thread outside lockstep programs.
+- Vector ALU: every VOP1, VOP2, VOPC, VOP3 and VOP3P opcode with plain operands, in its own encoding, as VOP3, with neg and abs, clamp and omod, op_sel, DPP16, DPP8, SDWA, a literal and inline constants, and float instructions under each float mode (`FLOAT_MODE` rounding and denormals, IEEE mode, DX10 clamp). The f64 division steps and `v_trig_preop_f64` also run over operands whose exponents sit around the thresholds where they scale. Each lane stores its result and its own bit of the mask written and of EXEC, since masks are per thread outside lockstep programs.
 - Lane-crossing: `v_readlane`, `v_writelane`, `v_readfirstlane` under several EXEC masks, `v_permlane16`/`x16`, `v_swap_b32`, the `v_movrel*` and `s_movrel*` families, `ds_swizzle_b32` in every mode.
 - Scalar ALU (SOP1, SOP2, SOPC, SOPK) and scalar loads, including buffer loads through descriptors of varied size, stride and out-of-bounds mode; one record per wave, with SCC.
 - LDS: every DS load, store, atomic, two-address form and permute.

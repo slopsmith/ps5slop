@@ -4684,16 +4684,16 @@ v_add_f32	e64, round toward zero	agree
 v_add_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_add_f32	sdwa dword selects	agree
 v_add_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_add_f64	e64	untranslated	at dword 17: unsupported instruction v_add_f64
-v_add_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_add_f64
-v_add_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_add_f64
-v_add_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_add_f64
-v_add_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_add_f64
-v_add_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_add_f64
-v_add_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_add_f64
-v_add_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_add_f64
-v_add_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_add_f64
-v_add_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_add_f64
+v_add_f64	e64	agree
+v_add_f64	e64 clamp omod	agree
+v_add_f64	e64 neg abs	agree
+v_add_f64	e64, IEEE mode	agree
+v_add_f64	e64, IEEE mode with DX10 clamp	agree
+v_add_f64	e64, all denormals flushed	agree
+v_add_f64	e64, all denormals kept	agree
+v_add_f64	e64, round toward +inf	agree
+v_add_f64	e64, round toward -inf	agree
+v_add_f64	e64, round toward zero	agree
 v_add_lshl_u32	e64	agree
 v_add_nc_i16	e64	agree
 v_add_nc_i16	e64 clamp omod	agree
@@ -4846,20 +4846,20 @@ v_ceil_f32	e64, round toward zero	agree
 v_ceil_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_ceil_f32	sdwa dword selects	agree
 v_ceil_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_ceil_f64	e32	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e64	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_ceil_f64
-v_ceil_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_ceil_f64
+v_ceil_f64	e32	agree
+v_ceil_f64	e32 inline constant 0xf3	agree
+v_ceil_f64	e32 inline constant 0xf8	agree
+v_ceil_f64	e32 literal	agree
+v_ceil_f64	e64	agree
+v_ceil_f64	e64 clamp omod	agree
+v_ceil_f64	e64 neg abs	agree
+v_ceil_f64	e64, IEEE mode	agree
+v_ceil_f64	e64, IEEE mode with DX10 clamp	agree
+v_ceil_f64	e64, all denormals flushed	agree
+v_ceil_f64	e64, all denormals kept	agree
+v_ceil_f64	e64, round toward +inf	agree
+v_ceil_f64	e64, round toward -inf	agree
+v_ceil_f64	e64, round toward zero	agree
 v_clrexcp	after s_setreg_imm32_b32 TRAPSTS 0x1ff, then s_getreg_b32 TRAPSTS	agree
 v_cmp_class_f16	e32	agree
 v_cmp_class_f16	e32 inline constant 0xf3	agree
@@ -4893,19 +4893,19 @@ v_cmp_class_f32	e64, round toward zero	agree
 v_cmp_class_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_class_f32	sdwa dword selects	agree
 v_cmp_class_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_class_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
-v_cmp_class_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
-v_cmp_class_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
-v_cmp_class_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
-v_cmp_class_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
-v_cmp_class_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
-v_cmp_class_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
-v_cmp_class_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
-v_cmp_class_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
-v_cmp_class_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
-v_cmp_class_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
-v_cmp_class_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
-v_cmp_class_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_class_f64
+v_cmp_class_f64	e32	agree
+v_cmp_class_f64	e32 inline constant 0xf3	agree
+v_cmp_class_f64	e32 inline constant 0xf8	agree
+v_cmp_class_f64	e32 literal	agree
+v_cmp_class_f64	e64	agree
+v_cmp_class_f64	e64 neg abs	agree
+v_cmp_class_f64	e64, IEEE mode	agree
+v_cmp_class_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_class_f64	e64, all denormals flushed	agree
+v_cmp_class_f64	e64, all denormals kept	agree
+v_cmp_class_f64	e64, round toward +inf	agree
+v_cmp_class_f64	e64, round toward -inf	agree
+v_cmp_class_f64	e64, round toward zero	agree
 v_cmp_eq_f16	e32	agree
 v_cmp_eq_f16	e32 inline constant 0xf3	agree
 v_cmp_eq_f16	e32 inline constant 0xf8	agree
@@ -4940,20 +4940,20 @@ v_cmp_eq_f32	e64, round toward zero	agree
 v_cmp_eq_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_eq_f32	sdwa dword selects	agree
 v_cmp_eq_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_eq_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
-v_cmp_eq_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_eq_f64
+v_cmp_eq_f64	e32	agree
+v_cmp_eq_f64	e32 inline constant 0xf3	agree
+v_cmp_eq_f64	e32 inline constant 0xf8	agree
+v_cmp_eq_f64	e32 literal	agree
+v_cmp_eq_f64	e64	agree
+v_cmp_eq_f64	e64 clamp omod	agree
+v_cmp_eq_f64	e64 neg abs	agree
+v_cmp_eq_f64	e64, IEEE mode	agree
+v_cmp_eq_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_eq_f64	e64, all denormals flushed	agree
+v_cmp_eq_f64	e64, all denormals kept	agree
+v_cmp_eq_f64	e64, round toward +inf	agree
+v_cmp_eq_f64	e64, round toward -inf	agree
+v_cmp_eq_f64	e64, round toward zero	agree
 v_cmp_eq_i16	e32	agree
 v_cmp_eq_i16	e32 inline constant 0xf3	agree
 v_cmp_eq_i16	e32 inline constant 0xf8	agree
@@ -5034,20 +5034,20 @@ v_cmp_f_f32	e64, round toward zero	agree
 v_cmp_f_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_f_f32	sdwa dword selects	agree
 v_cmp_f_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_f_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
-v_cmp_f_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_f_f64
+v_cmp_f_f64	e32	agree
+v_cmp_f_f64	e32 inline constant 0xf3	agree
+v_cmp_f_f64	e32 inline constant 0xf8	agree
+v_cmp_f_f64	e32 literal	agree
+v_cmp_f_f64	e64	agree
+v_cmp_f_f64	e64 clamp omod	agree
+v_cmp_f_f64	e64 neg abs	agree
+v_cmp_f_f64	e64, IEEE mode	agree
+v_cmp_f_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_f_f64	e64, all denormals flushed	agree
+v_cmp_f_f64	e64, all denormals kept	agree
+v_cmp_f_f64	e64, round toward +inf	agree
+v_cmp_f_f64	e64, round toward -inf	agree
+v_cmp_f_f64	e64, round toward zero	agree
 v_cmp_f_i32	e32	agree
 v_cmp_f_i32	e32 inline constant 0xf3	agree
 v_cmp_f_i32	e32 inline constant 0xf8	agree
@@ -5110,20 +5110,20 @@ v_cmp_ge_f32	e64, round toward zero	agree
 v_cmp_ge_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_ge_f32	sdwa dword selects	agree
 v_cmp_ge_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_ge_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
-v_cmp_ge_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_ge_f64
+v_cmp_ge_f64	e32	agree
+v_cmp_ge_f64	e32 inline constant 0xf3	agree
+v_cmp_ge_f64	e32 inline constant 0xf8	agree
+v_cmp_ge_f64	e32 literal	agree
+v_cmp_ge_f64	e64	agree
+v_cmp_ge_f64	e64 clamp omod	agree
+v_cmp_ge_f64	e64 neg abs	agree
+v_cmp_ge_f64	e64, IEEE mode	agree
+v_cmp_ge_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_ge_f64	e64, all denormals flushed	agree
+v_cmp_ge_f64	e64, all denormals kept	agree
+v_cmp_ge_f64	e64, round toward +inf	agree
+v_cmp_ge_f64	e64, round toward -inf	agree
+v_cmp_ge_f64	e64, round toward zero	agree
 v_cmp_ge_i16	e32	agree
 v_cmp_ge_i16	e32 inline constant 0xf3	agree
 v_cmp_ge_i16	e32 inline constant 0xf8	agree
@@ -5204,20 +5204,20 @@ v_cmp_gt_f32	e64, round toward zero	agree
 v_cmp_gt_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_gt_f32	sdwa dword selects	agree
 v_cmp_gt_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_gt_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
-v_cmp_gt_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_gt_f64
+v_cmp_gt_f64	e32	agree
+v_cmp_gt_f64	e32 inline constant 0xf3	agree
+v_cmp_gt_f64	e32 inline constant 0xf8	agree
+v_cmp_gt_f64	e32 literal	agree
+v_cmp_gt_f64	e64	agree
+v_cmp_gt_f64	e64 clamp omod	agree
+v_cmp_gt_f64	e64 neg abs	agree
+v_cmp_gt_f64	e64, IEEE mode	agree
+v_cmp_gt_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_gt_f64	e64, all denormals flushed	agree
+v_cmp_gt_f64	e64, all denormals kept	agree
+v_cmp_gt_f64	e64, round toward +inf	agree
+v_cmp_gt_f64	e64, round toward -inf	agree
+v_cmp_gt_f64	e64, round toward zero	agree
 v_cmp_gt_i16	e32	agree
 v_cmp_gt_i16	e32 inline constant 0xf3	agree
 v_cmp_gt_i16	e32 inline constant 0xf8	agree
@@ -5298,20 +5298,20 @@ v_cmp_le_f32	e64, round toward zero	agree
 v_cmp_le_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_le_f32	sdwa dword selects	agree
 v_cmp_le_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_le_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
-v_cmp_le_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_le_f64
+v_cmp_le_f64	e32	agree
+v_cmp_le_f64	e32 inline constant 0xf3	agree
+v_cmp_le_f64	e32 inline constant 0xf8	agree
+v_cmp_le_f64	e32 literal	agree
+v_cmp_le_f64	e64	agree
+v_cmp_le_f64	e64 clamp omod	agree
+v_cmp_le_f64	e64 neg abs	agree
+v_cmp_le_f64	e64, IEEE mode	agree
+v_cmp_le_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_le_f64	e64, all denormals flushed	agree
+v_cmp_le_f64	e64, all denormals kept	agree
+v_cmp_le_f64	e64, round toward +inf	agree
+v_cmp_le_f64	e64, round toward -inf	agree
+v_cmp_le_f64	e64, round toward zero	agree
 v_cmp_le_i16	e32	agree
 v_cmp_le_i16	e32 inline constant 0xf3	agree
 v_cmp_le_i16	e32 inline constant 0xf8	agree
@@ -5392,20 +5392,20 @@ v_cmp_lg_f32	e64, round toward zero	agree
 v_cmp_lg_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_lg_f32	sdwa dword selects	agree
 v_cmp_lg_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_lg_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
-v_cmp_lg_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_lg_f64
+v_cmp_lg_f64	e32	agree
+v_cmp_lg_f64	e32 inline constant 0xf3	agree
+v_cmp_lg_f64	e32 inline constant 0xf8	agree
+v_cmp_lg_f64	e32 literal	agree
+v_cmp_lg_f64	e64	agree
+v_cmp_lg_f64	e64 clamp omod	agree
+v_cmp_lg_f64	e64 neg abs	agree
+v_cmp_lg_f64	e64, IEEE mode	agree
+v_cmp_lg_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_lg_f64	e64, all denormals flushed	agree
+v_cmp_lg_f64	e64, all denormals kept	agree
+v_cmp_lg_f64	e64, round toward +inf	agree
+v_cmp_lg_f64	e64, round toward -inf	agree
+v_cmp_lg_f64	e64, round toward zero	agree
 v_cmp_lt_f16	e32	agree
 v_cmp_lt_f16	e32 inline constant 0xf3	agree
 v_cmp_lt_f16	e32 inline constant 0xf8	agree
@@ -5440,20 +5440,20 @@ v_cmp_lt_f32	e64, round toward zero	agree
 v_cmp_lt_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_lt_f32	sdwa dword selects	agree
 v_cmp_lt_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_lt_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
-v_cmp_lt_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_lt_f64
+v_cmp_lt_f64	e32	agree
+v_cmp_lt_f64	e32 inline constant 0xf3	agree
+v_cmp_lt_f64	e32 inline constant 0xf8	agree
+v_cmp_lt_f64	e32 literal	agree
+v_cmp_lt_f64	e64	agree
+v_cmp_lt_f64	e64 clamp omod	agree
+v_cmp_lt_f64	e64 neg abs	agree
+v_cmp_lt_f64	e64, IEEE mode	agree
+v_cmp_lt_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_lt_f64	e64, all denormals flushed	agree
+v_cmp_lt_f64	e64, all denormals kept	agree
+v_cmp_lt_f64	e64, round toward +inf	agree
+v_cmp_lt_f64	e64, round toward -inf	agree
+v_cmp_lt_f64	e64, round toward zero	agree
 v_cmp_lt_i16	e32	agree
 v_cmp_lt_i16	e32 inline constant 0xf3	agree
 v_cmp_lt_i16	e32 inline constant 0xf8	agree
@@ -5580,20 +5580,20 @@ v_cmp_neq_f32	e64, round toward zero	agree
 v_cmp_neq_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_neq_f32	sdwa dword selects	agree
 v_cmp_neq_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_neq_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
-v_cmp_neq_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_neq_f64
+v_cmp_neq_f64	e32	agree
+v_cmp_neq_f64	e32 inline constant 0xf3	agree
+v_cmp_neq_f64	e32 inline constant 0xf8	agree
+v_cmp_neq_f64	e32 literal	agree
+v_cmp_neq_f64	e64	agree
+v_cmp_neq_f64	e64 clamp omod	agree
+v_cmp_neq_f64	e64 neg abs	agree
+v_cmp_neq_f64	e64, IEEE mode	agree
+v_cmp_neq_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_neq_f64	e64, all denormals flushed	agree
+v_cmp_neq_f64	e64, all denormals kept	agree
+v_cmp_neq_f64	e64, round toward +inf	agree
+v_cmp_neq_f64	e64, round toward -inf	agree
+v_cmp_neq_f64	e64, round toward zero	agree
 v_cmp_nge_f16	e32	agree
 v_cmp_nge_f16	e32 inline constant 0xf3	agree
 v_cmp_nge_f16	e32 inline constant 0xf8	agree
@@ -5628,20 +5628,20 @@ v_cmp_nge_f32	e64, round toward zero	agree
 v_cmp_nge_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_nge_f32	sdwa dword selects	agree
 v_cmp_nge_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_nge_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
-v_cmp_nge_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_nge_f64
+v_cmp_nge_f64	e32	agree
+v_cmp_nge_f64	e32 inline constant 0xf3	agree
+v_cmp_nge_f64	e32 inline constant 0xf8	agree
+v_cmp_nge_f64	e32 literal	agree
+v_cmp_nge_f64	e64	agree
+v_cmp_nge_f64	e64 clamp omod	agree
+v_cmp_nge_f64	e64 neg abs	agree
+v_cmp_nge_f64	e64, IEEE mode	agree
+v_cmp_nge_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_nge_f64	e64, all denormals flushed	agree
+v_cmp_nge_f64	e64, all denormals kept	agree
+v_cmp_nge_f64	e64, round toward +inf	agree
+v_cmp_nge_f64	e64, round toward -inf	agree
+v_cmp_nge_f64	e64, round toward zero	agree
 v_cmp_ngt_f16	e32	agree
 v_cmp_ngt_f16	e32 inline constant 0xf3	agree
 v_cmp_ngt_f16	e32 inline constant 0xf8	agree
@@ -5676,20 +5676,20 @@ v_cmp_ngt_f32	e64, round toward zero	agree
 v_cmp_ngt_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_ngt_f32	sdwa dword selects	agree
 v_cmp_ngt_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_ngt_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
-v_cmp_ngt_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_ngt_f64
+v_cmp_ngt_f64	e32	agree
+v_cmp_ngt_f64	e32 inline constant 0xf3	agree
+v_cmp_ngt_f64	e32 inline constant 0xf8	agree
+v_cmp_ngt_f64	e32 literal	agree
+v_cmp_ngt_f64	e64	agree
+v_cmp_ngt_f64	e64 clamp omod	agree
+v_cmp_ngt_f64	e64 neg abs	agree
+v_cmp_ngt_f64	e64, IEEE mode	agree
+v_cmp_ngt_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_ngt_f64	e64, all denormals flushed	agree
+v_cmp_ngt_f64	e64, all denormals kept	agree
+v_cmp_ngt_f64	e64, round toward +inf	agree
+v_cmp_ngt_f64	e64, round toward -inf	agree
+v_cmp_ngt_f64	e64, round toward zero	agree
 v_cmp_nle_f16	e32	agree
 v_cmp_nle_f16	e32 inline constant 0xf3	agree
 v_cmp_nle_f16	e32 inline constant 0xf8	agree
@@ -5724,20 +5724,20 @@ v_cmp_nle_f32	e64, round toward zero	agree
 v_cmp_nle_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_nle_f32	sdwa dword selects	agree
 v_cmp_nle_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_nle_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
-v_cmp_nle_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_nle_f64
+v_cmp_nle_f64	e32	agree
+v_cmp_nle_f64	e32 inline constant 0xf3	agree
+v_cmp_nle_f64	e32 inline constant 0xf8	agree
+v_cmp_nle_f64	e32 literal	agree
+v_cmp_nle_f64	e64	agree
+v_cmp_nle_f64	e64 clamp omod	agree
+v_cmp_nle_f64	e64 neg abs	agree
+v_cmp_nle_f64	e64, IEEE mode	agree
+v_cmp_nle_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_nle_f64	e64, all denormals flushed	agree
+v_cmp_nle_f64	e64, all denormals kept	agree
+v_cmp_nle_f64	e64, round toward +inf	agree
+v_cmp_nle_f64	e64, round toward -inf	agree
+v_cmp_nle_f64	e64, round toward zero	agree
 v_cmp_nlg_f16	e32	agree
 v_cmp_nlg_f16	e32 inline constant 0xf3	agree
 v_cmp_nlg_f16	e32 inline constant 0xf8	agree
@@ -5772,20 +5772,20 @@ v_cmp_nlg_f32	e64, round toward zero	agree
 v_cmp_nlg_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_nlg_f32	sdwa dword selects	agree
 v_cmp_nlg_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_nlg_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
-v_cmp_nlg_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_nlg_f64
+v_cmp_nlg_f64	e32	agree
+v_cmp_nlg_f64	e32 inline constant 0xf3	agree
+v_cmp_nlg_f64	e32 inline constant 0xf8	agree
+v_cmp_nlg_f64	e32 literal	agree
+v_cmp_nlg_f64	e64	agree
+v_cmp_nlg_f64	e64 clamp omod	agree
+v_cmp_nlg_f64	e64 neg abs	agree
+v_cmp_nlg_f64	e64, IEEE mode	agree
+v_cmp_nlg_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_nlg_f64	e64, all denormals flushed	agree
+v_cmp_nlg_f64	e64, all denormals kept	agree
+v_cmp_nlg_f64	e64, round toward +inf	agree
+v_cmp_nlg_f64	e64, round toward -inf	agree
+v_cmp_nlg_f64	e64, round toward zero	agree
 v_cmp_nlt_f16	e32	agree
 v_cmp_nlt_f16	e32 inline constant 0xf3	agree
 v_cmp_nlt_f16	e32 inline constant 0xf8	agree
@@ -5820,20 +5820,20 @@ v_cmp_nlt_f32	e64, round toward zero	agree
 v_cmp_nlt_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_nlt_f32	sdwa dword selects	agree
 v_cmp_nlt_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_nlt_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
-v_cmp_nlt_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_nlt_f64
+v_cmp_nlt_f64	e32	agree
+v_cmp_nlt_f64	e32 inline constant 0xf3	agree
+v_cmp_nlt_f64	e32 inline constant 0xf8	agree
+v_cmp_nlt_f64	e32 literal	agree
+v_cmp_nlt_f64	e64	agree
+v_cmp_nlt_f64	e64 clamp omod	agree
+v_cmp_nlt_f64	e64 neg abs	agree
+v_cmp_nlt_f64	e64, IEEE mode	agree
+v_cmp_nlt_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_nlt_f64	e64, all denormals flushed	agree
+v_cmp_nlt_f64	e64, all denormals kept	agree
+v_cmp_nlt_f64	e64, round toward +inf	agree
+v_cmp_nlt_f64	e64, round toward -inf	agree
+v_cmp_nlt_f64	e64, round toward zero	agree
 v_cmp_o_f16	e32	agree
 v_cmp_o_f16	e32 inline constant 0xf3	agree
 v_cmp_o_f16	e32 inline constant 0xf8	agree
@@ -5868,20 +5868,20 @@ v_cmp_o_f32	e64, round toward zero	agree
 v_cmp_o_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_o_f32	sdwa dword selects	agree
 v_cmp_o_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_o_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
-v_cmp_o_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_o_f64
+v_cmp_o_f64	e32	agree
+v_cmp_o_f64	e32 inline constant 0xf3	agree
+v_cmp_o_f64	e32 inline constant 0xf8	agree
+v_cmp_o_f64	e32 literal	agree
+v_cmp_o_f64	e64	agree
+v_cmp_o_f64	e64 clamp omod	agree
+v_cmp_o_f64	e64 neg abs	agree
+v_cmp_o_f64	e64, IEEE mode	agree
+v_cmp_o_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_o_f64	e64, all denormals flushed	agree
+v_cmp_o_f64	e64, all denormals kept	agree
+v_cmp_o_f64	e64, round toward +inf	agree
+v_cmp_o_f64	e64, round toward -inf	agree
+v_cmp_o_f64	e64, round toward zero	agree
 v_cmp_t_i32	e32	agree
 v_cmp_t_i32	e32 inline constant 0xf3	agree
 v_cmp_t_i32	e32 inline constant 0xf8	agree
@@ -5944,20 +5944,20 @@ v_cmp_tru_f32	e64, round toward zero	agree
 v_cmp_tru_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_tru_f32	sdwa dword selects	agree
 v_cmp_tru_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_tru_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
-v_cmp_tru_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_tru_f64
+v_cmp_tru_f64	e32	agree
+v_cmp_tru_f64	e32 inline constant 0xf3	agree
+v_cmp_tru_f64	e32 inline constant 0xf8	agree
+v_cmp_tru_f64	e32 literal	agree
+v_cmp_tru_f64	e64	agree
+v_cmp_tru_f64	e64 clamp omod	agree
+v_cmp_tru_f64	e64 neg abs	agree
+v_cmp_tru_f64	e64, IEEE mode	agree
+v_cmp_tru_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_tru_f64	e64, all denormals flushed	agree
+v_cmp_tru_f64	e64, all denormals kept	agree
+v_cmp_tru_f64	e64, round toward +inf	agree
+v_cmp_tru_f64	e64, round toward -inf	agree
+v_cmp_tru_f64	e64, round toward zero	agree
 v_cmp_u_f16	e32	agree
 v_cmp_u_f16	e32 inline constant 0xf3	agree
 v_cmp_u_f16	e32 inline constant 0xf8	agree
@@ -5992,20 +5992,20 @@ v_cmp_u_f32	e64, round toward zero	agree
 v_cmp_u_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmp_u_f32	sdwa dword selects	agree
 v_cmp_u_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmp_u_f64	e32	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e64	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
-v_cmp_u_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmp_u_f64
+v_cmp_u_f64	e32	agree
+v_cmp_u_f64	e32 inline constant 0xf3	agree
+v_cmp_u_f64	e32 inline constant 0xf8	agree
+v_cmp_u_f64	e32 literal	agree
+v_cmp_u_f64	e64	agree
+v_cmp_u_f64	e64 clamp omod	agree
+v_cmp_u_f64	e64 neg abs	agree
+v_cmp_u_f64	e64, IEEE mode	agree
+v_cmp_u_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmp_u_f64	e64, all denormals flushed	agree
+v_cmp_u_f64	e64, all denormals kept	agree
+v_cmp_u_f64	e64, round toward +inf	agree
+v_cmp_u_f64	e64, round toward -inf	agree
+v_cmp_u_f64	e64, round toward zero	agree
 v_cmpx_class_f16	e32	agree
 v_cmpx_class_f16	e32 inline constant 0xf3	agree
 v_cmpx_class_f16	e32 inline constant 0xf8	agree
@@ -6038,19 +6038,19 @@ v_cmpx_class_f32	e64, round toward zero	agree
 v_cmpx_class_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_class_f32	sdwa dword selects	agree
 v_cmpx_class_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_class_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
-v_cmpx_class_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
-v_cmpx_class_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
-v_cmpx_class_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
-v_cmpx_class_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
-v_cmpx_class_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
-v_cmpx_class_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
-v_cmpx_class_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
-v_cmpx_class_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
-v_cmpx_class_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
-v_cmpx_class_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
-v_cmpx_class_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
-v_cmpx_class_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_class_f64
+v_cmpx_class_f64	e32	agree
+v_cmpx_class_f64	e32 inline constant 0xf3	agree
+v_cmpx_class_f64	e32 inline constant 0xf8	agree
+v_cmpx_class_f64	e32 literal	agree
+v_cmpx_class_f64	e64	agree
+v_cmpx_class_f64	e64 neg abs	agree
+v_cmpx_class_f64	e64, IEEE mode	agree
+v_cmpx_class_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_class_f64	e64, all denormals flushed	agree
+v_cmpx_class_f64	e64, all denormals kept	agree
+v_cmpx_class_f64	e64, round toward +inf	agree
+v_cmpx_class_f64	e64, round toward -inf	agree
+v_cmpx_class_f64	e64, round toward zero	agree
 v_cmpx_eq_f16	e32	agree
 v_cmpx_eq_f16	e32 inline constant 0xf3	agree
 v_cmpx_eq_f16	e32 inline constant 0xf8	agree
@@ -6085,20 +6085,20 @@ v_cmpx_eq_f32	e64, round toward zero	agree
 v_cmpx_eq_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_eq_f32	sdwa dword selects	agree
 v_cmpx_eq_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_eq_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
-v_cmpx_eq_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_eq_f64
+v_cmpx_eq_f64	e32	agree
+v_cmpx_eq_f64	e32 inline constant 0xf3	agree
+v_cmpx_eq_f64	e32 inline constant 0xf8	agree
+v_cmpx_eq_f64	e32 literal	agree
+v_cmpx_eq_f64	e64	agree
+v_cmpx_eq_f64	e64 clamp omod	agree
+v_cmpx_eq_f64	e64 neg abs	agree
+v_cmpx_eq_f64	e64, IEEE mode	agree
+v_cmpx_eq_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_eq_f64	e64, all denormals flushed	agree
+v_cmpx_eq_f64	e64, all denormals kept	agree
+v_cmpx_eq_f64	e64, round toward +inf	agree
+v_cmpx_eq_f64	e64, round toward -inf	agree
+v_cmpx_eq_f64	e64, round toward zero	agree
 v_cmpx_eq_i16	e32	agree
 v_cmpx_eq_i16	e32 inline constant 0xf3	agree
 v_cmpx_eq_i16	e32 inline constant 0xf8	agree
@@ -6179,20 +6179,20 @@ v_cmpx_f_f32	e64, round toward zero	agree
 v_cmpx_f_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_f_f32	sdwa dword selects	agree
 v_cmpx_f_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_f_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
-v_cmpx_f_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_f_f64
+v_cmpx_f_f64	e32	agree
+v_cmpx_f_f64	e32 inline constant 0xf3	agree
+v_cmpx_f_f64	e32 inline constant 0xf8	agree
+v_cmpx_f_f64	e32 literal	agree
+v_cmpx_f_f64	e64	agree
+v_cmpx_f_f64	e64 clamp omod	agree
+v_cmpx_f_f64	e64 neg abs	agree
+v_cmpx_f_f64	e64, IEEE mode	agree
+v_cmpx_f_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_f_f64	e64, all denormals flushed	agree
+v_cmpx_f_f64	e64, all denormals kept	agree
+v_cmpx_f_f64	e64, round toward +inf	agree
+v_cmpx_f_f64	e64, round toward -inf	agree
+v_cmpx_f_f64	e64, round toward zero	agree
 v_cmpx_f_i32	e32	agree
 v_cmpx_f_i32	e32 inline constant 0xf3	agree
 v_cmpx_f_i32	e32 inline constant 0xf8	agree
@@ -6255,20 +6255,20 @@ v_cmpx_ge_f32	e64, round toward zero	agree
 v_cmpx_ge_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_ge_f32	sdwa dword selects	agree
 v_cmpx_ge_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_ge_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
-v_cmpx_ge_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_ge_f64
+v_cmpx_ge_f64	e32	agree
+v_cmpx_ge_f64	e32 inline constant 0xf3	agree
+v_cmpx_ge_f64	e32 inline constant 0xf8	agree
+v_cmpx_ge_f64	e32 literal	agree
+v_cmpx_ge_f64	e64	agree
+v_cmpx_ge_f64	e64 clamp omod	agree
+v_cmpx_ge_f64	e64 neg abs	agree
+v_cmpx_ge_f64	e64, IEEE mode	agree
+v_cmpx_ge_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_ge_f64	e64, all denormals flushed	agree
+v_cmpx_ge_f64	e64, all denormals kept	agree
+v_cmpx_ge_f64	e64, round toward +inf	agree
+v_cmpx_ge_f64	e64, round toward -inf	agree
+v_cmpx_ge_f64	e64, round toward zero	agree
 v_cmpx_ge_i16	e32	agree
 v_cmpx_ge_i16	e32 inline constant 0xf3	agree
 v_cmpx_ge_i16	e32 inline constant 0xf8	agree
@@ -6349,20 +6349,20 @@ v_cmpx_gt_f32	e64, round toward zero	agree
 v_cmpx_gt_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_gt_f32	sdwa dword selects	agree
 v_cmpx_gt_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_gt_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
-v_cmpx_gt_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_gt_f64
+v_cmpx_gt_f64	e32	agree
+v_cmpx_gt_f64	e32 inline constant 0xf3	agree
+v_cmpx_gt_f64	e32 inline constant 0xf8	agree
+v_cmpx_gt_f64	e32 literal	agree
+v_cmpx_gt_f64	e64	agree
+v_cmpx_gt_f64	e64 clamp omod	agree
+v_cmpx_gt_f64	e64 neg abs	agree
+v_cmpx_gt_f64	e64, IEEE mode	agree
+v_cmpx_gt_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_gt_f64	e64, all denormals flushed	agree
+v_cmpx_gt_f64	e64, all denormals kept	agree
+v_cmpx_gt_f64	e64, round toward +inf	agree
+v_cmpx_gt_f64	e64, round toward -inf	agree
+v_cmpx_gt_f64	e64, round toward zero	agree
 v_cmpx_gt_i16	e32	agree
 v_cmpx_gt_i16	e32 inline constant 0xf3	agree
 v_cmpx_gt_i16	e32 inline constant 0xf8	agree
@@ -6443,20 +6443,20 @@ v_cmpx_le_f32	e64, round toward zero	agree
 v_cmpx_le_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_le_f32	sdwa dword selects	agree
 v_cmpx_le_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_le_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
-v_cmpx_le_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_le_f64
+v_cmpx_le_f64	e32	agree
+v_cmpx_le_f64	e32 inline constant 0xf3	agree
+v_cmpx_le_f64	e32 inline constant 0xf8	agree
+v_cmpx_le_f64	e32 literal	agree
+v_cmpx_le_f64	e64	agree
+v_cmpx_le_f64	e64 clamp omod	agree
+v_cmpx_le_f64	e64 neg abs	agree
+v_cmpx_le_f64	e64, IEEE mode	agree
+v_cmpx_le_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_le_f64	e64, all denormals flushed	agree
+v_cmpx_le_f64	e64, all denormals kept	agree
+v_cmpx_le_f64	e64, round toward +inf	agree
+v_cmpx_le_f64	e64, round toward -inf	agree
+v_cmpx_le_f64	e64, round toward zero	agree
 v_cmpx_le_i16	e32	agree
 v_cmpx_le_i16	e32 inline constant 0xf3	agree
 v_cmpx_le_i16	e32 inline constant 0xf8	agree
@@ -6537,20 +6537,20 @@ v_cmpx_lg_f32	e64, round toward zero	agree
 v_cmpx_lg_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_lg_f32	sdwa dword selects	agree
 v_cmpx_lg_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_lg_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
-v_cmpx_lg_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_lg_f64
+v_cmpx_lg_f64	e32	agree
+v_cmpx_lg_f64	e32 inline constant 0xf3	agree
+v_cmpx_lg_f64	e32 inline constant 0xf8	agree
+v_cmpx_lg_f64	e32 literal	agree
+v_cmpx_lg_f64	e64	agree
+v_cmpx_lg_f64	e64 clamp omod	agree
+v_cmpx_lg_f64	e64 neg abs	agree
+v_cmpx_lg_f64	e64, IEEE mode	agree
+v_cmpx_lg_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_lg_f64	e64, all denormals flushed	agree
+v_cmpx_lg_f64	e64, all denormals kept	agree
+v_cmpx_lg_f64	e64, round toward +inf	agree
+v_cmpx_lg_f64	e64, round toward -inf	agree
+v_cmpx_lg_f64	e64, round toward zero	agree
 v_cmpx_lt_f16	e32	agree
 v_cmpx_lt_f16	e32 inline constant 0xf3	agree
 v_cmpx_lt_f16	e32 inline constant 0xf8	agree
@@ -6585,20 +6585,20 @@ v_cmpx_lt_f32	e64, round toward zero	agree
 v_cmpx_lt_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_lt_f32	sdwa dword selects	agree
 v_cmpx_lt_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_lt_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
-v_cmpx_lt_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_lt_f64
+v_cmpx_lt_f64	e32	agree
+v_cmpx_lt_f64	e32 inline constant 0xf3	agree
+v_cmpx_lt_f64	e32 inline constant 0xf8	agree
+v_cmpx_lt_f64	e32 literal	agree
+v_cmpx_lt_f64	e64	agree
+v_cmpx_lt_f64	e64 clamp omod	agree
+v_cmpx_lt_f64	e64 neg abs	agree
+v_cmpx_lt_f64	e64, IEEE mode	agree
+v_cmpx_lt_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_lt_f64	e64, all denormals flushed	agree
+v_cmpx_lt_f64	e64, all denormals kept	agree
+v_cmpx_lt_f64	e64, round toward +inf	agree
+v_cmpx_lt_f64	e64, round toward -inf	agree
+v_cmpx_lt_f64	e64, round toward zero	agree
 v_cmpx_lt_i16	e32	agree
 v_cmpx_lt_i16	e32 inline constant 0xf3	agree
 v_cmpx_lt_i16	e32 inline constant 0xf8	agree
@@ -6725,20 +6725,20 @@ v_cmpx_neq_f32	e64, round toward zero	agree
 v_cmpx_neq_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_neq_f32	sdwa dword selects	agree
 v_cmpx_neq_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_neq_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
-v_cmpx_neq_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_neq_f64
+v_cmpx_neq_f64	e32	agree
+v_cmpx_neq_f64	e32 inline constant 0xf3	agree
+v_cmpx_neq_f64	e32 inline constant 0xf8	agree
+v_cmpx_neq_f64	e32 literal	agree
+v_cmpx_neq_f64	e64	agree
+v_cmpx_neq_f64	e64 clamp omod	agree
+v_cmpx_neq_f64	e64 neg abs	agree
+v_cmpx_neq_f64	e64, IEEE mode	agree
+v_cmpx_neq_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_neq_f64	e64, all denormals flushed	agree
+v_cmpx_neq_f64	e64, all denormals kept	agree
+v_cmpx_neq_f64	e64, round toward +inf	agree
+v_cmpx_neq_f64	e64, round toward -inf	agree
+v_cmpx_neq_f64	e64, round toward zero	agree
 v_cmpx_nge_f16	e32	agree
 v_cmpx_nge_f16	e32 inline constant 0xf3	agree
 v_cmpx_nge_f16	e32 inline constant 0xf8	agree
@@ -6773,20 +6773,20 @@ v_cmpx_nge_f32	e64, round toward zero	agree
 v_cmpx_nge_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_nge_f32	sdwa dword selects	agree
 v_cmpx_nge_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_nge_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
-v_cmpx_nge_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_nge_f64
+v_cmpx_nge_f64	e32	agree
+v_cmpx_nge_f64	e32 inline constant 0xf3	agree
+v_cmpx_nge_f64	e32 inline constant 0xf8	agree
+v_cmpx_nge_f64	e32 literal	agree
+v_cmpx_nge_f64	e64	agree
+v_cmpx_nge_f64	e64 clamp omod	agree
+v_cmpx_nge_f64	e64 neg abs	agree
+v_cmpx_nge_f64	e64, IEEE mode	agree
+v_cmpx_nge_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_nge_f64	e64, all denormals flushed	agree
+v_cmpx_nge_f64	e64, all denormals kept	agree
+v_cmpx_nge_f64	e64, round toward +inf	agree
+v_cmpx_nge_f64	e64, round toward -inf	agree
+v_cmpx_nge_f64	e64, round toward zero	agree
 v_cmpx_ngt_f16	e32	agree
 v_cmpx_ngt_f16	e32 inline constant 0xf3	agree
 v_cmpx_ngt_f16	e32 inline constant 0xf8	agree
@@ -6821,20 +6821,20 @@ v_cmpx_ngt_f32	e64, round toward zero	agree
 v_cmpx_ngt_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_ngt_f32	sdwa dword selects	agree
 v_cmpx_ngt_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_ngt_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
-v_cmpx_ngt_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_ngt_f64
+v_cmpx_ngt_f64	e32	agree
+v_cmpx_ngt_f64	e32 inline constant 0xf3	agree
+v_cmpx_ngt_f64	e32 inline constant 0xf8	agree
+v_cmpx_ngt_f64	e32 literal	agree
+v_cmpx_ngt_f64	e64	agree
+v_cmpx_ngt_f64	e64 clamp omod	agree
+v_cmpx_ngt_f64	e64 neg abs	agree
+v_cmpx_ngt_f64	e64, IEEE mode	agree
+v_cmpx_ngt_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_ngt_f64	e64, all denormals flushed	agree
+v_cmpx_ngt_f64	e64, all denormals kept	agree
+v_cmpx_ngt_f64	e64, round toward +inf	agree
+v_cmpx_ngt_f64	e64, round toward -inf	agree
+v_cmpx_ngt_f64	e64, round toward zero	agree
 v_cmpx_nle_f16	e32	agree
 v_cmpx_nle_f16	e32 inline constant 0xf3	agree
 v_cmpx_nle_f16	e32 inline constant 0xf8	agree
@@ -6869,20 +6869,20 @@ v_cmpx_nle_f32	e64, round toward zero	agree
 v_cmpx_nle_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_nle_f32	sdwa dword selects	agree
 v_cmpx_nle_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_nle_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
-v_cmpx_nle_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_nle_f64
+v_cmpx_nle_f64	e32	agree
+v_cmpx_nle_f64	e32 inline constant 0xf3	agree
+v_cmpx_nle_f64	e32 inline constant 0xf8	agree
+v_cmpx_nle_f64	e32 literal	agree
+v_cmpx_nle_f64	e64	agree
+v_cmpx_nle_f64	e64 clamp omod	agree
+v_cmpx_nle_f64	e64 neg abs	agree
+v_cmpx_nle_f64	e64, IEEE mode	agree
+v_cmpx_nle_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_nle_f64	e64, all denormals flushed	agree
+v_cmpx_nle_f64	e64, all denormals kept	agree
+v_cmpx_nle_f64	e64, round toward +inf	agree
+v_cmpx_nle_f64	e64, round toward -inf	agree
+v_cmpx_nle_f64	e64, round toward zero	agree
 v_cmpx_nlg_f16	e32	agree
 v_cmpx_nlg_f16	e32 inline constant 0xf3	agree
 v_cmpx_nlg_f16	e32 inline constant 0xf8	agree
@@ -6917,20 +6917,20 @@ v_cmpx_nlg_f32	e64, round toward zero	agree
 v_cmpx_nlg_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_nlg_f32	sdwa dword selects	agree
 v_cmpx_nlg_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_nlg_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
-v_cmpx_nlg_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_nlg_f64
+v_cmpx_nlg_f64	e32	agree
+v_cmpx_nlg_f64	e32 inline constant 0xf3	agree
+v_cmpx_nlg_f64	e32 inline constant 0xf8	agree
+v_cmpx_nlg_f64	e32 literal	agree
+v_cmpx_nlg_f64	e64	agree
+v_cmpx_nlg_f64	e64 clamp omod	agree
+v_cmpx_nlg_f64	e64 neg abs	agree
+v_cmpx_nlg_f64	e64, IEEE mode	agree
+v_cmpx_nlg_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_nlg_f64	e64, all denormals flushed	agree
+v_cmpx_nlg_f64	e64, all denormals kept	agree
+v_cmpx_nlg_f64	e64, round toward +inf	agree
+v_cmpx_nlg_f64	e64, round toward -inf	agree
+v_cmpx_nlg_f64	e64, round toward zero	agree
 v_cmpx_nlt_f16	e32	agree
 v_cmpx_nlt_f16	e32 inline constant 0xf3	agree
 v_cmpx_nlt_f16	e32 inline constant 0xf8	agree
@@ -6965,20 +6965,20 @@ v_cmpx_nlt_f32	e64, round toward zero	agree
 v_cmpx_nlt_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_nlt_f32	sdwa dword selects	agree
 v_cmpx_nlt_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_nlt_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
-v_cmpx_nlt_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_nlt_f64
+v_cmpx_nlt_f64	e32	agree
+v_cmpx_nlt_f64	e32 inline constant 0xf3	agree
+v_cmpx_nlt_f64	e32 inline constant 0xf8	agree
+v_cmpx_nlt_f64	e32 literal	agree
+v_cmpx_nlt_f64	e64	agree
+v_cmpx_nlt_f64	e64 clamp omod	agree
+v_cmpx_nlt_f64	e64 neg abs	agree
+v_cmpx_nlt_f64	e64, IEEE mode	agree
+v_cmpx_nlt_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_nlt_f64	e64, all denormals flushed	agree
+v_cmpx_nlt_f64	e64, all denormals kept	agree
+v_cmpx_nlt_f64	e64, round toward +inf	agree
+v_cmpx_nlt_f64	e64, round toward -inf	agree
+v_cmpx_nlt_f64	e64, round toward zero	agree
 v_cmpx_o_f16	e32	agree
 v_cmpx_o_f16	e32 inline constant 0xf3	agree
 v_cmpx_o_f16	e32 inline constant 0xf8	agree
@@ -7013,20 +7013,20 @@ v_cmpx_o_f32	e64, round toward zero	agree
 v_cmpx_o_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_o_f32	sdwa dword selects	agree
 v_cmpx_o_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_o_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
-v_cmpx_o_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_o_f64
+v_cmpx_o_f64	e32	agree
+v_cmpx_o_f64	e32 inline constant 0xf3	agree
+v_cmpx_o_f64	e32 inline constant 0xf8	agree
+v_cmpx_o_f64	e32 literal	agree
+v_cmpx_o_f64	e64	agree
+v_cmpx_o_f64	e64 clamp omod	agree
+v_cmpx_o_f64	e64 neg abs	agree
+v_cmpx_o_f64	e64, IEEE mode	agree
+v_cmpx_o_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_o_f64	e64, all denormals flushed	agree
+v_cmpx_o_f64	e64, all denormals kept	agree
+v_cmpx_o_f64	e64, round toward +inf	agree
+v_cmpx_o_f64	e64, round toward -inf	agree
+v_cmpx_o_f64	e64, round toward zero	agree
 v_cmpx_t_i32	e32	agree
 v_cmpx_t_i32	e32 inline constant 0xf3	agree
 v_cmpx_t_i32	e32 inline constant 0xf8	agree
@@ -7089,20 +7089,20 @@ v_cmpx_tru_f32	e64, round toward zero	agree
 v_cmpx_tru_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_tru_f32	sdwa dword selects	agree
 v_cmpx_tru_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_tru_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
-v_cmpx_tru_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_tru_f64
+v_cmpx_tru_f64	e32	agree
+v_cmpx_tru_f64	e32 inline constant 0xf3	agree
+v_cmpx_tru_f64	e32 inline constant 0xf8	agree
+v_cmpx_tru_f64	e32 literal	agree
+v_cmpx_tru_f64	e64	agree
+v_cmpx_tru_f64	e64 clamp omod	agree
+v_cmpx_tru_f64	e64 neg abs	agree
+v_cmpx_tru_f64	e64, IEEE mode	agree
+v_cmpx_tru_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_tru_f64	e64, all denormals flushed	agree
+v_cmpx_tru_f64	e64, all denormals kept	agree
+v_cmpx_tru_f64	e64, round toward +inf	agree
+v_cmpx_tru_f64	e64, round toward -inf	agree
+v_cmpx_tru_f64	e64, round toward zero	agree
 v_cmpx_u_f16	e32	agree
 v_cmpx_u_f16	e32 inline constant 0xf3	agree
 v_cmpx_u_f16	e32 inline constant 0xf8	agree
@@ -7137,20 +7137,20 @@ v_cmpx_u_f32	e64, round toward zero	agree
 v_cmpx_u_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cmpx_u_f32	sdwa dword selects	agree
 v_cmpx_u_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cmpx_u_f64	e32	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e64	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
-v_cmpx_u_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cmpx_u_f64
+v_cmpx_u_f64	e32	agree
+v_cmpx_u_f64	e32 inline constant 0xf3	agree
+v_cmpx_u_f64	e32 inline constant 0xf8	agree
+v_cmpx_u_f64	e32 literal	agree
+v_cmpx_u_f64	e64	agree
+v_cmpx_u_f64	e64 clamp omod	agree
+v_cmpx_u_f64	e64 neg abs	agree
+v_cmpx_u_f64	e64, IEEE mode	agree
+v_cmpx_u_f64	e64, IEEE mode with DX10 clamp	agree
+v_cmpx_u_f64	e64, all denormals flushed	agree
+v_cmpx_u_f64	e64, all denormals kept	agree
+v_cmpx_u_f64	e64, round toward +inf	agree
+v_cmpx_u_f64	e64, round toward -inf	agree
+v_cmpx_u_f64	e64, round toward zero	agree
 v_cndmask_b32	dpp quad_perm:[1,0,3,2]	agree
 v_cndmask_b32	dpp row_half_mirror	agree
 v_cndmask_b32	dpp row_mirror	agree
@@ -7371,20 +7371,20 @@ v_cvt_f32_f16	e64, round toward zero	agree
 v_cvt_f32_f16	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cvt_f32_f16	sdwa dword selects	agree
 v_cvt_f32_f16	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cvt_f32_f64	e32	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e64	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
-v_cvt_f32_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cvt_f32_f64
+v_cvt_f32_f64	e32	agree
+v_cvt_f32_f64	e32 inline constant 0xf3	agree
+v_cvt_f32_f64	e32 inline constant 0xf8	agree
+v_cvt_f32_f64	e32 literal	agree
+v_cvt_f32_f64	e64	agree
+v_cvt_f32_f64	e64 clamp omod	agree
+v_cvt_f32_f64	e64 neg abs	agree
+v_cvt_f32_f64	e64, IEEE mode	agree
+v_cvt_f32_f64	e64, IEEE mode with DX10 clamp	agree
+v_cvt_f32_f64	e64, all denormals flushed	agree
+v_cvt_f32_f64	e64, all denormals kept	agree
+v_cvt_f32_f64	e64, round toward +inf	agree
+v_cvt_f32_f64	e64, round toward -inf	agree
+v_cvt_f32_f64	e64, round toward zero	agree
 v_cvt_f32_i32	dpp quad_perm:[1,0,3,2]	agree
 v_cvt_f32_i32	dpp row_half_mirror	agree
 v_cvt_f32_i32	dpp row_mirror	agree
@@ -7547,46 +7547,46 @@ v_cvt_f32_ubyte3	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cvt_f32_ubyte3	sdwa dword selects	agree
 v_cvt_f32_ubyte3	sdwa src0_sel:BYTE_1 sext	agree
 v_cvt_f32_ubyte3	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cvt_f64_f32	e32	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e32 literal	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e64	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_f32	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cvt_f64_f32
-v_cvt_f64_i32	e32	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_i32	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_i32	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_i32	e32 literal	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_i32	e64	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_i32	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_i32	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_i32	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_i32	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_i32	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_i32	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_i32	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_i32	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cvt_f64_i32
-v_cvt_f64_u32	e32	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
-v_cvt_f64_u32	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
-v_cvt_f64_u32	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
-v_cvt_f64_u32	e32 literal	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
-v_cvt_f64_u32	e64	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
-v_cvt_f64_u32	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
-v_cvt_f64_u32	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
-v_cvt_f64_u32	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
-v_cvt_f64_u32	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
-v_cvt_f64_u32	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
-v_cvt_f64_u32	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
-v_cvt_f64_u32	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
-v_cvt_f64_u32	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cvt_f64_u32
+v_cvt_f64_f32	e32	agree
+v_cvt_f64_f32	e32 inline constant 0xf3	agree
+v_cvt_f64_f32	e32 inline constant 0xf8	agree
+v_cvt_f64_f32	e32 literal	agree
+v_cvt_f64_f32	e64	agree
+v_cvt_f64_f32	e64 clamp omod	agree
+v_cvt_f64_f32	e64 neg abs	agree
+v_cvt_f64_f32	e64, IEEE mode	agree
+v_cvt_f64_f32	e64, IEEE mode with DX10 clamp	agree
+v_cvt_f64_f32	e64, all denormals flushed	agree
+v_cvt_f64_f32	e64, all denormals kept	agree
+v_cvt_f64_f32	e64, round toward +inf	agree
+v_cvt_f64_f32	e64, round toward -inf	agree
+v_cvt_f64_f32	e64, round toward zero	agree
+v_cvt_f64_i32	e32	agree
+v_cvt_f64_i32	e32 inline constant 0xf3	agree
+v_cvt_f64_i32	e32 inline constant 0xf8	agree
+v_cvt_f64_i32	e32 literal	agree
+v_cvt_f64_i32	e64	agree
+v_cvt_f64_i32	e64 clamp omod	agree
+v_cvt_f64_i32	e64, IEEE mode	agree
+v_cvt_f64_i32	e64, IEEE mode with DX10 clamp	agree
+v_cvt_f64_i32	e64, all denormals flushed	agree
+v_cvt_f64_i32	e64, all denormals kept	agree
+v_cvt_f64_i32	e64, round toward +inf	agree
+v_cvt_f64_i32	e64, round toward -inf	agree
+v_cvt_f64_i32	e64, round toward zero	agree
+v_cvt_f64_u32	e32	agree
+v_cvt_f64_u32	e32 inline constant 0xf3	agree
+v_cvt_f64_u32	e32 inline constant 0xf8	agree
+v_cvt_f64_u32	e32 literal	agree
+v_cvt_f64_u32	e64	agree
+v_cvt_f64_u32	e64 clamp omod	agree
+v_cvt_f64_u32	e64, IEEE mode	agree
+v_cvt_f64_u32	e64, IEEE mode with DX10 clamp	agree
+v_cvt_f64_u32	e64, all denormals flushed	agree
+v_cvt_f64_u32	e64, all denormals kept	agree
+v_cvt_f64_u32	e64, round toward +inf	agree
+v_cvt_f64_u32	e64, round toward -inf	agree
+v_cvt_f64_u32	e64, round toward zero	agree
 v_cvt_flr_i32_f32	dpp quad_perm:[1,0,3,2]	agree
 v_cvt_flr_i32_f32	dpp row_half_mirror	agree
 v_cvt_flr_i32_f32	dpp row_mirror	agree
@@ -7668,20 +7668,20 @@ v_cvt_i32_f32	e64, round toward zero	agree
 v_cvt_i32_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cvt_i32_f32	sdwa dword selects	agree
 v_cvt_i32_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cvt_i32_f64	e32	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e64	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
-v_cvt_i32_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cvt_i32_f64
+v_cvt_i32_f64	e32	agree
+v_cvt_i32_f64	e32 inline constant 0xf3	agree
+v_cvt_i32_f64	e32 inline constant 0xf8	agree
+v_cvt_i32_f64	e32 literal	agree
+v_cvt_i32_f64	e64	agree
+v_cvt_i32_f64	e64 clamp omod	agree
+v_cvt_i32_f64	e64 neg abs	agree
+v_cvt_i32_f64	e64, IEEE mode	agree
+v_cvt_i32_f64	e64, IEEE mode with DX10 clamp	agree
+v_cvt_i32_f64	e64, all denormals flushed	agree
+v_cvt_i32_f64	e64, all denormals kept	agree
+v_cvt_i32_f64	e64, round toward +inf	agree
+v_cvt_i32_f64	e64, round toward -inf	agree
+v_cvt_i32_f64	e64, round toward zero	agree
 v_cvt_norm_i16_f16	dpp quad_perm:[1,0,3,2]	agree
 v_cvt_norm_i16_f16	dpp row_half_mirror	agree
 v_cvt_norm_i16_f16	dpp row_mirror	agree
@@ -7925,20 +7925,20 @@ v_cvt_u32_f32	e64, round toward zero	agree
 v_cvt_u32_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_cvt_u32_f32	sdwa dword selects	agree
 v_cvt_u32_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_cvt_u32_f64	e32	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e64	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
-v_cvt_u32_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_cvt_u32_f64
+v_cvt_u32_f64	e32	agree
+v_cvt_u32_f64	e32 inline constant 0xf3	agree
+v_cvt_u32_f64	e32 inline constant 0xf8	agree
+v_cvt_u32_f64	e32 literal	agree
+v_cvt_u32_f64	e64	agree
+v_cvt_u32_f64	e64 clamp omod	agree
+v_cvt_u32_f64	e64 neg abs	agree
+v_cvt_u32_f64	e64, IEEE mode	agree
+v_cvt_u32_f64	e64, IEEE mode with DX10 clamp	agree
+v_cvt_u32_f64	e64, all denormals flushed	agree
+v_cvt_u32_f64	e64, all denormals kept	agree
+v_cvt_u32_f64	e64, round toward +inf	agree
+v_cvt_u32_f64	e64, round toward -inf	agree
+v_cvt_u32_f64	e64, round toward zero	agree
 v_div_fixup_f16	e64	agree
 v_div_fixup_f16	e64 clamp omod	agree
 v_div_fixup_f16	e64 neg abs	agree
@@ -7960,16 +7960,20 @@ v_div_fixup_f32	e64, all denormals kept	agree
 v_div_fixup_f32	e64, round toward +inf	agree
 v_div_fixup_f32	e64, round toward -inf	agree
 v_div_fixup_f32	e64, round toward zero	agree
-v_div_fixup_f64	e64	untranslated	at dword 17: unsupported instruction v_div_fixup_f64
-v_div_fixup_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_div_fixup_f64
-v_div_fixup_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_div_fixup_f64
-v_div_fixup_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_div_fixup_f64
-v_div_fixup_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_div_fixup_f64
-v_div_fixup_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_div_fixup_f64
-v_div_fixup_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_div_fixup_f64
-v_div_fixup_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_div_fixup_f64
-v_div_fixup_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_div_fixup_f64
-v_div_fixup_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_div_fixup_f64
+v_div_fixup_f64	e64	agree
+v_div_fixup_f64	e64 clamp omod	agree
+v_div_fixup_f64	e64 neg abs	agree
+v_div_fixup_f64	e64, IEEE mode	agree
+v_div_fixup_f64	e64, IEEE mode with DX10 clamp	agree
+v_div_fixup_f64	e64, all denormals flushed	agree
+v_div_fixup_f64	e64, all denormals kept	agree
+v_div_fixup_f64	e64, exponent differences around underflow	agree
+v_div_fixup_f64	e64, exponent differences around underflow, all denormals flushed	agree
+v_div_fixup_f64	e64, exponent differences around underflow, round toward +inf	agree
+v_div_fixup_f64	e64, exponent differences around underflow, round toward zero	agree
+v_div_fixup_f64	e64, round toward +inf	agree
+v_div_fixup_f64	e64, round toward -inf	agree
+v_div_fixup_f64	e64, round toward zero	agree
 v_div_fmas_f32	e64	agree
 v_div_fmas_f32	e64 clamp omod	agree
 v_div_fmas_f32	e64 neg abs	agree
@@ -7980,16 +7984,20 @@ v_div_fmas_f32	e64, all denormals kept	agree
 v_div_fmas_f32	e64, round toward +inf	agree
 v_div_fmas_f32	e64, round toward -inf	agree
 v_div_fmas_f32	e64, round toward zero	agree
-v_div_fmas_f64	e64	untranslated	at dword 17: unsupported instruction v_div_fmas_f64
-v_div_fmas_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_div_fmas_f64
-v_div_fmas_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_div_fmas_f64
-v_div_fmas_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_div_fmas_f64
-v_div_fmas_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_div_fmas_f64
-v_div_fmas_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_div_fmas_f64
-v_div_fmas_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_div_fmas_f64
-v_div_fmas_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_div_fmas_f64
-v_div_fmas_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_div_fmas_f64
-v_div_fmas_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_div_fmas_f64
+v_div_fmas_f64	e64	agree
+v_div_fmas_f64	e64 clamp omod	agree
+v_div_fmas_f64	e64 neg abs	agree
+v_div_fmas_f64	e64, IEEE mode	agree
+v_div_fmas_f64	e64, IEEE mode with DX10 clamp	agree
+v_div_fmas_f64	e64, all denormals flushed	agree
+v_div_fmas_f64	e64, all denormals kept	agree
+v_div_fmas_f64	e64, results around the range limits after scaling	agree
+v_div_fmas_f64	e64, results around the range limits after scaling, all denormals flushed	agree
+v_div_fmas_f64	e64, results around the range limits after scaling, round toward +inf	agree
+v_div_fmas_f64	e64, results around the range limits after scaling, round toward zero	agree
+v_div_fmas_f64	e64, round toward +inf	agree
+v_div_fmas_f64	e64, round toward -inf	agree
+v_div_fmas_f64	e64, round toward zero	agree
 v_div_scale_f32	e64	agree
 v_div_scale_f32	e64 clamp omod	agree
 v_div_scale_f32	e64 neg abs	differ	1 of 2048: 1 value
@@ -8000,16 +8008,20 @@ v_div_scale_f32	e64, all denormals kept	agree
 v_div_scale_f32	e64, round toward +inf	differ	1 of 2048: 1 value
 v_div_scale_f32	e64, round toward -inf	agree
 v_div_scale_f32	e64, round toward zero	differ	1 of 2048: 1 value
-v_div_scale_f64	e64	untranslated	at dword 17: unsupported instruction v_div_scale_f64
-v_div_scale_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_div_scale_f64
-v_div_scale_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_div_scale_f64
-v_div_scale_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_div_scale_f64
-v_div_scale_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_div_scale_f64
-v_div_scale_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_div_scale_f64
-v_div_scale_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_div_scale_f64
-v_div_scale_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_div_scale_f64
-v_div_scale_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_div_scale_f64
-v_div_scale_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_div_scale_f64
+v_div_scale_f64	e64	agree
+v_div_scale_f64	e64 clamp omod	agree
+v_div_scale_f64	e64 neg abs	agree
+v_div_scale_f64	e64, IEEE mode	agree
+v_div_scale_f64	e64, IEEE mode with DX10 clamp	agree
+v_div_scale_f64	e64, all denormals flushed	agree
+v_div_scale_f64	e64, all denormals kept	agree
+v_div_scale_f64	e64, denominator and numerator exponents around the scaling limits	agree
+v_div_scale_f64	e64, denominator and numerator exponents around the scaling limits, all denormals flushed	agree
+v_div_scale_f64	e64, denominator and numerator exponents around the scaling limits, round toward +inf	agree
+v_div_scale_f64	e64, denominator and numerator exponents around the scaling limits, round toward zero	agree
+v_div_scale_f64	e64, round toward +inf	agree
+v_div_scale_f64	e64, round toward -inf	agree
+v_div_scale_f64	e64, round toward zero	agree
 v_exp_f16	dpp quad_perm:[1,0,3,2]	agree
 v_exp_f16	dpp row_half_mirror	agree
 v_exp_f16	dpp row_mirror	agree
@@ -8175,20 +8187,20 @@ v_floor_f32	e64, round toward zero	agree
 v_floor_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_floor_f32	sdwa dword selects	agree
 v_floor_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_floor_f64	e32	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e64	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_floor_f64
-v_floor_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_floor_f64
+v_floor_f64	e32	agree
+v_floor_f64	e32 inline constant 0xf3	agree
+v_floor_f64	e32 inline constant 0xf8	agree
+v_floor_f64	e32 literal	agree
+v_floor_f64	e64	agree
+v_floor_f64	e64 clamp omod	agree
+v_floor_f64	e64 neg abs	agree
+v_floor_f64	e64, IEEE mode	agree
+v_floor_f64	e64, IEEE mode with DX10 clamp	agree
+v_floor_f64	e64, all denormals flushed	agree
+v_floor_f64	e64, all denormals kept	agree
+v_floor_f64	e64, round toward +inf	agree
+v_floor_f64	e64, round toward -inf	agree
+v_floor_f64	e64, round toward zero	agree
 v_fma_f16	e64	agree
 v_fma_f16	e64 clamp omod	agree
 v_fma_f16	e64 neg abs	agree
@@ -8210,16 +8222,16 @@ v_fma_f32	e64, all denormals kept	agree
 v_fma_f32	e64, round toward +inf	agree
 v_fma_f32	e64, round toward -inf	agree
 v_fma_f32	e64, round toward zero	agree
-v_fma_f64	e64	untranslated	at dword 17: unsupported instruction v_fma_f64
-v_fma_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_fma_f64
-v_fma_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_fma_f64
-v_fma_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_fma_f64
-v_fma_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_fma_f64
-v_fma_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_fma_f64
-v_fma_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_fma_f64
-v_fma_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_fma_f64
-v_fma_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_fma_f64
-v_fma_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_fma_f64
+v_fma_f64	e64	agree
+v_fma_f64	e64 clamp omod	agree
+v_fma_f64	e64 neg abs	agree
+v_fma_f64	e64, IEEE mode	agree
+v_fma_f64	e64, IEEE mode with DX10 clamp	agree
+v_fma_f64	e64, all denormals flushed	agree
+v_fma_f64	e64, all denormals kept	agree
+v_fma_f64	e64, round toward +inf	agree
+v_fma_f64	e64, round toward -inf	agree
+v_fma_f64	e64, round toward zero	agree
 v_fma_mix_f32	e64	agree
 v_fma_mix_f32	e64 clamp omod	agree
 v_fma_mix_f32	e64 neg abs	agree
@@ -8365,20 +8377,20 @@ v_fract_f32	e64, round toward zero	agree
 v_fract_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_fract_f32	sdwa dword selects	agree
 v_fract_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_fract_f64	e32	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e64	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_fract_f64
-v_fract_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_fract_f64
+v_fract_f64	e32	agree
+v_fract_f64	e32 inline constant 0xf3	agree
+v_fract_f64	e32 inline constant 0xf8	agree
+v_fract_f64	e32 literal	agree
+v_fract_f64	e64	agree
+v_fract_f64	e64 clamp omod	agree
+v_fract_f64	e64 neg abs	agree
+v_fract_f64	e64, IEEE mode	agree
+v_fract_f64	e64, IEEE mode with DX10 clamp	agree
+v_fract_f64	e64, all denormals flushed	agree
+v_fract_f64	e64, all denormals kept	agree
+v_fract_f64	e64, round toward +inf	agree
+v_fract_f64	e64, round toward -inf	agree
+v_fract_f64	e64, round toward zero	agree
 v_frexp_exp_i16_f16	dpp quad_perm:[1,0,3,2]	agree
 v_frexp_exp_i16_f16	dpp row_half_mirror	agree
 v_frexp_exp_i16_f16	dpp row_mirror	agree
@@ -8433,20 +8445,20 @@ v_frexp_exp_i32_f32	e64, round toward zero	agree
 v_frexp_exp_i32_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_frexp_exp_i32_f32	sdwa dword selects	agree
 v_frexp_exp_i32_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_frexp_exp_i32_f64	e32	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e64	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
-v_frexp_exp_i32_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_frexp_exp_i32_f64
+v_frexp_exp_i32_f64	e32	agree
+v_frexp_exp_i32_f64	e32 inline constant 0xf3	agree
+v_frexp_exp_i32_f64	e32 inline constant 0xf8	agree
+v_frexp_exp_i32_f64	e32 literal	agree
+v_frexp_exp_i32_f64	e64	agree
+v_frexp_exp_i32_f64	e64 clamp omod	agree
+v_frexp_exp_i32_f64	e64 neg abs	agree
+v_frexp_exp_i32_f64	e64, IEEE mode	agree
+v_frexp_exp_i32_f64	e64, IEEE mode with DX10 clamp	agree
+v_frexp_exp_i32_f64	e64, all denormals flushed	agree
+v_frexp_exp_i32_f64	e64, all denormals kept	agree
+v_frexp_exp_i32_f64	e64, round toward +inf	agree
+v_frexp_exp_i32_f64	e64, round toward -inf	agree
+v_frexp_exp_i32_f64	e64, round toward zero	agree
 v_frexp_mant_f16	dpp quad_perm:[1,0,3,2]	agree
 v_frexp_mant_f16	dpp row_half_mirror	agree
 v_frexp_mant_f16	dpp row_mirror	agree
@@ -8501,20 +8513,20 @@ v_frexp_mant_f32	e64, round toward zero	agree
 v_frexp_mant_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_frexp_mant_f32	sdwa dword selects	agree
 v_frexp_mant_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_frexp_mant_f64	e32	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e64	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
-v_frexp_mant_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_frexp_mant_f64
+v_frexp_mant_f64	e32	agree
+v_frexp_mant_f64	e32 inline constant 0xf3	agree
+v_frexp_mant_f64	e32 inline constant 0xf8	agree
+v_frexp_mant_f64	e32 literal	agree
+v_frexp_mant_f64	e64	agree
+v_frexp_mant_f64	e64 clamp omod	agree
+v_frexp_mant_f64	e64 neg abs	agree
+v_frexp_mant_f64	e64, IEEE mode	agree
+v_frexp_mant_f64	e64, IEEE mode with DX10 clamp	agree
+v_frexp_mant_f64	e64, all denormals flushed	agree
+v_frexp_mant_f64	e64, all denormals kept	agree
+v_frexp_mant_f64	e64, round toward +inf	agree
+v_frexp_mant_f64	e64, round toward -inf	agree
+v_frexp_mant_f64	e64, round toward zero	agree
 v_interp_mov_f32	draw input: MovP0	differ	0 of 0: ; 1273 stored dwords value
 v_interp_mov_f32	draw input: MovP0 flat shaded	agree
 v_interp_mov_f32	draw input: MovP0 flat shaded to 32_32_32_32 float	agree
@@ -9344,16 +9356,16 @@ v_ldexp_f32	e64, all denormals kept	agree
 v_ldexp_f32	e64, round toward +inf	agree
 v_ldexp_f32	e64, round toward -inf	agree
 v_ldexp_f32	e64, round toward zero	agree
-v_ldexp_f64	e64	untranslated	at dword 17: unsupported instruction v_ldexp_f64
-v_ldexp_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_ldexp_f64
-v_ldexp_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_ldexp_f64
-v_ldexp_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_ldexp_f64
-v_ldexp_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_ldexp_f64
-v_ldexp_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_ldexp_f64
-v_ldexp_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_ldexp_f64
-v_ldexp_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_ldexp_f64
-v_ldexp_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_ldexp_f64
-v_ldexp_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_ldexp_f64
+v_ldexp_f64	e64	agree
+v_ldexp_f64	e64 clamp omod	agree
+v_ldexp_f64	e64 neg abs	agree
+v_ldexp_f64	e64, IEEE mode	agree
+v_ldexp_f64	e64, IEEE mode with DX10 clamp	agree
+v_ldexp_f64	e64, all denormals flushed	agree
+v_ldexp_f64	e64, all denormals kept	agree
+v_ldexp_f64	e64, round toward +inf	agree
+v_ldexp_f64	e64, round toward -inf	agree
+v_ldexp_f64	e64, round toward zero	agree
 v_lerp_u8	e64	agree
 v_log_f16	dpp quad_perm:[1,0,3,2]	agree
 v_log_f16	dpp row_half_mirror	agree
@@ -9624,16 +9636,16 @@ v_max_f32	e64, round toward zero	agree
 v_max_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_max_f32	sdwa dword selects	agree
 v_max_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_max_f64	e64	untranslated	at dword 17: unsupported instruction v_max_f64
-v_max_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_max_f64
-v_max_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_max_f64
-v_max_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_max_f64
-v_max_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_max_f64
-v_max_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_max_f64
-v_max_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_max_f64
-v_max_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_max_f64
-v_max_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_max_f64
-v_max_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_max_f64
+v_max_f64	e64	agree
+v_max_f64	e64 clamp omod	agree
+v_max_f64	e64 neg abs	agree
+v_max_f64	e64, IEEE mode	agree
+v_max_f64	e64, IEEE mode with DX10 clamp	agree
+v_max_f64	e64, all denormals flushed	agree
+v_max_f64	e64, all denormals kept	agree
+v_max_f64	e64, round toward +inf	agree
+v_max_f64	e64, round toward -inf	agree
+v_max_f64	e64, round toward zero	agree
 v_max_i16	e64	agree
 v_max_i32	dpp quad_perm:[1,0,3,2]	agree
 v_max_i32	dpp row_half_mirror	agree
@@ -9784,16 +9796,16 @@ v_min_f32	e64, round toward zero	agree
 v_min_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_min_f32	sdwa dword selects	agree
 v_min_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_min_f64	e64	untranslated	at dword 17: unsupported instruction v_min_f64
-v_min_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_min_f64
-v_min_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_min_f64
-v_min_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_min_f64
-v_min_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_min_f64
-v_min_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_min_f64
-v_min_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_min_f64
-v_min_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_min_f64
-v_min_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_min_f64
-v_min_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_min_f64
+v_min_f64	e64	agree
+v_min_f64	e64 clamp omod	agree
+v_min_f64	e64 neg abs	agree
+v_min_f64	e64, IEEE mode	agree
+v_min_f64	e64, IEEE mode with DX10 clamp	agree
+v_min_f64	e64, all denormals flushed	agree
+v_min_f64	e64, all denormals kept	agree
+v_min_f64	e64, round toward +inf	agree
+v_min_f64	e64, round toward -inf	agree
+v_min_f64	e64, round toward zero	agree
 v_min_i16	e64	agree
 v_min_i32	dpp quad_perm:[1,0,3,2]	agree
 v_min_i32	dpp row_half_mirror	agree
@@ -9934,16 +9946,16 @@ v_mul_f32	e64, round toward zero	agree
 v_mul_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_mul_f32	sdwa dword selects	agree
 v_mul_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_mul_f64	e64	untranslated	at dword 17: unsupported instruction v_mul_f64
-v_mul_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_mul_f64
-v_mul_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_mul_f64
-v_mul_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_mul_f64
-v_mul_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_mul_f64
-v_mul_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_mul_f64
-v_mul_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_mul_f64
-v_mul_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_mul_f64
-v_mul_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_mul_f64
-v_mul_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_mul_f64
+v_mul_f64	e64	agree
+v_mul_f64	e64 clamp omod	agree
+v_mul_f64	e64 neg abs	agree
+v_mul_f64	e64, IEEE mode	agree
+v_mul_f64	e64, IEEE mode with DX10 clamp	agree
+v_mul_f64	e64, all denormals flushed	agree
+v_mul_f64	e64, all denormals kept	agree
+v_mul_f64	e64, round toward +inf	agree
+v_mul_f64	e64, round toward -inf	agree
+v_mul_f64	e64, round toward zero	agree
 v_mul_hi_i32	e64	agree
 v_mul_hi_i32_i24	dpp quad_perm:[1,0,3,2]	agree
 v_mul_hi_i32_i24	dpp row_half_mirror	agree
@@ -10298,20 +10310,20 @@ v_rcp_f32	e64, round toward zero	differ	227 of 2048: 227 value
 v_rcp_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	differ	193 of 2048: 116 NaN bits, 73 denormal or zero sign, 4 value
 v_rcp_f32	sdwa dword selects	differ	227 of 2048: 227 value
 v_rcp_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	differ	188 of 2048: 188 value
-v_rcp_f64	e32	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e64	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_rcp_f64
-v_rcp_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_rcp_f64
+v_rcp_f64	e32	differ	1695 of 2048: 28 denormal or zero sign, 1667 value
+v_rcp_f64	e32 inline constant 0xf3	agree
+v_rcp_f64	e32 inline constant 0xf8	differ	2048 of 2048: 2048 value
+v_rcp_f64	e32 literal	differ	2048 of 2048: 2048 value
+v_rcp_f64	e64	differ	1733 of 2048: 25 denormal or zero sign, 1708 value
+v_rcp_f64	e64 clamp omod	differ	736 of 2048: 36 denormal or zero sign, 700 value
+v_rcp_f64	e64 neg abs	differ	1746 of 2048: 32 denormal or zero sign, 1714 value
+v_rcp_f64	e64, IEEE mode	differ	1725 of 2048: 24 denormal or zero sign, 1701 value
+v_rcp_f64	e64, IEEE mode with DX10 clamp	differ	1765 of 2048: 20 denormal or zero sign, 1745 value
+v_rcp_f64	e64, all denormals flushed	differ	1676 of 2048: 1676 value
+v_rcp_f64	e64, all denormals kept	differ	1744 of 2048: 30 denormal or zero sign, 1714 value
+v_rcp_f64	e64, round toward +inf	differ	1679 of 2048: 1679 value
+v_rcp_f64	e64, round toward -inf	differ	1746 of 2048: 40 denormal or zero sign, 1706 value
+v_rcp_f64	e64, round toward zero	differ	1778 of 2048: 21 denormal or zero sign, 1757 value
 v_rcp_iflag_f32	dpp quad_perm:[1,0,3,2]	differ	193 of 2048: 193 value
 v_rcp_iflag_f32	dpp row_half_mirror	differ	221 of 2048: 221 value
 v_rcp_iflag_f32	dpp row_mirror	differ	195 of 2048: 195 value
@@ -10402,20 +10414,20 @@ v_rndne_f32	e64, round toward zero	agree
 v_rndne_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_rndne_f32	sdwa dword selects	agree
 v_rndne_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_rndne_f64	e32	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e64	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_rndne_f64
-v_rndne_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_rndne_f64
+v_rndne_f64	e32	agree
+v_rndne_f64	e32 inline constant 0xf3	agree
+v_rndne_f64	e32 inline constant 0xf8	agree
+v_rndne_f64	e32 literal	agree
+v_rndne_f64	e64	agree
+v_rndne_f64	e64 clamp omod	agree
+v_rndne_f64	e64 neg abs	agree
+v_rndne_f64	e64, IEEE mode	agree
+v_rndne_f64	e64, IEEE mode with DX10 clamp	agree
+v_rndne_f64	e64, all denormals flushed	agree
+v_rndne_f64	e64, all denormals kept	agree
+v_rndne_f64	e64, round toward +inf	agree
+v_rndne_f64	e64, round toward -inf	agree
+v_rndne_f64	e64, round toward zero	agree
 v_rsq_f16	dpp quad_perm:[1,0,3,2]	agree
 v_rsq_f16	dpp row_half_mirror	agree
 v_rsq_f16	dpp row_mirror	agree
@@ -10470,20 +10482,20 @@ v_rsq_f32	e64, round toward zero	differ	108 of 2048: 108 value
 v_rsq_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	differ	100 of 2048: 49 NaN bits, 50 denormal or zero sign, 1 value
 v_rsq_f32	sdwa dword selects	differ	113 of 2048: 113 value
 v_rsq_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	differ	124 of 2048: 1 denormal or zero sign, 123 value
-v_rsq_f64	e32	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e64	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_rsq_f64
-v_rsq_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_rsq_f64
+v_rsq_f64	e32	differ	1024 of 2048: 1024 value
+v_rsq_f64	e32 inline constant 0xf3	agree
+v_rsq_f64	e32 inline constant 0xf8	differ	2048 of 2048: 2048 value
+v_rsq_f64	e32 literal	differ	2048 of 2048: 2048 value
+v_rsq_f64	e64	differ	1001 of 2048: 1001 value
+v_rsq_f64	e64 clamp omod	differ	707 of 2048: 707 value
+v_rsq_f64	e64 neg abs	differ	756 of 2048: 756 value
+v_rsq_f64	e64, IEEE mode	differ	1008 of 2048: 1008 value
+v_rsq_f64	e64, IEEE mode with DX10 clamp	differ	1006 of 2048: 1006 value
+v_rsq_f64	e64, all denormals flushed	differ	952 of 2048: 952 value
+v_rsq_f64	e64, all denormals kept	differ	1010 of 2048: 1010 value
+v_rsq_f64	e64, round toward +inf	differ	993 of 2048: 993 value
+v_rsq_f64	e64, round toward -inf	differ	1006 of 2048: 1006 value
+v_rsq_f64	e64, round toward zero	differ	981 of 2048: 981 value
 v_sad_hi_u8	e64	agree
 v_sad_hi_u8	e64 clamp omod	agree
 v_sad_u16	e64	agree
@@ -10619,20 +10631,20 @@ v_sqrt_f32	e64, round toward zero	differ	296 of 2048: 296 value
 v_sqrt_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	differ	294 of 2048: 164 NaN bits, 129 denormal or zero sign, 1 value
 v_sqrt_f32	sdwa dword selects	differ	256 of 2048: 256 value
 v_sqrt_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	differ	301 of 2048: 2 NaN bits, 1 denormal or zero sign, 298 value
-v_sqrt_f64	e32	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e64	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_sqrt_f64
-v_sqrt_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_sqrt_f64
+v_sqrt_f64	e32	differ	1097 of 2048: 1097 value
+v_sqrt_f64	e32 inline constant 0xf3	agree
+v_sqrt_f64	e32 inline constant 0xf8	differ	2048 of 2048: 2048 value
+v_sqrt_f64	e32 literal	differ	2048 of 2048: 2048 value
+v_sqrt_f64	e64	differ	1090 of 2048: 1090 value
+v_sqrt_f64	e64 clamp omod	differ	330 of 2048: 330 value
+v_sqrt_f64	e64 neg abs	differ	823 of 2048: 823 value
+v_sqrt_f64	e64, IEEE mode	differ	1105 of 2048: 1105 value
+v_sqrt_f64	e64, IEEE mode with DX10 clamp	differ	1079 of 2048: 1079 value
+v_sqrt_f64	e64, all denormals flushed	differ	1054 of 2048: 1054 value
+v_sqrt_f64	e64, all denormals kept	differ	1082 of 2048: 1082 value
+v_sqrt_f64	e64, round toward +inf	differ	1064 of 2048: 1064 value
+v_sqrt_f64	e64, round toward -inf	differ	1091 of 2048: 1091 value
+v_sqrt_f64	e64, round toward zero	differ	1046 of 2048: 1046 value
 v_sub_co_ci_u32	dpp quad_perm:[1,0,3,2]	agree
 v_sub_co_ci_u32	dpp row_half_mirror	agree
 v_sub_co_ci_u32	dpp row_mirror	agree
@@ -10842,16 +10854,20 @@ v_subrev_nc_u32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	a
 v_swap_b32	src stored as dst+1	agree
 v_swaprel_b32	m0 0, src stored as dst+1	agree
 v_swaprel_b32	m0 1, src stored as dst+1	agree
-v_trig_preop_f64	e64	untranslated	at dword 17: unsupported instruction v_trig_preop_f64
-v_trig_preop_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_trig_preop_f64
-v_trig_preop_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_trig_preop_f64
-v_trig_preop_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_trig_preop_f64
-v_trig_preop_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_trig_preop_f64
-v_trig_preop_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_trig_preop_f64
-v_trig_preop_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_trig_preop_f64
-v_trig_preop_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_trig_preop_f64
-v_trig_preop_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_trig_preop_f64
-v_trig_preop_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_trig_preop_f64
+v_trig_preop_f64	e64	agree
+v_trig_preop_f64	e64 clamp omod	agree
+v_trig_preop_f64	e64 neg abs	agree
+v_trig_preop_f64	e64, IEEE mode	agree
+v_trig_preop_f64	e64, IEEE mode with DX10 clamp	agree
+v_trig_preop_f64	e64, all denormals flushed	agree
+v_trig_preop_f64	e64, all denormals kept	agree
+v_trig_preop_f64	e64, exponents around the shift limits, every segment	agree
+v_trig_preop_f64	e64, exponents around the shift limits, every segment, all denormals flushed	agree
+v_trig_preop_f64	e64, exponents around the shift limits, every segment, round toward +inf	agree
+v_trig_preop_f64	e64, exponents around the shift limits, every segment, round toward zero	agree
+v_trig_preop_f64	e64, round toward +inf	agree
+v_trig_preop_f64	e64, round toward -inf	agree
+v_trig_preop_f64	e64, round toward zero	agree
 v_trunc_f16	dpp quad_perm:[1,0,3,2]	agree
 v_trunc_f16	dpp row_half_mirror	agree
 v_trunc_f16	dpp row_mirror	agree
@@ -10906,20 +10922,20 @@ v_trunc_f32	e64, round toward zero	agree
 v_trunc_f32	sdwa dst_sel:BYTE_0 dst_unused:UNUSED_SEXT	agree
 v_trunc_f32	sdwa dword selects	agree
 v_trunc_f32	sdwa src1_sel:WORD_1 dst_sel:WORD_1 dst_unused:UNUSED_PRESERVE	agree
-v_trunc_f64	e32	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e32 inline constant 0xf3	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e32 inline constant 0xf8	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e32 literal	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e64	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e64 clamp omod	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e64 neg abs	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e64, IEEE mode	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e64, IEEE mode with DX10 clamp	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e64, all denormals flushed	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_trunc_f64
-v_trunc_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_trunc_f64
+v_trunc_f64	e32	agree
+v_trunc_f64	e32 inline constant 0xf3	agree
+v_trunc_f64	e32 inline constant 0xf8	agree
+v_trunc_f64	e32 literal	agree
+v_trunc_f64	e64	agree
+v_trunc_f64	e64 clamp omod	agree
+v_trunc_f64	e64 neg abs	agree
+v_trunc_f64	e64, IEEE mode	agree
+v_trunc_f64	e64, IEEE mode with DX10 clamp	agree
+v_trunc_f64	e64, all denormals flushed	agree
+v_trunc_f64	e64, all denormals kept	agree
+v_trunc_f64	e64, round toward +inf	agree
+v_trunc_f64	e64, round toward -inf	agree
+v_trunc_f64	e64, round toward zero	agree
 v_writelane_b32	lane 0	agree
 v_writelane_b32	lane 31	agree
 v_writelane_b32	lane 32	agree

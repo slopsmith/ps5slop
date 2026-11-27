@@ -6,6 +6,7 @@ use crate::opinfo::Ty;
 use std::collections::HashSet;
 
 const FLOAT_PRELUDE: &str = include_str!("float_prelude.metal");
+const DOUBLE_PRELUDE: &str = include_str!("double_prelude.metal");
 
 /// Where `prelude_for` puts the float helpers in a program being emitted.
 pub(super) const PRELUDE_HERE: &str = "\n// float helpers\n";
@@ -47,10 +48,16 @@ fn identifiers(text: &str) -> impl Iterator<Item = &str> {
 
 /// Each helper's name and text (its leading comment included).
 fn helpers() -> Vec<(&'static str, &'static str)> {
+    let mut all = helpers_of(FLOAT_PRELUDE);
+    all.extend(helpers_of(DOUBLE_PRELUDE));
+    all
+}
+
+fn helpers_of(prelude: &'static str) -> Vec<(&'static str, &'static str)> {
     let mut starts: Vec<usize> = Vec::new();
     let mut comment = None;
     let mut at = 0;
-    for line in FLOAT_PRELUDE.split_inclusive('\n') {
+    for line in prelude.split_inclusive('\n') {
         if line.starts_with("static inline") {
             starts.push(comment.unwrap_or(at));
             comment = None;
@@ -61,11 +68,11 @@ fn helpers() -> Vec<(&'static str, &'static str)> {
         }
         at += line.len();
     }
-    starts.push(FLOAT_PRELUDE.len());
+    starts.push(prelude.len());
     starts
         .windows(2)
         .map(|w| {
-            let text = &FLOAT_PRELUDE[w[0]..w[1]];
+            let text = &prelude[w[0]..w[1]];
             let sig = text
                 .lines()
                 .find(|l| l.starts_with("static inline"))
@@ -80,15 +87,16 @@ fn helpers() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
-/// The `#define`s `FLOAT_PRELUDE` reads, from a `PGM_RSRC1` and the parts
-/// left to Metal (`Request::plain_float`).
+/// The `#define`s the float and double preludes read, from a `PGM_RSRC1`
+/// and the parts left to Metal (`Request::plain_float`), which f64 ignores.
 pub(super) fn mode_defines(rsrc1: u32, plain: u8) -> String {
     let mode = rsrc1 >> 12 & 0xFF;
     let round = if plain & PLAIN_ROUND != 0 { 0 } else { mode };
     let exact = |part: u8| u8::from(plain & part == 0);
     format!(
         "#define FM_RND32 {}u\n#define FM_RND16 {}u\n#define FM_DN32 {}u\n#define FM_DN16 {}u\n#define FM_DX10 {}\n#define FM_IEEE {}\n\
-         #define FX_NAN {}\n#define FX_DN {}\n#define FX_RND {}\n#define FX_MODS {}\n",
+         #define FX_NAN {}\n#define FX_DN {}\n#define FX_RND {}\n#define FX_MODS {}\n\
+         #define FD_RND {}u\n#define FD_DN {}u\n#define FD_RND32 {}u\n",
         round & 3,
         round >> 2 & 3,
         mode >> 4 & 3,
@@ -99,6 +107,9 @@ pub(super) fn mode_defines(rsrc1: u32, plain: u8) -> String {
         exact(PLAIN_DENORM),
         exact(PLAIN_ROUND),
         exact(PLAIN_MODS),
+        mode >> 2 & 3,
+        mode >> 6 & 3,
+        mode & 3,
     )
 }
 
@@ -228,7 +239,7 @@ impl<'a> Tx<'a> {
     }
 
     /// An f32 result with the instruction's output modifier and clamp.
-    fn mods32(&self, v: &Valu, e: String) -> String {
+    pub(super) fn mods32(&self, v: &Valu, e: String) -> String {
         let e = match v.omod {
             1 => format!("omod32({e}, 2.0f)"),
             2 => format!("omod32({e}, 4.0f)"),
@@ -491,26 +502,32 @@ impl<'a> Tx<'a> {
             "f32" => self.fbits(pc, inst, v, 1)?,
             _ => self.hbits(pc, inst, v, 1)?,
         };
-        let code = match op {
-            "f" => 0,
-            "lt" => 1,
-            "eq" => 2,
-            "le" => 3,
-            "gt" => 4,
-            "lg" => 5,
-            "ge" => 6,
-            "o" => 7,
-            "u" => 8,
-            "nge" => 9,
-            "nlg" => 10,
-            "ngt" => 11,
-            "nle" => 12,
-            "neq" => 13,
-            "nlt" => 14,
-            "t" | "tru" => 15,
-
-            _ => return Err(err(pc, format!("unsupported instruction {name}"))),
-        };
+        let code =
+            cmp_code(op).ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?;
         Ok(Some(format!("cmp{bits}({a}, {b}, {code}u)")))
     }
+}
+
+/// The `cmp_code` helper's number for a VOPC float compare.
+pub(super) fn cmp_code(op: &str) -> Option<u32> {
+    Some(match op {
+        "f" => 0,
+        "lt" => 1,
+        "eq" => 2,
+        "le" => 3,
+        "gt" => 4,
+        "lg" => 5,
+        "ge" => 6,
+        "o" => 7,
+        "u" => 8,
+        "nge" => 9,
+        "nlg" => 10,
+        "ngt" => 11,
+        "nle" => 12,
+        "neq" => 13,
+        "nlt" => 14,
+        "t" | "tru" => 15,
+
+        _ => return None,
+    })
 }

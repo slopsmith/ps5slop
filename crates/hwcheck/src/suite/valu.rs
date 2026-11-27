@@ -575,6 +575,126 @@ pub fn cases() -> Vec<Case> {
         }
     }
     out.extend(reversed_dpp_cases());
+    out.extend(f64_threshold_cases());
+    out
+}
+
+/// An f64 with biased exponent `e` (0 for a denormal), a random significand
+/// and sign.
+fn f64_with_exponent(e: u64, rng: &mut Rng) -> u64 {
+    let mut m = rng.next() & ((1 << 52) - 1);
+    if e == 0 && m == 0 {
+        m = 1;
+    }
+    (rng.next() & 1) << 63 | e.min(2046) << 52 | m
+}
+
+/// A biased exponent `d` away from `e`, kept within finite values.
+fn shifted(e: u64, d: i64) -> u64 {
+    (e as i64 + d).clamp(0, 2046) as u64
+}
+
+/// The f64 division steps and `v_trig_preop_f64` with operands whose
+/// exponents sit around the thresholds where they scale, which random
+/// operands rarely reach.
+fn f64_threshold_cases() -> Vec<Case> {
+    let lanes = (GROUPS * 64) as usize;
+    let near = |rng: &mut Rng, base: i64| base + rng.below(9) as i64 - 4;
+    let mut out = Vec::new();
+    let ops: [(&str, &str); 4] = [
+        (
+            "v_div_scale_f64",
+            "denominator and numerator exponents around the scaling limits",
+        ),
+        (
+            "v_div_fmas_f64",
+            "results around the range limits after scaling",
+        ),
+        ("v_div_fixup_f64", "exponent differences around underflow"),
+        (
+            "v_trig_preop_f64",
+            "exponents around the shift limits, every segment",
+        ),
+    ];
+    for (name, what) in ops {
+        let Some(op) = gfx10::opinfo::by_name(name) else {
+            continue;
+        };
+        let Some(inst) = encode(op, Form::E64) else {
+            continue;
+        };
+        for mode in [BASE_MODE, MODES[1], MODES[2], MODES[4]] {
+            let variant = if mode == BASE_MODE {
+                format!("e64, {what}")
+            } else {
+                format!("e64, {what}, {}", mode.name)
+            };
+            let mut rng = Rng::new(&format!("{name} {variant}"));
+            let mut inputs = Vec::with_capacity(lanes * IN_WORDS);
+            for lane in 0..lanes {
+                let srcs: [u64; 3] = match name {
+                    "v_div_scale_f64" => {
+                        let e1 = [0, 1, 2, 54, 1023, 1500, 2043, 2044, 2045, 2046][lane / 2 % 10];
+                        let e2 = match lane / 20 % 4 {
+                            0 => shifted(e1, near(&mut rng, 768)),
+                            1 => shifted(e1, near(&mut rng, -768)),
+                            2 => near(&mut rng, 53).max(0) as u64,
+                            _ => rng.below(2047) as u64,
+                        };
+                        let (d, n) = (
+                            f64_with_exponent(e1, &mut rng),
+                            f64_with_exponent(e2, &mut rng),
+                        );
+                        [if lane % 2 == 0 { d } else { n }, d, n]
+                    }
+                    "v_div_fmas_f64" => {
+                        let ec = [1021, 1022, 1023, 1024, 1025, 1, 2046, 900, 1150][lane % 9];
+                        let ea = rng.below(2047) as u64;
+                        let eb = shifted(ec + 1023, near(&mut rng, 0) - ea as i64);
+                        [
+                            f64_with_exponent(ea, &mut rng),
+                            f64_with_exponent(eb, &mut rng),
+                            f64_with_exponent(ec, &mut rng),
+                        ]
+                    }
+                    "v_div_fixup_f64" => {
+                        let e1 = 1023 + rng.below(1024) as u64;
+                        let e2 = shifted(e1, near(&mut rng, -1075));
+                        let q = match lane % 3 {
+                            0 => 0x7FF0_0000_0000_0000,
+                            _ => f64_with_exponent(rng.below(2047) as u64, &mut rng),
+                        };
+                        [
+                            q,
+                            f64_with_exponent(e1, &mut rng),
+                            f64_with_exponent(e2, &mut rng),
+                        ]
+                    }
+                    _ => {
+                        let e = match lane % 4 {
+                            0 => near(&mut rng, 1077),
+                            1 => near(&mut rng, 1968),
+                            2 => 2043 + rng.below(5) as i64,
+                            _ => rng.below(4) as i64,
+                        };
+                        let a = (rng.next() & 1) << 63 | (e as u64) << 52 | rng.next() >> 12;
+                        [a, (lane / 4 % 32) as u64, 0]
+                    }
+                };
+                for v in srcs {
+                    inputs.extend([v as u32, (v >> 32) as u32]);
+                }
+                inputs.extend([rng.next() as u32 & 1, rng.next() as u32]);
+            }
+            let body = Body {
+                setup: &[],
+                inst: &inst,
+                after: &[],
+            };
+            let in_sgprs = name == "v_div_scale_f64";
+            out.extend(around(op, variant, body, in_sgprs, mode, Some(inputs)));
+        }
+    }
     out
 }
 

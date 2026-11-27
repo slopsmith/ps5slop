@@ -124,6 +124,9 @@ impl<'a> Tx<'a> {
         if op.fmt == Fmt::Vopc {
             return self.vopc(pc, inst, v);
         }
+        if double::is_float64(name) {
+            return self.float64(pc, inst, v);
+        }
         if matches!(
             name,
             "v_interp_p1ll_f16" | "v_interp_p1lv_f16" | "v_interp_p2_f16"
@@ -772,7 +775,11 @@ impl<'a> Tx<'a> {
         let (op, ty) = rest
             .rsplit_once('_')
             .ok_or_else(|| err(pc, format!("unsupported instruction {name}")))?;
-        let float = self.fcompare(pc, inst, v, op, ty)?;
+        let float = if ty == "f64" {
+            Some(self.fcompare64(pc, inst, v, op)?)
+        } else {
+            self.fcompare(pc, inst, v, op, ty)?
+        };
         let cond = match ty {
             _ if float.is_some() => float.unwrap_or_default(),
             "i32" | "u32" | "i16" | "u16" => {

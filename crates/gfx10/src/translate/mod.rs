@@ -14,6 +14,7 @@ use crate::opinfo::Fmt;
 use crate::print::{Syntax, mimg_addr_count, print};
 
 mod calls;
+mod double;
 mod emit;
 mod float;
 mod flow;
