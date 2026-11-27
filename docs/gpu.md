@@ -179,6 +179,7 @@ Render targets, depth targets and program-written volumes are read back into a s
 `libSceVideoOut` (`crates/hle/src/videoout.rs`) follows the call sequence ScreenTester5 uses (GPL-3.0, read for the sequence only). None of it is verified on a PS5:
 
 - One port. `SetBufferAttribute2` fills a block the guest treats as opaque, so it holds our own layout. `RegisterBuffers2` takes `{ data, metadata, reserved[2] }` entries.
+- `GetOutputStatus` reports a 4K SDR output at 59.94 Hz. At 1080p GTA VI makes 1920x1080 buffers but composites its frame with a projection for 3840x2160, so it showed only the top-left quarter; why is unknown. Titles that size their buffers from this render at 4K.
 - A flip shows the buffer at once (index -1 blanks the screen) and fires a flip event; vblank is a 60 Hz clock.
 - A buffer the GPU rendered is shown from its Metal texture; a buffer the CPU filled is read from guest memory and untiled.
 - Formats whose top byte is `0xC0` (Superliminal's RGBA16Float `0xC001000600000000`) hold linear light, inferred from the title's own final pass, and are encoded as sRGB for display and screenshots. No public source names these formats.

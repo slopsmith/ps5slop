@@ -506,11 +506,11 @@ fn delete_flip_event(env: &mut Env) -> Result<Outcome, CallError> {
 }
 
 /// `sceVideoOutGetOutputStatus(handle, status)`: 48 bytes in SharpEmu-mac's
-/// layout. Resolution class 1 (Minecraft reads it as 1080p), dynamic range 1
+/// layout. Resolution class 2 (4K; GTA VI reads 1 as 1080p), dynamic range 1
 /// (SDR, 2 is HDR), refresh-rate code 3 (59.94 Hz), HDR flag 0, as we present SDR.
 fn output_status(env: &mut Env) -> Result<Outcome, CallError> {
     let mut b = [0u8; 0x30];
-    b[0..4].copy_from_slice(&1u32.to_le_bytes());
+    b[0..4].copy_from_slice(&2u32.to_le_bytes());
     b[4..8].copy_from_slice(&1u32.to_le_bytes());
     b[8..16].copy_from_slice(&3u64.to_le_bytes());
     env.mem.write(env.arg(1), &b)?;
