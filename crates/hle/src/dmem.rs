@@ -343,6 +343,7 @@ pub static FUNCTIONS: &[Function] = &[
     f("sceKernelCheckedReleaseDirectMemory", checked_release),
     f("sceKernelMapDirectMemory", map),
     f("sceKernelMapNamedDirectMemory", map),
+    f("sceKernelMapDirectMemory2", map2),
     f("sceKernelMapFlexibleMemory", map_flexible),
     f("sceKernelMapNamedFlexibleMemory", map_flexible),
     f("sceKernelMapNamedFlexibleMemoryInternal", map_flexible),
@@ -473,6 +474,27 @@ fn map(env: &mut Env) -> Result<Outcome, CallError> {
         env.arg(3),
         env.arg(4),
         env.arg(5),
+    );
+    let wanted = env.mem.read_u64(addr_at)?;
+    match map_direct(env, wanted, len, prot, flags, offset, align) {
+        Ok(at) => {
+            env.mem.write_u64(addr_at, at)?;
+            ret(0)
+        }
+        Err(e) => ret(sce_error(e)),
+    }
+}
+
+/// `(*addr, len, memory type, prot, flags, direct_start, align)`; the
+/// memory type only steers caching, as in `sceKernelMtypeprotect`.
+fn map2(env: &mut Env) -> Result<Outcome, CallError> {
+    let (addr_at, len, prot, flags, offset, align) = (
+        env.arg(0),
+        env.arg(1),
+        env.arg(3),
+        env.arg(4),
+        env.arg(5),
+        env.arg_n(6)?,
     );
     let wanted = env.mem.read_u64(addr_at)?;
     match map_direct(env, wanted, len, prot, flags, offset, align) {
