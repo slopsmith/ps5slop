@@ -13,6 +13,7 @@ use crate::decode::{Inst, Kind, Mimg, VEnc, Valu, decode, src};
 use crate::opinfo::Fmt;
 use crate::print::{Syntax, mimg_addr_count, print};
 
+mod calls;
 mod emit;
 mod float;
 mod flow;
@@ -25,6 +26,7 @@ mod scalar;
 mod sources;
 mod valu;
 
+pub use calls::{CallSite, Callee, call_sites};
 use flow::{branch_target, crosses_lanes, ordered_lds};
 use half::{HALF_OPS, PACKED_F16};
 use prelude::{
@@ -133,6 +135,9 @@ pub struct Request<'a> {
     /// The stage's `PGM_RSRC1`, whose FLOAT_MODE, DX10_CLAMP and IEEE_MODE
     /// fields set the float mode the program runs in.
     pub rsrc1: u32,
+    /// Targets of calls and jumps through SGPRs, read for this dispatch from
+    /// where [`call_sites`] says they come from.
+    pub calls: &'a [Callee],
 }
 
 /// NaN results, quieting and the NaN rules of min, max and med3.
@@ -418,7 +423,8 @@ fn err(pc: usize, message: impl Into<String>) -> TranslateError {
 }
 
 /// Decodes from the start of `code` to the first instruction that does not
-/// fall through (`s_endpgm`, `s_branch`) and that no branch jumps past.
+/// fall through (`s_endpgm`, `s_branch`, `s_setpc_b64` or `s_swappc_b64`
+/// that discards the return address) and that no branch jumps past.
 pub fn program(code: &[u32]) -> Result<Vec<(usize, Inst)>, TranslateError> {
     let mut out = Vec::new();
     let mut pc = 0;
@@ -432,7 +438,9 @@ pub fn program(code: &[u32]) -> Result<Vec<(usize, Inst)>, TranslateError> {
             furthest = furthest.max(t);
         }
         out.push((pc, inst));
-        let ends = matches!(name, "s_endpgm" | "s_code_end" | "s_branch");
+        let ends = matches!(name, "s_endpgm" | "s_code_end" | "s_branch" | "s_setpc_b64")
+            || matches!(inst.kind, Kind::Sop1 { sdst, .. }
+                if name == "s_swappc_b64" && sdst as u16 == src::NULL);
         if ends && pc >= furthest {
             return Ok(out);
         }
@@ -445,8 +453,39 @@ pub fn program(code: &[u32]) -> Result<Vec<(usize, Inst)>, TranslateError> {
 
 /// Translates a program.
 pub fn translate(req: &Request) -> Result<Translated, TranslateError> {
-    let insts = program(req.code)?;
+    let (exp, sites) = calls::resolve(req)?;
+    let runs = exp.runs.clone();
+    translate_expanded(req, exp, &sites).map_err(|mut e| {
+        if let Some(pc) = e.pc {
+            let at = calls::Expanded::address(&runs, pc);
+            let offset = at.wrapping_sub(req.address) / 4;
+            if offset < req.code.len() as u64 {
+                e.pc = Some(offset as usize);
+            } else {
+                e.pc = None;
+                e.message = format!("in code at {at:#x} the program calls: {}", e.message);
+            }
+        }
+        e
+    })
+}
+
+fn translate_expanded(
+    req: &Request,
+    exp: calls::Expanded,
+    sites: &[CallSite],
+) -> Result<Translated, TranslateError> {
+    if let Some(&(pc, site, _)) = exp.open.first() {
+        let message = if sites.iter().any(|s| s.site == site) {
+            "call target known only per dispatch and not given"
+        } else {
+            "call target not from constants, user SGPRs or memory they point to"
+        };
+        return Err(err(pc, message));
+    }
+    let insts = exp.insts;
     let mut dry = Tx::new(req, insts.clone());
+    dry.runs = exp.runs.clone();
     dry.run()?;
     let bits: Vec<(u16, TextureKind)> = dry
         .textures
@@ -457,11 +496,13 @@ pub fn translate(req: &Request) -> Result<Translated, TranslateError> {
     if !bits.is_empty() {
         // Again with the bits slots merged, so slot numbers match the last pass.
         dry = Tx::new(req, insts.clone());
+        dry.runs = exp.runs.clone();
         dry.bits_textures = bits.clone();
         dry.run()?;
     }
     let syms = dry.sgpr_sources();
     let mut tx = Tx::new(req, insts);
+    tx.runs = exp.runs;
     tx.syms = Some(syms);
     tx.mem_write = dry.mem_write;
     tx.read_anywhere = (!dry.movrel).then(|| dry.live_sgprs());
@@ -528,6 +569,9 @@ enum Interp {
 struct Tx<'a> {
     req: &'a Request<'a>,
     insts: Vec<(usize, Inst)>,
+    /// The first pc and guest address of each run of `insts` that lie one
+    /// after another in guest memory (`calls::Expanded::runs`).
+    runs: Vec<(usize, u64)>,
     has_barrier: bool,
     /// The program stores to scratch (private per-thread memory).
     scratch_stores: bool,
@@ -677,6 +721,7 @@ impl<'a> Tx<'a> {
         Tx {
             req,
             insts,
+            runs: vec![(0, req.address)],
             wave32,
             lockstep,
             has_barrier: false,

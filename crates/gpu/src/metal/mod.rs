@@ -223,6 +223,9 @@ pub struct Metal {
     epoch: u64,
     detilers: HashMap<(TileMode, u32, Detile), Retained<ComputePipeline>>,
     programs: HashMap<(u64, u64), Option<Arc<Program>>>,
+    /// The calls through SGPRs of the program at an address with a code
+    /// head hash, once the targets listed are known (`Gpu::call_targets`).
+    call_sites: HashMap<(u64, u64, Vec<CallTarget>), Arc<Vec<shader::CallSite>>>,
     variants: HashMap<VariantKey, Arc<Task<Retained<Function>>>>,
     pipelines: HashMap<PipelineKey, Arc<Task<Retained<RenderPipeline>>>>,
     /// The first and last frame each colour or depth target (address,
@@ -348,6 +351,7 @@ impl Metal {
             epoch: 0,
             detilers: HashMap::new(),
             programs: HashMap::new(),
+            call_sites: HashMap::new(),
             variants: HashMap::new(),
             pipelines: HashMap::new(),
             drawn: HashMap::new(),

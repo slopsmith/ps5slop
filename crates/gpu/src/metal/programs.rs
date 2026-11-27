@@ -99,6 +99,120 @@ pub(super) struct PipelineKey {
     pub(super) form: VertexForm,
 }
 
+/// A call target in one dispatch: where the call is, where it goes, and a
+/// hash of the code there, as titles load other code where freed code was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) struct CallTarget {
+    site: u64,
+    target: u64,
+    head: u64,
+}
+
+/// A hash of the first 256 bytes of code at `address`.
+fn code_head(host: &dyn Host, address: u64) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut head = [0u8; 256];
+    host.read(address, &mut head);
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    head.hash(&mut h);
+    h.finish()
+}
+
+/// The code at `address`, up to 64 KiB or the end of its memory.
+fn read_code(host: &dyn Host, address: u64) -> Option<Vec<u32>> {
+    let (_, hi) = host.extent(address)?;
+    let len = (hi - address).min(64 << 10) as usize & !3;
+    let mut bytes = vec![0u8; len];
+    host.read(address, &mut bytes).then(|| {
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| u32::from_le_bytes(*c))
+            .collect()
+    })
+}
+
+fn callees(host: &dyn Host, calls: &[CallTarget]) -> Option<Vec<shader::Callee>> {
+    calls
+        .iter()
+        .map(|c| {
+            Some(shader::Callee {
+                site: c.site,
+                target: c.target,
+                code: read_code(host, c.target)?,
+            })
+        })
+        .collect()
+}
+
+/// The translation request for a program, without its code.
+fn request<'a>(
+    state: &State<'a>,
+    stage: Stage,
+    address: u64,
+    user_sgprs: u32,
+    ngg: bool,
+    variant: Variant,
+) -> shader::Request<'a> {
+    let c = state.context;
+    let rsrc1 = state.sh[match (stage, ngg) {
+        (Stage::Pixel, _) => sh::SPI_SHADER_PGM_RSRC1_PS,
+        (Stage::Compute, _) => sh::COMPUTE_PGM_RSRC1,
+        (Stage::Vertex, true) => sh::SPI_SHADER_PGM_RSRC1_GS,
+        (Stage::Vertex, false) => sh::SPI_SHADER_PGM_RSRC1_VS,
+    }];
+    let tmpring = if stage == Stage::Compute {
+        state.sh[sh::COMPUTE_TMPRING_SIZE]
+    } else {
+        c[context::SPI_TMPRING_SIZE]
+    };
+    let plain_float = {
+        let e = diag::config().gpu.exact_float;
+        [
+            (e.nan, shader::PLAIN_NAN),
+            (e.denorm, shader::PLAIN_DENORM),
+            (e.round, shader::PLAIN_ROUND),
+            (e.mods, shader::PLAIN_MODS),
+        ]
+        .iter()
+        .filter(|(exact, _)| !*exact)
+        .fold(0, |bits, (_, bit)| bits | bit)
+    };
+    shader::Request {
+        stage,
+        code: &[],
+        address,
+        user_sgprs,
+        ngg,
+        ps_input_ena: c[context::SPI_PS_INPUT_ENA],
+        ps_input_addr: c[context::SPI_PS_INPUT_ADDR],
+        ps_input_cntl: &c[context::SPI_PS_INPUT_CNTL_0..context::SPI_PS_INPUT_CNTL_0 + 32],
+        col_format: variant.col_format,
+        compute_rsrc2: state.sh[sh::COMPUTE_PGM_RSRC2],
+        threads: [0, 1, 2].map(|i| (state.sh[sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1)),
+        uint_textures: variant.uint_textures,
+        sint_textures: variant.sint_textures,
+        coded_textures: variant.coded_textures,
+        grid_bounds: variant.grid_bounds,
+        drop_depth_export: variant.drop_depth_export,
+        half_targets: variant.half_targets,
+        srgb_targets: variant.srgb_targets,
+        dual_source: variant.dual_source,
+        blends: variant.blends,
+        logic_op: variant.logic_op,
+        logic_targets: variant.logic_targets,
+        swizzles: variant.swizzles,
+        packed_targets: variant.packed_targets,
+        probe_flat: diag::config().gpu.probe_flat,
+        filter_bilinear: diag::config().gpu.filter_bilinear,
+        plain_float,
+        scratch_wave_bytes: (tmpring >> 12 & 0x1FFF) << 10,
+        rsrc1,
+        calls: &[],
+    }
+}
+
 /// The `user(locnN)` locations a pixel program reads flat (declared `uint4`).
 fn flat_locations(msl: &str) -> Vec<u32> {
     msl.lines()
@@ -165,7 +279,8 @@ impl Metal {
     }
 
     /// The program at `address` as the bound descriptors need it: translated
-    /// again with integer texture types when a T# has an integer format.
+    /// again with integer texture types when a T# has an integer format, and
+    /// with the code its calls through SGPRs reach in this dispatch.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn typed_program(
         &mut self,
@@ -178,7 +293,12 @@ impl Metal {
         user: &[u32],
         base: Variant,
     ) -> Option<Arc<Program>> {
-        let program = self.program(host, state, stage, address, user_sgprs, ngg, base)?;
+        let head = code_head(host, address);
+        let probe = request(state, stage, address, user_sgprs, ngg, base);
+        let calls = self.call_targets(host, probe, head, user);
+        let program = self.program(
+            host, state, stage, address, user_sgprs, ngg, base, head, &calls,
+        )?;
         let mut variant = base;
         for r in &program.translated.resources {
             if let Resource::Texture {
@@ -218,8 +338,64 @@ impl Metal {
         if variant == base {
             Some(program)
         } else {
-            self.program(host, state, stage, address, user_sgprs, ngg, variant)
+            self.program(
+                host, state, stage, address, user_sgprs, ngg, variant, head, &calls,
+            )
         }
+    }
+
+    /// The targets of the program's calls through SGPRs in this dispatch,
+    /// read from where the translator says they come from. Called code can
+    /// hold calls of its own, so this repeats while it finds new targets.
+    fn call_targets(
+        &mut self,
+        host: &dyn Host,
+        probe: shader::Request,
+        head: u64,
+        user: &[u32],
+    ) -> Vec<CallTarget> {
+        const ROUNDS: usize = 8;
+        let mut targets: Vec<CallTarget> = Vec::new();
+        for _ in 0..ROUNDS {
+            let key = (probe.address, head, targets.clone());
+            let sites = match self.call_sites.get(&key) {
+                Some(s) => s.clone(),
+                None => {
+                    let sites = read_code(host, probe.address)
+                        .and_then(|code| {
+                            let callees = callees(host, &targets)?;
+                            shader::call_sites(&shader::Request {
+                                code: &code,
+                                calls: &callees,
+                                ..probe
+                            })
+                            .ok()
+                        })
+                        .unwrap_or_default();
+                    let sites = Arc::new(sites);
+                    self.call_sites.insert(key, sites.clone());
+                    sites
+                }
+            };
+            let known = targets.len();
+            for site in sites.iter() {
+                if targets.iter().any(|t| t.site == site.site) {
+                    continue;
+                }
+                if let Some(d) = self.descriptor(host, user, &site.target, 2) {
+                    let target = d[0] as u64 | (d[1] as u64) << 32;
+                    targets.push(CallTarget {
+                        site: site.site,
+                        target,
+                        head: code_head(host, target),
+                    });
+                }
+            }
+            if targets.len() == known {
+                break;
+            }
+        }
+        targets
     }
 
     /// The translated program at `address`, translated on first use.
@@ -233,33 +409,10 @@ impl Metal {
         user_sgprs: u32,
         ngg: bool,
         variant: Variant,
+        head: u64,
+        calls: &[CallTarget],
     ) -> Option<Arc<Program>> {
-        let c = state.context;
-        let cntl = &c[context::SPI_PS_INPUT_CNTL_0..context::SPI_PS_INPUT_CNTL_0 + 32];
-        let rsrc1 = state.sh[match (stage, ngg) {
-            (Stage::Pixel, _) => sh::SPI_SHADER_PGM_RSRC1_PS,
-            (Stage::Compute, _) => sh::COMPUTE_PGM_RSRC1,
-            (Stage::Vertex, true) => sh::SPI_SHADER_PGM_RSRC1_GS,
-            (Stage::Vertex, false) => sh::SPI_SHADER_PGM_RSRC1_VS,
-        }];
-        let tmpring = if stage == Stage::Compute {
-            state.sh[sh::COMPUTE_TMPRING_SIZE]
-        } else {
-            c[context::SPI_TMPRING_SIZE]
-        };
-        let scratch_wave_bytes = (tmpring >> 12 & 0x1FFF) << 10;
-        let plain_float = {
-            let e = diag::config().gpu.exact_float;
-            [
-                (e.nan, shader::PLAIN_NAN),
-                (e.denorm, shader::PLAIN_DENORM),
-                (e.round, shader::PLAIN_ROUND),
-                (e.mods, shader::PLAIN_MODS),
-            ]
-            .iter()
-            .filter(|(exact, _)| !*exact)
-            .fold(0, |bits, (_, bit)| bits | bit)
-        };
+        let probe = request(state, stage, address, user_sgprs, ngg, variant);
         let key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -268,77 +421,31 @@ impl Metal {
                 user_sgprs,
                 ngg,
                 variant,
-                scratch_wave_bytes,
-                rsrc1,
-                plain_float,
+                probe.scratch_wave_bytes,
+                probe.rsrc1,
+                probe.plain_float,
+                head,
+                calls,
             )
                 .hash(&mut h);
             if stage == Stage::Pixel {
-                (
-                    cntl,
-                    c[context::SPI_PS_INPUT_ENA],
-                    c[context::SPI_PS_INPUT_ADDR],
-                )
-                    .hash(&mut h);
+                (probe.ps_input_cntl, probe.ps_input_ena, probe.ps_input_addr).hash(&mut h);
             }
             if stage == Stage::Compute {
-                let s = &state.sh;
-                (
-                    s[sh::COMPUTE_PGM_RSRC2],
-                    &s[sh::COMPUTE_NUM_THREAD_X..sh::COMPUTE_NUM_THREAD_X + 3],
-                )
-                    .hash(&mut h);
+                (probe.compute_rsrc2, probe.threads).hash(&mut h);
             }
-            // Titles load other programs where freed ones were.
-            let mut head = [0u8; 256];
-            host.read(address, &mut head);
-            head.hash(&mut h);
             h.finish()
         };
         if let Some(p) = self.programs.get(&(address, key)) {
             return p.clone();
         }
-        let (_, hi) = host.extent(address)?;
-        let len = (hi - address).min(64 << 10) as usize & !3;
-        let mut bytes = vec![0u8; len];
-        let program = if host.read(address, &mut bytes) {
-            let code: Vec<u32> = bytes
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .map(|c| u32::from_le_bytes(*c))
-                .collect();
+        let program = if let Some(code) = read_code(host, address)
+            && let Some(callees) = callees(host, calls)
+        {
             let request = shader::Request {
-                stage,
                 code: &code,
-                address,
-                user_sgprs,
-                ngg,
-                ps_input_ena: c[context::SPI_PS_INPUT_ENA],
-                ps_input_addr: c[context::SPI_PS_INPUT_ADDR],
-                ps_input_cntl: cntl,
-                col_format: variant.col_format,
-                compute_rsrc2: state.sh[sh::COMPUTE_PGM_RSRC2],
-                threads: [0, 1, 2]
-                    .map(|i| (state.sh[sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1)),
-                uint_textures: variant.uint_textures,
-                sint_textures: variant.sint_textures,
-                coded_textures: variant.coded_textures,
-                grid_bounds: variant.grid_bounds,
-                drop_depth_export: variant.drop_depth_export,
-                half_targets: variant.half_targets,
-                srgb_targets: variant.srgb_targets,
-                dual_source: variant.dual_source,
-                blends: variant.blends,
-                logic_op: variant.logic_op,
-                logic_targets: variant.logic_targets,
-                swizzles: variant.swizzles,
-                packed_targets: variant.packed_targets,
-                probe_flat: diag::config().gpu.probe_flat,
-                filter_bilinear: diag::config().gpu.filter_bilinear,
-                plain_float,
-                scratch_wave_bytes,
-                rsrc1,
+                calls: &callees,
+                ..probe
             };
             if let Some(dir) = &diag::config().gpu.shader_dump {
                 let path = dir.join(format!("{stage:?}-{address:x}-{key:016x}.bin"));

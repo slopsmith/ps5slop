@@ -1,16 +1,16 @@
 //! Tests of program flow and machine state, in the vector ALU test's
 //! per-lane program: every conditional and unconditional branch (taken and
 //! not, from conditions that are the same across a wave and from ones that
-//! differ per lane), the `s_*_saveexec` family, `s_getpc_b64`, `s_setreg`
-//! on the float mode, and instructions that must leave the results alone
-//! (waits, nops, priorities, prefetch and cache invalidates).
+//! differ per lane), the `s_*_saveexec` family, `s_getpc_b64`, calls and
+//! jumps, `s_setreg` on the float mode, and instructions that must leave the
+//! results alone (waits, nops, priorities, prefetch and cache invalidates).
 
 use gfx10::opinfo::{Fmt, OpInfo, all, by_name};
 
 use super::valu::{Body, GROUPS, around};
 use super::{BASE_MODE, Rng};
 use crate::coverage::instance;
-use crate::{COMPUTE_DISPATCH_INITIATOR, COMPUTE_FIRST, CS_W32_EN, Case};
+use crate::{COMPUTE_DISPATCH_INITIATOR, COMPUTE_FIRST, CS_W32_EN, Case, write_pages};
 
 const IN_WORDS: usize = 8;
 const V1: u32 = 257;
@@ -225,6 +225,102 @@ fn machine_state() -> Vec<Case> {
     out
 }
 
+/// Where the code that calls through memory or constants go to lies.
+const CALLEE: u64 = 0x18_0000;
+
+/// Calls and jumps to code in the program, after a branch over it, and to
+/// code elsewhere, the target built from `s_getpc_b64`, relative, constant
+/// or loaded from memory. The called code runs `v_add_f32` into v10 and
+/// returns through s[30:31] (`s_setpc_b64`, or `s_swappc_b64` that drops
+/// the address it would save); v11 keeps the return address.
+fn calls() -> Vec<Case> {
+    const S30: u32 = 30;
+    let swappc = sop1("s_swappc_b64", S30, S4);
+    let setpc = |s: u32| 0xBE80_0000 | (op("s_setpc_b64").code as u32) << 8 | s;
+    let callee = [v_add(), setpc(S30)];
+    // s_getpc_b64 s[4:5] gives the address of the s_add_u32 after it.
+    let getpc_plus = |bytes: u32| {
+        vec![
+            sop1("s_getpc_b64", S4, 0),
+            sop2("s_add_u32", S4, S4, INLINE_0 + bytes),
+            sop2("s_addc_u32", S4 + 1, S4 + 1, INLINE_0),
+        ]
+    };
+    let s_mov_literal = |sdst: u32, k: u32| [sop1("s_mov_b32", sdst, 0xFF), k];
+    let load_target = [
+        0xF400_0000 | (op("s_load_dwordx2").code as u32) << 18 | S4 << 6,
+        0xFA00_0000, // s_load_dwordx2 s[4:5], s[0:1], 0
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+    ];
+    let over_callee = sopp("s_branch", 2);
+    let mut out = Vec::new();
+    out.extend(test(
+        "s_swappc_b64",
+        "target from s_getpc_b64, called code after a branch",
+        getpc_plus(16),
+        [&[swappc, over_callee][..], &callee].concat(),
+        vec![v_mov(11, S30)],
+    ));
+    const NULL: u32 = 125;
+    out.extend(test(
+        "s_swappc_b64",
+        "returning with s_swappc_b64 null",
+        getpc_plus(16),
+        vec![
+            swappc,
+            over_callee,
+            v_add(),
+            sop1("s_swappc_b64", NULL, S30),
+        ],
+        vec![v_mov(11, S30)],
+    ));
+    let call = 0xB000_0000 | (op("s_call_b64").code as u32) << 23 | S30 << 16 | 1;
+    out.extend(test(
+        "s_call_b64",
+        "called code after a branch",
+        Vec::new(),
+        [&[call, over_callee][..], &callee].concat(),
+        vec![v_mov(11, S30)],
+    ));
+    out.extend(test(
+        "s_setpc_b64",
+        "jump over an instruction, target from s_getpc_b64",
+        getpc_plus(16),
+        vec![setpc(S4), v_mov(11, INLINE_0 + 5), v_add()],
+        Vec::new(),
+    ));
+    out.extend(test(
+        "s_swappc_b64",
+        "constant target elsewhere",
+        [s_mov_literal(S4, CALLEE as u32), s_mov_literal(S4 + 1, 0)].concat(),
+        vec![swappc],
+        vec![v_mov(11, S30)],
+    ));
+    let mut inputs = inputs("s_swappc_b64 target from memory");
+    inputs[..2].copy_from_slice(&[CALLEE as u32, (CALLEE >> 32) as u32]);
+    let body = Body {
+        setup: &load_target,
+        inst: &[swappc],
+        after: &[v_mov(11, S30)],
+    };
+    out.extend(around(
+        op("s_swappc_b64"),
+        "target loaded from memory".into(),
+        body,
+        false,
+        BASE_MODE,
+        Some(inputs),
+    ));
+    for case in out
+        .iter_mut()
+        .filter(|c| c.variant.contains("elsewhere") || c.variant.contains("memory"))
+    {
+        let bytes: Vec<u8> = callee.iter().flat_map(|w| w.to_le_bytes()).collect();
+        write_pages(&mut case.input, CALLEE, &bytes);
+    }
+    out
+}
+
 /// Opcodes whose effect on a program's results is none at all.
 const NO_EFFECT: [&str; 18] = [
     "s_nop",
@@ -297,7 +393,14 @@ fn no_effect() -> Vec<Case> {
 
 /// Every flow and machine-state test.
 pub fn cases() -> Vec<Case> {
-    [branches(), saveexec(), machine_state(), no_effect()].concat()
+    [
+        branches(),
+        saveexec(),
+        machine_state(),
+        calls(),
+        no_effect(),
+    ]
+    .concat()
 }
 
 #[cfg(test)]
@@ -320,6 +423,16 @@ mod tests {
             "s_and_saveexec_b64 s[20:21], s[24:25]"
         );
         assert_eq!(text("s_getpc_b64"), "s_getpc_b64 s[20:21]");
+        assert_eq!(text("s_swappc_b64"), "s_swappc_b64 s[30:31], s[4:5]");
+        assert_eq!(text("s_call_b64"), "s_call_b64 s[30:31], 1");
+        assert_eq!(text("s_setpc_b64"), "s_setpc_b64 s[4:5]");
+        assert_eq!(
+            cases
+                .iter()
+                .filter(|c| c.opcode.ends_with("pc_b64"))
+                .count(),
+            6
+        );
         assert!(text("s_setreg_imm32_b32").starts_with("s_setreg_imm32_b32 hwreg(HW_REG_MODE"));
         for name in NO_EFFECT {
             text(name);

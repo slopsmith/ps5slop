@@ -121,9 +121,13 @@ impl<'a> Tx<'a> {
             self.set64(sdst, &e);
             return Ok(());
         }
-        if name == "s_getpc_b64" {
-            let next = self.req.address + 4 * (pc as u64 + 1);
+        // The called code follows the call, inlined (`calls.rs`).
+        if matches!(name, "s_getpc_b64" | "s_swappc_b64") {
+            let next = calls::Expanded::address(&self.runs, pc) + 4;
             self.set64(sdst, &format!("{next:#x}ul"));
+            return Ok(());
+        }
+        if name == "s_setpc_b64" {
             return Ok(());
         }
         if let Some(e) = match name {
@@ -390,6 +394,10 @@ impl<'a> Tx<'a> {
     ) -> Result<(), TranslateError> {
         let k = simm16 as i16 as i32;
         match name {
+            "s_call_b64" => {
+                let next = calls::Expanded::address(&self.runs, pc) + 4;
+                self.set64(sdst, &format!("{next:#x}ul"));
+            }
             // Hardware registers (rounding and denormal modes) are not modelled.
             "s_setreg_b32" | "s_setreg_imm32_b32" => {}
             "s_movk_i32" => {

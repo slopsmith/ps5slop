@@ -169,6 +169,43 @@ impl<'a> Tx<'a> {
                     };
                     new.insert(sdst as u16, scaled);
                 }
+                Kind::Sop1 { sdst, .. } if inst.op.name == "s_getpc_b64" => {
+                    let next = calls::Expanded::address(&self.runs, pc) + 4;
+                    new.insert(sdst as u16, Some(Source::Constant(vec![next as u32])));
+                    new.insert(
+                        sdst as u16 + 1,
+                        Some(Source::Constant(vec![(next >> 32) as u32])),
+                    );
+                }
+                // Code addresses: `s_getpc_b64` plus an offset in two halves.
+                Kind::Sop2 { sdst, ssrc0, ssrc1 }
+                    if matches!(inst.op.name, "s_add_u32" | "s_addc_u32") =>
+                {
+                    let known = |st: &Syms, inst: &Inst, r: u16| match st.get(r as usize) {
+                        Some(Some(Source::Constant(v))) if v.len() == 1 => Some(v[0]),
+                        _ => constant(inst, r),
+                    };
+                    let sum = |st: &Syms, inst: &Inst, s0, s1| {
+                        Some(known(st, inst, s0)? as u64 + known(st, inst, s1)? as u64)
+                    };
+                    let carry = if inst.op.name == "s_add_u32" {
+                        Some(0)
+                    } else {
+                        i.checked_sub(1)
+                            .map(|p| &self.insts[p])
+                            .filter(|(_, p)| p.op.name == "s_add_u32")
+                            .and_then(|(p_pc, p)| match p.kind {
+                                Kind::Sop2 { ssrc0, ssrc1, .. } => {
+                                    sum(before.get(p_pc)?, p, ssrc0, ssrc1).map(|s| s >> 32)
+                                }
+                                _ => None,
+                            })
+                    };
+                    let value = carry
+                        .zip(sum(&st, inst, ssrc0, ssrc1))
+                        .map(|(c, s)| Source::Constant(vec![(s + c) as u32]));
+                    new.insert(sdst as u16, value);
+                }
                 Kind::Smem {
                     sdata,
                     sbase,

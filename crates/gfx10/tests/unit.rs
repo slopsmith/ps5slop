@@ -73,6 +73,7 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
         plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
+        calls: &[],
     })
     .unwrap()
 }
@@ -170,6 +171,7 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
         plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
+        calls: &[],
     })
     .unwrap();
     assert_eq!(t.msl.matches("[[user(locn0)").count(), 1);
@@ -218,6 +220,7 @@ fn compute_request(code: &[u32], user_sgprs: u32, rsrc2: u32, threads: u32) -> R
         plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
+        calls: &[],
     }
 }
 
@@ -440,6 +443,7 @@ fn integer_colour_formats_export_integers() {
         plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
+        calls: &[],
     };
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("uint4 c0 [[color(0)]]"));
@@ -489,6 +493,7 @@ fn dual_source_blending_blends_with_the_mrt1_export() {
         scratch_wave_bytes: 0,
         coded_textures: 0,
         rsrc1: DEFAULT_RSRC1,
+        calls: &[],
     };
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("float4 c1 [[color(1)]]"), "{}", t.msl);
@@ -546,6 +551,7 @@ fn blending_into_half_targets_writes_the_cb_halves() {
         scratch_wave_bytes: 0,
         coded_textures: 0,
         rsrc1: DEFAULT_RSRC1,
+        calls: &[],
     };
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("float4 c0 [[color(0)]]"), "{}", t.msl);
@@ -598,6 +604,7 @@ fn integer_texture_slots_read_and_write_integers() {
         plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
+        calls: &[],
     };
     let float = translate(&request(0, 0)).unwrap();
     let typed = translate(&request(1, 2)).unwrap();
@@ -669,6 +676,7 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
         plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
+        calls: &[],
     };
     let bytes = gfx10::capture::Capture::new(&req).to_bytes();
     let c = gfx10::capture::Capture::from_bytes(&bytes).unwrap();
@@ -841,6 +849,7 @@ fn getpc_gives_the_address_of_the_next_instruction() {
         plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
+        calls: &[],
     };
     let t = translate(&req).unwrap();
     assert!(t.msl.contains("0x500001004ul"));
@@ -1489,4 +1498,73 @@ fn waves_of_a_bigger_group_that_cross_halves_meet_pairwise() {
         256,
     );
     assert!(!plain.msl.contains("LOCKSTEP_WAVES"));
+}
+
+#[test]
+fn calls_to_constant_and_relative_targets_are_inlined() {
+    let code = [
+        0xBE84_1F00, // s_getpc_b64 s[4:5]
+        0x8004_9C04, // s_add_u32 s4, s4, 28
+        0x8205_8005, // s_addc_u32 s5, s5, 0
+        0xBE9E_2104, // s_swappc_b64 s[30:31], s[4:5]
+        0x7E04_0301, // v_mov_b32_e32 v2, v1
+        0xBB1E_0004, // s_call_b64 s[30:31], 4
+        0xBF81_0000, // s_endpgm
+        0xBF80_0000, // s_nop 0
+        0x4A02_0081, // v_add_nc_u32_e32 v1, 1, v0
+        0xBE80_201E, // s_setpc_b64 s[30:31]
+        0x3402_0281, // v_lshlrev_b32_e32 v1, 1, v1
+        0xBF85_0001, // s_cbranch_scc1 1
+        0xBE80_201E, // s_setpc_b64 s[30:31]
+        0x4A02_0282, // v_add_nc_u32_e32 v1, 2, v1
+        0xBE80_201E, // s_setpc_b64 s[30:31]
+    ];
+    let req = compute_request(&code, 0, 0, 64);
+    assert_eq!(gfx10::translate::call_sites(&req).unwrap(), []);
+    let t = translate(&req).unwrap();
+    assert!(
+        t.msl.contains("0x10ul"),
+        "return address of the s_swappc_b64"
+    );
+    assert!(t.msl.contains("0x18ul"), "return address of the s_call_b64");
+    assert!(t.msl.contains("1u + v0"));
+    assert!(t.msl.contains("2u + v1"));
+    compile(&t.msl);
+}
+
+#[test]
+fn calls_through_user_sgprs_take_their_target_per_dispatch() {
+    let code = [
+        0xBE86_0400, // s_mov_b64 s[6:7], s[0:1]
+        0xBE9E_2106, // s_swappc_b64 s[30:31], s[6:7]
+        0xBF81_0000, // s_endpgm
+    ];
+    let callee = [
+        0x4A02_0081, // v_add_nc_u32_e32 v1, 1, v0
+        0xBE80_201E, // s_setpc_b64 s[30:31]
+    ];
+    let req = compute_request(&code, 2, 2 << 1, 64);
+    let sites = gfx10::translate::call_sites(&req).unwrap();
+    assert_eq!(
+        sites,
+        [gfx10::translate::CallSite {
+            site: 4,
+            target: Source::UserSgpr(0),
+        }]
+    );
+    let e = translate(&req).unwrap_err();
+    assert_eq!(e.pc, Some(1));
+    assert!(e.message.contains("per dispatch"), "{}", e.message);
+    let calls = [gfx10::translate::Callee {
+        site: 4,
+        target: 0x1000,
+        code: callee.to_vec(),
+    }];
+    let t = translate(&Request {
+        calls: &calls,
+        ..req
+    })
+    .unwrap();
+    assert!(t.msl.contains("1u + v0"));
+    compile(&t.msl);
 }

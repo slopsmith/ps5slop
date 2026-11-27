@@ -4447,6 +4447,7 @@ s_buffer_load_dwordx8	offset 0x10 + soffset, stride 0x3fff	agree
 s_buffer_load_dwordx8	offset 0x10 + soffset, stride 0x4	agree
 s_buffer_load_dwordx8	offset 0x1004 + soffset	agree
 s_buffer_load_dwordx8	offset 0x40	agree
+s_call_b64	called code after a branch	agree
 s_cbranch_cdbgsys	exec from each lane	agree
 s_cbranch_cdbgsys	exec from each lane, then s_nop 4	agree
 s_cbranch_cdbgsys	exec from the group's bit 0	agree
@@ -4703,6 +4704,7 @@ s_pack_lh_b32_b16	base	agree
 s_pack_ll_b32_b16	base	agree
 s_quadmask_b32	base	agree
 s_quadmask_b64	base	agree
+s_setpc_b64	jump over an instruction, target from s_getpc_b64	agree
 s_setprio	leaves v_add_f32's result alone	agree
 s_setreg_b32	all denormals kept	agree
 s_setreg_b32	round toward +inf	differ	431 of 2048: 431 value
@@ -4718,6 +4720,10 @@ s_sleep	leaves v_add_f32's result alone	agree
 s_sub_i32	base	agree
 s_sub_u32	base	agree
 s_subb_u32	base	agree
+s_swappc_b64	constant target elsewhere	agree
+s_swappc_b64	returning with s_swappc_b64 null	agree
+s_swappc_b64	target from s_getpc_b64, called code after a branch	agree
+s_swappc_b64	target loaded from memory	agree
 s_waitcnt	leaves v_add_f32's result alone	agree
 s_waitcnt_expcnt	leaves v_add_f32's result alone	agree
 s_waitcnt_lgkmcnt	leaves v_add_f32's result alone	agree

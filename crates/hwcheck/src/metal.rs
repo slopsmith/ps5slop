@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use gfx10::translate::{Request, Stage, translate};
+use gfx10::translate::{Callee, Request, Source, Stage, call_sites, translate};
 use gpu::capture::{CaptureMeta, CommandBuffer, FrameCapture, Submission};
 use gpu::replay::{ReplayOptions, replay};
 
@@ -17,7 +17,12 @@ const MEMORY: (u64, u64) = (0, 0x100_0000);
 /// Why the translator refuses the case's program, if it does.
 pub fn untranslated(case: &Case) -> Option<String> {
     let code = case.code(case.program);
-    translate(&request(case, &code)).err().map(|e| match e.pc {
+    let calls = callees(case, &code);
+    let req = Request {
+        calls: &calls,
+        ..request(case, &code)
+    };
+    translate(&req).err().map(|e| match e.pc {
         Some(pc) => format!("at dword {pc}: {}", e.message),
         None => e.message,
     })
@@ -56,6 +61,57 @@ pub fn request<'a>(case: &Case, code: &'a [u32]) -> Request<'a> {
         plain_float: 0,
         scratch_wave_bytes: (case.reg(0x218) >> 12 & 0x1FFF) << 10,
         rsrc1: case.reg(0x212),
+        calls: &[],
+    }
+}
+
+/// The code the program's calls through SGPRs reach, found as the renderer
+/// finds it, from user SGPRs and memory they point to.
+fn callees(case: &Case, code: &[u32]) -> Vec<Callee> {
+    let mut calls: Vec<Callee> = Vec::new();
+    for _ in 0..8 {
+        let req = Request {
+            calls: &calls,
+            ..request(case, code)
+        };
+        let new: Vec<Callee> = call_sites(&req)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| !calls.iter().any(|c| c.site == s.site))
+            .filter_map(|s| {
+                let d = dwords(case, &s.target, 2)?;
+                let target = d[0] as u64 | (d[1] as u64) << 32;
+                Some(Callee {
+                    site: s.site,
+                    target,
+                    code: case.code(target),
+                })
+            })
+            .collect();
+        if new.is_empty() {
+            break;
+        }
+        calls.extend(new);
+    }
+    calls
+}
+
+fn dwords(case: &Case, source: &Source, n: u32) -> Option<Vec<u32>> {
+    match source {
+        Source::UserSgpr(s) => Some(
+            (0..n)
+                .map(|i| case.reg(0x240 + (*s as u32 + i) as usize))
+                .collect(),
+        ),
+        Source::Memory { pointer, offset } => {
+            let p = dwords(case, pointer, 2)?;
+            let at = (p[0] as u64 | (p[1] as u64) << 32) + *offset as u64;
+            let mut bytes = vec![0u8; 4 * n as usize];
+            case.read(at, &mut bytes);
+            Some(crate::words(&bytes))
+        }
+        Source::Constant(v) => v.get(..n as usize).map(<[u32]>::to_vec),
+        _ => None,
     }
 }
 

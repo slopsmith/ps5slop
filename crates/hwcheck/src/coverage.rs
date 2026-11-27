@@ -95,6 +95,7 @@ pub fn coverage(op: &OpInfo) -> Coverage {
         plain_float: 0,
         scratch_wave_bytes: 0,
         rsrc1: DEFAULT_RSRC1,
+        calls: &[],
     };
     match translate(&req) {
         Err(e) if e.message.contains("unsupported instruction") => {

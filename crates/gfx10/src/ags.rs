@@ -225,6 +225,7 @@ impl Ags<'_> {
             plain_float: 0,
             scratch_wave_bytes: 0,
             rsrc1,
+            calls: &[],
         }
     }
 }

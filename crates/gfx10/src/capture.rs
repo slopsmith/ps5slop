@@ -4,10 +4,10 @@
 //! older versions lack the fields added after them (`PGM_RSRC1` becomes
 //! [`DEFAULT_RSRC1`]).
 
-use crate::translate::{DEFAULT_RSRC1, Request, Stage, program};
+use crate::translate::{Callee, DEFAULT_RSRC1, Request, Stage, program};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"g10c");
-const VERSION: u32 = 10;
+const VERSION: u32 = 11;
 const GRID_BOUNDS: u32 = 1;
 const DROP_DEPTH_EXPORT: u32 = 2;
 const DUAL_SOURCE: u32 = 4;
@@ -40,14 +40,21 @@ pub struct Capture {
     pub packed_targets: [u16; 8],
     pub scratch_wave_bytes: u32,
     pub rsrc1: u32,
+    pub calls: Vec<Callee>,
     pub code: Vec<u32>,
 }
 
 impl Capture {
-    /// Copies `req`, keeping the code up to the end of the program when it decodes.
+    /// Copies `req`, keeping the code up to the end of the program when it
+    /// decodes and calls no code after its end.
     pub fn new(req: &Request) -> Self {
+        let calls = |p: &[(usize, crate::Inst)]| {
+            p.iter()
+                .any(|(_, i)| matches!(i.op.name, "s_call_b64" | "s_swappc_b64" | "s_setpc_b64"))
+        };
         let len = program(req.code)
             .ok()
+            .filter(|p| !calls(p))
             .and_then(|p| p.last().map(|(pc, i)| pc + i.words as usize))
             .unwrap_or(req.code.len());
         Capture {
@@ -76,6 +83,7 @@ impl Capture {
             packed_targets: req.packed_targets,
             scratch_wave_bytes: req.scratch_wave_bytes,
             rsrc1: req.rsrc1,
+            calls: req.calls.to_vec(),
             code: req.code[..len.min(req.code.len())].to_vec(),
         }
     }
@@ -111,6 +119,7 @@ impl Capture {
             plain_float: 0,
             scratch_wave_bytes: self.scratch_wave_bytes,
             rsrc1: self.rsrc1,
+            calls: &self.calls,
         }
     }
 
@@ -162,6 +171,17 @@ impl Capture {
         w.extend_from_slice(&self.blends);
         let p = self.packed_targets;
         w.extend((0..4).map(|i| u32::from(p[2 * i]) | u32::from(p[2 * i + 1]) << 16));
+        w.push(self.calls.len() as u32);
+        for c in &self.calls {
+            w.extend([
+                c.site as u32,
+                (c.site >> 32) as u32,
+                c.target as u32,
+                (c.target >> 32) as u32,
+                c.code.len() as u32,
+            ]);
+            w.extend_from_slice(&c.code);
+        }
         w.extend_from_slice(&self.code);
         w.iter().flat_map(|x| x.to_le_bytes()).collect()
     }
@@ -239,6 +259,21 @@ impl Capture {
             }
             code_at += 4;
         }
+        let mut calls = Vec::new();
+        if w[1] >= 11 {
+            let n = *w.get(code_at)?;
+            code_at += 1;
+            for _ in 0..n {
+                let h = w.get(code_at..code_at + 5)?;
+                let len = h[4] as usize;
+                calls.push(Callee {
+                    site: h[0] as u64 | (h[1] as u64) << 32,
+                    target: h[2] as u64 | (h[3] as u64) << 32,
+                    code: w.get(code_at + 5..code_at + 5 + len)?.to_vec(),
+                });
+                code_at += 5 + len;
+            }
+        }
         Some(Capture {
             stage,
             user_sgprs: w[3],
@@ -265,6 +300,7 @@ impl Capture {
             packed_targets,
             scratch_wave_bytes,
             rsrc1,
+            calls,
             code: w[code_at..].to_vec(),
         })
     }
