@@ -97,7 +97,7 @@ fn simd_three(op: u16) -> Option<(bool, u32, u32)> {
 
 /// Two-source integer operations done per 128-bit half.
 fn packed_int(op: u16) -> bool {
-    matches!(op, 0x160..=0x16d | 0x1db | 0x1df | 0x1eb | 0x1ef | 0x1e4 | 0x1e5 | 0x1f4..=0x1f6 | 0x200 | 0x204 | 0x22b)
+    matches!(op, 0x160..=0x16d | 0x1db | 0x1df | 0x1eb | 0x1ef | 0x1e4 | 0x1e5 | 0x1f4..=0x1f6 | 0x200..=0x20a | 0x21c..=0x21e | 0x228 | 0x22b)
         || simd_three(op).is_some()
 }
 
@@ -205,6 +205,7 @@ pub(super) fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         0x20c => i.vex.is_some() && p == Pfx::P66 && !i.rex_w(),
         0x22c..=0x22f => i.vex.is_some() && p == Pfx::P66 && !i.rex_w() && i.mem.is_some(),
         0x28c | 0x28e => i.vex.is_some() && p == Pfx::P66 && i.mem.is_some(),
+        0x2cb..=0x2cd => i.vex.is_none() && p == Pfx::None,
         _ => false,
     };
     if !ok || (i.vex.is_none() && wide) {
@@ -238,9 +239,25 @@ const XTN_2S: u32 = 0x0ea1_2800;
 const FMLA_V: u32 = 0x4e20_cc00;
 /// FNEG Vd.4S, Vn.4S (bit 22 makes it .2D).
 const FNEG_V: u32 = 0x6ea0_f800;
+/// ABS, CMLT #0 and CMEQ #0 on Vd.16B, Vn.16B (element size at bit 22).
+const ABS_V: u32 = 0x4e20_b800;
+const CMLT_ZERO_V: u32 = 0x4e20_a800;
+const CMEQ_ZERO_V: u32 = 0x4e20_9800;
+/// REV64 Vd.4S, Vn.4S.
+const REV64_4S: u32 = 0x4ea0_0800;
+/// SHA256H Qd, Qn, Vm.4S (| 1 << 12 for SHA256H2, | 2 << 12 for SHA256SU1).
+const SHA256H: u32 = 0x5e00_4000;
+const SHA256H2: u32 = SHA256H | 1 << 12;
+const SHA256SU1: u32 = SHA256H | 2 << 12;
+/// SHA256SU0 Vd.4S, Vn.4S.
+const SHA256SU0: u32 = 0x5e28_2800;
 
 fn vregs(d: V, n: V) -> u32 {
     (n.0 as u32) << 5 | d.0 as u32
+}
+
+fn vregs3(d: V, n: V, m: V) -> u32 {
+    (m.0 as u32) << 16 | vregs(d, n)
 }
 
 /// UMOV Xd, Vn.D[1].
@@ -298,6 +315,7 @@ impl Translator {
         match op {
             0x1ae => return self.mxcsr(i),
             0x22c..=0x22f | 0x28c | 0x28e => return self.masked_move(i, op, halves),
+            0x2cb..=0x2cd => return self.sha256(i, op),
             0x30f => {
                 let n = i.imm as u32 & 0xff;
                 for h in 0..halves {
@@ -1373,10 +1391,67 @@ impl Translator {
         self.a.stp(Size::X, Reg(31), Reg(31), CTX, ymm(n, 1));
     }
 
+    /// SHA256RNDS2, SHA256MSG1 or SHA256MSG2. Intel keeps the state as
+    /// {F,E,B,A} and {H,G,D,C}; SHA256H/H2 take {A,B,C,D} and {E,F,G,H}.
+    fn sha256(&mut self, i: &Insn, op: u16) {
+        self.a.ldr_q(XA, CTX, ymm(i.reg, 0));
+        self.rm_half(i, 0, XB);
+        let a = &mut self.a;
+        match op {
+            0x2cc => a.emit(SHA256SU0 | vregs(XA, XB)),
+            0x2cd => {
+                a.vec3(true, true, 0, 0b00011, XT, XT, XT);
+                a.ins(2, XB, 0, XT, 0);
+                a.emit(SHA256SU1 | vregs3(XA, XT, XB));
+            }
+            _ => {
+                // SHA256H runs four rounds; the two Intel asks for end up in
+                // the upper lanes, and rounds 3 and 4 only fill the lower ones.
+                a.ldr_q(XU, CTX, ymm(0, 0));
+                a.emit(REV64_4S | vregs(XS, XB));
+                a.emit(REV64_4S | vregs(XT, XA));
+                a.zip(true, 3, true, XR, XS, XT);
+                a.zip(true, 3, false, XS, XS, XT);
+                a.vec3(true, false, 2, 0b00011, XT, XR, XR);
+                a.emit(SHA256H | vregs3(XR, XS, XU));
+                a.emit(SHA256H2 | vregs3(XS, XT, XU));
+                a.zip(true, 3, true, XA, XS, XR);
+                a.emit(REV64_4S | vregs(XA, XA));
+            }
+        }
+        self.a.str_q(XA, CTX, ymm(i.reg, 0));
+    }
+
     /// XR = XA `op` XB, one 128-bit half of a packed integer operation.
     fn packed(&mut self, op: u16) {
         let a = &mut self.a;
         match op {
+            0x201 | 0x202 => a.vec3(true, false, op as u32 - 0x200, 0b10111, XR, XA, XB),
+            0x203 | 0x205..=0x207 => {
+                let size = if op == 0x206 { 2 } else { 1 };
+                a.uzp(true, size, false, XT, XA, XB);
+                a.uzp(true, size, true, XS, XA, XB);
+                let (u, opcode) = match op {
+                    0x203 => (false, 0b00001),
+                    0x207 => (false, 0b00101),
+                    _ => (true, 0b10000),
+                };
+                a.vec3(true, u, size, opcode, XR, XT, XS);
+            }
+            0x208..=0x20a => {
+                let size = (op - 0x208) as u32;
+                a.neg_v(size, XT, XA);
+                a.emit(CMLT_ZERO_V | size << 22 | vregs(XS, XB));
+                a.vec3(true, true, 1, 0b00011, XS, XT, XA);
+                a.emit(CMEQ_ZERO_V | size << 22 | vregs(XU, XB));
+                a.vec3(true, false, 1, 0b00011, XR, XS, XU);
+            }
+            0x21c..=0x21e => a.emit(ABS_V | ((op - 0x21c) as u32) << 22 | vregs(XR, XB)),
+            0x228 => {
+                a.narrow(Narrow::Xtn, 2, XR, XA);
+                a.narrow(Narrow::Xtn, 2, XT, XB);
+                a.mull(true, 2, XR, XR, XT);
+            }
             0x1db => a.vec3(true, false, 0, 0b00011, XR, XA, XB),
             0x1df => a.vec3(true, false, 1, 0b00011, XR, XB, XA),
             0x1eb => a.vec3(true, false, 2, 0b00011, XR, XA, XB),
