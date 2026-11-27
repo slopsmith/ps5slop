@@ -152,6 +152,9 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
     let string = i.map == Map::Primary && matches!(i.op, 0xa4..=0xa7 | 0xaa..=0xaf);
     let pause = i.rep == Rep::Rep && i.map == Map::Primary && i.op == 0x90 && i.rex & 1 == 0;
     let rep_ret = i.rep == Rep::Rep && i.map == Map::Primary && i.op == 0xc3;
+    let adx = i.map == Map::M0F38
+        && i.op == 0xf6
+        && matches!((i.rep, i.opsize_prefix), (Rep::Rep, _) | (Rep::None, true));
     if i.vex.is_none()
         && !i.lock
         && i.seg != Some(Seg::Gs)
@@ -163,7 +166,7 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
     if i.vex.is_some()
         || (i.lock && !lockable(i))
         || i.seg == Some(Seg::Gs)
-        || (i.rep != Rep::None && !counts && !crc32 && !string && !pause && !rep_ret)
+        || (i.rep != Rep::None && !counts && !crc32 && !string && !pause && !rep_ret && !adx)
     {
         return None;
     }
@@ -219,6 +222,12 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
         (Map::M0F38, 0xf0 | 0xf1) if crc32 || (i.rep == Rep::None && i.mem.is_some()) => {
             (false, none)
         }
+        (Map::M0F38, 0xf6) if adx => (false, both),
+        (Map::M0F, 0x01) if matches!(i.modrm, Some(0xfa | 0xfb)) => (false, none),
+        (Map::M0F, 0xa4) if i.osize() >= 4 => match i.imm as u32 & (i.osize() as u32 * 8 - 1) {
+            0 => (false, none),
+            _ => (false, writes),
+        },
         (Map::Primary, 0x90) if i.rex & 1 == 0 => (false, none),
         (Map::Primary, 0xf5 | 0xf8 | 0xf9) => (false, both),
         (Map::Primary, 0xb0..=0xbf) => (false, none),
@@ -839,6 +848,10 @@ impl Translator {
             }
             (Map::Primary, 0xa4..=0xa7 | 0xaa..=0xaf) => self.string(i),
             (Map::M0F38, 0xf0 | 0xf1) => self.movbe_crc32(i, next),
+            (Map::M0F38, 0xf6) => self.adx(i, next, flags),
+            (Map::M0F, 0x01) if i.modrm == Some(0xfb) => self.a.isb(),
+            (Map::M0F, 0x01) => {}
+            (Map::M0F, 0xa4) => self.shld(i, next, flags),
             (Map::M0F, 0xae) => {
                 if i.ext() == 6 && i.mem.is_none() {
                     self.a.dmb(0xb);
@@ -1885,6 +1898,67 @@ impl Translator {
         a.msr(a64::sysreg::NZCV, PF_RESULT);
         a.mov(Size::X, PF_RESULT, T);
         a.eor(Size::X, AF_AUX, T, old_af);
+    }
+
+    /// ADCX (F3: ADOX): `reg += r/m + CF` (OF), writing only that flag.
+    fn adx(&mut self, i: &Insn, next: u64, flags: bool) {
+        let size = if i.rex_w() { 8 } else { 4 };
+        let (s, dst, ox) = (sz(size), r(i.reg), i.rep == Rep::Rep);
+        self.get_rm(i, size, next);
+        let a = &mut self.a;
+        if flags || ox {
+            a.mrs(OLD_NZCV, a64::sysreg::NZCV);
+        }
+        if ox {
+            // NZCV's V into C.
+            a.rmif(OLD_NZCV, 27, 0b0010);
+        } else {
+            a.cfinv();
+        }
+        if !flags {
+            a.adc(s, dst, dst, A);
+            return;
+        }
+        a.adcs(s, dst, dst, A);
+        if ox {
+            a.cset(Size::X, U, Cond::Hs);
+            a.rmif(OLD_NZCV, 28, 0b1110);
+            a.rmif(U, 0, 0b0001);
+        } else {
+            a.cfinv();
+            a.rmif(OLD_NZCV, 28, 0b1101);
+        }
+    }
+
+    /// SHLD with an immediate count, at 32 or 64 bits.
+    fn shld(&mut self, i: &Insn, next: u64, flags: bool) {
+        let size = i.osize();
+        let (s, bits) = (sz(size), size as u32 * 8);
+        let n = i.imm as u32 & (bits - 1);
+        self.get_rm(i, size, next);
+        if n == 0 {
+            if i.mem.is_none() {
+                self.set(i.rm, size, true, A);
+            }
+            return;
+        }
+        self.get(B, i.reg, size, true);
+        let a = &mut self.a;
+        a.extr(s, T, A, B, bits - n);
+        if flags {
+            a.ubfx(Size::X, U, A, bits - n, 1);
+            assert!(a.logic_imm(Logic::Eor, Size::X, U, U, 1));
+            a.eor(s, B, T, A);
+            a.lsr_imm(s, B, B, bits - 1);
+            a.tst(s, T, T);
+            a.mrs(OLD_NZCV, a64::sysreg::NZCV);
+            a.bfi(Size::X, OLD_NZCV, U, 29, 1);
+            a.bfi(Size::X, OLD_NZCV, B, 28, 1);
+            a.msr(a64::sysreg::NZCV, OLD_NZCV);
+            a.mov(Size::X, PF_RESULT, T);
+            a.mov(Size::X, AF_AUX, T);
+        }
+        self.set_rm(i, size, T);
     }
 
     /// IMUL's flags from the comparison just made (EQ when the product

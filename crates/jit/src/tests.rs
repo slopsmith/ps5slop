@@ -2068,3 +2068,167 @@ fn a_map_as_fragmented_as_gta_v_reaches_the_vm() {
     assert_eq!(mem.read_u64(last).unwrap(), 1);
     cpu.release(&mut m);
 }
+
+/// `mov ebx, CODE + 0xf80` (scratch memory) and `mov r14d, CODE + 0x800`
+/// (where `record` stores results).
+fn scratch_and_results() -> Vec<u8> {
+    let mut code = vec![0xbb];
+    code.extend_from_slice(&(CODE as u32 + 0xf80).to_le_bytes());
+    code.extend_from_slice(&[0x41, 0xbe]);
+    code.extend_from_slice(&(CODE as u32 + 0x800).to_le_bytes());
+    code
+}
+
+/// `push imm32; popfq`.
+fn set_rflags(code: &mut Vec<u8>, rflags: u32) {
+    code.push(0x68);
+    code.extend_from_slice(&rflags.to_le_bytes());
+    code.push(0x9d);
+}
+
+/// Stores RAX and RFLAGS at r14 and advances it.
+fn record(code: &mut Vec<u8>) {
+    code.extend_from_slice(&[
+        0x9c, // pushfq
+        0x5a, // pop rdx
+        0x49, 0x89, 0x06, // mov [r14], rax
+        0x49, 0x89, 0x56, 0x08, // mov [r14 + 8], rdx
+        0x49, 0x83, 0xc6, 0x10, // add r14, 16
+    ]);
+}
+
+/// RFLAGS values to start from: none, all, only CF and OF, all but CF and OF.
+const FLAGS_IN: [u32; 4] = [0x002, 0x8d7, 0x803, 0x0d6];
+
+const ADX_FORMS: &[&[u8]] = &[
+    &[0x66, 0x48, 0x0f, 0x38, 0xf6, 0xc1], // adcx rax, rcx
+    &[0x66, 0x0f, 0x38, 0xf6, 0xc1],       // adcx eax, ecx
+    &[0xf3, 0x48, 0x0f, 0x38, 0xf6, 0xc1], // adox rax, rcx
+    &[0xf3, 0x0f, 0x38, 0xf6, 0xc1],       // adox eax, ecx
+    &[0x66, 0x48, 0x0f, 0x38, 0xf6, 0x03], // adcx rax, [rbx]
+    &[0xf3, 0x0f, 0x38, 0xf6, 0x43, 0x08], // adox eax, [rbx + 8]
+];
+
+#[test]
+fn adcx_and_adox_change_only_their_own_flag_like_the_interpreter() {
+    assert_all_translated(&ADX_FORMS.concat());
+    let pairs = [
+        (u64::MAX, 0u64),
+        (0x1234_5678_8000_0000, 0x8765_4321_8000_0000),
+        (0x8000_0000_0000_0001, 0xffff_ffff_ffff_fffe),
+    ];
+    for rflags in FLAGS_IN {
+        let mut code = scratch_and_results();
+        for (a, b) in pairs {
+            for op in ADX_FORMS {
+                code.extend_from_slice(&[0x48, 0xb8]);
+                code.extend_from_slice(&a.to_le_bytes());
+                code.extend_from_slice(&[0x48, 0xb9]);
+                code.extend_from_slice(&b.to_le_bytes());
+                // mov [rbx], rcx; mov [rbx + 8], rcx
+                code.extend_from_slice(&[0x48, 0x89, 0x0b, 0x48, 0x89, 0x4b, 0x08]);
+                set_rflags(&mut code, rflags);
+                code.extend_from_slice(op);
+                record(&mut code);
+            }
+        }
+        code.extend_from_slice(&[0xff, 0xd5]); // call rbp
+        assert!(code.len() <= 0x800);
+        same_as_interpreter(&code, &[]);
+    }
+}
+
+#[test]
+fn an_interleaved_adcx_adox_chain_matches_the_interpreter() {
+    let mut code = scratch_and_results();
+    for (reg, v) in [
+        (0xb8, u64::MAX),              // rax
+        (0xb9, 1),                     // rcx
+        (0xba, 0xffff_ffff_0000_0000), // rdx
+        (0xbe, 0x1_0000_0000),         // rsi
+    ] {
+        code.extend_from_slice(&[0x48, reg]);
+        code.extend_from_slice(&v.to_le_bytes());
+    }
+    // mov r8, rax; mov r9, rdx; mov [rbx], rax; mov [rbx + 8], rdx
+    code.extend_from_slice(&[0x49, 0x89, 0xc0, 0x49, 0x89, 0xd1]);
+    code.extend_from_slice(&[0x48, 0x89, 0x03, 0x48, 0x89, 0x53, 0x08]);
+    for rflags in [0x8d7, 0x002] {
+        set_rflags(&mut code, rflags);
+        code.extend_from_slice(&[
+            0x66, 0x48, 0x0f, 0x38, 0xf6, 0xc1, // adcx rax, rcx
+            0xf3, 0x48, 0x0f, 0x38, 0xf6, 0xd6, // adox rdx, rsi
+            0x66, 0x4c, 0x0f, 0x38, 0xf6, 0x03, // adcx r8, [rbx]
+            0xf3, 0x4c, 0x0f, 0x38, 0xf6, 0x4b, 0x08, // adox r9, [rbx + 8]
+            0x66, 0x0f, 0x38, 0xf6, 0xc1, // adcx eax, ecx
+            0xf3, 0x0f, 0x38, 0xf6, 0xd6, // adox edx, esi
+        ]);
+        record(&mut code);
+        set_rflags(&mut code, rflags);
+        code.extend_from_slice(&[
+            0x66, 0x4c, 0x0f, 0x38, 0xf6, 0x03, // adcx r8, [rbx]
+            0x31, 0xff, // xor edi, edi
+            0x66, 0x48, 0x0f, 0x38, 0xf6, 0xc1, // adcx rax, rcx
+            0xf3, 0x4c, 0x0f, 0x38, 0xf6, 0x4b, 0x08, // adox r9, [rbx + 8]
+            0x31, 0xff, // xor edi, edi
+        ]);
+        record(&mut code);
+    }
+    code.extend_from_slice(&[0xff, 0xd5]);
+    same_as_interpreter(&code, &[]);
+}
+
+#[test]
+fn monitorx_and_mwaitx_match_the_interpreter() {
+    let code = [
+        0xb8, 0x00, 0x0f, 0x40, 0x00, // mov eax, CODE + 0xf00
+        0x31, 0xc9, // xor ecx, ecx
+        0x31, 0xd2, // xor edx, edx
+        0x0f, 0x01, 0xfa, // monitorx
+        0x0f, 0x01, 0xfb, // mwaitx
+        0xff, 0xd5, // call rbp
+    ];
+    assert_all_translated(&code);
+    same_as_interpreter(&code, &[]);
+}
+
+#[test]
+fn shld_with_an_immediate_count_matches_the_interpreter() {
+    let forms: &[&[u8]] = &[
+        &[0x48, 0x0f, 0xa4, 0xc8, 0x01], // shld rax, rcx, 1
+        &[0x48, 0x0f, 0xa4, 0xc8, 0x0d], // shld rax, rcx, 13
+        &[0x48, 0x0f, 0xa4, 0xc8, 0x3f], // shld rax, rcx, 63
+        &[0x48, 0x0f, 0xa4, 0xc8, 0x40], // shld rax, rcx, 64
+        &[0x0f, 0xa4, 0xc8, 0x00],       // shld eax, ecx, 0
+        &[0x0f, 0xa4, 0xc8, 0x01],       // shld eax, ecx, 1
+        &[0x0f, 0xa4, 0xc8, 0x1f],       // shld eax, ecx, 31
+        &[0x0f, 0xa4, 0xc8, 0x21],       // shld eax, ecx, 33
+        &[0x48, 0x0f, 0xa4, 0x0b, 0x05], // shld [rbx], rcx, 5
+        &[0x48, 0x0f, 0xa4, 0x0b, 0x00], // shld [rbx], rcx, 0
+    ];
+    assert_all_translated(&forms.concat());
+    for (a, b) in [
+        (0x8123_4567_89ab_cdefu64, 0xfedc_ba98_7654_3210u64),
+        (0x4000_0000_4000_0000, 0),
+    ] {
+        let mut code = scratch_and_results();
+        for rflags in [0x8d7, 0x002] {
+            for op in forms {
+                code.extend_from_slice(&[0x48, 0xb8]);
+                code.extend_from_slice(&a.to_le_bytes());
+                code.extend_from_slice(&[0x48, 0xb9]);
+                code.extend_from_slice(&b.to_le_bytes());
+                code.extend_from_slice(&[0x48, 0x89, 0x03]); // mov [rbx], rax
+                set_rflags(&mut code, rflags);
+                code.extend_from_slice(op);
+                code.extend_from_slice(&[0x48, 0x8b, 0x3b]); // mov rdi, [rbx]
+                record(&mut code);
+                code.extend_from_slice(&[0x49, 0x89, 0x3e]); // mov [r14], rdi
+                code.extend_from_slice(&[0x49, 0x83, 0xc6, 0x08]); // add r14, 8
+            }
+        }
+        code.extend_from_slice(&[0xff, 0xd5]);
+        assert!(code.len() <= 0x800);
+        same_as_interpreter(&code, &[]);
+    }
+}

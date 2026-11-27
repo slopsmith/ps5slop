@@ -38,7 +38,7 @@ A vCPU racing ahead of a sync sees what a vCPU already inside the VM always coul
 - **DF** is stored as 0 or all ones, so a string step is `(size ^ df) - df` without touching NZCV.
 - **FPCR from MXCSR.** Every entry, and every translated `ldmxcsr`, sets FPCR: AH and NEP (FEAT_AFP) give x86's NaN, min/max and scalar-upper-lane rules (from 86slopper's `docs/sse-neon.md`), DAZ maps to FIZ, FTZ to FZ, RC to RMode. FPSR's flags fold back into MXCSR on exit (DE has no equivalent). x87 code switches to the host's default FPCR around its arithmetic, as the interpreter's own `f64` arithmetic runs, and restores the SSE FPCR before vector code, exits and bails.
 - **x87** follows the interpreter's model: doubles, TOP in the status word, a tag bit per register, all kept in the context block. There is no register cache yet, so each instruction loads and stores the state it uses.
-- **Atomics.** Locked instructions and `xchg`, `xadd`, `cmpxchg` on memory are LSE atomics (`ldaddal`, `casal`, `swpal`, ...); `lock cmpxchg16b` is `caspal`. Flags are computed afterwards from the old value. `mfence` is `dmb ish`; other fences are nothing (hardware TSO covers them). `pause` is `isb`.
+- **Atomics.** Locked instructions and `xchg`, `xadd`, `cmpxchg` on memory are LSE atomics (`ldaddal`, `casal`, `swpal`, ...); `lock cmpxchg16b` is `caspal`. Flags are computed afterwards from the old value. `mfence` is `dmb ish`; other fences are nothing (hardware TSO covers them). `pause` and `mwaitx` are `isb`; `monitorx` arms nothing.
 
 ### Blocks, the dispatcher and chaining
 
