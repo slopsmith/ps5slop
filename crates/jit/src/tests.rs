@@ -2193,6 +2193,17 @@ fn monitorx_and_mwaitx_match_the_interpreter() {
 }
 
 #[test]
+fn clzero_zeroes_the_line_holding_rax() {
+    let code = [
+        0xb8, 0x25, 0x04, 0x40, 0x00, // mov eax, CODE + 0x425
+        0x0f, 0x01, 0xfc, // clzero
+        0xff, 0xd5, // call rbp
+    ];
+    assert_all_translated(&code);
+    same_as_interpreter(&code, &[0xaa; 0x80]);
+}
+
+#[test]
 fn shld_with_an_immediate_count_matches_the_interpreter() {
     let forms: &[&[u8]] = &[
         &[0x48, 0x0f, 0xa4, 0xc8, 0x01], // shld rax, rcx, 1

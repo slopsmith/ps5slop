@@ -1,7 +1,7 @@
 //! Translates a basic block of x86-64 into AArch64. Register and flag
 //! conventions are in `docs/jit.md`, "Translated code".
 
-use a64::{Asm, Cond, Label, Logic, Reg, Shift, Size, V, Width, r};
+use a64::{Asm, Cond, Label, Logic, Reg, Shift, Size, V, Width, ZR, r};
 use memory::Memory;
 use x86::decode::{Insn, Map, Mem, Rep, Seg, decode};
 
@@ -224,7 +224,7 @@ fn classify(i: &Insn) -> Option<(bool, FlagUse)> {
             (false, none)
         }
         (Map::M0F38, 0xf6) if adx => (false, both),
-        (Map::M0F, 0x01) if matches!(i.modrm, Some(0xf9..=0xfb)) => (false, none),
+        (Map::M0F, 0x01) if matches!(i.modrm, Some(0xf9..=0xfc)) => (false, none),
         (Map::M0F, 0x31) => (false, none),
         (Map::Primary, 0x9b) => (false, none),
         (Map::Primary, 0xd2 | 0xd3) if i.ext() <= 1 => (false, both),
@@ -859,6 +859,7 @@ impl Translator {
             (Map::M0F38, 0xf6) => self.adx(i, next, flags),
             (Map::M0F, 0x01) if i.modrm == Some(0xfb) => self.a.isb(),
             (Map::M0F, 0x01) if i.modrm == Some(0xf9) => self.rdtsc(true),
+            (Map::M0F, 0x01) if i.modrm == Some(0xfc) => self.clzero(),
             (Map::M0F, 0x31) => self.rdtsc(false),
             (Map::Primary, 0x9b) => {}
             (Map::M0F, 0x01) => {}
@@ -1625,9 +1626,18 @@ impl Translator {
         }
     }
 
-    /// ROL and ROR by 1, a constant or CL: only CF and OF change, and
-    /// nothing does for a count of 0. 8- and 16-bit rotates by 1 or a
-    /// constant are [`Self::narrow_shift`]'s.
+    /// CLZERO: the 64-byte line holding RAX becomes zeros.
+    fn clzero(&mut self) {
+        let a = &mut self.a;
+        a.lsr_imm(Size::X, ADDR, r(0), 6);
+        a.lsl_imm(Size::X, ADDR, ADDR, 6);
+        for k in 0..4 {
+            a.stp(Size::X, ZR, ZR, ADDR, 16 * k);
+        }
+    }
+
+    /// ROL and ROR by 1, a constant or CL: only CF and OF change, none for a
+    /// count of 0. Narrow rotates by 1 or a constant are `narrow_shift`'s.
     fn rotate(&mut self, i: &Insn, next: u64, flags: bool) {
         let size = if i.op == 0xd2 { 1 } else { i.osize() };
         let s = sz(size);
