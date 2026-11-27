@@ -410,7 +410,7 @@ fn allocate_in(
 }
 
 /// `sceKernelAllocateDirectMemory(search_start, search_end, len, align, type, *start)`.
-fn allocate(env: &mut Env) -> Result<Outcome, CallError> {
+pub(crate) fn allocate(env: &mut Env) -> Result<Outcome, CallError> {
     let (start, end, len, align, kind, out) = (
         env.arg(0),
         env.arg(1),

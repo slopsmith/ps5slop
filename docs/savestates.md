@@ -42,7 +42,7 @@ A save fails, saying why, when something in use is not kept: fonts (libSceFont's
 Guest memory holds host-function addresses (import tables, return addresses, `atexit` entries), so a state loads only in a process whose stubs sit where the saving one's did. The header's fingerprint hashes every stub (NID and library, in order), every HLE variable address and the TLS layout; a mismatch is refused before anything is touched. Internal stubs are made in sorted name order for this reason.
 
 - A rebuild that changes nothing guest-visible loads older states (a note is printed). This is the point of a fingerprint rather than a build id: states stay usable across debugging rebuilds.
-- A change to anything encoded bumps `FORMAT`; older states are refused with both versions named.
+- A change to anything encoded bumps `FORMAT`; older states are refused with both versions named. The exception: fields appended at the end of `KERN` and read only when the section has bytes left, so older states load with those fields empty (the AMM buffer table, counters and parked buffers).
 - Adding an HLE function a title imports does not move its stubs (they follow the title's imports); adding an internal function does.
 
 ## Limits and unknowns

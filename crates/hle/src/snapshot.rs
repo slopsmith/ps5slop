@@ -236,6 +236,7 @@ impl Kernel {
         crate::dialog::save(e);
         crate::stubs::save(e);
         crate::services::save(e);
+        self.apr.save_amm(e);
         Ok(())
     }
 
@@ -263,6 +264,10 @@ impl Kernel {
         crate::dialog::load(d)?;
         crate::stubs::load(d)?;
         crate::services::load(d)?;
+        // Optional: states from before these fields existed end here.
+        if !d.is_empty() {
+            self.apr.load_amm(d)?;
+        }
         Ok(())
     }
 
