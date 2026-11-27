@@ -32,6 +32,7 @@ use half::{HALF_OPS, PACKED_F16};
 use prelude::{
     GUARD_PRELUDE, LDS_PRELUDE, LOCKSTEP_GUARD_PRELUDE, PRELUDE, SCRATCH_PRELUDE, WAVE_PRELUDE,
 };
+use scalar::hwreg;
 use sources::TRACKED_SGPRS;
 /// Pipeline stage of a program.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

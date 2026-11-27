@@ -456,7 +456,7 @@ impl<'a> Tx<'a> {
                 self.sop2(pc, name, sdst as u16, ssrc0, ssrc1, lit)
             }
             Kind::Sopc { ssrc0, ssrc1 } => self.sopc(pc, name, ssrc0, ssrc1, lit),
-            Kind::Sopk { sdst, simm16 } => self.sopk(pc, name, sdst as u16, simm16),
+            Kind::Sopk { sdst, simm16 } => self.sopk(pc, name, sdst as u16, simm16, inst.literal),
             Kind::Smem {
                 sdata,
                 sbase,
@@ -521,7 +521,7 @@ impl<'a> Tx<'a> {
         }
     }
 
-    fn sopp(&mut self, pc: usize, inst: &Inst, _simm16: u16) -> Result<(), TranslateError> {
+    fn sopp(&mut self, pc: usize, inst: &Inst, simm16: u16) -> Result<(), TranslateError> {
         let name = inst.op.name;
         match name {
             "s_endpgm" => {
@@ -531,6 +531,15 @@ impl<'a> Tx<'a> {
             | "s_waitcnt_depctr" | "s_setprio" | "s_sleep" | "s_icache_inv" | "s_trap"
             | "s_wakeup" | "s_incperflevel" | "s_decperflevel" | "s_ttracedata"
             | "s_ttracedata_imm" | "s_wait_idle" => {}
+            "s_round_mode" | "s_denorm_mode" => {
+                let shift = if name == "s_round_mode" { 0 } else { 4 };
+                let mode = self.hwreg_var(hwreg::MODE);
+                self.line(&format!(
+                    "{mode} = ({mode} & ~{:#x}u) | {:#x}u;",
+                    0xF << shift,
+                    (simm16 as u32 & 0xF) << shift
+                ));
+            }
             "s_barrier" => {
                 if self.req.stage == Stage::Compute {
                     self.line(

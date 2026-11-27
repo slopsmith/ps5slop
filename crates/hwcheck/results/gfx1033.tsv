@@ -4606,6 +4606,7 @@ s_cmpk_lt_u32	simm16 0xffff	agree
 s_cselect_b32	base	agree
 s_cselect_b64	base	agree
 s_dcache_inv	leaves v_add_f32's result alone	agree
+s_denorm_mode	6, then s_getreg_b32 MODE	agree
 s_endpgm	before any store	agree
 s_ff0_i32_b32	base	agree
 s_ff0_i32_b64	base	agree
@@ -4616,6 +4617,20 @@ s_flbit_i32_b32	base	agree
 s_flbit_i32_b64	base	agree
 s_flbit_i32_i64	base	agree
 s_getpc_b64	program counter	agree
+s_getreg_b32	GPR_ALLOC SGPR_SIZE	agree
+s_getreg_b32	GPR_ALLOC VGPR_SIZE	agree
+s_getreg_b32	IB_STS	agree
+s_getreg_b32	LDS_ALLOC LDS_SIZE	agree
+s_getreg_b32	MODE	agree
+s_getreg_b32	MODE after s_setreg_imm32_b32 0x80055a	agree
+s_getreg_b32	MODE bits 4 to 7	agree
+s_getreg_b32	STATUS VALID	agree
+s_getreg_b32	STATUS bits 0 to 11, EXEC zero	agree
+s_getreg_b32	STATUS bits 0 to 11, SCC set	agree
+s_getreg_b32	STATUS bits 0 to 11, VCC zero	agree
+s_getreg_b32	TBA_LO	agree
+s_getreg_b32	TMA_LO	agree
+s_getreg_b32	TRAPSTS exceptions	agree
 s_gl1_inv	leaves v_add_f32's result alone	agree
 s_icache_inv	leaves v_add_f32's result alone	agree
 s_inst_prefetch	leaves v_add_f32's result alone	agree
@@ -4714,6 +4729,7 @@ s_pack_lh_b32_b16	base	agree
 s_pack_ll_b32_b16	base	agree
 s_quadmask_b32	base	agree
 s_quadmask_b64	base	agree
+s_round_mode	9, then s_getreg_b32 MODE	agree
 s_setpc_b64	jump over an instruction, target from s_getpc_b64	agree
 s_setprio	leaves v_add_f32's result alone	agree
 s_setreg_b32	all denormals kept	agree
@@ -5154,6 +5170,7 @@ v_ceil_f64	e64, all denormals kept	untranslated	at dword 17: unsupported instruc
 v_ceil_f64	e64, round toward +inf	untranslated	at dword 17: unsupported instruction v_ceil_f64
 v_ceil_f64	e64, round toward -inf	untranslated	at dword 17: unsupported instruction v_ceil_f64
 v_ceil_f64	e64, round toward zero	untranslated	at dword 17: unsupported instruction v_ceil_f64
+v_clrexcp	after s_setreg_imm32_b32 TRAPSTS 0x1ff, then s_getreg_b32 TRAPSTS	agree
 v_cmp_class_f16	e32	agree
 v_cmp_class_f16	e32 inline constant 0xf3	agree
 v_cmp_class_f16	e32 inline constant 0xf8	agree

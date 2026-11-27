@@ -2,6 +2,21 @@
 
 use super::*;
 
+/// Hardware registers `s_getreg_b32` reads (ISA guide, 5.8) and their fields.
+pub(super) mod hwreg {
+    pub const MODE: u16 = 1;
+    pub const STATUS: u16 = 2;
+    pub const TRAPSTS: u16 = 3;
+    pub const GPR_ALLOC: u16 = 5;
+    pub const LDS_ALLOC: u16 = 6;
+    pub const STATUS_EXECZ: u32 = 1 << 9;
+    pub const STATUS_VCCZ: u32 = 1 << 10;
+    pub const STATUS_IN_WG: u32 = 1 << 11;
+    pub const STATUS_VALID: u32 = 1 << 16;
+    /// GFX10 gives every wave 128 SGPRs (measured on gfx1033).
+    pub const GPR_ALLOC_SGPRS: u32 = 0xF << 24;
+}
+
 /// The operands of a scalar memory instruction.
 pub(super) struct Smem {
     pub sdata: u16,
@@ -210,6 +225,52 @@ impl<'a> Tx<'a> {
             self.line(&format!("{d} = {e};"));
         }
         Ok(())
+    }
+
+    /// The variable holding a hardware register programs can write.
+    pub(super) fn hwreg_var(&mut self, id: u16) -> String {
+        let name = if id == hwreg::MODE {
+            "hw_mode"
+        } else {
+            "hw_trapsts"
+        };
+        self.regs.insert(name.into());
+        name.into()
+    }
+
+    /// What `s_getreg_b32` reads from hardware register `id`. What depends on
+    /// where the hardware placed the wave, or on how the machine is set up
+    /// (bases, ids, apertures, trace and debug bits), reads 0.
+    fn hwreg(&mut self, id: u16) -> String {
+        match id {
+            hwreg::MODE | hwreg::TRAPSTS => self.hwreg_var(id),
+            hwreg::STATUS => {
+                self.regs.insert("scc".into());
+                let execz = self.mask_any(126);
+                let vccz = self.mask_any(106);
+                let [x, y, z] = self.req.threads;
+                let in_wg = if self.req.stage == Stage::Compute && x * y * z > 64 {
+                    hwreg::STATUS_IN_WG
+                } else {
+                    0
+                };
+                format!(
+                    "(uint(scc) | ({execz} ? 0u : {:#x}u) | ({vccz} ? 0u : {:#x}u) | {:#x}u)",
+                    hwreg::STATUS_EXECZ,
+                    hwreg::STATUS_VCCZ,
+                    hwreg::STATUS_VALID | in_wg
+                )
+            }
+            hwreg::GPR_ALLOC => format!(
+                "{:#x}u",
+                (self.req.rsrc1 & 0x3F) << 8 | hwreg::GPR_ALLOC_SGPRS
+            ),
+            hwreg::LDS_ALLOC if self.req.stage == Stage::Compute => {
+                let granules = self.req.compute_rsrc2 >> 15 & 0x1FF;
+                format!("{:#x}u", (granules * 2) << 12)
+            }
+            _ => "0u".into(),
+        }
     }
 
     // M0 indexes s0 to s105 and VCC; the ISA guide calls indices past them
@@ -464,14 +525,34 @@ impl<'a> Tx<'a> {
         name: &str,
         sdst: u16,
         simm16: u16,
+        lit: Option<u32>,
     ) -> Result<(), TranslateError> {
         let k = simm16 as i16 as i32;
+        let (id, offset, size) = (simm16 & 0x3F, simm16 >> 6 & 0x1F, (simm16 >> 11 & 0x1F) + 1);
+        let field = u32::MAX >> (32 - size);
         match name {
+            "s_getreg_b32" => {
+                let value = self.hwreg(id);
+                if let Some(d) = self.sdst(sdst) {
+                    self.line(&format!("{d} = ({value} >> {offset}u) & {field:#x}u;"));
+                }
+            }
+            // The float mode stays the one `PGM_RSRC1` gives at translation.
+            "s_setreg_b32" | "s_setreg_imm32_b32" if matches!(id, hwreg::MODE | hwreg::TRAPSTS) => {
+                let value = match lit {
+                    Some(v) if name == "s_setreg_imm32_b32" => format!("{v:#x}u"),
+                    _ => self.s(sdst),
+                };
+                let var = self.hwreg_var(id);
+                let mask = field << offset;
+                self.line(&format!(
+                    "{var} = ({var} & ~{mask:#x}u) | (({value} << {offset}u) & {mask:#x}u);"
+                ));
+            }
             "s_call_b64" => {
                 let next = calls::Expanded::address(&self.runs, pc) + 4;
                 self.set64(sdst, &format!("{next:#x}ul"));
             }
-            // Hardware registers (rounding and denormal modes) are not modelled.
             "s_setreg_b32" | "s_setreg_imm32_b32" => {}
             "s_movk_i32" => {
                 if let Some(d) = self.sdst(sdst) {

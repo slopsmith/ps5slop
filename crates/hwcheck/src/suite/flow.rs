@@ -222,6 +222,98 @@ fn machine_state() -> Vec<Case> {
             vec![v_add()],
         ));
     }
+    out.extend(hardware_registers());
+    out
+}
+
+/// `s_getreg_b32` of the fields of hardware registers that do not depend on
+/// where the wave runs or on how the machine is set up, into s20 (stored in
+/// v10), also after writes by `s_setreg`, `s_round_mode` and
+/// `s_denorm_mode`, and TRAPSTS around `v_clrexcp`. Writes leave out MODE's
+/// DEBUG and exception enables, which could make the wave trap.
+fn hardware_registers() -> Vec<Case> {
+    const S_CMP_EQ_U32_0_0: u32 = 0xBF06_8080;
+    let getreg = |id: u32, offset: u32, size: u32| {
+        0xB000_0000
+            | (op("s_getreg_b32").code as u32) << 23
+            | 20 << 16
+            | (size - 1) << 11
+            | offset << 6
+            | id
+    };
+    let setreg_imm = |id: u32, value: u32| {
+        vec![
+            0xB000_0000 | (op("s_setreg_imm32_b32").code as u32) << 23 | 31 << 11 | id,
+            value,
+        ]
+    };
+    let s_mov_b64 = |sdst: u32, ssrc0: u32| sop1("s_mov_b64", sdst, ssrc0);
+    let store = vec![v_mov(10, 20)];
+    let mut out = Vec::new();
+    let reads = [
+        ("MODE", Vec::new(), (1, 0, 32)),
+        ("MODE bits 4 to 7", Vec::new(), (1, 4, 4)),
+        (
+            "STATUS bits 0 to 11, SCC set",
+            vec![S_CMP_EQ_U32_0_0, s_mov_b64(VCC, INLINE_MINUS_1)],
+            (2, 0, 12),
+        ),
+        (
+            "STATUS bits 0 to 11, VCC zero",
+            vec![s_mov_b64(VCC, INLINE_0)],
+            (2, 0, 12),
+        ),
+        ("STATUS VALID", Vec::new(), (2, 16, 1)),
+        ("TRAPSTS exceptions", Vec::new(), (3, 0, 9)),
+        ("GPR_ALLOC VGPR_SIZE", Vec::new(), (5, 8, 6)),
+        ("GPR_ALLOC SGPR_SIZE", Vec::new(), (5, 24, 4)),
+        ("LDS_ALLOC LDS_SIZE", Vec::new(), (6, 12, 9)),
+        ("IB_STS", Vec::new(), (7, 0, 32)),
+        ("TBA_LO", Vec::new(), (16, 0, 32)),
+        ("TMA_LO", Vec::new(), (18, 0, 32)),
+        (
+            "MODE after s_setreg_imm32_b32 0x80055a",
+            setreg_imm(1, 0x0080_055A),
+            (1, 0, 32),
+        ),
+    ];
+    for (variant, setup, (id, offset, size)) in reads {
+        out.extend(test(
+            "s_getreg_b32",
+            variant,
+            setup,
+            vec![getreg(id, offset, size)],
+            store.clone(),
+        ));
+    }
+    out.extend(test(
+        "s_getreg_b32",
+        "STATUS bits 0 to 11, EXEC zero",
+        vec![s_mov_b64(EXEC, INLINE_0)],
+        vec![getreg(2, 0, 12)],
+        [vec![s_mov_b64(EXEC, INLINE_MINUS_1)], store.clone()].concat(),
+    ));
+    out.extend(test(
+        "s_round_mode",
+        "9, then s_getreg_b32 MODE",
+        Vec::new(),
+        vec![sopp("s_round_mode", 9)],
+        [vec![getreg(1, 0, 32)], store.clone()].concat(),
+    ));
+    out.extend(test(
+        "s_denorm_mode",
+        "6, then s_getreg_b32 MODE",
+        Vec::new(),
+        vec![sopp("s_denorm_mode", 6)],
+        [vec![getreg(1, 0, 32)], store.clone()].concat(),
+    ));
+    out.extend(test(
+        "v_clrexcp",
+        "after s_setreg_imm32_b32 TRAPSTS 0x1ff, then s_getreg_b32 TRAPSTS",
+        setreg_imm(3, 0x1FF),
+        vec![0x7E00_0000 | (op("v_clrexcp").code as u32) << 9],
+        [vec![getreg(3, 0, 9)], store].concat(),
+    ));
     out
 }
 

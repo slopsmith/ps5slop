@@ -226,9 +226,14 @@ impl<'a> Tx<'a> {
         let mut init = String::new();
         let users = self.req.user_sgprs as u16;
         for r in self.regs.clone() {
-            init.push_str(
-                &format!("    uint {r} = 0u;\n").replace("uint scc = 0u", "bool scc = false"),
-            );
+            match r.as_str() {
+                "scc" => init.push_str("    bool scc = false;\n"),
+                "hw_mode" => init.push_str(&format!(
+                    "    uint hw_mode = {:#x}u;\n",
+                    self.initial_mode()
+                )),
+                _ => init.push_str(&format!("    uint {r} = 0u;\n")),
+            }
         }
         for i in 0..users {
             let r = self.user_base + i;
@@ -468,6 +473,20 @@ impl<'a> Tx<'a> {
             out = out.replacen(float::PRELUDE_HERE, &float::prelude_for(&out), 1);
         }
         out
+    }
+
+    /// The MODE register a wave starts with: the float mode, DX10 clamp, IEEE
+    /// mode and FP16 overflow bits of `PGM_RSRC1`, and a compute program's
+    /// exception enables from `COMPUTE_PGM_RSRC2`.
+    fn initial_mode(&self) -> u32 {
+        let r1 = self.req.rsrc1;
+        let mut mode = (r1 >> 12 & 0xFF) | (r1 >> 21 & 1) << 8 | (r1 >> 23 & 1) << 9;
+        mode |= (r1 >> 26 & 1) << 23;
+        if self.req.stage == Stage::Compute {
+            let r2 = self.req.compute_rsrc2;
+            mode |= (r2 >> 24 & 0x7F) << 12 | (r2 >> 13 & 3) << 19;
+        }
+        mode
     }
 
     /// Replaces the `VREAD`/`VWRITE` markers by one case per VGPR up to the
