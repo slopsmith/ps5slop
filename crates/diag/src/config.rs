@@ -79,6 +79,10 @@ pub enum Unimplemented {
 pub struct Jit {
     /// Runs every block in the interpreter too and compares.
     pub verify: bool,
+    /// Address ranges `[start, end)` verify mode checks; empty checks all.
+    pub verify_ranges: Vec<(u64, u64)>,
+    /// Runs of each block verify mode checks before it runs unchecked.
+    pub verify_runs: u32,
     /// Ends blocks at every instruction boundary the guest can be stopped at,
     /// and records each block start for fault reports.
     pub trace: bool,
@@ -91,6 +95,8 @@ pub struct Jit {
     pub tier2: Option<u32>,
     /// Guest addresses that always run in the interpreter, logging each arrival.
     pub probes: Vec<u64>,
+    /// Address ranges `[start, end)` whose blocks are never translated.
+    pub interpret: Vec<(u64, u64)>,
     /// Rows in each table of the statistics report.
     pub stats_top: usize,
 }
@@ -99,12 +105,15 @@ impl Default for Jit {
     fn default() -> Self {
         Self {
             verify: false,
+            verify_ranges: Vec::new(),
+            verify_runs: 4,
             trace: false,
             lazy_sync: false,
             no_natives: false,
             segments: None,
             tier2: None,
             probes: Vec::new(),
+            interpret: Vec::new(),
             stats_top: 20,
         }
     }
@@ -240,6 +249,8 @@ impl Config {
             },
             jit: Jit {
                 verify: flag("PS5SLOP_JIT_VERIFY"),
+                verify_ranges: ranges(text("PS5SLOP_JIT_VERIFY")),
+                verify_runs: v.number("PS5SLOP_JIT_VERIFY_RUNS").unwrap_or(4),
                 trace: flag("PS5SLOP_JIT_TRACE"),
                 lazy_sync: flag("PS5SLOP_JIT_LAZY_SYNC"),
                 no_natives: flag("PS5SLOP_JIT_NO_NATIVES"),
@@ -254,6 +265,7 @@ impl Config {
                     .split(',')
                     .filter_map(hex)
                     .collect(),
+                interpret: ranges(text("PS5SLOP_JIT_INTERPRET")),
                 stats_top: v.number("PS5SLOP_JIT_STATS_TOP").unwrap_or(20),
             },
             gpu: Gpu {
@@ -334,6 +346,17 @@ impl<F: Fn(&str) -> Option<OsString>> Vars<F> {
 }
 
 /// A hex number, with or without `0x`.
+/// `START-END[,START-END...]` in hex; anything else is skipped.
+fn ranges(v: Option<String>) -> Vec<(u64, u64)> {
+    v.unwrap_or_default()
+        .split(',')
+        .filter_map(|r| {
+            let (a, b) = r.split_once('-')?;
+            Some((hex(a)?, hex(b)?))
+        })
+        .collect()
+}
+
 fn hex(s: &str) -> Option<u64> {
     u64::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok()
 }
@@ -362,6 +385,9 @@ mod tests {
     #[test]
     fn a_flag_is_on_whatever_its_value() {
         assert!(with(&[("PS5SLOP_JIT_VERIFY", "0")]).jit.verify);
+        let ranged = with(&[("PS5SLOP_JIT_VERIFY", "400000-500000,0x10-20")]).jit;
+        assert!(ranged.verify);
+        assert_eq!(ranged.verify_ranges, [(0x40_0000, 0x50_0000), (0x10, 0x20)]);
     }
 
     #[test]

@@ -32,13 +32,14 @@ Every environment variable ps5slop reads; this is the one list, and other docs l
 
 | Variable | What it does |
 | --- | --- |
-| `PS5SLOP_JIT_VERIFY` | Runs every translated block in the interpreter too and logs differences |
+| `PS5SLOP_JIT_VERIFY[=START-END,...]` | Runs every translated block (or only those starting in these address ranges) in the interpreter too and logs differences |
 | `PS5SLOP_JIT_TRACE` | Sends every block exit to the host and keeps the last 64 blocks per thread for fault reports ([jit.md](jit.md)) |
 | `PS5SLOP_JIT_LAZY_SYNC` | Memory map changes reach running vCPUs at their next entry instead of at once |
 | `PS5SLOP_JIT_NO_NATIVES` | Keeps `memset`, `memcpy` and `memmove` as host calls, so `calls` and watches see them |
 | `PS5SLOP_JIT_SEGMENTS=N` | Uses N code cache segments (at least 2), to test eviction |
 | `PS5SLOP_JIT_TIER2=N\|eager\|off` | Compiles a block's tier-2 region after N runs, at its first run, or never (default) |
 | `PS5SLOP_JIT_STATS_TOP=N` | Rows in each table of the `jit::stats` report (20) |
+| `PS5SLOP_JIT_INTERPRET=START-END[,START-END...]` | Blocks starting in these address ranges run in the interpreter, to find a mistranslated block by halving a range (a block starting just before a range still translates into it) |
 | `PS5SLOP_PROBE_RIP=ADDR[,ADDR...]` | Interprets and logs every arrival at these guest addresses (target `jit::probe`) |
 
 ## GPU tracing and inspection

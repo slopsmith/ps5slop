@@ -194,6 +194,19 @@ pub(crate) fn is_probe(rip: u64) -> bool {
     !p.is_empty() && p.contains(&rip)
 }
 
+fn in_verify_ranges(rip: u64) -> bool {
+    let r = &diag::config().jit.verify_ranges;
+    r.is_empty() || r.iter().any(|&(start, end)| (start..end).contains(&rip))
+}
+
+fn kept_in_interpreter(rip: u64) -> bool {
+    diag::config()
+        .jit
+        .interpret
+        .iter()
+        .any(|&(start, end)| (start..end).contains(&rip))
+}
+
 /// Makes calls to the host function at trap address `addr` run `native`
 /// inside the VM (not in verify mode, which checks the host versions).
 pub fn set_native(addr: u64, native: Native) {
@@ -232,7 +245,9 @@ pub fn set_native(addr: u64, native: Native) {
 
 /// Runs of each block verify mode checks against the interpreter before a
 /// copy with ordinary exits replaces it.
-const VERIFY_RUNS: u32 = 4;
+fn verify_runs() -> u32 {
+    diag::config().jit.verify_runs
+}
 
 /// How far verify mode runs the interpreter to check one run of translated
 /// code: a block's instruction count, or while it stays in a region.
@@ -754,7 +769,7 @@ impl Machine {
     /// Translates the block at `rip` and enters it in the lookup table;
     /// false if it cannot be translated or the cache is full.
     fn translate(&mut self, mem: &Memory, rip: u64) -> bool {
-        if is_probe(rip) {
+        if is_probe(rip) || kept_in_interpreter(rip) {
             self.enter(rip, INTERP_EXIT);
             return false;
         }
@@ -772,7 +787,8 @@ impl Machine {
             }
             return true;
         }
-        let exit = if self.verify || self.trace {
+        let check = self.verify && in_verify_ranges(rip);
+        let exit = if check || self.trace {
             VERIFY_EXIT
         } else {
             DISPATCH
@@ -795,7 +811,11 @@ impl Machine {
             BlockInfo {
                 place,
                 insns,
-                verified: 0,
+                verified: if check || !self.verify {
+                    0
+                } else {
+                    verify_runs()
+                },
             },
         );
         self.by_place.insert(place, block.insns);
@@ -830,7 +850,7 @@ impl Machine {
             return;
         };
         engine::count_exit(engine::Count::Region);
-        let verified = if self.verify { 0 } else { VERIFY_RUNS };
+        let verified = if self.verify { 0 } else { verify_runs() };
         let rips = std::sync::Arc::new(rips);
         self.regions.insert(
             rip,
@@ -903,7 +923,7 @@ impl Machine {
     /// Whether the block may be entered in the lookup table and chained to:
     /// always, except in verify mode before its checks are done.
     fn ready(&self, b: &BlockInfo) -> bool {
-        !self.trace && (!self.verify || b.verified >= VERIFY_RUNS)
+        !self.trace && (!self.verify || b.verified >= verify_runs())
     }
 
     /// Translates the block at `rip` into the code cache, its exits going to
@@ -1008,13 +1028,13 @@ impl Machine {
         }
         if let Some(r) = self.regions.get(&rip) {
             let steps = Steps::Region(r.rips.clone());
-            return Some((layout::va(r.place), steps, r.verified < VERIFY_RUNS));
+            return Some((layout::va(r.place), steps, r.verified < verify_runs()));
         }
         let b = self.blocks.get(&rip)?;
         Some((
             layout::va(b.place),
             Steps::Insns(b.insns),
-            b.verified < VERIFY_RUNS,
+            b.verified < verify_runs(),
         ))
     }
 
@@ -1023,7 +1043,7 @@ impl Machine {
     fn verified(&mut self, rip: u64, mem: &Memory) {
         if let Some(r) = self.regions.get_mut(&rip) {
             r.verified += 1;
-            if r.verified != VERIFY_RUNS {
+            if r.verified != verify_runs() {
                 return;
             }
             let block_place = self.blocks.get(&rip).map(|b| b.place);
@@ -1041,7 +1061,7 @@ impl Machine {
             return;
         };
         b.verified += 1;
-        if b.verified != VERIFY_RUNS {
+        if b.verified != verify_runs() {
             return;
         }
         let Some((place, block)) = self.emit(mem, rip, DISPATCH) else {
