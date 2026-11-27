@@ -48,6 +48,8 @@ mod services;
 mod snapshot;
 mod stubs;
 mod sysmodule;
+#[cfg(test)]
+mod test_env;
 mod thread;
 mod timing;
 mod vfs;

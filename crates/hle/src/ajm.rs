@@ -410,6 +410,7 @@ pub(crate) fn load(d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_env::{call, with_env};
 
     const FRAME: [u8; 4] = [0xFF, 0xFA, 0x64, 0xC0];
 
@@ -502,45 +503,9 @@ mod tests {
     const INPUT: u64 = AREA + 0x4000;
     const OUTPUT: u64 = AREA + 0x10_0000;
 
-    /// Runs `test` with an `Env` over 2 MiB of guest memory at [`AREA`].
-    fn with_env(test: impl FnOnce(&mut Env, &memory::Memory)) {
-        use crate::{Cpu, Hle, Kernel, Thread, TlsTemplate, Vfs};
-        use memory::{Memory, PAGE_SIZE, Prot};
-        let mem = Memory::new(1 << 40).unwrap();
-        mem.map(AREA, 0x20_0000, Prot::RW, "test").unwrap();
-        let hle = Hle::new();
-        hle.map(&mem).unwrap();
-        let kernel = Kernel::new(
-            hle,
-            mem,
-            TlsTemplate::default(),
-            Box::new(std::io::sink()),
-            Box::new(std::io::sink()),
-            Vfs::default(),
-        );
-        let mem = kernel.memory();
-        let mut cpu = Cpu::default();
-        let mut env = Env {
-            cpu: &mut cpu,
-            mem: &mem,
-            kernel: &kernel,
-            thread: Thread {
-                tcb: AREA + PAGE_SIZE,
-            },
-        };
-        test(&mut env, &mem);
-    }
-
-    fn call(env: &mut Env, f: crate::HostFn, args: &[u64]) {
-        for (k, &a) in args.iter().enumerate() {
-            env.cpu.regs[[7, 6, 2, 1, 8, 9][k]] = a;
-        }
-        assert!(matches!(f(env), Ok(Outcome::Return(0))));
-    }
-
     #[test]
     fn clearing_the_context_drops_a_partial_frame() {
-        with_env(|env, mem| {
+        with_env(AREA, |env, mem| {
             call(env, instance_create, &[0, u64::from(CODEC_MP3), 7, ID]);
             call(env, batch_initialize, &[BATCH, 0x1000, INFO]);
             let id = mem.read_u64(ID).unwrap() & 0xFFFF_FFFF;
@@ -564,7 +529,7 @@ mod tests {
         let mp3 = include_bytes!("ajm/testdata/sine-1khz.mp3");
         let mut whole = Instance::default();
         let expected = decode_mp3(&mut whole, mp3, 1 << 20).pcm;
-        with_env(|env, mem| {
+        with_env(AREA, |env, mem| {
             mem.write(INPUT, mp3).unwrap();
             call(env, instance_create, &[0, u64::from(CODEC_MP3), 0, ID]);
             call(env, batch_initialize, &[BATCH, 0x1000, INFO]);

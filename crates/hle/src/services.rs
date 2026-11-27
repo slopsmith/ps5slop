@@ -380,12 +380,19 @@ fn civil_from_days(days: i64) -> (i64, u64, u64) {
     (year, month, day)
 }
 
-/// `sceRtcGetCurrentTick(&tick)`: microseconds since 0001-01-01 UTC. The
-/// network tick (`sceRtcGetCurrentNetworkTick`) is the same clock here.
+/// `sceRtcGetCurrentTick(&tick)`: microseconds since 0001-01-01 UTC; the
+/// network tick is the same clock. GTA VI probes it with a null pointer.
 fn rtc_current_tick(env: &mut Env) -> Result<Outcome, CallError> {
+    if env.arg(0) == 0 {
+        return ret(RTC_ERROR_DATETIME_UNINITIALIZED);
+    }
     env.mem.write_u64(env.arg(0), current_tick())?;
     ret(0)
 }
+
+/// What `sceRtcGetCurrentTick` returns for a null pointer (shadPS4's
+/// `ORBIS_RTC_ERROR_DATETIME_UNINITIALIZED`).
+const RTC_ERROR_DATETIME_UNINITIALIZED: u64 = 0x7FFE_F9FE;
 
 fn current_tick() -> u64 {
     let now = savestate::clock::unix();
@@ -405,7 +412,22 @@ pub(crate) fn load(d: &mut savestate::Decoder) -> Result<(), savestate::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{civil_from_days, days_from_civil};
+    use super::{
+        RTC_ERROR_DATETIME_UNINITIALIZED, civil_from_days, days_from_civil, rtc_current_tick,
+    };
+    use crate::test_env::{call_for, with_env};
+
+    #[test]
+    fn the_current_tick_with_no_pointer_is_an_error() {
+        with_env(0x40_0000, |env, mem| {
+            assert_eq!(
+                call_for(env, rtc_current_tick, &[0]),
+                RTC_ERROR_DATETIME_UNINITIALIZED
+            );
+            assert_eq!(call_for(env, rtc_current_tick, &[0x40_2000]), 0);
+            assert!(mem.read_u64(0x40_2000).unwrap() > 63_000_000_000_000_000);
+        });
+    }
 
     #[test]
     fn days_map_to_gregorian_dates_across_leap_days_and_the_epoch() {

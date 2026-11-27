@@ -650,11 +650,7 @@ impl Machine {
             return Ok(true);
         }
         self.full_pending = true;
-        let regions: Vec<_> = mem
-            .region_spans()
-            .into_iter()
-            .filter(usable)
-            .collect();
+        let regions: Vec<_> = mem.region_spans().into_iter().filter(usable).collect();
         let access: Vec<(u64, u64, bool)> = regions
             .iter()
             .filter(|r| r.prot.allows(memory::Access::Read) || r.prot.allows(memory::Access::Write))
