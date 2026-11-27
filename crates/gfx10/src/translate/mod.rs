@@ -605,6 +605,9 @@ struct Tx<'a> {
     /// Destination and base SGPRs of each scalar load read through guest memory.
     load_bases: Vec<(Vec<u16>, Vec<u16>)>,
     attrs: BTreeMap<u8, Interp>,
+    /// Attributes the f16 interpolation instructions read, as two inputs of
+    /// halves (`aNl`, `aNh`) that Metal interpolates as floats.
+    half_attrs: BTreeMap<u8, Interp>,
     params: BTreeSet<u8>,
     mrts: u8,
     depth: bool,
@@ -743,6 +746,7 @@ impl<'a> Tx<'a> {
             read_anywhere: None,
             load_bases: Vec::new(),
             attrs: BTreeMap::new(),
+            half_attrs: BTreeMap::new(),
             params: BTreeSet::new(),
             mrts: 0,
             depth: false,

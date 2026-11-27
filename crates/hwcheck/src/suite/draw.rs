@@ -12,6 +12,7 @@
 
 use gfx10::opinfo::by_name;
 
+use super::mimg::f16_bits;
 use super::{BASE_MODE, INPUTS, OUTPUTS, PROGRAM, Rng};
 use crate::{Case, write_pages};
 
@@ -125,6 +126,13 @@ pub enum Interp {
     FragCoord,
     /// Front face, the ancillary word, sample coverage and the fixed-point position.
     Misc,
+    /// Attribute 0 as packed halves (`FP16_INTERP_MODE`), the low ones read
+    /// with `v_interp_p1ll_f16` and `v_interp_p2_f16`, widened to f32.
+    F16Low,
+    /// The same with the high halves.
+    F16High,
+    /// The high halves with `v_interp_p1lv_f16`, P0 from `v_interp_mov_f32`.
+    F16HighP0,
 }
 
 /// How the pixel program turns its four floats into the export.
@@ -155,6 +163,8 @@ impl Interp {
         match self {
             Interp::FragCoord | Interp::Misc => vec!["exp"],
             Interp::MovP0 => vec!["exp", "v_interp_mov_f32"],
+            Interp::F16Low | Interp::F16High => vec!["exp", "v_interp_p1ll_f16", "v_interp_p2_f16"],
+            Interp::F16HighP0 => vec!["exp", "v_interp_p1lv_f16", "v_interp_p2_f16"],
             _ => vec!["exp", "v_interp_p1_f32", "v_interp_p2_f32"],
         }
     }
@@ -238,7 +248,12 @@ pub fn pixel(interp: Interp, out: Out, dual: bool) -> Pixel {
     const LINEAR_CENTER: u32 = 5;
     const LINEAR_CENTROID: u32 = 6;
     let (bary, extra): (u32, &[u32]) = match interp {
-        Interp::PerspCenter | Interp::Flat | Interp::MovP0 => (PERSP_CENTER, &[]),
+        Interp::PerspCenter
+        | Interp::Flat
+        | Interp::MovP0
+        | Interp::F16Low
+        | Interp::F16High
+        | Interp::F16HighP0 => (PERSP_CENTER, &[]),
         Interp::PerspCentroid => (PERSP_CENTROID, &[]),
         Interp::PerspSample => (PERSP_SAMPLE, &[]),
         Interp::LinearCenter => (LINEAR_CENTER, &[]),
@@ -263,6 +278,37 @@ pub fn pixel(interp: Interp, out: Out, dual: bool) -> Pixel {
             const P0: u32 = 2;
             for c in 0..4 {
                 code.push(vintrp(2, 20 + c, P0, c));
+            }
+        }
+        Interp::F16Low | Interp::F16High | Interp::F16HighP0 => {
+            const P0: u32 = 2;
+            let high = (interp != Interp::F16Low) as u32;
+            let interp_f16 = |name: &str, vdst: u32, src: [u32; 3]| {
+                let op = by_name(name).expect("in the opcode table").code as u32;
+                [
+                    0xD400_0000 | op << 16 | vdst,
+                    src[2] << 18 | src[1] << 9 | src[0],
+                ]
+            };
+            for c in 0..4 {
+                let attr = c << 6 | high << 8;
+                let d = 20 + c;
+                if interp == Interp::F16HighP0 {
+                    code.push(vintrp(2, 26, P0, c));
+                    code.extend(interp_f16(
+                        "v_interp_p1lv_f16",
+                        d,
+                        [attr, VGPR + i, VGPR + 26],
+                    ));
+                } else {
+                    code.extend(interp_f16("v_interp_p1ll_f16", d, [attr, VGPR + i, 0]));
+                }
+                code.extend(interp_f16(
+                    "v_interp_p2_f16",
+                    d,
+                    [attr, VGPR + i + 1, VGPR + d],
+                ));
+                code.push(vop1("v_cvt_f32_f16", d, VGPR + d));
             }
         }
         _ => {
@@ -336,10 +382,10 @@ pub fn pixel(interp: Interp, out: Out, dual: bool) -> Pixel {
     code.push(0xBF81_0000);
     Pixel {
         inputs,
-        cntl: if interp == Interp::Flat {
-            FLAT_SHADE
-        } else {
-            0
+        cntl: match interp {
+            Interp::Flat => FLAT_SHADE,
+            Interp::F16Low | Interp::F16High | Interp::F16HighP0 => FP16_ATTRS,
+            _ => 0,
         },
         code,
         dual,
@@ -463,6 +509,9 @@ impl Draw {
 const TRILIST: u32 = 4;
 /// `SPI_PS_INPUT_CNTL_n.FLAT_SHADE`.
 const FLAT_SHADE: u32 = 1 << 10;
+/// `SPI_PS_INPUT_CNTL_n` FP16_INTERP_MODE, ATTR0_VALID and ATTR1_VALID, as
+/// radv sets them for 16-bit inputs.
+const FP16_ATTRS: u32 = 1 << 19 | 1 << 24 | 1 << 25;
 const COLOR_8_8_8_8: u32 = 10;
 const NUMBER_UNORM: u32 = 0;
 
@@ -945,6 +994,30 @@ pub fn cases() -> Vec<Case> {
             interp,
             Out::F32,
             tris("inputs"),
+        );
+        d.format = (14, 7, 0, 16);
+        out.push(case(d));
+    }
+    // Each attribute dword packs two halves in [0, 2).
+    let packed = |v: Vec<[f32; 8]>| -> Vec<[f32; 8]> {
+        v.into_iter()
+            .map(|mut x| {
+                let a = [x[4], x[5], x[6], x[7]];
+                for c in 0..4 {
+                    let (lo, hi) = (f16_bits(a[c]), f16_bits(2.0 * a[(c + 1) % 4]));
+                    x[4 + c] = f32::from_bits(u32::from(hi) << 16 | u32::from(lo));
+                }
+                x
+            })
+            .collect()
+    };
+    for interp in [Interp::F16Low, Interp::F16High, Interp::F16HighP0] {
+        let mut d = Draw::new(
+            "draw input",
+            format!("{interp:?} to 32_32_32_32 float"),
+            interp,
+            Out::F32,
+            packed(tris("inputs")),
         );
         d.format = (14, 7, 0, 16);
         out.push(case(d));

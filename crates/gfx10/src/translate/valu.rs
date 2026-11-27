@@ -124,6 +124,12 @@ impl<'a> Tx<'a> {
         if op.fmt == Fmt::Vopc {
             return self.vopc(pc, inst, v);
         }
+        if matches!(
+            name,
+            "v_interp_p1ll_f16" | "v_interp_p1lv_f16" | "v_interp_p2_f16"
+        ) {
+            return self.interp_f16(pc, name, v);
+        }
         // `v_clrexcp` leaves TRAPSTS alone on gfx1033 (measured).
         if matches!(name, "v_nop" | "v_illegal" | "v_pipeflush" | "v_clrexcp") {
             return Ok(());

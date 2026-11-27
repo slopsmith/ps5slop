@@ -309,15 +309,7 @@ impl<'a> Tx<'a> {
                     if first[&loc] != a {
                         continue;
                     }
-                    let q = match mode {
-                        Interp::Perspective => "center_perspective",
-                        Interp::PerspectiveCentroid => "centroid_perspective",
-                        Interp::PerspectiveSample => "sample_perspective",
-                        Interp::Linear => "center_no_perspective",
-                        Interp::LinearCentroid => "centroid_no_perspective",
-                        Interp::LinearSample => "sample_no_perspective",
-                        Interp::Flat => "flat",
-                    };
+                    let q = qualifier(mode);
                     // Flat inputs carry raw bits (often integers), which a float
                     // varying may not keep; vertex variants export them as uint4.
                     let ty = if mode == Interp::Flat {
@@ -326,6 +318,14 @@ impl<'a> Tx<'a> {
                         "float4"
                     };
                     out.push_str(&format!("    {ty} a{a} [[user(locn{loc}), {q}]];\n"));
+                }
+                for (&a, &mode) in &self.half_attrs {
+                    let (loc, q) = (loc_of(a), qualifier(mode));
+                    for half in ['l', 'h'] {
+                        out.push_str(&format!(
+                            "    float4 a{a}{half} [[user(locn{loc}{half}), {q}]];\n"
+                        ));
+                    }
                 }
                 if shared {
                     out.push_str("};\n\nstruct PsIn {\n    float4 pos;\n    bool front;\n");
@@ -343,6 +343,10 @@ impl<'a> Tx<'a> {
                         } else {
                             fill.push_str(&format!(", as_type<{ty}>(raw.a{src})"));
                         }
+                    }
+                    for &a in self.half_attrs.keys() {
+                        out.push_str(&format!("    float4 a{a}l;\n    float4 a{a}h;\n"));
+                        fill.push_str(&format!(", raw.a{a}l, raw.a{a}h"));
                     }
                     init.insert_str(0, &(fill + " };\n"));
                 }
@@ -625,5 +629,18 @@ impl<'a> Tx<'a> {
             reg += n;
         }
         s
+    }
+}
+
+/// The Metal interpolation qualifier of a pixel input.
+fn qualifier(mode: Interp) -> &'static str {
+    match mode {
+        Interp::Perspective => "center_perspective",
+        Interp::PerspectiveCentroid => "centroid_perspective",
+        Interp::PerspectiveSample => "sample_perspective",
+        Interp::Linear => "center_no_perspective",
+        Interp::LinearCentroid => "centroid_no_perspective",
+        Interp::LinearSample => "sample_no_perspective",
+        Interp::Flat => "flat",
     }
 }

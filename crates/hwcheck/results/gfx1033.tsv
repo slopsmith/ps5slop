@@ -767,6 +767,9 @@ draw format	8_8_8_8 unorm comp swap 3	agree
 draw format	8_8_8_8 unorm export F16	agree
 draw format	8_8_8_8 unorm export F32	agree
 draw format	8_8_8_8 unorm export Unorm16	differ	1127 target dwords value
+draw input	F16High to 32_32_32_32 float	differ	0 of 0: ; 668 stored dwords value
+draw input	F16HighP0 to 32_32_32_32 float	differ	0 of 0: ; 668 stored dwords value
+draw input	F16Low to 32_32_32_32 float	differ	0 of 0: ; 668 stored dwords value
 draw input	Flat	agree
 draw input	Flat to 32_32_32_32 float	agree
 draw input	FragCoord	agree
@@ -1680,6 +1683,9 @@ exp	draw format: 8_8_8_8 unorm comp swap 3	agree
 exp	draw format: 8_8_8_8 unorm export F16	agree
 exp	draw format: 8_8_8_8 unorm export F32	agree
 exp	draw format: 8_8_8_8 unorm export Unorm16	differ	1127 target dwords value
+exp	draw input: F16High to 32_32_32_32 float	differ	0 of 0: ; 668 stored dwords value
+exp	draw input: F16HighP0 to 32_32_32_32 float	differ	0 of 0: ; 668 stored dwords value
+exp	draw input: F16Low to 32_32_32_32 float	differ	0 of 0: ; 668 stored dwords value
 exp	draw input: Flat	agree
 exp	draw input: Flat to 32_32_32_32 float	agree
 exp	draw input: FragCoord	agree
@@ -9374,6 +9380,12 @@ v_interp_p1_f32	draw write mask: mask 0x1	agree
 v_interp_p1_f32	draw write mask: mask 0x6	agree
 v_interp_p1_f32	draw write mask: mask 0x8	agree
 v_interp_p1_f32	draw write mask: mask 0xb	agree
+v_interp_p1ll_f16	draw input: F16High to 32_32_32_32 float	differ	0 of 0: ; 668 stored dwords value
+v_interp_p1ll_f16	draw input: F16Low to 32_32_32_32 float	differ	0 of 0: ; 668 stored dwords value
+v_interp_p1lv_f16	draw input: F16HighP0 to 32_32_32_32 float	differ	0 of 0: ; 668 stored dwords value
+v_interp_p2_f16	draw input: F16High to 32_32_32_32 float	differ	0 of 0: ; 668 stored dwords value
+v_interp_p2_f16	draw input: F16HighP0 to 32_32_32_32 float	differ	0 of 0: ; 668 stored dwords value
+v_interp_p2_f16	draw input: F16Low to 32_32_32_32 float	differ	0 of 0: ; 668 stored dwords value
 v_interp_p2_f32	draw blend: 16_16_16_16 float dst both inv src alpha	agree
 v_interp_p2_f32	draw blend: 16_16_16_16 float dst both inv src alpha export F16	differ	3256 target dwords value
 v_interp_p2_f32	draw blend: 16_16_16_16 float dst both src alpha	agree

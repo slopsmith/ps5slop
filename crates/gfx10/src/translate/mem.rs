@@ -10,6 +10,79 @@ impl<'a> Tx<'a> {
             .unwrap_or(Interp::Perspective)
     }
 
+    // `FLAT_SHADE` inputs read the provoking vertex whatever the instruction.
+    fn attr_mode(&self, attr: u8, vsrc: u16, flat: bool) -> Interp {
+        const FLAT_SHADE: u32 = 1 << 10;
+        let flat_shaded = self
+            .req
+            .ps_input_cntl
+            .get(attr as usize)
+            .is_some_and(|c| c & FLAT_SHADE != 0);
+        if flat || flat_shaded {
+            Interp::Flat
+        } else {
+            self.input_interp(vsrc)
+        }
+    }
+
+    /// `v_interp_p1ll_f16`, `v_interp_p1lv_f16` and `v_interp_p2_f16`: Metal
+    /// interpolates the half the instruction picks, so the first two give
+    /// the interpolated value as f32 and the last rounds it to f16; their
+    /// own `p0`, `p1` and partial result operands are not read.
+    pub(super) fn interp_f16(
+        &mut self,
+        pc: usize,
+        name: &str,
+        v: &Valu,
+    ) -> Result<(), TranslateError> {
+        if self.req.stage != Stage::Pixel {
+            return Err(err(pc, "interpolation outside a pixel shader"));
+        }
+        if v.neg & 3 != 0 || v.abs & 3 != 0 || v.omod != 0 || v.src[1] < src::VGPR0 {
+            return Err(err(pc, format!("unsupported form of {name}")));
+        }
+        let a = v.src[0];
+        let attr = (a & 0x3F) as u8;
+        let loc = |a: u8| {
+            self.req
+                .ps_input_cntl
+                .get(a as usize)
+                .map_or(a as u32, |c| c & 0x1F)
+        };
+        if self
+            .half_attrs
+            .keys()
+            .any(|&b| b != attr && loc(b) == loc(attr))
+        {
+            return Err(err(pc, "two f16 inputs at one location"));
+        }
+        let mode = self.attr_mode(attr, v.src[1] - src::VGPR0, false);
+        match self.half_attrs.get(&attr) {
+            Some(m) if *m != mode => {
+                return Err(err(
+                    pc,
+                    format!("attribute {attr} read with two interpolation modes"),
+                ));
+            }
+            _ => {
+                self.half_attrs.insert(attr, mode);
+            }
+        }
+        let c = ['x', 'y', 'z', 'w'][(a >> 6 & 3) as usize];
+        let half = if a & 0x100 != 0 { 'h' } else { 'l' };
+        let mut value = format!("in.a{attr}{half}.{c}");
+        if v.clamp {
+            value = format!("saturate({value})");
+        }
+        if name == "v_interp_p2_f16" {
+            self.write16(v, &format!("uint(as_type<ushort>(half({value})))"));
+        } else {
+            let d = self.v(v.vdst as u16);
+            self.guard(&format!("{d} = U({value});"));
+        }
+        Ok(())
+    }
+
     pub(super) fn vintrp(
         &mut self,
         pc: usize,
@@ -22,17 +95,7 @@ impl<'a> Tx<'a> {
         if self.req.stage != Stage::Pixel {
             return Err(err(pc, "interpolation outside a pixel shader"));
         }
-        const FLAT_SHADE: u32 = 1 << 10;
-        let flat_shaded = self
-            .req
-            .ps_input_cntl
-            .get(attr as usize)
-            .is_some_and(|c| c & FLAT_SHADE != 0);
-        let mode = if name == "v_interp_mov_f32" || flat_shaded {
-            Interp::Flat
-        } else {
-            self.input_interp(vsrc)
-        };
+        let mode = self.attr_mode(attr, vsrc, name == "v_interp_mov_f32");
         match self.attrs.get(&attr) {
             Some(m) if *m != mode => {
                 return Err(err(

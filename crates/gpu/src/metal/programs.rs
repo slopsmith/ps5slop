@@ -3,8 +3,9 @@
 use super::*;
 
 /// A vertex program, whether it draws rectangles or uses OpenGL clip space,
-/// and the attributes it must add.
-pub(super) type VariantKey = (u64, VertexForm, Vec<u32>, Vec<u32>);
+/// the attributes it must add, those it exports as bits and those it also
+/// exports as halves.
+pub(super) type VariantKey = (u64, VertexForm, Vec<u32>, Vec<u32>, Vec<u32>);
 
 /// How a draw's vertex function differs from its program's own.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -48,6 +49,8 @@ pub(super) struct Program {
     pub(super) translated: Translated,
     /// The `user(locnN)` locations a pixel program reads flat.
     flat: Vec<u32>,
+    /// The locations a pixel program reads as f16 halves (`user(locnNl)`).
+    halves: Vec<u32>,
     /// Texture slots declared `<int>`.
     pub(super) sint_textures: u32,
     /// Raw texture slots the program converts (`Request::coded_textures`).
@@ -226,6 +229,37 @@ fn flat_locations(msl: &str) -> Vec<u32> {
                 .ok()
         })
         .collect()
+}
+
+/// The locations a pixel program reads as f16 halves (`aNl [[user(locnLl)]]`).
+fn half_locations(msl: &str) -> Vec<u32> {
+    msl.lines()
+        .filter_map(|l| {
+            let loc = l.split("[[user(locn").nth(1)?.split(')').next()?;
+            loc.strip_suffix('l')?.parse().ok()
+        })
+        .collect()
+}
+
+/// `msl` with each store to vertex output `p{loc}` also storing the low and
+/// high f16 halves of its components, as floats, into `p{loc}l` and
+/// `p{loc}h`, so that Metal interpolates each half on its own.
+fn half_outputs(msl: &str, loc: u32) -> String {
+    let store = format!("o.p{loc} = ");
+    let mut out = String::with_capacity(msl.len() + 256);
+    let mut rest = msl;
+    while let Some(i) = rest.find(&store) {
+        let Some(end) = rest[i..].find(';').map(|e| i + e + 1) else {
+            break;
+        };
+        out.push_str(&rest[..end]);
+        out.push_str(&format!(
+            " {{ uint4 hb = as_type<uint4>(o.p{loc}); o.p{loc}l = float4(f16_float(hb.x & 0xffffu), f16_float(hb.y & 0xffffu), f16_float(hb.z & 0xffffu), f16_float(hb.w & 0xffffu)); o.p{loc}h = float4(f16_float(hb.x >> 16), f16_float(hb.y >> 16), f16_float(hb.z >> 16), f16_float(hb.w >> 16)); }}"
+        ));
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `msl` with vertex output `p{loc}` declared `uint4` and stored bit for bit.
@@ -533,6 +567,7 @@ impl Metal {
                         function,
                         compute,
                         flat: flat_locations(&translated.msl),
+                        halves: half_locations(&translated.msl),
                         sint_textures: variant.sint_textures,
                         coded_textures: variant.coded_textures,
                         frame: self.epoch,
@@ -603,10 +638,21 @@ impl Metal {
         };
         // Rectangles keep flat outputs from the first vertex: `rect_source` combines floats only.
         let flat = pixel.flat.clone();
-        if missing.is_empty() && flat.is_empty() && form == VertexForm::default() {
+        let halves = pixel.halves.clone();
+        if missing.is_empty()
+            && flat.is_empty()
+            && halves.is_empty()
+            && form == VertexForm::default()
+        {
             return vertex.function.clone();
         }
-        let key = (vertex.id, form, missing.clone(), flat.clone());
+        let key = (
+            vertex.id,
+            form,
+            missing.clone(),
+            flat.clone(),
+            halves.clone(),
+        );
         if let Some(f) = self.variants.get(&key) {
             return f.clone();
         }
@@ -616,13 +662,13 @@ impl Metal {
             vertex.translated.entry.clone(),
         );
         let label = format!(
-            "vertex {:#x} variant {form:?} missing {missing:?} flat {flat:?}",
+            "vertex {:#x} variant {form:?} missing {missing:?} flat {flat:?} halves {halves:?}",
             vertex.address
         );
         let queued = std::time::Instant::now();
         let f = Task::spawn(move || {
             let start = std::time::Instant::now();
-            let extra: String = missing
+            let mut extra: String = missing
                 .iter()
                 .map(|l| {
                     format!(
@@ -631,6 +677,11 @@ impl Metal {
                     )
                 })
                 .collect();
+            for l in &halves {
+                for half in ['l', 'h'] {
+                    extra.push_str(&format!("    float4 p{l}{half} [[user(locn{l}{half})]];\n"));
+                }
+            }
             let mut msl = source.replacen(
                 "    float4 pos [[position]];\n",
                 &format!("    float4 pos [[position]];\n{extra}"),
@@ -638,6 +689,9 @@ impl Metal {
             );
             for l in &flat {
                 msl = uint_output(&msl, *l);
+            }
+            for l in &halves {
+                msl = half_outputs(&msl, *l);
             }
             if gl_clip {
                 msl = gl_clip_space(&msl);
