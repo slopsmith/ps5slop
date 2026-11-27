@@ -7,14 +7,16 @@
 # kept result is checked against this build, by default and with the accuracy
 # switches on, into crates/hwcheck/results/<gpu>.tsv and <gpu>.exact.tsv, and
 # the status page is written to target/hwcheck/chart.html.
-#   usage: scripts/hwcheck HOST [--filter TEXT]...
+#   usage: [HWCHECK_REMOTE=DIR] scripts/hwcheck HOST [--filter TEXT]...
+# HWCHECK_REMOTE is the directory on HOST (default ~/ps5slop-hw); runs that
+# overlap need different ones.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 host=${1:?usage: scripts/hwcheck HOST [--filter TEXT]...}
 shift
 out="$root/target/hwcheck"
-remote='~/ps5slop-hw'
+remote=${HWCHECK_REMOTE:-'~/ps5slop-hw'}
 gpu=gfx1033
 
 cd "$root"
