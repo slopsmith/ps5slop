@@ -241,6 +241,15 @@ fn ret(errno: i32) -> Result<Outcome, CallError> {
     }))
 }
 
+/// libkernel's APR calls also set errno: GTA VI's callers test only the
+/// sign of the result and take the error from errno.
+fn kernel_ret(env: &Env, errno: i32) -> Result<Outcome, CallError> {
+    if errno != 0 {
+        env.set_errno(errno)?;
+    }
+    ret(errno)
+}
+
 fn open(env: &Env, path: &[u8]) -> Option<AprFile> {
     open_in(&env.kernel.vfs, path)
 }
@@ -256,7 +265,8 @@ fn open_in(vfs: &crate::Vfs, path: &[u8]) -> Option<AprFile> {
 /// index of the first unresolved path goes to `failed`.
 fn resolve(env: &mut Env) -> Result<Outcome, CallError> {
     let [paths, count, ids, sizes, failed] = [0, 1, 2, 3, 4].map(|n| env.arg(n));
-    resolve_paths(env, &[], [paths, count, ids, sizes, failed, 0])
+    let errno = resolve_paths(env, &[], [paths, count, ids, sizes, failed, 0])?;
+    kernel_ret(env, errno)
 }
 
 /// `(prefix, paths, count, ids, sizes, failed)`: as `resolve`, with
@@ -264,7 +274,8 @@ fn resolve(env: &mut Env) -> Result<Outcome, CallError> {
 fn resolve_with_prefix(env: &mut Env) -> Result<Outcome, CallError> {
     let prefix = crate::libc::cstr(env, env.arg(0))?;
     let [paths, count, ids, sizes, failed] = [1, 2, 3, 4, 5].map(|n| env.arg(n));
-    resolve_paths(env, &prefix, [paths, count, ids, sizes, failed, 0])
+    let errno = resolve_paths(env, &prefix, [paths, count, ids, sizes, failed, 0])?;
+    kernel_ret(env, errno)
 }
 
 /// `(prefix, paths, count, ids, sizes, results)`: as `resolve_with_prefix`,
@@ -273,7 +284,7 @@ fn resolve_with_prefix_each(env: &mut Env) -> Result<Outcome, CallError> {
     let prefix = crate::libc::cstr(env, env.arg(0))?;
     let [paths, count, ids, sizes, results] = [1, 2, 3, 4, 5].map(|n| env.arg(n));
     match resolve_paths(env, &prefix, [paths, count, ids, sizes, 0, results])? {
-        Outcome::Return(r) if r == sce_error(EINVAL) => ret(EINVAL),
+        EINVAL => kernel_ret(env, EINVAL),
         _ => ret(0),
     }
 }
@@ -282,9 +293,9 @@ fn resolve_paths(
     env: &Env,
     prefix: &[u8],
     [paths, count, ids, sizes, failed, results]: [u64; 6],
-) -> Result<Outcome, CallError> {
+) -> Result<i32, CallError> {
     if count == 0 || count > RESOLVE_MAX {
-        return ret(EINVAL);
+        return Ok(EINVAL);
     }
     let mut missing = None;
     for k in 0..count {
@@ -331,9 +342,9 @@ fn resolve_paths(
             if failed != 0 {
                 env.mem.write(failed, &k.to_le_bytes())?;
             }
-            ret(ENOENT)
+            Ok(ENOENT)
         }
-        None => ret(0),
+        None => Ok(0),
     }
 }
 
@@ -513,7 +524,7 @@ fn virtual_address_ranges(env: &mut Env) -> Result<Outcome, CallError> {
 fn submit_and_get_result(env: &mut Env) -> Result<Outcome, CallError> {
     let errno = run(env, env.arg(0), usize::MAX)?;
     if errno != 0 {
-        return ret(errno);
+        return kernel_ret(env, errno);
     }
     let (result, id) = (env.arg(2), env.arg(3));
     if result != 0 {
@@ -529,7 +540,7 @@ fn submit_and_get_result(env: &mut Env) -> Result<Outcome, CallError> {
 /// `(buffer, priority)`: runs the commands now.
 fn submit(env: &mut Env) -> Result<Outcome, CallError> {
     let errno = run(env, env.arg(0), usize::MAX)?;
-    ret(errno)
+    kernel_ret(env, errno)
 }
 
 /// Runs the first `count` commands of `buffer`, then any parked batch its
@@ -538,6 +549,7 @@ fn run(env: &Env, buffer: u64, count: usize) -> Result<i32, CallError> {
     let Some(commands) = lock(&env.kernel.apr.buffers).get(&buffer).cloned() else {
         return Ok(ESRCH);
     };
+    tracing::debug!("submit {buffer:#x}: {} commands", commands.len().min(count));
     let errno = run_batch(env, commands.into_iter().take(count).collect())?;
     if errno != 0 {
         return Ok(errno);
@@ -569,10 +581,17 @@ fn run_batch(env: &Env, mut batch: VecDeque<Command>) -> Result<i32, CallError> 
                 offset,
             } => {
                 if !read(env, file, dest, len, offset)? {
+                    tracing::warn!(
+                        "read of unknown file {file:#x} at {offset:#x} len {len:#x}; {} commands dropped",
+                        batch.len()
+                    );
                     return Ok(EINVAL);
                 }
             }
-            Command::WriteAddress { addr, value } => env.mem.write_u64(addr, value)?,
+            Command::WriteAddress { addr, value } => {
+                tracing::debug!("write {value:#x} to {addr:#x}");
+                env.mem.write_u64(addr, value)?
+            }
             Command::MapAsPrt { va, len }
             | Command::Map { va, len }
             | Command::UnmapToPrt { va, len } => {
@@ -582,6 +601,7 @@ fn run_batch(env: &Env, mut batch: VecDeque<Command>) -> Result<i32, CallError> 
                 }
             }
             Command::Signal { counter, value } => {
+                tracing::debug!("signal counter {counter:#x} = {value:#x}");
                 lock(&env.kernel.apr.counters).insert(counter, value);
             }
             Command::Wait { counter, value } => {
@@ -590,6 +610,10 @@ fn run_batch(env: &Env, mut batch: VecDeque<Command>) -> Result<i32, CallError> 
                     .copied()
                     .unwrap_or(0);
                 if now < value {
+                    tracing::debug!(
+                        "wait for counter {counter:#x} >= {value:#x} (now {now:#x}): {} commands parked",
+                        batch.len() + 1
+                    );
                     batch.push_front(c);
                     lock(&env.kernel.apr.parked).push(batch);
                     return Ok(0);
@@ -753,5 +777,64 @@ impl Apr {
         *lock(&self.buffers) = d.get()?;
         self.submissions.store(d.get()?, Ordering::Relaxed);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use memory::{Memory, PAGE_SIZE, Prot};
+
+    use super::*;
+    use crate::{Cpu, Hle, Kernel, Thread, TlsTemplate, Vfs};
+
+    const AREA: u64 = 0x30_0000;
+    const PATH: u64 = AREA;
+    const PATHS: u64 = AREA + 0x100;
+    const IDS: u64 = AREA + 0x200;
+    const SIZES: u64 = AREA + 0x210;
+    const FAILED: u64 = AREA + 0x220;
+    const TCB: u64 = AREA + 0x1000;
+
+    #[test]
+    fn a_missing_path_fails_with_errno_set() {
+        let mem = Memory::new(1 << 40).unwrap();
+        mem.map(AREA, 2 * PAGE_SIZE, Prot::RW, "test").unwrap();
+        mem.write(PATH, b"/app0/missing.rpf\0").unwrap();
+        mem.write_u64(PATHS, PATH).unwrap();
+        let hle = Hle::new();
+        hle.map(&mem).unwrap();
+        let kernel = Kernel::new(
+            hle,
+            mem,
+            TlsTemplate::default(),
+            Box::new(std::io::sink()),
+            Box::new(std::io::sink()),
+            Vfs::default(),
+        );
+        let mem = kernel.memory();
+        let mut cpu = Cpu::default();
+        for (reg, value) in [(7, PATHS), (6, 1), (2, IDS), (1, SIZES), (8, FAILED)] {
+            cpu.regs[reg] = value;
+        }
+        let thread = Thread { tcb: TCB };
+        let mut env = Env {
+            cpu: &mut cpu,
+            mem: &mem,
+            kernel: &kernel,
+            thread,
+        };
+
+        let result = match resolve(&mut env) {
+            Ok(Outcome::Return(r)) => r,
+            _ => panic!("resolve failed"),
+        };
+
+        assert_eq!(result, sce_error(ENOENT));
+        let mut errno = [0u8; 4];
+        mem.read(thread.errno_addr(), &mut errno).unwrap();
+        assert_eq!(i32::from_le_bytes(errno), ENOENT);
+        let mut id = [0u8; 4];
+        mem.read(IDS, &mut id).unwrap();
+        assert_eq!(u32::from_le_bytes(id), FILE_ID_INVALID);
     }
 }
