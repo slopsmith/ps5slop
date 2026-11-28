@@ -207,6 +207,7 @@ impl Ags<'_> {
             col_format: reg(&cx, SPI_SHADER_COL_FORMAT),
             compute_rsrc2: 0,
             threads: [64, 1, 1],
+            mesh: Default::default(),
             uint_textures: 0,
             sint_textures: 0,
             coded_textures: 0,

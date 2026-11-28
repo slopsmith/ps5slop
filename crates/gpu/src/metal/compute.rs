@@ -62,7 +62,11 @@ impl Metal {
     }
 
     /// A zeroed slot of loop guard words for the next dispatch, as a byte offset.
-    fn guard_slot(&mut self, program: u64, user: &[u32]) -> Option<(Retained<Buffer>, usize)> {
+    pub(super) fn guard_slot(
+        &mut self,
+        program: u64,
+        user: &[u32],
+    ) -> Option<(Retained<Buffer>, usize)> {
         if self.guard.is_none() {
             self.guard = Some(self.device.newBufferWithLength_options(
                 GUARD_SLOTS * 8,

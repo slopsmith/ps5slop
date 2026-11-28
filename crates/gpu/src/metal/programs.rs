@@ -100,6 +100,8 @@ pub(super) struct PipelineKey {
     pub(super) depth: usize,
     pub(super) stencil: bool,
     pub(super) form: VertexForm,
+    /// The vertex function is a mesh function.
+    pub(super) mesh: bool,
 }
 
 /// A call target in one dispatch: where the call is, where it goes, and a
@@ -162,7 +164,7 @@ fn request<'a>(
     let rsrc1 = state.sh[match (stage, ngg) {
         (Stage::Pixel, _) => sh::SPI_SHADER_PGM_RSRC1_PS,
         (Stage::Compute, _) => sh::COMPUTE_PGM_RSRC1,
-        (Stage::Vertex, true) => sh::SPI_SHADER_PGM_RSRC1_GS,
+        (Stage::Vertex, true) | (Stage::Mesh, _) => sh::SPI_SHADER_PGM_RSRC1_GS,
         (Stage::Vertex, false) => sh::SPI_SHADER_PGM_RSRC1_VS,
     }];
     let tmpring = if stage == Stage::Compute {
@@ -193,7 +195,21 @@ fn request<'a>(
         ps_input_cntl: &c[context::SPI_PS_INPUT_CNTL_0..context::SPI_PS_INPUT_CNTL_0 + 32],
         col_format: variant.col_format,
         compute_rsrc2: state.sh[sh::COMPUTE_PGM_RSRC2],
-        threads: [0, 1, 2].map(|i| (state.sh[sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1)),
+        threads: if stage == Stage::Mesh {
+            [mesh_threads(c), 1, 1]
+        } else {
+            [0, 1, 2].map(|i| (state.sh[sh::COMPUTE_NUM_THREAD_X + i] & 0xFFFF).max(1))
+        },
+        mesh: if stage == Stage::Mesh {
+            shader::Mesh {
+                vertices: mesh_vertices(c),
+                primitives: (c[context::GE_NGG_SUBGRP_CNTL] & 0x1FF) as u16,
+                topology: c[context::VGT_GS_OUT_PRIM_TYPE] as u8,
+                lds_bytes: (state.sh[sh::SPI_SHADER_PGM_RSRC2_GS] >> 19 & 0xFF) * 512,
+            }
+        } else {
+            shader::Mesh::default()
+        },
         uint_textures: variant.uint_textures,
         sint_textures: variant.sint_textures,
         coded_textures: variant.coded_textures,
@@ -213,6 +229,37 @@ fn request<'a>(
         scratch_wave_bytes: (tmpring >> 12 & 0x1FFF) << 10,
         rsrc1,
         calls: &[],
+    }
+}
+
+/// Whether a draw's NGG program builds each subgroup's geometry itself from
+/// one input vertex, as a mesh shader: launched in fast-launch mode, as radv
+/// does on GFX10.3, or as PS5 titles do, as GS subgroups of one ES vertex
+/// whose primitives are amplified (see shaders.md).
+pub(super) fn mesh_launch(c: &[u32]) -> bool {
+    let stages = c[context::VGT_SHADER_STAGES_EN];
+    let ngg_gs = stages & (1 << 13) != 0 && stages & (1 << 5) != 0;
+    let fast = stages >> 19 & 3 != 0;
+    let amplified =
+        c[context::GE_NGG_SUBGRP_CNTL] & 0x1FF > 1 && c[context::VGT_GS_ONCHIP_CNTL] & 0x7FF == 1;
+    ngg_gs && (fast || amplified)
+}
+
+/// Threads in a mesh group, in whole wave64s: one per vertex
+/// (`VGT_GS_MAX_VERT_OUT`) and per primitive (`PRIM_AMP_FACTOR`).
+pub(super) fn mesh_threads(c: &[u32]) -> u32 {
+    let vertices = c[context::VGT_GS_MAX_VERT_OUT] & 0x7FF;
+    let primitives = c[context::GE_NGG_SUBGRP_CNTL] & 0x1FF;
+    vertices.max(primitives).clamp(1, 1024).next_multiple_of(64)
+}
+
+/// Vertices a mesh group may export: `VGT_GS_MAX_VERT_OUT`, or radv's
+/// `GE_MAX_OUTPUT_PER_SUBGROUP` where that is set and smaller.
+fn mesh_vertices(c: &[u32]) -> u16 {
+    let most = c[context::VGT_GS_MAX_VERT_OUT] & 0x7FF;
+    match c[context::GE_MAX_OUTPUT_PER_SUBGROUP] & 0x3FF {
+        0 => most as u16,
+        v => v.min(most) as u16,
     }
 }
 
@@ -467,6 +514,9 @@ impl Metal {
             }
             if stage == Stage::Compute {
                 (probe.compute_rsrc2, probe.threads).hash(&mut h);
+            }
+            if stage == Stage::Mesh {
+                (probe.threads, probe.mesh).hash(&mut h);
             }
             h.finish()
         };
@@ -732,31 +782,51 @@ impl Metal {
             let start = std::time::Instant::now();
             let (vertex, pixel) = (vertex.wait()?, pixel.wait()?);
             let ready = std::time::Instant::now();
-            let desc = MTLRenderPipelineDescriptor::new();
-            desc.setVertexFunction(Some(&vertex));
-            desc.setFragmentFunction(Some(&pixel));
-            for (i, &raw) in key.formats.iter().enumerate() {
-                if raw == 0 {
-                    continue;
-                }
-                let att = unsafe { desc.colorAttachments().objectAtIndexedSubscript(i) };
-                att.setPixelFormat(MTLPixelFormat(raw));
-                att.setWriteMask(MTLColorWriteMask(key.write_masks[i] as usize));
-            }
-            if key.depth != 0 {
-                desc.setDepthAttachmentPixelFormat(MTLPixelFormat(key.depth));
-                if key.stencil {
-                    desc.setStencilAttachmentPixelFormat(MTLPixelFormat(key.depth));
-                }
-            }
-            if crate::timing::labels() {
-                desc.setLabel(Some(&NSString::from_str(&format!(
-                    "vertex {:#x} pixel {:#x}",
-                    key.vertex, key.pixel
-                ))));
+            let label = (crate::timing::labels()).then(|| {
+                NSString::from_str(&format!("vertex {:#x} pixel {:#x}", key.vertex, key.pixel))
+            });
+            // The two descriptors share no protocol, so each is filled alike.
+            macro_rules! targets {
+                ($desc:expr) => {
+                    for (i, &raw) in key.formats.iter().enumerate() {
+                        if raw == 0 {
+                            continue;
+                        }
+                        let att = unsafe { $desc.colorAttachments().objectAtIndexedSubscript(i) };
+                        att.setPixelFormat(MTLPixelFormat(raw));
+                        att.setWriteMask(MTLColorWriteMask(key.write_masks[i] as usize));
+                    }
+                    if key.depth != 0 {
+                        $desc.setDepthAttachmentPixelFormat(MTLPixelFormat(key.depth));
+                        if key.stencil {
+                            $desc.setStencilAttachmentPixelFormat(MTLPixelFormat(key.depth));
+                        }
+                    }
+                    if let Some(l) = &label {
+                        $desc.setLabel(Some(l));
+                    }
+                };
             }
             let t = crate::timing::start();
-            let made = device.newRenderPipelineStateWithDescriptor_error(&desc);
+            let made = if key.mesh {
+                let desc = objc2_metal::MTLMeshRenderPipelineDescriptor::new();
+                unsafe {
+                    desc.setMeshFunction(Some(&vertex));
+                    desc.setFragmentFunction(Some(&pixel));
+                }
+                targets!(desc);
+                device.newRenderPipelineStateWithMeshDescriptor_options_reflection_error(
+                    &desc,
+                    objc2_metal::MTLPipelineOption::None,
+                    None,
+                )
+            } else {
+                let desc = MTLRenderPipelineDescriptor::new();
+                desc.setVertexFunction(Some(&vertex));
+                desc.setFragmentFunction(Some(&pixel));
+                targets!(desc);
+                device.newRenderPipelineStateWithDescriptor_error(&desc)
+            };
             crate::timing::add(crate::timing::Part::Compile, t);
             log_compile(
                 "render pipeline",

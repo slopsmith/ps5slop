@@ -1,7 +1,10 @@
 //! Translates every program a title ran, from the files `PS5SLOP_SHADER_DUMP`
 //! wrote, and counts why the others fail.
-//! Usage: `cargo run -p gfx10 --example captures -- DIR [NAME]`; with NAME,
-//! prints that program's disassembly and translation.
+//! Usage: `cargo run -p gfx10 --example captures -- [--mesh THREADS] DIR [NAME]`;
+//! with NAME, prints that program's disassembly and translation. `--mesh`
+//! translates NGG vertex programs saved without mesh state as mesh programs
+//! of THREADS threads, vertices and primitives with triangles, for captures
+//! from builds that did not record it.
 
 use std::collections::BTreeMap;
 
@@ -25,8 +28,19 @@ fn compile(_: &str) -> Result<(), String> {
 }
 
 fn main() {
-    let mut args = std::env::args().skip(1);
-    let dir = args.next().expect("usage: captures DIR [NAME]");
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mesh = args.iter().position(|a| a == "--mesh").map(|i| {
+        let n: u32 = args
+            .get(i + 1)
+            .and_then(|n| n.parse().ok())
+            .expect("--mesh THREADS");
+        args.drain(i..i + 2);
+        n
+    });
+    let mut args = args.into_iter();
+    let dir = args
+        .next()
+        .expect("usage: captures [--mesh THREADS] DIR [NAME]");
     let only = args.next();
     let mut paths: Vec<_> = std::fs::read_dir(&dir)
         .expect("read dir")
@@ -41,9 +55,23 @@ fn main() {
         if only.as_ref().is_some_and(|o| !name.contains(o.as_str())) {
             continue;
         }
-        let Some(c) = Capture::from_bytes(&std::fs::read(path).unwrap()) else {
+        let Some(mut c) = Capture::from_bytes(&std::fs::read(path).unwrap()) else {
             continue;
         };
+        if let Some(n) = mesh
+            && c.stage == gfx10::translate::Stage::Vertex
+            && c.ngg
+            && c.mesh == gfx10::translate::Mesh::default()
+        {
+            c.stage = gfx10::translate::Stage::Mesh;
+            c.threads = [n, 1, 1];
+            c.mesh = gfx10::translate::Mesh {
+                vertices: n as u16,
+                primitives: n as u16,
+                topology: 2,
+                lds_bytes: 0,
+            };
+        }
         let req = c.request();
         let result = translate(&req);
         if only.is_some() {

@@ -249,7 +249,7 @@ impl<'a> Tx<'a> {
                 let execz = self.mask_any(126);
                 let vccz = self.mask_any(106);
                 let [x, y, z] = self.req.threads;
-                let in_wg = if self.req.stage == Stage::Compute && x * y * z > 64 {
+                let in_wg = if self.req.stage.grouped() && x * y * z > 64 {
                     hwreg::STATUS_IN_WG
                 } else {
                     0

@@ -199,6 +199,10 @@ impl Metal {
     ) -> Result<(), &'static str> {
         let (c, s, u) = (state.context, state.sh, state.uconfig);
         let ngg = c[context::VGT_SHADER_STAGES_EN] & (1 << 13) != 0;
+        let mesh = mesh_launch(c);
+        if mesh && matches!(draw, Draw::Indexed { .. }) {
+            return Err("indexed mesh draw");
+        }
         let (vs_lo, vs_rsrc2, vs_user) = if ngg {
             (
                 sh::SPI_SHADER_PGM_LO_ES,
@@ -259,7 +263,7 @@ impl Metal {
             .typed_program(
                 host,
                 state,
-                Stage::Vertex,
+                if mesh { Stage::Mesh } else { Stage::Vertex },
                 vs_addr,
                 vs_users,
                 ngg,
@@ -347,11 +351,20 @@ impl Metal {
                 offset: [vp.x_offset.to_bits(), vp.y_offset.to_bits()],
             }
         });
-        let form = VertexForm {
-            rect,
-            gl_clip,
-            point_size,
-            wide_line,
+        // A mesh draw's primitive type is the point list each group is
+        // launched from; the program sets what it draws.
+        let form = if mesh {
+            VertexForm {
+                gl_clip,
+                ..VertexForm::default()
+            }
+        } else {
+            VertexForm {
+                rect,
+                gl_clip,
+                point_size,
+                wide_line,
+            }
         };
         let vertex_function = self.vertex_function(&vertex, &pixel, form);
 
@@ -365,6 +378,7 @@ impl Metal {
             depth: 0,
             stencil: false,
             form,
+            mesh,
         };
         for n in attached_targets(mask, col_format) {
             let write = (mask >> (4 * n)) & 0xF;
@@ -589,6 +603,9 @@ impl Metal {
             }
         }
         .ok_or("pipeline")?;
+        if mesh && pipeline.maxTotalThreadsPerMeshThreadgroup() < mesh_threads(c) as usize {
+            return Err("mesh group too large");
+        }
         let depth_bound = depth.is_some();
         let (w, h) = match (size, &depth) {
             (Some((w, h)), _) => (w as f64, h as f64),
@@ -729,7 +746,11 @@ impl Metal {
         } else {
             MTLWinding::CounterClockwise
         });
-        Self::apply(Slot::Vertex(&enc), &vs_bound, vs_data);
+        if mesh {
+            Self::apply(Slot::Mesh(&enc), &vs_bound, vs_data);
+        } else {
+            Self::apply(Slot::Vertex(&enc), &vs_bound, vs_data);
+        }
         Self::apply(Slot::Fragment(&enc), &ps_bound, ps_data);
         if pixel.translated.reads_blend_color {
             let color = blend_color(c);
@@ -744,6 +765,7 @@ impl Metal {
             self.note(|| format!("bound t{slot} {ptr:#x} {w}x{h}"));
         }
         let primitive = match u[uconfig::VGT_PRIMITIVE_TYPE] {
+            _ if mesh => MTLPrimitiveType::Point,
             1 => MTLPrimitiveType::Point,
             2 => MTLPrimitiveType::Line,
             3 => MTLPrimitiveType::LineStrip,
@@ -773,6 +795,43 @@ impl Metal {
             self.note(|| format!("pixels slot {slot}"));
         }
         match draw {
+            Draw::Auto { count: 0, .. } if mesh => {}
+            Draw::Auto { count, instances } if mesh => {
+                let guard = if vertex.translated.loop_guard {
+                    Some(
+                        self.guard_slot(vertex.address, vs_data)
+                            .ok_or("loop guard buffer")?,
+                    )
+                } else {
+                    None
+                };
+                let slot = Slot::Mesh(&enc);
+                if let Some((g, offset)) = &guard {
+                    slot.buffer(g, *offset, binding::GUARD as usize);
+                }
+                slot.bytes(
+                    (&start as *const u32).cast(),
+                    4,
+                    binding::FIRST_VERTEX as usize,
+                );
+                let one = MTLSize {
+                    width: 1,
+                    height: 1,
+                    depth: 1,
+                };
+                enc.drawMeshThreadgroups_threadsPerObjectThreadgroup_threadsPerMeshThreadgroup(
+                    MTLSize {
+                        width: count as usize,
+                        height: instances.max(1) as usize,
+                        depth: 1,
+                    },
+                    one,
+                    MTLSize {
+                        width: mesh_threads(c) as usize,
+                        ..one
+                    },
+                );
+            }
             // gen5_vs_rect takes the index offset as its base instance.
             Draw::Auto { count, instances } if rect => unsafe {
                 enc.drawPrimitives_vertexStart_vertexCount_instanceCount_baseInstance(

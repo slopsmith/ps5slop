@@ -42,6 +42,30 @@ pub enum Stage {
     Vertex,
     Pixel,
     Compute,
+    /// An NGG program that builds each subgroup's vertices and primitives
+    /// itself from one input vertex (a mesh shader): run as a Metal mesh
+    /// function, one threadgroup per subgroup (see shaders.md).
+    Mesh,
+}
+
+impl Stage {
+    /// The program runs as a threadgroup with LDS and barriers.
+    pub fn grouped(self) -> bool {
+        matches!(self, Stage::Compute | Stage::Mesh)
+    }
+}
+
+/// A mesh program's output limits, from the draw's registers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Mesh {
+    /// Vertices a group may export (`GE_MAX_OUTPUT_PER_SUBGROUP`).
+    pub vertices: u16,
+    /// Primitives a group may export (`GE_NGG_SUBGRP_CNTL.PRIM_AMP_FACTOR`).
+    pub primitives: u16,
+    /// `VGT_GS_OUT_PRIM_TYPE`: 0 points, 1 lines, 2 triangles.
+    pub topology: u8,
+    /// Bytes of LDS the group has (`SPI_SHADER_PGM_RSRC2_GS.LDS_SIZE`).
+    pub lds_bytes: u32,
 }
 
 /// What to translate and the register state the program starts with.
@@ -68,8 +92,11 @@ pub struct Request<'a> {
     /// Compute stage: `COMPUTE_PGM_RSRC2`, which says which workgroup ids and
     /// thread ids the program starts with.
     pub compute_rsrc2: u32,
-    /// Compute stage: `COMPUTE_NUM_THREAD_X/Y/Z`, the threadgroup size.
+    /// Compute stage: `COMPUTE_NUM_THREAD_X/Y/Z`, the threadgroup size. Mesh
+    /// stage: the threads of a group (`VGT_GS_MAX_VERT_OUT`) in x.
     pub threads: [u32; 3],
+    /// Mesh stage: the group's output limits.
+    pub mesh: Mesh,
     /// Texture slots (bit n for slot n of [`Translated::resources`]) whose image
     /// format is unsigned or signed integer, declared `<uint>` or `<int>`.
     /// Slot numbers do not depend on these masks.
@@ -295,11 +322,11 @@ pub struct Translated {
     /// The V#s every buffer store and atomic goes through, with whether the
     /// access is indexed; `None` when one of them is not known.
     pub store_buffers: Option<Vec<(Source, bool)>>,
-    /// Compute stage: bytes of threadgroup memory (LDS) the kernel declares.
+    /// Compute and mesh stages: bytes of threadgroup memory (LDS) declared.
     pub lds_bytes: u32,
     /// The program uses the global data share, bound at `[[buffer(27)]]`.
     pub gds: bool,
-    /// Compute stage: the program loops, and gives up after too many backward
+    /// Compute and mesh stages: the program loops, and gives up after too many backward
     /// branches, counted in the words bound at `[[buffer(25)]]` (zeroed per dispatch).
     pub loop_guard: bool,
     /// Compute stage: each wave's two SIMD groups wait for each other, so a group
@@ -360,6 +387,9 @@ pub mod binding {
     pub const GUARD: u32 = 25;
     /// `device const uint* bounds`: the grid size in threads, for [`Request::grid_bounds`].
     pub const BOUNDS: u32 = 24;
+    /// `constant uint& first_vertex`: a mesh draw's first vertex index, which
+    /// with the group's index is its v5.
+    pub const FIRST_VERTEX: u32 = 26;
     /// The first of the [`super::MAX_CONSTANTS`] `constant uint* cbN` buffers.
     pub const CONSTANTS: u32 = 1;
 }
@@ -403,6 +433,12 @@ pub fn packed_widths(layout: u32) -> Option<[u32; 4]> {
 /// Constant buffers a program may bind; scalar loads through more bases read
 /// guest memory instead.
 pub const MAX_CONSTANTS: usize = 16;
+
+/// Metal's limits on a mesh threadgroup's output: vertices, primitives, and
+/// bytes of vertex data (measured on an M4 Pro: the pipeline is refused past it).
+pub const MESH_MAX_VERTICES: u16 = 256;
+pub const MESH_MAX_PRIMITIVES: u16 = 512;
+pub const MESH_MAX_BYTES: usize = 32 << 10;
 
 /// Backward branches a vertex or pixel invocation may take before it gives up: a
 /// GPU hang makes macOS ignore all of the process's later Metal work.
@@ -485,6 +521,24 @@ fn translate_expanded(
         };
         return Err(err(pc, message));
     }
+    if req.stage == Stage::Mesh {
+        let m = req.mesh;
+        if !matches!(m.topology, 1 | 2) {
+            return Err(err(0, format!("mesh output primitive type {}", m.topology)));
+        }
+        if !(1..=MESH_MAX_VERTICES).contains(&m.vertices)
+            || !(1..=MESH_MAX_PRIMITIVES).contains(&m.primitives)
+            || !(1..=1024).contains(&req.threads[0])
+        {
+            return Err(err(
+                0,
+                format!(
+                    "mesh group of {} threads, {} vertices, {} primitives",
+                    req.threads[0], m.vertices, m.primitives
+                ),
+            ));
+        }
+    }
     let insts = exp.insts;
     let mut dry = Tx::new(req, insts.clone());
     dry.runs = exp.runs.clone();
@@ -526,6 +580,13 @@ fn translate_expanded(
         return Err(err(
             0,
             "bounds of a lockstep program with a multi-dimensional group",
+        ));
+    }
+    let mesh_bytes = req.mesh.vertices as usize * 16 * (1 + tx.params.len());
+    if req.stage == Stage::Mesh && mesh_bytes > MESH_MAX_BYTES {
+        return Err(err(
+            0,
+            format!("mesh output of {mesh_bytes} bytes, more than Metal's {MESH_MAX_BYTES}"),
         ));
     }
     Ok(tx.finish())
@@ -668,7 +729,7 @@ impl<'a> Tx<'a> {
     }
 
     fn new(req: &'a Request<'a>, insts: Vec<(usize, Inst)>) -> Self {
-        let user_base = if req.stage == Stage::Vertex && req.ngg {
+        let user_base = if req.stage == Stage::Mesh || req.stage == Stage::Vertex && req.ngg {
             8
         } else {
             0
@@ -708,12 +769,12 @@ impl<'a> Tx<'a> {
         let threads = req.threads.iter().product::<u32>();
         let barrier = insts.iter().any(|(_, i)| i.op.name == "s_barrier");
         let lds = |i: &Inst| matches!(i.kind, Kind::Ds { gds: false, .. });
-        let lockstep = req.stage == Stage::Compute
+        let lockstep = req.stage.grouped()
             && !wave32
             && threads.is_multiple_of(64)
             && match threads {
                 0 => false,
-                64 => {
+                64 if req.stage == Stage::Compute => {
                     !barrier
                         && insts
                             .iter()

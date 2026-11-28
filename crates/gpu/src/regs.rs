@@ -55,6 +55,11 @@ pub mod context {
     pub const PA_SU_LINE_CNTL: usize = 0x282;
     pub const PA_CL_VTE_CNTL: usize = 0x206;
     pub const VGT_SHADER_STAGES_EN: usize = 0x2D5;
+    pub const VGT_GS_OUT_PRIM_TYPE: usize = 0x29B;
+    pub const VGT_GS_MAX_VERT_OUT: usize = 0x2CE;
+    pub const GE_NGG_SUBGRP_CNTL: usize = 0x2D3;
+    pub const GE_MAX_OUTPUT_PER_SUBGROUP: usize = 0x1FF;
+    pub const VGT_GS_ONCHIP_CNTL: usize = 0x291;
     pub const CB_COLOR0_BASE: usize = 0x318;
     pub const CB_COLOR0_VIEW: usize = 0x31B;
     pub const CB_COLOR0_INFO: usize = 0x31C;

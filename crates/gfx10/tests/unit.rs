@@ -55,6 +55,7 @@ fn pixel(code: &[u32], user_sgprs: u32) -> gfx10::Translated {
         col_format: 9,
         compute_rsrc2: 0,
         threads: [1, 1, 1],
+        mesh: Default::default(),
         uint_textures: 0,
         sint_textures: 0,
         coded_textures: 0,
@@ -153,6 +154,7 @@ fn pixel_inputs_sharing_a_location_read_one_interpolant() {
         col_format: 9,
         compute_rsrc2: 0,
         threads: [1, 1, 1],
+        mesh: Default::default(),
         uint_textures: 0,
         sint_textures: 0,
         coded_textures: 0,
@@ -202,6 +204,7 @@ fn compute_request(code: &[u32], user_sgprs: u32, rsrc2: u32, threads: u32) -> R
         col_format: 0,
         compute_rsrc2: rsrc2,
         threads: [threads, 1, 1],
+        mesh: Default::default(),
         uint_textures: 0,
         sint_textures: 0,
         coded_textures: 0,
@@ -425,6 +428,7 @@ fn integer_colour_formats_export_integers() {
         col_format: 7,
         compute_rsrc2: 0,
         threads: [1, 1, 1],
+        mesh: Default::default(),
         uint_textures: 0,
         sint_textures: 0,
         coded_textures: 0,
@@ -475,6 +479,7 @@ fn dual_source_blending_blends_with_the_mrt1_export() {
         col_format: 0x99,
         compute_rsrc2: 0,
         threads: [1, 1, 1],
+        mesh: Default::default(),
         uint_textures: 0,
         sint_textures: 0,
         grid_bounds: false,
@@ -533,6 +538,7 @@ fn blending_into_half_targets_writes_the_cb_halves() {
         col_format: 0x4,
         compute_rsrc2: 0,
         threads: [1, 1, 1],
+        mesh: Default::default(),
         uint_textures: 0,
         sint_textures: 0,
         grid_bounds: false,
@@ -586,6 +592,7 @@ fn integer_texture_slots_read_and_write_integers() {
         col_format: 0,
         compute_rsrc2: 16 << 1,
         threads: [64, 1, 1],
+        mesh: Default::default(),
         uint_textures,
         sint_textures,
         coded_textures: 0,
@@ -658,6 +665,7 @@ fn captures_keep_the_grid_bounds_and_depth_export_flags() {
         col_format: 0,
         compute_rsrc2: 0,
         threads: [64, 1, 1],
+        mesh: Default::default(),
         uint_textures: 0,
         sint_textures: 0,
         coded_textures: 0,
@@ -831,6 +839,7 @@ fn getpc_gives_the_address_of_the_next_instruction() {
         col_format: 0,
         compute_rsrc2: 0,
         threads: [64, 1, 1],
+        mesh: Default::default(),
         uint_textures: 0,
         sint_textures: 0,
         coded_textures: 0,
@@ -1569,6 +1578,73 @@ fn calls_through_user_sgprs_take_their_target_per_dispatch() {
     compile(&t.msl);
 }
 
+fn mesh_request(code: &[u32]) -> Request<'_> {
+    Request {
+        stage: Stage::Mesh,
+        ngg: true,
+        threads: [128, 1, 1],
+        mesh: gfx10::translate::Mesh {
+            vertices: 3,
+            primitives: 1,
+            topology: 2,
+            lds_bytes: 1024,
+        },
+        ..compute_request(code, 0, 0, 128)
+    }
+}
+
+const MESH: [u32; 19] = [
+    0xBEFE_04C1, // s_mov_b64 exec, -1
+    0xD765_0000,
+    0x0001_00C1, // v_mbcnt_lo_u32_b32 v0, -1, 0
+    0xD834_0000,
+    0x0000_0500, // ds_write_b32 v0, v5
+    0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+    0xBF8A_0000, // s_barrier
+    0xD8D8_0000,
+    0x0100_0000, // ds_read_b32 v1, v0
+    0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+    0xBEFC_03FF,
+    0x0000_1003, // s_mov_b32 m0, 0x1003
+    0xBF90_0009, // s_sendmsg sendmsg(MSG_GS_ALLOC_REQ)
+    0xF800_0941,
+    0x0000_0000, // exp prim v0, off, off, off done
+    0xF800_08CF,
+    0x0101_0101, // exp pos0 v1, v1, v1, v1 done
+    0xBF81_0000, // s_endpgm
+    0,
+];
+
+#[test]
+fn mesh_programs_share_lds_and_export_their_own_primitives() {
+    let t = translate(&mesh_request(&MESH)).unwrap();
+    assert_eq!(t.entry, "gen5_ms");
+    assert!(t.lockstep, "v_mbcnt needs the whole wave");
+    assert_eq!(t.lds_bytes, 1024);
+    for want in [
+        "[[mesh]] void gen5_ms(mesh<VsOut, void, 3, 1, topology::triangle> m",
+        "v5 = first_vertex + gid.x;",
+        "threadgroup uint lds[LDS_BYTES / 4];",
+        "m.set_primitive_count(min((m0 >> 12) & 0x7ffu, MESH_PRIMITIVES));",
+        "m.set_index(3u * lid.x + 2u,",
+        "o.pos = float4(F(v1), F(v1), F(v1), F(v1)); vexp = true;",
+        "m.set_vertex(lid.x, o)",
+    ] {
+        assert!(t.msl.contains(want), "missing {want:?} in\n{}", t.msl);
+    }
+    compile(&t.msl);
+}
+
+#[test]
+fn mesh_programs_refuse_what_metal_cannot_hold() {
+    let mut req = mesh_request(&MESH);
+    req.mesh.topology = 0;
+    assert!(translate(&req).is_err(), "points have no size to draw at");
+    let mut req = mesh_request(&MESH);
+    req.mesh.vertices = 257;
+    assert!(translate(&req).is_err());
+}
+
 #[test]
 fn code_behind_debug_flag_branches_is_not_translated() {
     let code = [
@@ -1579,4 +1655,16 @@ fn code_behind_debug_flag_branches_is_not_translated() {
     ];
     let t = compute(&code, 0, 0);
     assert!(!t.msl.contains("s_swappc_b64"), "{}", t.msl);
+}
+
+#[test]
+fn captures_keep_the_mesh_state() {
+    let req = mesh_request(&MESH);
+    let bytes = gfx10::capture::Capture::new(&req).to_bytes();
+    let c = gfx10::capture::Capture::from_bytes(&bytes).unwrap();
+    let again = c.request();
+    assert_eq!(
+        (again.stage, again.threads, again.mesh),
+        (Stage::Mesh, req.threads, req.mesh)
+    );
 }

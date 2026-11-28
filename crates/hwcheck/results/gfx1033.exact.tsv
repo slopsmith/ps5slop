@@ -656,6 +656,8 @@ draw input	PerspCentroid	agree
 draw input	PerspCentroid to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
 draw input	PerspSample	agree
 draw input	PerspSample to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
+draw mesh	LDS across waves and barrier, amplified	agree
+draw mesh	LDS across waves and barrier, fast launch	agree
 draw primitive	line strip	differ	0 of 0: ; 3 stored dwords value
 draw primitive	lines	differ	0 of 0: ; 3 stored dwords value
 draw primitive	points	agree
@@ -949,6 +951,8 @@ ds_read_addtid_b32	offset 0x0	agree
 ds_read_addtid_b32	offset 0x18	agree
 ds_read_b128	offset 0x0	agree
 ds_read_b128	offset 0x30	agree
+ds_read_b32	draw mesh: LDS across waves and barrier, amplified	agree
+ds_read_b32	draw mesh: LDS across waves and barrier, fast launch	agree
 ds_read_b32	offset 0x0	agree
 ds_read_b32	offset 0x18	agree
 ds_read_b64	offset 0x0	agree
@@ -1034,6 +1038,8 @@ ds_write_b16	offset 0x0	agree
 ds_write_b16	offset 0x18	agree
 ds_write_b16_d16_hi	offset 0x0	agree
 ds_write_b16_d16_hi	offset 0x18	agree
+ds_write_b32	draw mesh: LDS across waves and barrier, amplified	agree
+ds_write_b32	draw mesh: LDS across waves and barrier, fast launch	agree
 ds_write_b32	offset 0x0	agree
 ds_write_b32	offset 0x18	agree
 ds_write_b64	offset 0x0	agree
@@ -1432,6 +1438,8 @@ exp	draw input: PerspCentroid	agree
 exp	draw input: PerspCentroid to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
 exp	draw input: PerspSample	agree
 exp	draw input: PerspSample to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
+exp	draw mesh: LDS across waves and barrier, amplified	agree
+exp	draw mesh: LDS across waves and barrier, fast launch	agree
 exp	draw primitive: line strip	differ	0 of 0: ; 3 stored dwords value
 exp	draw primitive: lines	differ	0 of 0: ; 3 stored dwords value
 exp	draw primitive: points	agree
@@ -4074,6 +4082,8 @@ s_andn2_saveexec_b32	lane masks, wave32	agree
 s_andn2_saveexec_b64	lane masks	agree
 s_ashr_i32	base	agree
 s_ashr_i64	base	agree
+s_barrier	draw mesh: LDS across waves and barrier, amplified	agree
+s_barrier	draw mesh: LDS across waves and barrier, fast launch	agree
 s_barrier	one wave	agree
 s_bcnt0_i32_b32	base	agree
 s_bcnt0_i32_b64	base	agree
@@ -4420,6 +4430,8 @@ s_pack_ll_b32_b16	base	agree
 s_quadmask_b32	base	agree
 s_quadmask_b64	base	agree
 s_round_mode	9, then s_getreg_b32 MODE	agree
+s_sendmsg	draw mesh: LDS across waves and barrier, amplified	agree
+s_sendmsg	draw mesh: LDS across waves and barrier, fast launch	agree
 s_setpc_b64	jump over an instruction, target from s_getpc_b64	agree
 s_setprio	leaves v_add_f32's result alone	agree
 s_setreg_b32	all denormals kept	agree
@@ -8886,6 +8898,8 @@ v_interp_p1_f32	draw input: PerspCentroid	agree
 v_interp_p1_f32	draw input: PerspCentroid to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
 v_interp_p1_f32	draw input: PerspSample	agree
 v_interp_p1_f32	draw input: PerspSample to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
+v_interp_p1_f32	draw mesh: LDS across waves and barrier, amplified	agree
+v_interp_p1_f32	draw mesh: LDS across waves and barrier, fast launch	agree
 v_interp_p1_f32	draw primitive: line strip	differ	0 of 0: ; 3 stored dwords value
 v_interp_p1_f32	draw primitive: lines	differ	0 of 0: ; 3 stored dwords value
 v_interp_p1_f32	draw primitive: points	agree
@@ -9283,6 +9297,8 @@ v_interp_p2_f32	draw input: PerspCentroid	agree
 v_interp_p2_f32	draw input: PerspCentroid to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
 v_interp_p2_f32	draw input: PerspSample	agree
 v_interp_p2_f32	draw input: PerspSample to 32_32_32_32 float	differ	0 of 0: ; 5591 stored dwords value
+v_interp_p2_f32	draw mesh: LDS across waves and barrier, amplified	agree
+v_interp_p2_f32	draw mesh: LDS across waves and barrier, fast launch	agree
 v_interp_p2_f32	draw primitive: line strip	differ	0 of 0: ; 3 stored dwords value
 v_interp_p2_f32	draw primitive: lines	differ	0 of 0: ; 3 stored dwords value
 v_interp_p2_f32	draw primitive: points	agree

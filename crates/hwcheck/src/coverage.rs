@@ -77,6 +77,7 @@ pub fn coverage(op: &OpInfo) -> Coverage {
         col_format: 0x4,
         compute_rsrc2: 4 << 1 | 1 << 7,
         threads: [64, 1, 1],
+        mesh: Default::default(),
         uint_textures: 0,
         sint_textures: 0,
         coded_textures: 0,

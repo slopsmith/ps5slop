@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// `s_sendmsg` message ids are in `SIMM16[3:0]`; 9 is `MSG_GS_ALLOC_REQ`.
+const SENDMSG_GS_ALLOC_REQ: u16 = 9;
+
 /// Branches whose condition is false on the machines programs run on.
 const NEVER_TAKEN: [&str; 2] = ["s_cbranch_cdbgsys", "s_cbranch_cdbgsys_and_user"];
 
@@ -381,13 +384,13 @@ impl<'a> Tx<'a> {
             .insts
             .iter()
             .any(|(_, i)| i.op.name.starts_with("scratch_store"));
-        self.guarded = self.req.stage == Stage::Compute
+        self.guarded = self.req.stage.grouped()
             && self
                 .insts
                 .iter()
                 .any(|(pc, i)| branch_target(*pc, i).is_some_and(|t| t <= *pc));
         let insts = std::mem::take(&mut self.insts);
-        let ret = if self.req.stage == Stage::Compute {
+        let ret = if self.req.stage.grouped() {
             "return;"
         } else {
             "return o;"
@@ -447,7 +450,7 @@ impl<'a> Tx<'a> {
             self.body = format!(
                 "    uint pc = 0;\n    uint back = 0;\n    for (;;) {{\n    switch (pc) {{\n{}    default: {}\n    }}\n    }}\n",
                 self.body,
-                if self.req.stage == Stage::Compute {
+                if self.req.stage.grouped() {
                     "return;"
                 } else {
                     "return o;"
@@ -538,6 +541,15 @@ impl<'a> Tx<'a> {
             "s_endpgm" => {
                 self.end_program();
             }
+            "s_sendmsg"
+                if self.req.stage == Stage::Mesh && simm16 & 0xF == SENDMSG_GS_ALLOC_REQ =>
+            {
+                // M0: vertices in bits 0 to 10, primitives from bit 12.
+                let m0 = self.s(124);
+                self.line(&format!(
+                    "if ((lid.x & 63u) == 0u) m.set_primitive_count(min(({m0} >> 12) & 0x7ffu, MESH_PRIMITIVES));"
+                ));
+            }
             "s_code_end" | "s_nop" | "s_waitcnt" | "s_inst_prefetch" | "s_clause" | "s_sendmsg"
             | "s_waitcnt_depctr" | "s_setprio" | "s_sleep" | "s_icache_inv" | "s_trap"
             | "s_wakeup" | "s_incperflevel" | "s_decperflevel" | "s_ttracedata"
@@ -552,7 +564,7 @@ impl<'a> Tx<'a> {
                 ));
             }
             "s_barrier" => {
-                if self.req.stage == Stage::Compute {
+                if self.req.stage.grouped() {
                     self.line(
                         "threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);",
                     );
@@ -608,7 +620,7 @@ impl<'a> Tx<'a> {
                 let any = self.mask_any(if n.contains("vcc") { 106 } else { 126 });
                 let any = if self.lockstep {
                     format!("wave_any({any}, wv)")
-                } else if self.req.stage == Stage::Compute {
+                } else if self.req.stage.grouped() {
                     format!("simd_any({any})")
                 } else {
                     any
@@ -642,13 +654,13 @@ impl<'a> Tx<'a> {
                 format!("if (++back > {MAX_BACK_BRANCHES}u) {{ discard_fragment(); return o; }} ")
             }
             Stage::Vertex => format!("if (++back > {MAX_BACK_BRANCHES}u) {{ return o; }} "),
-            Stage::Compute if self.lockstep => {
+            Stage::Compute | Stage::Mesh if self.lockstep => {
                 "if (lockstep_leave(guard, ++back, wv, tg_bail)) { return; } ".into()
             }
-            Stage::Compute if self.has_barrier => {
+            Stage::Compute | Stage::Mesh if self.has_barrier => {
                 "if (guard_leave(guard, ++back, bail_at, tg_bail)) { return; } ".into()
             }
-            Stage::Compute => "if (guard_stop(guard, ++back)) { return; } ".into(),
+            Stage::Compute | Stage::Mesh => "if (guard_stop(guard, ++back)) { return; } ".into(),
         }
     }
 
@@ -656,7 +668,7 @@ impl<'a> Tx<'a> {
         match self.req.stage {
             Stage::Pixel => self.line("if (!exported) discard_fragment(); return o;"),
             Stage::Vertex => self.line("return o;"),
-            Stage::Compute => self.line("return;"),
+            Stage::Compute | Stage::Mesh => self.line("return;"),
         }
     }
 }

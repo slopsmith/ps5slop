@@ -42,6 +42,88 @@ const VERTEX: [u32; 11] = [
     0xBF81_0000, // s_endpgm
 ];
 
+// Assembled with `llvm-mc -mcpu=gfx1013 -mattr=+wavefrontsize64`.
+/// A mesh program of two waves, one group per input point: wave 0's
+/// first lane hands the group index (v5) to the group through LDS, every
+/// thread stores its index in LDS and after `s_barrier` reads the one 64
+/// threads away (the other wave's), and thread `t` of the first 8 exports
+/// vertex `8 * group + (that index & 7)` of the table at `s[8:9]`
+/// (position and one attribute). Wave 0 allocates 8 vertices and 4
+/// triangles (t, t + 1, t + 2), the last of them null.
+const MESH: [u32; 67] = [
+    0xBEFE_04C1, // s_mov_b64 exec, -1
+    0x9384_FF03,
+    0x0004_0018, // s_bfe_u32 s4, s3, 0x40018
+    0xD765_0000,
+    0x0001_00C1, // v_mbcnt_lo_u32_b32 v0, -1, 0
+    0xD766_0000,
+    0x0002_00C1, // v_mbcnt_hi_u32_b32 v0, -1, v0
+    0xD746_0000,
+    0x0401_0C04, // v_lshl_add_u32 v0, s4, 6, v0
+    0xBF07_8004, // s_cmp_lg_u32 s4, 0
+    0xBF85_0006, // s_cbranch_scc1 6
+    0xBEFE_0481, // s_mov_b64 exec, 1
+    0x7E02_02FF,
+    0x0000_0200, // v_mov_b32_e32 v1, 0x200
+    0xD834_0000,
+    0x0000_0501, // ds_write_b32 v1, v5
+    0xBEFE_04C1, // s_mov_b64 exec, -1
+    0x3404_0082, // v_lshlrev_b32_e32 v2, 2, v0
+    0xD834_0000,
+    0x0000_0002, // ds_write_b32 v2, v0
+    0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+    0xBF8A_0000, // s_barrier
+    0x3A06_00C0, // v_xor_b32_e32 v3, 64, v0
+    0x3406_0682, // v_lshlrev_b32_e32 v3, 2, v3
+    0xD8D8_0000,
+    0x0400_0003, // ds_read_b32 v4, v3
+    0x7E02_02FF,
+    0x0000_0200, // v_mov_b32_e32 v1, 0x200
+    0xD8D8_0000,
+    0x0100_0001, // ds_read_b32 v1, v1
+    0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+    0x3608_0887, // v_and_b32_e32 v4, 7, v4
+    0xBF07_8004, // s_cmp_lg_u32 s4, 0
+    0xBF85_0003, // s_cbranch_scc1 3
+    0xBEFC_03FF,
+    0x0000_4008, // s_mov_b32 m0, 0x4008
+    0xBF90_0009, // s_sendmsg sendmsg(MSG_GS_ALLOC_REQ)
+    0x7DA8_0084, // v_cmpx_gt_u32_e32 4, v0
+    0xBF88_000C, // s_cbranch_execz 12
+    0x4A0C_0081, // v_add_nc_u32_e32 v6, 1, v0
+    0x4A0E_0082, // v_add_nc_u32_e32 v7, 2, v0
+    0x340C_0C8A, // v_lshlrev_b32_e32 v6, 10, v6
+    0x340E_0E94, // v_lshlrev_b32_e32 v7, 20, v7
+    0xD772_0006,
+    0x041E_0D00, // v_or3_b32 v6, v0, v6, v7
+    0x7E12_7081, // v_bfrev_b32_e32 v9, 1
+    0x3812_0D09, // v_or_b32_e32 v9, v9, v6
+    0x7D84_0083, // v_cmp_eq_u32_e32 vcc, 3, v0
+    0x020C_1306, // v_cndmask_b32_e32 v6, v6, v9, vcc
+    0xF800_0941,
+    0x0000_0006, // exp prim v6, off, off, off done
+    0xBEFE_04C1, // s_mov_b64 exec, -1
+    0x7DA8_0088, // v_cmpx_gt_u32_e32 8, v0
+    0xBF88_000C, // s_cbranch_execz 12
+    0xD746_000A,
+    0x0411_0701, // v_lshl_add_u32 v10, v1, 3, v4
+    0x3414_1485, // v_lshlrev_b32_e32 v10, 5, v10
+    0xDC38_8000,
+    0x0C08_000A, // global_load_dwordx4 v[12:15], v10, s[8:9]
+    0xDC38_8010,
+    0x1008_000A, // global_load_dwordx4 v[16:19], v10, s[8:9] offset:16
+    0xBF8C_3F70, // s_waitcnt vmcnt(0)
+    0xF800_08CF,
+    0x0F0E_0D0C, // exp pos0 v12, v13, v14, v15 done
+    0xF800_020F,
+    0x1312_1110, // exp param0 v16, v17, v18, v19
+    0xBF81_0000, // s_endpgm
+];
+/// Threads in a [`MESH`] group, and the vertices and primitives it may export.
+const MESH_THREADS: u32 = 128;
+const MESH_VERTICES: usize = 8;
+const MESH_PRIMITIVES: u32 = 4;
+
 const CONTEXT_CONTROL: u32 = 0x28;
 const CLEAR_STATE: u32 = 0x12;
 const SET_CONTEXT_REG: u32 = 0x69;
@@ -69,8 +151,9 @@ fn set(reg: u32, values: &[u32]) -> Vec<u32> {
 }
 
 /// What only the hardware gets first: the state Mesa's drivers send once per
-/// command stream on GFX10 (`ac_init_graphics_preamble_state`).
-fn preamble() -> Vec<u32> {
+/// command stream on GFX10 (`ac_init_graphics_preamble_state`), and for
+/// `mesh` the compute units geometry waves may use, as radv sets them.
+fn preamble(mesh: bool) -> Vec<u32> {
     const LOAD_ENABLES: u32 = 1 << 31;
     const SHADOW_ENABLES: u32 = 1 << 31;
     const CU_EN_ALL: u32 = 0xFFFF;
@@ -83,6 +166,15 @@ fn preamble() -> Vec<u32> {
         set(0xB118, &[CU_EN_ALL | WAVE_LIMIT]),
         set(0xB104, &[CU_EN_ALL]),
         set(0x2_8708, &[1]),
+        if mesh {
+            [
+                set(0xB21C, &[CU_EN_ALL | WAVE_LIMIT]),
+                set(0xB204, &[CU_EN_ALL]),
+            ]
+            .concat()
+        } else {
+            Vec::new()
+        },
     ]
     .concat()
 }
@@ -477,6 +569,20 @@ pub struct Draw {
     pub user_data: Vec<u32>,
     /// Memory the draw reads besides its programs and vertices.
     pub memory: Vec<(u64, Vec<u8>)>,
+    /// The vertices come from [`MESH`], one group per [`MESH_VERTICES`] of
+    /// them, launched as this says.
+    pub mesh: Option<MeshLaunch>,
+}
+
+/// How the hardware is told to run [`MESH`] groups.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeshLaunch {
+    /// `GS_FAST_LAUNCH`, as radv launches mesh shaders on GFX10.3.
+    Fast,
+    /// GS subgroups of one ES vertex with amplified primitives, as PS5
+    /// titles set it up (SharpEmu-mac's reading of Black Myth: Wukong's
+    /// registers: `VGT_SHADER_STAGES_EN` 0x2030, `ES_VERTS_PER_SUBGRP` 1).
+    Amplified,
 }
 
 impl Draw {
@@ -502,6 +608,7 @@ impl Draw {
             covers: interp.covers(),
             user_data: Vec::new(),
             memory: Vec::new(),
+            mesh: None,
         }
     }
 }
@@ -606,13 +713,29 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
     let (sx0, sy0, sx1, sy1) = d.scissor;
     let dual = d.pixel.dual && d.blend & BLEND_ENABLE != 0;
     let blend_controls = [d.blend, BLEND_ENABLE];
+    let vertex_regs = if let Some(launch) = d.mesh {
+        mesh_regs(vertex_buffer, launch)
+    } else {
+        [
+            set(0xB120, &[(PROGRAM >> 8) as u32, (PROGRAM >> 40) as u32]),
+            set(0xB128, &[rsrc1(16), 2 << 1]),
+            set(
+                0xB130,
+                &[vertex_buffer as u32, (vertex_buffer >> 32) as u32],
+            ),
+            set(0x2_8B54, &[MAX_PRIMGRP_IN_WAVE]),
+            set(0x3_096C, &[128 | 256 << 9]),
+            set(0x3_0908, &[d.primitive, 0]),
+        ]
+        .concat()
+    };
+    let count = if d.mesh.is_some() {
+        (d.vertices.len() / MESH_VERTICES) as u32
+    } else {
+        d.vertices.len() as u32
+    };
     [
-        set(0xB120, &[(PROGRAM >> 8) as u32, (PROGRAM >> 40) as u32]),
-        set(0xB128, &[rsrc1(16), 2 << 1]),
-        set(
-            0xB130,
-            &[vertex_buffer as u32, (vertex_buffer >> 32) as u32],
-        ),
+        vertex_regs,
         set(
             0xB020,
             &[(PIXEL_PROGRAM >> 8) as u32, (PIXEL_PROGRAM >> 40) as u32],
@@ -623,10 +746,7 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
         } else {
             set(0xB030, &d.user_data)
         },
-        set(0x2_8B54, &[MAX_PRIMGRP_IN_WAVE]),
         set(0x2_8A40, &[0]),
-        set(0x3_096C, &[128 | 256 << 9]),
-        set(0x3_0908, &[d.primitive, 0]),
         set(0x3_0924, &[0, 0, 0]),
         set(0x3_0964, &[u32::MAX, 0]),
         set(0x3_097C, &[0]),
@@ -701,7 +821,51 @@ fn stream(d: &Draw, vertex_buffer: u64) -> Vec<u32> {
         set(0x2_8754, &[0, 0, 0]),
         set(0x2_8760, &[sx_blend_opt(d.blend, dual); 8]),
         packet(NUM_INSTANCES, &[1]),
-        packet(DRAW_INDEX_AUTO, &[d.vertices.len() as u32, AUTO_INDEX]),
+        packet(DRAW_INDEX_AUTO, &[count, AUTO_INDEX]),
+    ]
+    .concat()
+}
+
+/// The registers of a [`MESH`] draw, as radv sets them for a mesh shader on
+/// GFX10.3 (`radv_precompute_registers_hw_ngg`, `radv_precompute_registers_hw_ms`,
+/// `radv_emit_vgt_shader_config_gfx6`): a point list whose every point
+/// launches one group of [`MESH_THREADS`] threads. `Amplified` only changes
+/// the stages to the PS5's.
+fn mesh_regs(vertex_buffer: u64, launch: MeshLaunch) -> Vec<u32> {
+    const ES_EN_REAL: u32 = 2 << 3;
+    const GS_EN: u32 = 1 << 5;
+    const PRIMGEN_EN: u32 = 1 << 13;
+    const MAX_PRIMGRP_IN_WAVE: u32 = 2 << 15;
+    const GS_FAST_LAUNCH: u32 = 1 << 19;
+    const GS_VGPR_COMP_CNT_1: u32 = 1 << 29;
+    const LDS_GRANULES: u32 = 4;
+    const POINTLIST: u32 = 1;
+    const TRISTRIP: u32 = 2;
+    [
+        set(0xB320, &[(PROGRAM >> 8) as u32, (PROGRAM >> 40) as u32]),
+        set(
+            0xB228,
+            &[rsrc1(24) | GS_VGPR_COMP_CNT_1, 2 << 1 | LDS_GRANULES << 19],
+        ),
+        set(
+            0xB230,
+            &[vertex_buffer as u32, (vertex_buffer >> 32) as u32],
+        ),
+        set(
+            0x2_8B54,
+            &[match launch {
+                MeshLaunch::Fast => GS_EN | PRIMGEN_EN | MAX_PRIMGRP_IN_WAVE | GS_FAST_LAUNCH,
+                MeshLaunch::Amplified => ES_EN_REAL | GS_EN | PRIMGEN_EN,
+            }],
+        ),
+        set(0x2_87FC, &[MESH_VERTICES as u32]),
+        set(0x2_8B4C, &[MESH_PRIMITIVES]),
+        set(0x2_8B38, &[MESH_THREADS]),
+        set(0x2_8A44, &[1 | 1 << 11 | 1 << 22]),
+        set(0x2_8A6C, &[TRISTRIP]),
+        set(0x2_8AAC, &[1]),
+        set(0x3_096C, &[1 | 1 << 9]),
+        set(0x3_0908, &[POINTLIST, 0]),
     ]
     .concat()
 }
@@ -721,14 +885,15 @@ pub fn case(d: Draw) -> Case {
         text: format!("{} vertices", d.vertices.len()),
         graphics: true,
         stream: stream(&d, vertex_buffer),
-        preamble: preamble(),
+        preamble: preamble(d.mesh.is_some()),
         postamble: postamble(),
         target: (TARGET, WIDTH, HEIGHT, pitch),
         checked: (TARGET, pitch * HEIGHT),
         covers: d.covers.iter().map(|s| s.to_string()).collect(),
         ..Case::default()
     };
-    let code: Vec<u8> = VERTEX.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let vertex: &[u32] = if d.mesh.is_some() { &MESH } else { &VERTEX };
+    let code: Vec<u8> = vertex.iter().flat_map(|w| w.to_le_bytes()).collect();
     write_pages(&mut case.input, PROGRAM, &code);
     let code: Vec<u8> = d.pixel.code.iter().flat_map(|w| w.to_le_bytes()).collect();
     write_pages(&mut case.input, PIXEL_PROGRAM, &code);
@@ -1290,7 +1455,45 @@ pub fn cases() -> Vec<Case> {
         d.line_half_width = 1 << 4;
         out.push(case(d));
     }
+    for (name, launch) in [
+        ("fast launch", MeshLaunch::Fast),
+        ("amplified", MeshLaunch::Amplified),
+    ] {
+        let mut d = Draw::new(
+            "draw mesh",
+            format!("LDS across waves and barrier, {name}"),
+            Interp::PerspCenter,
+            Out::F32,
+            mesh_strips(),
+        );
+        d.mesh = Some(launch);
+        d.covers
+            .extend(["ds_write_b32", "ds_read_b32", "s_barrier", "s_sendmsg"]);
+        out.push(case(d));
+    }
     out.extend(texture::cases());
+    out
+}
+
+/// Vertex `k` of the strip in the quadrant from (`x0`, `y0`).
+fn mesh_corner(x0: f32, y0: f32, k: usize) -> (f32, f32) {
+    (
+        x0 + 0.05 + 0.3 * (k / 2) as f32,
+        y0 + 0.15 + 0.7 * (k % 2) as f32 - 0.01 * k as f32,
+    )
+}
+
+/// The vertex table of the mesh draw: four groups, each a strip of
+/// [`MESH_VERTICES`] vertices in its own quadrant, coloured by group and vertex.
+fn mesh_strips() -> Vec<[f32; 8]> {
+    let mut out = Vec::new();
+    for g in 0..4 {
+        let (x0, y0) = ((g % 2) as f32 - 1.0, (g / 2) as f32 - 1.0);
+        for k in 0..MESH_VERTICES {
+            let (x, y) = mesh_corner(x0, y0, k);
+            out.push([x, y, 0.5, 1.0, g as f32 / 4.0, k as f32 / 8.0, 0.25, 1.0]);
+        }
+    }
     out
 }
 
@@ -1347,6 +1550,49 @@ mod tests {
             text.iter()
                 .any(|t| t.starts_with("exp mrt0 v24, v24, v25, v25 done compr vm"))
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mesh_groups_draw_the_vertices_their_lds_exchange_picks() {
+        for mut c in cases().into_iter().filter(|c| c.opcode == "draw mesh") {
+            crate::metal::run(&mut c).unwrap();
+            assert_eq!(c.untranslated, None);
+            let (drawn, before) = (c.metal_checked(), {
+                let mut b = vec![0u8; c.checked.1 as usize];
+                crate::read_pages(&[&c.input], c.checked.0, &mut b);
+                b.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|w| u32::from_le_bytes(*w))
+                    .collect::<Vec<_>>()
+            });
+            let pitch = c.target.3 as usize / 4;
+            let at = |(x, y): (f32, f32)| {
+                let (px, py) = ((x + 1.0) * 32.0, (1.0 - y) * 32.0);
+                py as usize * pitch + px as usize
+            };
+            let mix = |p: [(f32, f32); 3], w: [f32; 3]| {
+                (
+                    p.iter().zip(w).map(|(p, w)| p.0 * w).sum::<f32>(),
+                    p.iter().zip(w).map(|(p, w)| p.1 * w).sum::<f32>(),
+                )
+            };
+            for g in 0..4 {
+                let (x0, y0) = ((g % 2) as f32 - 1.0, (g / 2) as f32 - 1.0);
+                let v = |k| mesh_corner(x0, y0, k);
+                let first = drawn[at(mix([v(0), v(1), v(2)], [1.0 / 3.0; 3]))].to_le_bytes();
+                assert!(
+                    first[0].abs_diff(g as u8 * 64) <= 2 && first[1].abs_diff(32) <= 4,
+                    "group {g}: {first:?}"
+                );
+                let null = at(mix([v(3), v(4), v(5)], [0.1, 0.1, 0.8]));
+                assert_eq!(
+                    drawn[null], before[null],
+                    "group {g} drew its null triangle"
+                );
+            }
+        }
     }
 
     #[test]

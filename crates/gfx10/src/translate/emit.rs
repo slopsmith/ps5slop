@@ -32,6 +32,7 @@ impl<'a> Tx<'a> {
             Stage::Vertex => "gen5_vs",
             Stage::Pixel => "gen5_ps",
             Stage::Compute => "gen5_cs",
+            Stage::Mesh => "gen5_ms",
         };
         Translated {
             msl,
@@ -87,7 +88,11 @@ impl<'a> Tx<'a> {
     /// Threadgroup memory: `LDS_SIZE` of `COMPUTE_PGM_RSRC2` in 512-byte units,
     /// within what Metal allows.
     fn lds_bytes(&self) -> u32 {
-        let declared = (self.req.compute_rsrc2 >> 15 & 0x1FF) * 512;
+        let declared = if self.req.stage == Stage::Mesh {
+            self.req.mesh.lds_bytes
+        } else {
+            (self.req.compute_rsrc2 >> 15 & 0x1FF) * 512
+        };
         let most = (32 << 10) - if self.lockstep { LOCKSTEP_LDS } else { 0 };
         if declared == 0 {
             most
@@ -434,6 +439,70 @@ impl<'a> Tx<'a> {
                     if shared { "PsInRaw raw" } else { "PsIn in" },
                     entry_params.join(", "),
                     body
+                ));
+            }
+            Stage::Mesh => {
+                let mesh = self.req.mesh;
+                let waves = self.req.threads[0].div_ceil(64);
+                let topology = if mesh.topology == 1 {
+                    "line"
+                } else {
+                    "triangle"
+                };
+                out.push_str(&format!(
+                    "#define MESH_VERTICES {}u\n#define MESH_PRIMITIVES {}u\n#define MESH_RETURN {{ if (vexp && lid.x < MESH_VERTICES) m.set_vertex(lid.x, o); return; }}\n",
+                    mesh.vertices, mesh.primitives
+                ));
+                out.push_str("struct VsOut {\n    float4 pos [[position]];\n");
+                for p in &self.params {
+                    out.push_str(&format!("    float4 p{p} [[user(locn{p})]];\n"));
+                }
+                out.push_str("};\n\n");
+                let mut inputs = String::from("    VsOut o = {};\n    bool vexp = false;\n");
+                if self.regs.contains("v5") {
+                    entry_params.push(format!(
+                        "constant uint& first_vertex [[buffer({})]]",
+                        binding::FIRST_VERTEX
+                    ));
+                    inputs.push_str("    v5 = first_vertex + gid.x;\n");
+                }
+                if self.regs.contains("v8") {
+                    inputs.push_str("    v8 = gid.y;\n");
+                }
+                if self.regs.contains("s3") {
+                    // Merged wave info: the wave's index in the group and the
+                    // group's waves; the one input vertex and primitive are in wave 0.
+                    inputs.push_str(&format!(
+                        "    s3 = (lid.x / 64u) << 24 | {waves}u << 28 | (lid.x < 64u ? 0x101u : 0u);\n"
+                    ));
+                }
+                init.push_str(&inputs);
+                let mut lds = if self.lds {
+                    "    threadgroup uint lds[LDS_BYTES / 4];\n"
+                } else {
+                    ""
+                }
+                .to_string();
+                if self.guarded && (self.has_barrier || self.lockstep) {
+                    lds.push_str("    threadgroup bool tg_bail;\n    uint bail_at = 0;\n    if (all(lid == 0)) tg_bail = false;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n");
+                }
+                let mut params = entry_params.join(", ");
+                if self.lockstep {
+                    lds.push_str(&format!(
+                        "    threadgroup uint lockstep_vote[{}];\n    threadgroup atomic_uint lockstep_seq[{}];\n",
+                        4 * waves,
+                        2 * waves
+                    ));
+                    if waves > 1 {
+                        lds.push_str("    if (slane == 0) atomic_store_explicit(&lockstep_seq[sgi], 0u, memory_order_relaxed);\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n");
+                    }
+                    params.push_str(", ushort sgi [[simdgroup_index_in_threadgroup]]");
+                }
+                out.push_str(&format!(
+                    "[[mesh]] void gen5_ms(mesh<VsOut, void, {}, {}, topology::{topology}> m, {params}, uint3 lid [[thread_position_in_threadgroup]], uint3 gid [[threadgroup_position_in_grid]]) {{\n{lds}{init}{}    MESH_RETURN\n}}\n",
+                    mesh.vertices,
+                    mesh.primitives,
+                    self.body.replace("return;", "MESH_RETURN")
                 ));
             }
             Stage::Compute => {

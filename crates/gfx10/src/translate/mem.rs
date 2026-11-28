@@ -149,8 +149,28 @@ impl<'a> Tx<'a> {
         };
         let stmt = match (self.req.stage, target) {
             (Stage::Vertex, 12) => format!("o.pos = {};", float4(&comps)),
-            (Stage::Vertex, 13..=16) | (Stage::Vertex, 20) | (_, 9) => String::new(),
-            (Stage::Vertex, 32..=63) => {
+            (Stage::Mesh, 12) => format!("o.pos = {}; vexp = true;", float4(&comps)),
+            (Stage::Vertex | Stage::Mesh, 13..=16) | (Stage::Vertex, 20) | (_, 9) => String::new(),
+            (Stage::Mesh, 20) => {
+                let p = &comps[0].1;
+                let corners = match self.req.mesh.topology {
+                    1 => 2,
+                    2 => 3,
+                    t => return Err(err(pc, format!("mesh output primitive type {t}"))),
+                };
+                // Vertex k's index is in bits 10k to 10k + 8; bit 31 marks a
+                // primitive that is not drawn, which repeats one vertex.
+                let sets: String = (0..corners)
+                    .map(|k| {
+                        format!(
+                            "m.set_index({corners}u * lid.x + {k}u, (({p} >> 31) != 0u) ? 0u : min(({p} >> {}u) & 0x1ffu, MESH_VERTICES - 1u)); ",
+                            10 * k
+                        )
+                    })
+                    .collect();
+                format!("if (lid.x < MESH_PRIMITIVES) {{ {sets}}}")
+            }
+            (Stage::Vertex | Stage::Mesh, 32..=63) => {
                 let n = target - 32;
                 self.params.insert(n);
                 format!("o.p{n} = {};", float4(&comps))
@@ -264,7 +284,12 @@ impl<'a> Tx<'a> {
             self.line(&format!("if (({e} & 1u) == 0u) discard_fragment();"));
         }
         if !stmt.is_empty() {
-            self.line(&format!("if ({e} & 1u) {{ {stmt} }}"));
+            let on = if self.req.stage == Stage::Mesh {
+                self.mask_on(126)
+            } else {
+                format!("{e} & 1u")
+            };
+            self.line(&format!("if ({on}) {{ {stmt} }}"));
         }
         if self.req.stage == Stage::Pixel {
             self.line("exported = true;");
@@ -832,7 +857,7 @@ impl<'a> Tx<'a> {
             return Ok(());
         }
         if !gds
-            && self.req.stage != Stage::Compute
+            && !self.req.stage.grouped()
             && matches!(name, "ds_write_addtid_b32" | "ds_read_addtid_b32")
         {
             // Fragment/vertex stages have no threadgroup memory in Metal; addtid
@@ -857,7 +882,7 @@ impl<'a> Tx<'a> {
             self.guard(&stmt);
             return Ok(());
         }
-        if gds || self.req.stage != Stage::Compute {
+        if gds || !self.req.stage.grouped() {
             return Err(err(pc, format!("unsupported LDS access {name}")));
         }
         self.lds = true;
@@ -1146,7 +1171,7 @@ impl<'a> Tx<'a> {
                     "atomic_fetch_{op}_explicit(&gds[((({m0} >> 16) + {offset}u) & 0xfffcu) >> 2], n, memory_order_relaxed)"
                 )
             } else {
-                if self.req.stage != Stage::Compute {
+                if !self.req.stage.grouped() {
                     return Err(err(pc, format!("unsupported LDS access {name}")));
                 }
                 self.lds = true;
@@ -1165,7 +1190,7 @@ impl<'a> Tx<'a> {
                 "{{ uint a = (({m0} >> 16) + {offset}u) & 0xfffcu; {d} = atomic_fetch_{op}_explicit(&gds[a >> 2], 1u, memory_order_relaxed); }}"
             )
         } else {
-            if self.req.stage != Stage::Compute {
+            if !self.req.stage.grouped() {
                 return Err(err(pc, format!("unsupported LDS access {name}")));
             }
             self.lds = true;

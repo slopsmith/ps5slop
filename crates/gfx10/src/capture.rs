@@ -4,10 +4,10 @@
 //! older versions lack the fields added after them (`PGM_RSRC1` becomes
 //! [`DEFAULT_RSRC1`]).
 
-use crate::translate::{Callee, DEFAULT_RSRC1, Request, Stage, program};
+use crate::translate::{Callee, DEFAULT_RSRC1, Mesh, Request, Stage, program};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"g10c");
-const VERSION: u32 = 11;
+const VERSION: u32 = 12;
 const GRID_BOUNDS: u32 = 1;
 const DROP_DEPTH_EXPORT: u32 = 2;
 const DUAL_SOURCE: u32 = 4;
@@ -24,6 +24,7 @@ pub struct Capture {
     pub col_format: u32,
     pub compute_rsrc2: u32,
     pub threads: [u32; 3],
+    pub mesh: Mesh,
     pub uint_textures: u32,
     pub sint_textures: u32,
     pub coded_textures: u32,
@@ -67,6 +68,7 @@ impl Capture {
             col_format: req.col_format,
             compute_rsrc2: req.compute_rsrc2,
             threads: req.threads,
+            mesh: req.mesh,
             uint_textures: req.uint_textures,
             sint_textures: req.sint_textures,
             coded_textures: req.coded_textures,
@@ -101,6 +103,7 @@ impl Capture {
             col_format: self.col_format,
             compute_rsrc2: self.compute_rsrc2,
             threads: self.threads,
+            mesh: self.mesh,
             uint_textures: self.uint_textures,
             sint_textures: self.sint_textures,
             coded_textures: self.coded_textures,
@@ -128,6 +131,7 @@ impl Capture {
             Stage::Vertex => 0,
             Stage::Pixel => 1,
             Stage::Compute => 2,
+            Stage::Mesh => 3,
         };
         let mut w = vec![
             MAGIC,
@@ -182,6 +186,12 @@ impl Capture {
             ]);
             w.extend_from_slice(&c.code);
         }
+        let m = self.mesh;
+        w.extend([
+            u32::from(m.vertices) | u32::from(m.primitives) << 16,
+            m.topology.into(),
+            m.lds_bytes,
+        ]);
         w.extend_from_slice(&self.code);
         w.iter().flat_map(|x| x.to_le_bytes()).collect()
     }
@@ -200,6 +210,7 @@ impl Capture {
             0 => Stage::Vertex,
             1 => Stage::Pixel,
             2 => Stage::Compute,
+            3 => Stage::Mesh,
             _ => return None,
         };
         let (masks, at) = if w[1] >= 2 {
@@ -274,6 +285,17 @@ impl Capture {
                 code_at += 5 + len;
             }
         }
+        let mut mesh = Mesh::default();
+        if w[1] >= 12 {
+            let m = w.get(code_at..code_at + 3)?;
+            mesh = Mesh {
+                vertices: m[0] as u16,
+                primitives: (m[0] >> 16) as u16,
+                topology: m[1] as u8,
+                lds_bytes: m[2],
+            };
+            code_at += 3;
+        }
         Some(Capture {
             stage,
             user_sgprs: w[3],
@@ -283,6 +305,7 @@ impl Capture {
             col_format: w[7],
             compute_rsrc2: w[8],
             threads: [w[9], w[10], w[11]],
+            mesh,
             uint_textures: masks[0],
             sint_textures: masks[1],
             coded_textures: coded,

@@ -22,6 +22,7 @@ pub(super) struct Bound {
 #[derive(Clone, Copy)]
 pub(super) enum Slot<'a> {
     Vertex(&'a RenderEncoder),
+    Mesh(&'a RenderEncoder),
     Fragment(&'a RenderEncoder),
     Compute(&'a ProtocolObject<dyn MTLComputeCommandEncoder>),
 }
@@ -32,6 +33,7 @@ impl Slot<'_> {
         unsafe {
             match self {
                 Slot::Vertex(e) => e.setVertexBytes_length_atIndex(data, len, index),
+                Slot::Mesh(e) => e.setMeshBytes_length_atIndex(data, len, index),
                 Slot::Fragment(e) => e.setFragmentBytes_length_atIndex(data, len, index),
                 Slot::Compute(e) => e.setBytes_length_atIndex(data, len, index),
             }
@@ -42,6 +44,7 @@ impl Slot<'_> {
         unsafe {
             match self {
                 Slot::Vertex(e) => e.setVertexTexture_atIndex(Some(t), index),
+                Slot::Mesh(e) => e.setMeshTexture_atIndex(Some(t), index),
                 Slot::Fragment(e) => e.setFragmentTexture_atIndex(Some(t), index),
                 Slot::Compute(e) => e.setTexture_atIndex(Some(t), index),
             }
@@ -52,6 +55,7 @@ impl Slot<'_> {
         unsafe {
             match self {
                 Slot::Vertex(e) => e.setVertexSamplerState_atIndex(Some(s), index),
+                Slot::Mesh(e) => e.setMeshSamplerState_atIndex(Some(s), index),
                 Slot::Fragment(e) => e.setFragmentSamplerState_atIndex(Some(s), index),
                 Slot::Compute(e) => e.setSamplerState_atIndex(Some(s), index),
             }
@@ -64,6 +68,7 @@ impl Slot<'_> {
         let usage = MTLResourceUsage::Read | MTLResourceUsage::Write;
         match self {
             Slot::Vertex(e) => e.useResource_usage_stages(r, usage, MTLRenderStages::Vertex),
+            Slot::Mesh(e) => e.useResource_usage_stages(r, usage, MTLRenderStages::Mesh),
             Slot::Fragment(e) => e.useResource_usage_stages(r, usage, MTLRenderStages::Fragment),
             Slot::Compute(e) => e.useResource_usage(r, usage),
         }
@@ -73,6 +78,7 @@ impl Slot<'_> {
         unsafe {
             match self {
                 Slot::Vertex(e) => e.setVertexBuffer_offset_atIndex(Some(b), offset, index),
+                Slot::Mesh(e) => e.setMeshBuffer_offset_atIndex(Some(b), offset, index),
                 Slot::Fragment(e) => e.setFragmentBuffer_offset_atIndex(Some(b), offset, index),
                 Slot::Compute(e) => e.setBuffer_offset_atIndex(Some(b), offset, index),
             }

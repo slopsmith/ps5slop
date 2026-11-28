@@ -43,6 +43,7 @@ pub fn request<'a>(case: &Case, code: &'a [u32]) -> Request<'a> {
         col_format: 0,
         compute_rsrc2: case.reg(0x213),
         threads: [64, 1, 1],
+        mesh: Default::default(),
         uint_textures: 0,
         sint_textures: 0,
         coded_textures: 0,
