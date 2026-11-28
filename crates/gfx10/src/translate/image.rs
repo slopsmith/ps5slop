@@ -707,7 +707,7 @@ impl<'a> Tx<'a> {
         let d = m.vdata as u16;
         let (elem, conv) = self.texel(t);
         let coded = self.req.coded_textures >> t & 1 != 0 || self.textures[t].4 == View::Bits;
-        if (coded || pck) && m.d16 {
+        if pck && m.d16 {
             return Err(err(pc, format!("unsupported form of {name}")));
         }
         let (t1, t3) = (self.tword(t, 0), self.tword(t, 1));
@@ -731,10 +731,13 @@ impl<'a> Tx<'a> {
                     };
                     let half = format!("({v} >> {}u)", 16 * (j % 2));
                     comps.push(match (elem, m.d16) {
+                        (_, true) if coded => format!("image_from_d16({half}, {t1})"),
                         ("float", false) => format!("F({v})"),
                         ("int", false) => format!("int({v})"),
                         (_, false) => v,
-                        ("float", true) => format!("float(as_type<half>(ushort({half})))"),
+                        ("float", true) => {
+                            format!("as_type<float>(image_from_half({half} & 0xffffu))")
+                        }
                         ("int", true) => format!("int(short({half}))"),
                         (_, true) => format!("({half} & 0xffffu)"),
                     });
@@ -785,7 +788,27 @@ impl<'a> Tx<'a> {
             } else {
                 (0..4).filter(|&i| m.dmask >> i & 1 != 0).collect()
             };
-            self.write_results(&mut s, m, elem, conv, &comps);
+            if m.d16 {
+                // Converted texels hold integers for integer formats only.
+                let ints = if coded {
+                    format!("image_layout(({t1} >> 20) & 0x1ffu).type - 4u < 2u")
+                } else {
+                    (elem != "float").to_string()
+                };
+                write!(
+                    s,
+                    " {{ uint4 r16 = image_to_d16(as_type<uint4>(r), {t1}, {ints});"
+                )
+                .unwrap();
+                for (j, &i) in comps.iter().enumerate() {
+                    let v = self.v(m.vdata as u16 + j as u16 / 2);
+                    let op = if j % 2 == 0 { "=" } else { "|=" };
+                    write!(s, " {v} {op} r16[{i}] << {}u;", 16 * (j % 2)).unwrap();
+                }
+                s.push_str(" }");
+            } else {
+                self.write_results(&mut s, m, elem, conv, &comps);
+            }
             self.guard(&s);
         }
         Ok(())

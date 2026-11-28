@@ -2374,81 +2374,157 @@ image_get_resinfo	cube 8_8_8_8_UNORM bilinear wrap	agree
 image_load	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_load	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load	2d 10_10_10_2_SINT bilinear wrap	agree
+image_load	2d 10_10_10_2_SINT bilinear wrap d16	agree
 image_load	2d 10_10_10_2_SNORM bilinear wrap	agree
+image_load	2d 10_10_10_2_SNORM bilinear wrap d16	agree
 image_load	2d 10_10_10_2_SSCALED bilinear wrap	agree
+image_load	2d 10_10_10_2_SSCALED bilinear wrap d16	agree
 image_load	2d 10_10_10_2_UINT bilinear wrap	agree
+image_load	2d 10_10_10_2_UINT bilinear wrap d16	agree
 image_load	2d 10_10_10_2_UNORM bilinear wrap	agree
+image_load	2d 10_10_10_2_UNORM bilinear wrap d16	agree
 image_load	2d 10_10_10_2_USCALED bilinear wrap	agree
+image_load	2d 10_10_10_2_USCALED bilinear wrap d16	agree
 image_load	2d 10_11_11_FLOAT bilinear wrap	differ	39 of 1024: 25 NaN bits, 14 value
+image_load	2d 10_11_11_FLOAT bilinear wrap d16	differ	42 of 1024: 42 NaN bits
 image_load	2d 10_11_11_SINT bilinear wrap	agree
+image_load	2d 10_11_11_SINT bilinear wrap d16	agree
 image_load	2d 10_11_11_SNORM bilinear wrap	agree
+image_load	2d 10_11_11_SNORM bilinear wrap d16	agree
 image_load	2d 10_11_11_SSCALED bilinear wrap	agree
+image_load	2d 10_11_11_SSCALED bilinear wrap d16	agree
 image_load	2d 10_11_11_UINT bilinear wrap	agree
+image_load	2d 10_11_11_UINT bilinear wrap d16	agree
 image_load	2d 10_11_11_UNORM bilinear wrap	agree
+image_load	2d 10_11_11_UNORM bilinear wrap d16	agree
 image_load	2d 10_11_11_USCALED bilinear wrap	agree
+image_load	2d 10_11_11_USCALED bilinear wrap d16	agree
 image_load	2d 11_11_10_FLOAT bilinear wrap	agree
+image_load	2d 11_11_10_FLOAT bilinear wrap d16	agree
 image_load	2d 11_11_10_SINT bilinear wrap	agree
+image_load	2d 11_11_10_SINT bilinear wrap d16	agree
 image_load	2d 11_11_10_SNORM bilinear wrap	agree
+image_load	2d 11_11_10_SNORM bilinear wrap d16	agree
 image_load	2d 11_11_10_SSCALED bilinear wrap	agree
+image_load	2d 11_11_10_SSCALED bilinear wrap d16	agree
 image_load	2d 11_11_10_UINT bilinear wrap	agree
+image_load	2d 11_11_10_UINT bilinear wrap d16	agree
 image_load	2d 11_11_10_UNORM bilinear wrap	agree
+image_load	2d 11_11_10_UNORM bilinear wrap d16	agree
 image_load	2d 11_11_10_USCALED bilinear wrap	agree
+image_load	2d 11_11_10_USCALED bilinear wrap d16	agree
 image_load	2d 16_16_16_16_FLOAT bilinear wrap	agree
+image_load	2d 16_16_16_16_FLOAT bilinear wrap d16	agree
 image_load	2d 16_16_16_16_SINT bilinear wrap	agree
+image_load	2d 16_16_16_16_SINT bilinear wrap d16	agree
 image_load	2d 16_16_16_16_SNORM bilinear wrap	agree
+image_load	2d 16_16_16_16_SNORM bilinear wrap d16	agree
 image_load	2d 16_16_16_16_SSCALED bilinear wrap	agree
+image_load	2d 16_16_16_16_SSCALED bilinear wrap d16	agree
 image_load	2d 16_16_16_16_UINT bilinear wrap	agree
+image_load	2d 16_16_16_16_UINT bilinear wrap d16	agree
 image_load	2d 16_16_16_16_UNORM bilinear wrap	agree
+image_load	2d 16_16_16_16_UNORM bilinear wrap d16	agree
 image_load	2d 16_16_16_16_USCALED bilinear wrap	agree
+image_load	2d 16_16_16_16_USCALED bilinear wrap d16	agree
 image_load	2d 16_16_FLOAT bilinear wrap	agree
+image_load	2d 16_16_FLOAT bilinear wrap d16	agree
 image_load	2d 16_16_SINT bilinear wrap	agree
+image_load	2d 16_16_SINT bilinear wrap d16	agree
 image_load	2d 16_16_SNORM bilinear wrap	agree
+image_load	2d 16_16_SNORM bilinear wrap d16	agree
 image_load	2d 16_16_SSCALED bilinear wrap	agree
+image_load	2d 16_16_SSCALED bilinear wrap d16	agree
 image_load	2d 16_16_UINT bilinear wrap	agree
+image_load	2d 16_16_UINT bilinear wrap d16	agree
 image_load	2d 16_16_UNORM bilinear wrap	agree
+image_load	2d 16_16_UNORM bilinear wrap d16	agree
 image_load	2d 16_16_USCALED bilinear wrap	agree
+image_load	2d 16_16_USCALED bilinear wrap d16	agree
 image_load	2d 16_FLOAT bilinear wrap	agree
+image_load	2d 16_FLOAT bilinear wrap d16	agree
 image_load	2d 16_SINT bilinear wrap	agree
+image_load	2d 16_SINT bilinear wrap d16	agree
 image_load	2d 16_SNORM bilinear wrap	agree
+image_load	2d 16_SNORM bilinear wrap d16	agree
 image_load	2d 16_SSCALED bilinear wrap	agree
+image_load	2d 16_SSCALED bilinear wrap d16	agree
 image_load	2d 16_UINT bilinear wrap	agree
+image_load	2d 16_UINT bilinear wrap d16	agree
 image_load	2d 16_UNORM bilinear wrap	agree
+image_load	2d 16_UNORM bilinear wrap d16	agree
 image_load	2d 16_USCALED bilinear wrap	agree
+image_load	2d 16_USCALED bilinear wrap d16	agree
 image_load	2d 24_8_UINT bilinear wrap	agree
+image_load	2d 24_8_UINT bilinear wrap d16	agree
 image_load	2d 24_8_UNORM bilinear wrap	agree
+image_load	2d 24_8_UNORM bilinear wrap d16	agree
 image_load	2d 2_10_10_10_SINT bilinear wrap	agree
+image_load	2d 2_10_10_10_SINT bilinear wrap d16	agree
 image_load	2d 2_10_10_10_SNORM bilinear wrap	agree
+image_load	2d 2_10_10_10_SNORM bilinear wrap d16	agree
 image_load	2d 2_10_10_10_SSCALED bilinear wrap	agree
+image_load	2d 2_10_10_10_SSCALED bilinear wrap d16	agree
 image_load	2d 2_10_10_10_UINT bilinear wrap	agree
+image_load	2d 2_10_10_10_UINT bilinear wrap d16	agree
 image_load	2d 2_10_10_10_UNORM bilinear wrap	agree
+image_load	2d 2_10_10_10_UNORM bilinear wrap d16	agree
 image_load	2d 2_10_10_10_USCALED bilinear wrap	agree
+image_load	2d 2_10_10_10_USCALED bilinear wrap d16	agree
 image_load	2d 32_32_32_32_FLOAT bilinear wrap	agree
+image_load	2d 32_32_32_32_FLOAT bilinear wrap d16	agree
 image_load	2d 32_32_32_32_SINT bilinear wrap	agree
+image_load	2d 32_32_32_32_SINT bilinear wrap d16	agree
 image_load	2d 32_32_32_32_UINT bilinear wrap	agree
+image_load	2d 32_32_32_32_UINT bilinear wrap d16	agree
 image_load	2d 32_32_32_FLOAT bilinear wrap	differ	894 of 1024: 894 value
+image_load	2d 32_32_32_FLOAT bilinear wrap d16	differ	1024 of 1024: 1024 value
 image_load	2d 32_32_32_SINT bilinear wrap	differ	900 of 1024: 900 value
+image_load	2d 32_32_32_SINT bilinear wrap d16	differ	1024 of 1024: 1024 value
 image_load	2d 32_32_32_UINT bilinear wrap	differ	915 of 1024: 915 value
+image_load	2d 32_32_32_UINT bilinear wrap d16	differ	1024 of 1024: 1024 value
 image_load	2d 32_32_FLOAT bilinear wrap	agree
+image_load	2d 32_32_FLOAT bilinear wrap d16	agree
 image_load	2d 32_32_SINT bilinear wrap	agree
+image_load	2d 32_32_SINT bilinear wrap d16	agree
 image_load	2d 32_32_UINT bilinear wrap	agree
+image_load	2d 32_32_UINT bilinear wrap d16	agree
 image_load	2d 32_FLOAT bilinear wrap	agree
+image_load	2d 32_FLOAT bilinear wrap d16	agree
 image_load	2d 32_FLOAT_CLAMP bilinear wrap	agree
+image_load	2d 32_FLOAT_CLAMP bilinear wrap d16	agree
 image_load	2d 32_SINT bilinear wrap	agree
+image_load	2d 32_SINT bilinear wrap d16	agree
 image_load	2d 32_UINT bilinear wrap	agree
+image_load	2d 32_UINT bilinear wrap d16	agree
 image_load	2d 4_4_4_4_UNORM bilinear wrap	agree
+image_load	2d 4_4_4_4_UNORM bilinear wrap d16	agree
 image_load	2d 4_4_UNORM bilinear wrap	agree
+image_load	2d 4_4_UNORM bilinear wrap d16	agree
 image_load	2d 5_5_5_1_UNORM bilinear wrap	agree
+image_load	2d 5_5_5_1_UNORM bilinear wrap d16	agree
 image_load	2d 5_6_5_UNORM bilinear wrap	agree
+image_load	2d 5_6_5_UNORM bilinear wrap d16	agree
 image_load	2d 5_9_9_9_FLOAT bilinear wrap	agree
+image_load	2d 5_9_9_9_FLOAT bilinear wrap d16	agree
 image_load	2d 6E4_FLOAT bilinear wrap	agree
+image_load	2d 6E4_FLOAT bilinear wrap d16	agree
 image_load	2d 7E3_FLOAT bilinear wrap	agree
+image_load	2d 7E3_FLOAT bilinear wrap d16	agree
 image_load	2d 8_24_UINT bilinear wrap	agree
+image_load	2d 8_24_UINT bilinear wrap d16	agree
 image_load	2d 8_24_UNORM bilinear wrap	agree
+image_load	2d 8_24_UNORM bilinear wrap d16	agree
 image_load	2d 8_8_8_8_SINT bilinear wrap	agree
+image_load	2d 8_8_8_8_SINT bilinear wrap d16	agree
 image_load	2d 8_8_8_8_SNORM bilinear wrap	agree
+image_load	2d 8_8_8_8_SNORM bilinear wrap d16	agree
 image_load	2d 8_8_8_8_SRGB bilinear wrap	agree
+image_load	2d 8_8_8_8_SRGB bilinear wrap d16	agree
 image_load	2d 8_8_8_8_SSCALED bilinear wrap	agree
+image_load	2d 8_8_8_8_SSCALED bilinear wrap d16	agree
 image_load	2d 8_8_8_8_UINT bilinear wrap	agree
+image_load	2d 8_8_8_8_UINT bilinear wrap d16	agree
 image_load	2d 8_8_8_8_UNORM bilinear clamp to edge	agree
 image_load	2d 8_8_8_8_UNORM bilinear clamp to opaque black border	agree
 image_load	2d 8_8_8_8_UNORM bilinear clamp to opaque white border	agree
@@ -2456,6 +2532,7 @@ image_load	2d 8_8_8_8_UNORM bilinear clamp to transparent black border	agree
 image_load	2d 8_8_8_8_UNORM bilinear compare less	agree
 image_load	2d 8_8_8_8_UNORM bilinear mirror	agree
 image_load	2d 8_8_8_8_UNORM bilinear wrap	agree
+image_load	2d 8_8_8_8_UNORM bilinear wrap d16	agree
 image_load	2d 8_8_8_8_UNORM bilinear wrap dmask 0x5	agree
 image_load	2d 8_8_8_8_UNORM bilinear wrap unorm	agree
 image_load	2d 8_8_8_8_UNORM point compare greater or equal	agree
@@ -2466,37 +2543,68 @@ image_load	2d 8_8_8_8_UNORM point unnormalized clamp	agree
 image_load	2d 8_8_8_8_UNORM point wrap	agree
 image_load	2d 8_8_8_8_UNORM trilinear wrap	agree
 image_load	2d 8_8_8_8_USCALED bilinear wrap	agree
+image_load	2d 8_8_8_8_USCALED bilinear wrap d16	agree
 image_load	2d 8_8_SINT bilinear wrap	agree
+image_load	2d 8_8_SINT bilinear wrap d16	agree
 image_load	2d 8_8_SNORM bilinear wrap	agree
+image_load	2d 8_8_SNORM bilinear wrap d16	agree
 image_load	2d 8_8_SRGB bilinear wrap	agree
+image_load	2d 8_8_SRGB bilinear wrap d16	agree
 image_load	2d 8_8_SSCALED bilinear wrap	agree
+image_load	2d 8_8_SSCALED bilinear wrap d16	agree
 image_load	2d 8_8_UINT bilinear wrap	agree
+image_load	2d 8_8_UINT bilinear wrap d16	agree
 image_load	2d 8_8_UNORM bilinear wrap	agree
+image_load	2d 8_8_UNORM bilinear wrap d16	agree
 image_load	2d 8_8_USCALED bilinear wrap	agree
+image_load	2d 8_8_USCALED bilinear wrap d16	agree
 image_load	2d 8_SINT bilinear wrap	agree
+image_load	2d 8_SINT bilinear wrap d16	agree
 image_load	2d 8_SNORM bilinear wrap	agree
+image_load	2d 8_SNORM bilinear wrap d16	agree
 image_load	2d 8_SRGB bilinear wrap	agree
+image_load	2d 8_SRGB bilinear wrap d16	agree
 image_load	2d 8_SSCALED bilinear wrap	agree
+image_load	2d 8_SSCALED bilinear wrap d16	agree
 image_load	2d 8_UINT bilinear wrap	agree
+image_load	2d 8_UINT bilinear wrap d16	agree
 image_load	2d 8_UNORM bilinear wrap	agree
+image_load	2d 8_UNORM bilinear wrap d16	agree
 image_load	2d 8_USCALED bilinear wrap	agree
+image_load	2d 8_USCALED bilinear wrap d16	agree
 image_load	2d BC1_SRGB bilinear wrap	agree
+image_load	2d BC1_SRGB bilinear wrap d16	agree
 image_load	2d BC1_UNORM bilinear wrap	agree
+image_load	2d BC1_UNORM bilinear wrap d16	agree
 image_load	2d BC2_SRGB bilinear wrap	agree
+image_load	2d BC2_SRGB bilinear wrap d16	agree
 image_load	2d BC2_UNORM bilinear wrap	agree
+image_load	2d BC2_UNORM bilinear wrap d16	agree
 image_load	2d BC3_SRGB bilinear wrap	agree
+image_load	2d BC3_SRGB bilinear wrap d16	agree
 image_load	2d BC3_UNORM bilinear wrap	agree
+image_load	2d BC3_UNORM bilinear wrap d16	agree
 image_load	2d BC4_SNORM bilinear wrap	differ	23 of 1024: 23 value
+image_load	2d BC4_SNORM bilinear wrap d16	differ	12 of 1024: 12 value
 image_load	2d BC4_UNORM bilinear wrap	agree
+image_load	2d BC4_UNORM bilinear wrap d16	agree
 image_load	2d BC5_SNORM bilinear wrap	differ	8 of 1024: 8 value
+image_load	2d BC5_SNORM bilinear wrap d16	differ	11 of 1024: 11 value
 image_load	2d BC5_UNORM bilinear wrap	differ	1 of 1024: 1 value
+image_load	2d BC5_UNORM bilinear wrap d16	agree
 image_load	2d BC6_SFLOAT bilinear wrap	agree
+image_load	2d BC6_SFLOAT bilinear wrap d16	agree
 image_load	2d BC6_UFLOAT bilinear wrap	agree
+image_load	2d BC6_UFLOAT bilinear wrap d16	agree
 image_load	2d BC7_SRGB bilinear wrap	agree
+image_load	2d BC7_SRGB bilinear wrap d16	agree
 image_load	2d BC7_UNORM bilinear wrap	agree
+image_load	2d BC7_UNORM bilinear wrap d16	agree
 image_load	2d T# from a table indexed per wave	agree
 image_load	2d X24_8_32_FLOAT bilinear wrap	agree
+image_load	2d X24_8_32_FLOAT bilinear wrap d16	agree
 image_load	2d X24_8_32_UINT bilinear wrap	agree
+image_load	2d X24_8_32_UINT bilinear wrap d16	agree
 image_load	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_load	3d 8_8_8_8_UNORM bilinear wrap	agree
 image_load	cube 8_8_8_8_UNORM bilinear wrap	agree
@@ -3714,81 +3822,157 @@ image_sample_o	cube 8_8_8_8_UNORM bilinear wrap	differ	1010 of 1024: 1010 value
 image_store	1d 8_8_8_8_UNORM bilinear wrap	agree
 image_store	1d array 8_8_8_8_UNORM bilinear wrap	agree
 image_store	2d 10_10_10_2_SINT bilinear wrap	agree
+image_store	2d 10_10_10_2_SINT bilinear wrap d16	agree
 image_store	2d 10_10_10_2_SNORM bilinear wrap	agree
+image_store	2d 10_10_10_2_SNORM bilinear wrap d16	agree
 image_store	2d 10_10_10_2_SSCALED bilinear wrap	agree
+image_store	2d 10_10_10_2_SSCALED bilinear wrap d16	agree
 image_store	2d 10_10_10_2_UINT bilinear wrap	agree
+image_store	2d 10_10_10_2_UINT bilinear wrap d16	agree
 image_store	2d 10_10_10_2_UNORM bilinear wrap	agree
+image_store	2d 10_10_10_2_UNORM bilinear wrap d16	agree
 image_store	2d 10_10_10_2_USCALED bilinear wrap	agree
+image_store	2d 10_10_10_2_USCALED bilinear wrap d16	agree
 image_store	2d 10_11_11_FLOAT bilinear wrap	differ	9 of 1024: 3 NaN bits, 6 value; 9 stored dwords value
+image_store	2d 10_11_11_FLOAT bilinear wrap d16	differ	96 of 1024: 36 NaN bits, 60 value; 96 stored dwords value
 image_store	2d 10_11_11_SINT bilinear wrap	agree
+image_store	2d 10_11_11_SINT bilinear wrap d16	agree
 image_store	2d 10_11_11_SNORM bilinear wrap	agree
+image_store	2d 10_11_11_SNORM bilinear wrap d16	agree
 image_store	2d 10_11_11_SSCALED bilinear wrap	agree
+image_store	2d 10_11_11_SSCALED bilinear wrap d16	agree
 image_store	2d 10_11_11_UINT bilinear wrap	agree
+image_store	2d 10_11_11_UINT bilinear wrap d16	agree
 image_store	2d 10_11_11_UNORM bilinear wrap	agree
+image_store	2d 10_11_11_UNORM bilinear wrap d16	agree
 image_store	2d 10_11_11_USCALED bilinear wrap	agree
+image_store	2d 10_11_11_USCALED bilinear wrap d16	agree
 image_store	2d 11_11_10_FLOAT bilinear wrap	agree
+image_store	2d 11_11_10_FLOAT bilinear wrap d16	differ	1 of 1024: 1 value; 1 stored dwords value
 image_store	2d 11_11_10_SINT bilinear wrap	agree
+image_store	2d 11_11_10_SINT bilinear wrap d16	agree
 image_store	2d 11_11_10_SNORM bilinear wrap	agree
+image_store	2d 11_11_10_SNORM bilinear wrap d16	agree
 image_store	2d 11_11_10_SSCALED bilinear wrap	agree
+image_store	2d 11_11_10_SSCALED bilinear wrap d16	agree
 image_store	2d 11_11_10_UINT bilinear wrap	agree
+image_store	2d 11_11_10_UINT bilinear wrap d16	agree
 image_store	2d 11_11_10_UNORM bilinear wrap	agree
+image_store	2d 11_11_10_UNORM bilinear wrap d16	agree
 image_store	2d 11_11_10_USCALED bilinear wrap	agree
+image_store	2d 11_11_10_USCALED bilinear wrap d16	agree
 image_store	2d 16_16_16_16_FLOAT bilinear wrap	agree
+image_store	2d 16_16_16_16_FLOAT bilinear wrap d16	agree
 image_store	2d 16_16_16_16_SINT bilinear wrap	agree
+image_store	2d 16_16_16_16_SINT bilinear wrap d16	agree
 image_store	2d 16_16_16_16_SNORM bilinear wrap	agree
+image_store	2d 16_16_16_16_SNORM bilinear wrap d16	agree
 image_store	2d 16_16_16_16_SSCALED bilinear wrap	agree
+image_store	2d 16_16_16_16_SSCALED bilinear wrap d16	agree
 image_store	2d 16_16_16_16_UINT bilinear wrap	agree
+image_store	2d 16_16_16_16_UINT bilinear wrap d16	agree
 image_store	2d 16_16_16_16_UNORM bilinear wrap	agree
+image_store	2d 16_16_16_16_UNORM bilinear wrap d16	agree
 image_store	2d 16_16_16_16_USCALED bilinear wrap	agree
+image_store	2d 16_16_16_16_USCALED bilinear wrap d16	agree
 image_store	2d 16_16_FLOAT bilinear wrap	agree
+image_store	2d 16_16_FLOAT bilinear wrap d16	agree
 image_store	2d 16_16_SINT bilinear wrap	agree
+image_store	2d 16_16_SINT bilinear wrap d16	agree
 image_store	2d 16_16_SNORM bilinear wrap	agree
+image_store	2d 16_16_SNORM bilinear wrap d16	agree
 image_store	2d 16_16_SSCALED bilinear wrap	agree
+image_store	2d 16_16_SSCALED bilinear wrap d16	agree
 image_store	2d 16_16_UINT bilinear wrap	agree
+image_store	2d 16_16_UINT bilinear wrap d16	agree
 image_store	2d 16_16_UNORM bilinear wrap	agree
+image_store	2d 16_16_UNORM bilinear wrap d16	agree
 image_store	2d 16_16_USCALED bilinear wrap	agree
+image_store	2d 16_16_USCALED bilinear wrap d16	agree
 image_store	2d 16_FLOAT bilinear wrap	agree
+image_store	2d 16_FLOAT bilinear wrap d16	agree
 image_store	2d 16_SINT bilinear wrap	agree
+image_store	2d 16_SINT bilinear wrap d16	agree
 image_store	2d 16_SNORM bilinear wrap	agree
+image_store	2d 16_SNORM bilinear wrap d16	agree
 image_store	2d 16_SSCALED bilinear wrap	agree
+image_store	2d 16_SSCALED bilinear wrap d16	agree
 image_store	2d 16_UINT bilinear wrap	agree
+image_store	2d 16_UINT bilinear wrap d16	agree
 image_store	2d 16_UNORM bilinear wrap	agree
+image_store	2d 16_UNORM bilinear wrap d16	agree
 image_store	2d 16_USCALED bilinear wrap	agree
+image_store	2d 16_USCALED bilinear wrap d16	agree
 image_store	2d 24_8_UINT bilinear wrap	agree
+image_store	2d 24_8_UINT bilinear wrap d16	agree
 image_store	2d 24_8_UNORM bilinear wrap	agree
+image_store	2d 24_8_UNORM bilinear wrap d16	agree
 image_store	2d 2_10_10_10_SINT bilinear wrap	agree
+image_store	2d 2_10_10_10_SINT bilinear wrap d16	agree
 image_store	2d 2_10_10_10_SNORM bilinear wrap	agree
+image_store	2d 2_10_10_10_SNORM bilinear wrap d16	agree
 image_store	2d 2_10_10_10_SSCALED bilinear wrap	agree
+image_store	2d 2_10_10_10_SSCALED bilinear wrap d16	agree
 image_store	2d 2_10_10_10_UINT bilinear wrap	agree
+image_store	2d 2_10_10_10_UINT bilinear wrap d16	agree
 image_store	2d 2_10_10_10_UNORM bilinear wrap	agree
+image_store	2d 2_10_10_10_UNORM bilinear wrap d16	agree
 image_store	2d 2_10_10_10_USCALED bilinear wrap	agree
+image_store	2d 2_10_10_10_USCALED bilinear wrap d16	agree
 image_store	2d 32_32_32_32_FLOAT bilinear wrap	agree
+image_store	2d 32_32_32_32_FLOAT bilinear wrap d16	agree
 image_store	2d 32_32_32_32_SINT bilinear wrap	agree
+image_store	2d 32_32_32_32_SINT bilinear wrap d16	agree
 image_store	2d 32_32_32_32_UINT bilinear wrap	agree
+image_store	2d 32_32_32_32_UINT bilinear wrap d16	agree
 image_store	2d 32_32_32_FLOAT bilinear wrap	differ	1024 of 1024: 1024 value
+image_store	2d 32_32_32_FLOAT bilinear wrap d16	differ	1024 of 1024: 1024 value
 image_store	2d 32_32_32_SINT bilinear wrap	differ	1024 of 1024: 1024 value
+image_store	2d 32_32_32_SINT bilinear wrap d16	differ	1024 of 1024: 1024 value
 image_store	2d 32_32_32_UINT bilinear wrap	differ	1024 of 1024: 1024 value
+image_store	2d 32_32_32_UINT bilinear wrap d16	differ	1024 of 1024: 1024 value
 image_store	2d 32_32_FLOAT bilinear wrap	agree
+image_store	2d 32_32_FLOAT bilinear wrap d16	agree
 image_store	2d 32_32_SINT bilinear wrap	agree
+image_store	2d 32_32_SINT bilinear wrap d16	agree
 image_store	2d 32_32_UINT bilinear wrap	agree
+image_store	2d 32_32_UINT bilinear wrap d16	agree
 image_store	2d 32_FLOAT bilinear wrap	agree
+image_store	2d 32_FLOAT bilinear wrap d16	agree
 image_store	2d 32_FLOAT_CLAMP bilinear wrap	agree
+image_store	2d 32_FLOAT_CLAMP bilinear wrap d16	agree
 image_store	2d 32_SINT bilinear wrap	agree
+image_store	2d 32_SINT bilinear wrap d16	agree
 image_store	2d 32_UINT bilinear wrap	agree
+image_store	2d 32_UINT bilinear wrap d16	agree
 image_store	2d 4_4_4_4_UNORM bilinear wrap	agree
+image_store	2d 4_4_4_4_UNORM bilinear wrap d16	agree
 image_store	2d 4_4_UNORM bilinear wrap	agree
+image_store	2d 4_4_UNORM bilinear wrap d16	agree
 image_store	2d 5_5_5_1_UNORM bilinear wrap	agree
+image_store	2d 5_5_5_1_UNORM bilinear wrap d16	agree
 image_store	2d 5_6_5_UNORM bilinear wrap	agree
+image_store	2d 5_6_5_UNORM bilinear wrap d16	agree
 image_store	2d 5_9_9_9_FLOAT bilinear wrap	agree
+image_store	2d 5_9_9_9_FLOAT bilinear wrap d16	agree
 image_store	2d 6E4_FLOAT bilinear wrap	agree
+image_store	2d 6E4_FLOAT bilinear wrap d16	agree
 image_store	2d 7E3_FLOAT bilinear wrap	agree
+image_store	2d 7E3_FLOAT bilinear wrap d16	agree
 image_store	2d 8_24_UINT bilinear wrap	agree
+image_store	2d 8_24_UINT bilinear wrap d16	agree
 image_store	2d 8_24_UNORM bilinear wrap	agree
+image_store	2d 8_24_UNORM bilinear wrap d16	agree
 image_store	2d 8_8_8_8_SINT bilinear wrap	agree
+image_store	2d 8_8_8_8_SINT bilinear wrap d16	agree
 image_store	2d 8_8_8_8_SNORM bilinear wrap	agree
+image_store	2d 8_8_8_8_SNORM bilinear wrap d16	agree
 image_store	2d 8_8_8_8_SRGB bilinear wrap	agree
+image_store	2d 8_8_8_8_SRGB bilinear wrap d16	agree
 image_store	2d 8_8_8_8_SSCALED bilinear wrap	agree
+image_store	2d 8_8_8_8_SSCALED bilinear wrap d16	agree
 image_store	2d 8_8_8_8_UINT bilinear wrap	agree
+image_store	2d 8_8_8_8_UINT bilinear wrap d16	agree
 image_store	2d 8_8_8_8_UNORM bilinear clamp to edge	agree
 image_store	2d 8_8_8_8_UNORM bilinear clamp to opaque black border	agree
 image_store	2d 8_8_8_8_UNORM bilinear clamp to opaque white border	agree
@@ -3796,6 +3980,7 @@ image_store	2d 8_8_8_8_UNORM bilinear clamp to transparent black border	agree
 image_store	2d 8_8_8_8_UNORM bilinear compare less	agree
 image_store	2d 8_8_8_8_UNORM bilinear mirror	agree
 image_store	2d 8_8_8_8_UNORM bilinear wrap	agree
+image_store	2d 8_8_8_8_UNORM bilinear wrap d16	agree
 image_store	2d 8_8_8_8_UNORM bilinear wrap dmask 0x5	agree
 image_store	2d 8_8_8_8_UNORM bilinear wrap unorm	agree
 image_store	2d 8_8_8_8_UNORM point compare greater or equal	agree
@@ -3806,22 +3991,39 @@ image_store	2d 8_8_8_8_UNORM point unnormalized clamp	agree
 image_store	2d 8_8_8_8_UNORM point wrap	agree
 image_store	2d 8_8_8_8_UNORM trilinear wrap	agree
 image_store	2d 8_8_8_8_USCALED bilinear wrap	agree
+image_store	2d 8_8_8_8_USCALED bilinear wrap d16	agree
 image_store	2d 8_8_SINT bilinear wrap	agree
+image_store	2d 8_8_SINT bilinear wrap d16	agree
 image_store	2d 8_8_SNORM bilinear wrap	agree
+image_store	2d 8_8_SNORM bilinear wrap d16	agree
 image_store	2d 8_8_SRGB bilinear wrap	agree
+image_store	2d 8_8_SRGB bilinear wrap d16	agree
 image_store	2d 8_8_SSCALED bilinear wrap	agree
+image_store	2d 8_8_SSCALED bilinear wrap d16	agree
 image_store	2d 8_8_UINT bilinear wrap	agree
+image_store	2d 8_8_UINT bilinear wrap d16	agree
 image_store	2d 8_8_UNORM bilinear wrap	agree
+image_store	2d 8_8_UNORM bilinear wrap d16	agree
 image_store	2d 8_8_USCALED bilinear wrap	agree
+image_store	2d 8_8_USCALED bilinear wrap d16	agree
 image_store	2d 8_SINT bilinear wrap	agree
+image_store	2d 8_SINT bilinear wrap d16	agree
 image_store	2d 8_SNORM bilinear wrap	agree
+image_store	2d 8_SNORM bilinear wrap d16	agree
 image_store	2d 8_SRGB bilinear wrap	agree
+image_store	2d 8_SRGB bilinear wrap d16	agree
 image_store	2d 8_SSCALED bilinear wrap	agree
+image_store	2d 8_SSCALED bilinear wrap d16	agree
 image_store	2d 8_UINT bilinear wrap	agree
+image_store	2d 8_UINT bilinear wrap d16	agree
 image_store	2d 8_UNORM bilinear wrap	agree
+image_store	2d 8_UNORM bilinear wrap d16	agree
 image_store	2d 8_USCALED bilinear wrap	agree
+image_store	2d 8_USCALED bilinear wrap d16	agree
 image_store	2d X24_8_32_FLOAT bilinear wrap	agree
+image_store	2d X24_8_32_FLOAT bilinear wrap d16	agree
 image_store	2d X24_8_32_UINT bilinear wrap	agree
+image_store	2d X24_8_32_UINT bilinear wrap d16	agree
 image_store	2d array 8_8_8_8_UNORM bilinear wrap	agree
 image_store	3d 8_8_8_8_UNORM bilinear wrap	agree
 image_store	cube 8_8_8_8_UNORM bilinear wrap	agree

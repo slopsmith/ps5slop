@@ -1268,6 +1268,36 @@ static inline uint4 image_encode(uint4 v, uint w1) {
     return raw;
 }
 
+// D16 store data (one 16-bit value) for an image of a format the program
+// converts, as the 32-bit VGPR value `image_encode` takes: a half for float
+// and normalized formats, a 16-bit integer for integer ones.
+static inline uint image_from_d16(uint h, uint w1) {
+    uint t = image_layout((w1 >> 20) & 0x1ffu).type;
+    h &= 0xffffu;
+    if (t == 4u) return h;
+    if (t == 5u) return uint(image_sext(h, 16u));
+    return image_from_half(h);
+}
+
+// A texel's channels as D16 load results (measured on RDNA2): integers
+// (`ints`) saturated to 16 bits; floats of float formats rounded toward
+// zero; others rounded to nearest, but never up to infinity (65535 gives
+// 65504) nor from below 1 to 1 (32766/32767 gives 0.99951).
+static inline uint4 image_to_d16(uint4 c, uint w1, bool ints) {
+    uint f = (w1 >> 20) & 0x1ffu, t = image_layout(f).type;
+    bool flt = t == 6u || f == 179u || f == 180u;
+    uint4 r;
+    for (uint i = 0u; i < 4u; i++) {
+        uint z = image_to_half(c[i]);
+        uint n = uint(as_type<ushort>(half(as_type<float>(c[i]))));
+        bool up = (n & 0x7fffu) == 0x7c00u || ((n & 0x7fffu) == 0x3c00u && abs(as_type<float>(c[i])) < 1.0f);
+        if (ints) r[i] = t == 5u ? uint(clamp(int(c[i]), -32768, 32767)) & 0xffffu : min(c[i], 0xffffu);
+        else if (flt || up) r[i] = z;
+        else r[i] = n;
+    }
+    return r;
+}
+
 // An S#'s LOD_BIAS (signed 6.8 fixed point in dword 2).
 static inline float lod_bias(uint w2) {
     return float(int(w2 << 18) >> 18) / 256.0f;

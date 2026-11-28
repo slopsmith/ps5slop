@@ -923,7 +923,7 @@ fn typed_buffer_stores_and_d16_image_stores_pack_their_data() {
     ];
     let t = compute(&code, 16, 16 << 1);
     assert!(t.msl.contains("buffer_store_format("));
-    assert!(t.msl.contains("as_type<half>(ushort((v1 >> 16u)))"));
+    assert!(t.msl.contains("image_from_half((v1 >> 16u) & 0xffffu)"));
     compile(&t.msl);
 }
 

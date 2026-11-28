@@ -468,6 +468,17 @@ fn room_for_every_lane(mut dim: Dim) -> Dim {
     dim
 }
 
+/// How a test's instruction reaches its image and data.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Form {
+    Plain,
+    /// The T# comes from a table at an offset known only at run time
+    /// ([`TABLE_LOAD`]).
+    Indexed,
+    /// Data are 16-bit, two per VGPR.
+    D16,
+}
+
 /// How a test's float coordinates are chosen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Coords {
@@ -571,14 +582,17 @@ fn case(
     samp: usize,
     dmask: u32,
     coords: Coords,
-    indexed: bool,
+    form: Form,
 ) -> Option<Case> {
+    let indexed = form == Form::Indexed;
+    let d16 = form == Form::D16;
     let unorm = coords == Coords::Texels;
     let args = args(op.name, dim);
     if args.len() > 13 {
         return None;
     }
-    let inst = encode(op, dim, dmask, unorm);
+    let mut inst = encode(op, dim, dmask, unorm);
+    inst[1] |= (d16 as u32) << 31;
     let decoded = decode(&inst).ok()?;
     if decoded.op.name != op.name {
         return None;
@@ -620,6 +634,9 @@ fn case(
     if indexed {
         variant = format!("{} T# from a table indexed per wave", dim.name);
     }
+    if d16 {
+        variant += " d16";
+    }
     let seed = format!("{} {variant}", op.name);
     let integer = !uses_sampler(op.name);
     let mut case = build(Test {
@@ -634,6 +651,8 @@ fn case(
         out_names: &OUT_NAMES,
         dst: if kind == "UINT" || kind == "SINT" {
             Dst::Bits
+        } else if d16 && !store {
+            Dst::PkF16
         } else {
             Dst::F32
         },
@@ -718,6 +737,9 @@ const SWEEP: [&str; 11] = [
     "image_gather4",
     "image_gather4_c",
 ];
+
+/// Opcodes of [`SWEEP`] that also run over every format with 16-bit data.
+const D16: [&str; 2] = ["image_load", "image_store"];
 
 /// Opcodes that also run with their T# loaded from a table at an offset
 /// known only at run time ([`TABLE_LOAD`]).
@@ -912,20 +934,28 @@ fn image_cases() -> Vec<Case> {
             0xF
         };
         for dim in dims(op.name) {
-            out.extend(case(op, dim, base, 0, dmask, Coords::Random, false));
+            out.extend(case(op, dim, base, 0, dmask, Coords::Random, Form::Plain));
         }
         if !atomic {
             for f in [r32_float, rgba16_float] {
-                out.extend(case(op, two_d, f, 0, dmask, Coords::Random, false));
+                out.extend(case(op, two_d, f, 0, dmask, Coords::Random, Form::Plain));
             }
         }
         if QUADS.contains(&op.name) {
             for s in [TRILINEAR, POINT_MIPS] {
-                out.extend(case(op, two_d, base, s, dmask, Coords::Quads, false));
+                out.extend(case(op, two_d, base, s, dmask, Coords::Quads, Form::Plain));
             }
         }
         if INDEXED.contains(&op.name) {
-            out.extend(case(op, two_d, base, 0, dmask, Coords::Random, true));
+            out.extend(case(
+                op,
+                two_d,
+                base,
+                0,
+                dmask,
+                Coords::Random,
+                Form::Indexed,
+            ));
         }
         if COMPARED.contains(&op.name) {
             for f in DEPTH_FORMATS {
@@ -936,7 +966,7 @@ fn image_cases() -> Vec<Case> {
                     COMPARE_LESS,
                     dmask,
                     Coords::Random,
-                    false,
+                    Form::Plain,
                 ));
             }
         }
@@ -944,15 +974,28 @@ fn image_cases() -> Vec<Case> {
             let writes = op.name.starts_with("image_store");
             let storable = |f: usize| !(writes && FORMATS[f].0.starts_with("BC"));
             for f in (0..FORMATS.len()).filter(|&f| f != base && storable(f)) {
-                out.extend(case(op, two_d, f, 0, dmask, Coords::Random, false));
+                out.extend(case(op, two_d, f, 0, dmask, Coords::Random, Form::Plain));
+            }
+            if D16.contains(&op.name) {
+                for f in (0..FORMATS.len()).filter(|&f| storable(f)) {
+                    out.extend(case(op, two_d, f, 0, dmask, Coords::Random, Form::D16));
+                }
             }
             for s in 1..SAMPLERS.len() {
-                out.extend(case(op, two_d, base, s, dmask, Coords::Random, false));
+                out.extend(case(op, two_d, base, s, dmask, Coords::Random, Form::Plain));
             }
-            out.extend(case(op, two_d, base, 0, 0x5, Coords::Random, false));
+            out.extend(case(op, two_d, base, 0, 0x5, Coords::Random, Form::Plain));
             // Unnormalized coordinates need a clamping sampler (Vulkan's rule).
             let clamp = if uses_sampler(op.name) { 4 } else { 0 };
-            out.extend(case(op, two_d, base, clamp, dmask, Coords::Texels, false));
+            out.extend(case(
+                op,
+                two_d,
+                base,
+                clamp,
+                dmask,
+                Coords::Texels,
+                Form::Plain,
+            ));
         }
     }
     out
@@ -1033,7 +1076,7 @@ mod tests {
                 0,
                 0xF,
                 Coords::Random,
-                false,
+                Form::Plain,
             )
             .unwrap()
             .text
