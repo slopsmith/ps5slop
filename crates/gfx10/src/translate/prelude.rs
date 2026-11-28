@@ -1465,6 +1465,54 @@ static inline float4 sample_coded(T t, uint slice, float2 uv, float lod, uint4 s
     return filter_blend(a, coded_level(t, slice, uv, min(uint(l0) + 1u, uint(last)), linear, sw, w1, w3), f);
 }
 
+// Texel `p` of level `l` of a coded 3D image, as `coded_texel` reads 2D ones.
+static inline float4 coded_texel3(texture3d<uint> t, int3 p, int3 size, uint l, uint4 sw, uint w1, uint w3) {
+    int x = tex_wrap(p.x, size.x, sw.x & 7u), y = tex_wrap(p.y, size.y, (sw.x >> 3) & 7u);
+    int z = tex_wrap(p.z, size.z, (sw.x >> 6) & 7u);
+    if (x < 0 || y < 0 || z < 0) {
+        return float4(border_component(sw.w, 0u), border_component(sw.w, 1u),
+                      border_component(sw.w, 2u), border_component(sw.w, 3u));
+    }
+    return as_type<float4>(image_decode(t.read(uint3(x, y, z), l), w1, w3));
+}
+
+// One level of a coded 3D image sampled at `uvw`, filtered in all three
+// directions with 8-bit positions as `coded_level` does in two (assumed).
+static inline float4 coded_level3(texture3d<uint> t, float3 uvw, uint l, bool linear, uint4 sw, uint w1, uint w3) {
+    int3 size = int3(t.get_width(l), t.get_height(l), t.get_depth(l));
+    float3 p = uvw * float3(size);
+    if (!linear) {
+        return coded_texel3(t, int3(floor(rint(p * 256.0f) / 256.0f)), size, l, sw, w1, w3);
+    }
+    float3 q = rint((p - 0.5f) * 256.0f) / 256.0f, b = floor(q), f = q - b;
+    int3 i = int3(b);
+    float4 s[2];
+    for (int k = 0; k < 2; k++) {
+        float4 t00 = coded_texel3(t, i + int3(0, 0, k), size, l, sw, w1, w3);
+        float4 t10 = coded_texel3(t, i + int3(1, 0, k), size, l, sw, w1, w3);
+        float4 t01 = coded_texel3(t, i + int3(0, 1, k), size, l, sw, w1, w3);
+        float4 t11 = coded_texel3(t, i + int3(1, 1, k), size, l, sw, w1, w3);
+        s[k] = filter_blend(filter_blend(t00, t10, f.x), filter_blend(t01, t11, f.x), f.y);
+    }
+    return filter_blend(s[0], s[1], f.z);
+}
+
+// `sample_coded` on a 3D image.
+static inline float4 sample_coded3(texture3d<uint> t, float3 uvw, float lod, uint4 sw, uint w1, uint w3) {
+    uint type = image_layout((w1 >> 20) & 0x1ffu).type;
+    bool integer = type == 4u || type == 5u;
+    bool linear = !integer && ((lod > 0.0f ? sw.z >> 22 : sw.z >> 20) & 1u) != 0u;
+    uint mip = (sw.z >> 26) & 3u;
+    float last = float(t.get_num_mip_levels() - 1u);
+    float l = clamp(lod, 0.0f, last);
+    if (mip == 0u) return coded_level3(t, uvw, 0u, linear, sw, w1, w3);
+    if (mip == 1u || integer) return coded_level3(t, uvw, uint(floor(l + 0.5f)), linear, sw, w1, w3);
+    float l0 = floor(l), f = rint((l - l0) * 256.0f) / 256.0f;
+    float4 a = coded_level3(t, uvw, uint(l0), linear, sw, w1, w3);
+    if (f == 0.0f) return a;
+    return filter_blend(a, coded_level3(t, uvw, min(uint(l0) + 1u, uint(last)), linear, sw, w1, w3), f);
+}
+
 // A gather's four texels of a coded image, component `c` decoded.
 // Gathers of 24_8_UNORM read 0 (measured for component x; samples of it
 // and gathers of 24_8_UINT read the texels).

@@ -369,7 +369,7 @@ impl<'a> Tx<'a> {
         let implicit_lod = matches!(flags.as_slice(), [] | ["b"] | ["cl"] | ["b", "cl"]);
         // Formats Metal lacks are read raw and filtered by the program.
         let coded = self.req.coded_textures >> t & 1 != 0;
-        if coded && !matches!(kind, TextureKind::Tex2d | TextureKind::Tex2dArray) {
+        if coded && kind == TextureKind::Cube {
             return Err(err(
                 pc,
                 format!("{name} of a format Metal lacks on {kind:?}"),
@@ -454,8 +454,13 @@ impl<'a> Tx<'a> {
         } else if coded && !get_lod {
             let lod = lod.or(deriv_lod).unwrap_or_else(|| "0.0f".into());
             let (t1, t3) = (self.tword(t, 0), self.tword(t, 1));
+            let at = if kind == TextureKind::Tex3d {
+                format!("sample_coded3(t{t}, {coord}")
+            } else {
+                format!("sample_coded(t{t}, {slice}, {uv}")
+            };
             s = format!(
-                "float4 r = sample_coded(t{t}, {slice}, {uv}, {lod}, uint4(user[{w}], user[{}], user[{}], user[{}]), {t1}, {t3});",
+                "float4 r = {at}, {lod}, uint4(user[{w}], user[{}], user[{}], user[{}]), {t1}, {t3});",
                 w + 1,
                 w + 2,
                 w + 3,
@@ -711,6 +716,9 @@ impl<'a> Tx<'a> {
             return Err(err(pc, format!("unsupported form of {name}")));
         }
         let (t1, t3) = (self.tword(t, 0), self.tword(t, 1));
+        // A T# of format 0 reads zeros and drops stores (measured), while
+        // the host binds a placeholder texture.
+        write!(inside, " && ({t1} & 0x1ff00000u) != 0u").unwrap();
         // The `_pck` forms move the element's dwords, one VGPR per DMASK bit.
         let dwords = m.dmask.count_ones() as usize;
         if store {

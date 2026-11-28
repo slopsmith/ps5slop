@@ -365,7 +365,15 @@ pub struct VolumeLevel {
     pub size: (u32, u32, u32),
     pitch: u32,
     offset: u64,
+    /// In the mip tail: where the level starts in the slab's first block.
+    tail: Option<(u32, u32)>,
 }
+
+/// Element sizes of a 256-byte 3D block, per log2 of the element size
+/// (addrlib's `Block256_3d`): mip tail levels start at multiples of them.
+const BLOCK_256_3D: [(u32, u32); 5] = [(8, 4), (4, 4), (4, 4), (4, 2), (2, 2)];
+/// Levels a thick 4 KiB block's mip tail holds (addrlib's `GetMaxNumMipsInTail`).
+const TAIL_LEVELS: u32 = 5;
 
 /// Address bit n of an element inside a `SW_4KB_S` 3D block, per log2 of
 /// the element size: (axis, bit), axis 3 for a byte-address bit.
@@ -444,7 +452,7 @@ const STANDARD_3D: [[(u8, u8); 12]; 5] = {
 impl Volume {
     /// The layout of a `width` x `height` x `depth` surface with `levels`
     /// mip levels; `None` for element sizes other than 1 to 16 bytes, or when
-    /// level 0 is already in the mip tail. Levels in the tail are left out.
+    /// level 0 is already in the mip tail.
     pub fn new(bpe: u32, width: u32, height: u32, depth: u32, levels: u32) -> Option<Self> {
         if !bpe.is_power_of_two() || bpe > 16 {
             return None;
@@ -456,13 +464,11 @@ impl Volume {
         // With mips, a thick 4 KiB block halves its tail height and holds at most 5 levels.
         let tail = (block.0, block.1 / 2);
         let mut sizes = Vec::new();
+        // Levels are sized in elements, rounding up as addrlib's `GetMipSize` does.
+        let shift = |n: u32, i: u32| n.max(1).div_ceil(1 << i);
         for i in 0..levels {
-            let size = (
-                (width >> i).max(1),
-                (height >> i).max(1),
-                (depth >> i).max(1),
-            );
-            if levels > 1 && size.0 <= tail.0 && size.1 <= tail.1 && levels - i <= 5 {
+            let size = (shift(width, i), shift(height, i), shift(depth, i));
+            if levels > 1 && size.0 <= tail.0 && size.1 <= tail.1 && levels - i <= TAIL_LEVELS {
                 break;
             }
             sizes.push(size);
@@ -470,11 +476,25 @@ impl Volume {
         if sizes.is_empty() {
             return None;
         }
-        let tail_bytes = if (sizes.len() as u32) < levels {
-            4096
-        } else {
-            0
-        };
+        // The tail's levels sit in the slab's first block, from the largest
+        // at tail slot TAIL_LEVELS - 1 down; slot m starts at byte m * 256,
+        // whose bit 9 gives its x and bits 8 and 10 its y in 256-byte blocks
+        // (addrlib's `ComputeSurfaceInfoMacroTiled`).
+        let first_tail = sizes.len() as u32;
+        let unit = BLOCK_256_3D[bpe_log2 as usize];
+        let tails: Vec<VolumeLevel> = (first_tail..levels)
+            .map(|i| {
+                let at = (TAIL_LEVELS - 1 - (i - first_tail)) << 8;
+                let (x, y) = (at >> 9 & 1, at >> 8 & 1 | at >> 9 & 2);
+                VolumeLevel {
+                    size: (shift(width, i), shift(height, i), shift(depth, i)),
+                    pitch: block.0,
+                    offset: 0,
+                    tail: Some((x * unit.0, y * unit.1)),
+                }
+            })
+            .collect();
+        let tail_bytes = if tails.is_empty() { 0 } else { 4096 };
         let slab_bytes = |s: (u32, u32, u32)| {
             u64::from(s.0.next_multiple_of(block.0))
                 * u64::from(s.1.next_multiple_of(block.1))
@@ -488,13 +508,16 @@ impl Volume {
                 size,
                 pitch: size.0.next_multiple_of(block.0),
                 offset,
+                tail: None,
             });
             offset += slab_bytes(size);
         }
+        let mut levels: Vec<VolumeLevel> = out.into_iter().flatten().collect();
+        levels.extend(tails);
         Some(Self {
             bpe_log2,
             block,
-            levels: out.into_iter().flatten().collect(),
+            levels,
             slab: offset,
         })
     }
@@ -509,6 +532,10 @@ impl Volume {
         let l = &self.levels[level];
         let (bw, bh, bd) = self.block;
         let block = u64::from(y / bh) * u64::from(l.pitch / bw) + u64::from(x / bw);
+        let (x, y) = match l.tail {
+            Some((tx, ty)) => (x + tx, y + ty),
+            None => (x, y),
+        };
         let within = STANDARD_3D[self.bpe_log2 as usize]
             .iter()
             .enumerate()
@@ -783,10 +810,17 @@ mod tests {
     }
 
     #[test]
-    fn standard_3d_levels_in_the_mip_tail_are_left_out() {
+    fn standard_3d_levels_in_the_mip_tail_share_the_first_block() {
         let v = Volume::new(4, 16, 16, 16, 5).unwrap();
-        assert_eq!(v.levels.len(), 1);
+        assert_eq!(v.levels.len(), 5);
         assert_eq!(v.offset(0, 0, 0, 0), 4096);
+        // Tail slot 4 (byte 1024, y 2 in 256-byte blocks of 4x4x4) holds
+        // level 1, slot 3 (x 1, y 1) level 2, slot 1 (y 1) level 4.
+        let at = |x, y| v.offset(0, x, y, 0) - 4096;
+        assert_eq!(v.offset(1, 0, 0, 0), at(0, 8));
+        assert_eq!(v.offset(2, 0, 0, 0), at(4, 4));
+        assert_eq!(v.offset(4, 0, 0, 0), at(0, 4));
+        assert_eq!(v.offset(1, 0, 0, 8), v.offset(1, 0, 0, 0) + v.slab);
         assert_eq!(Volume::new(4, 8, 8, 8, 2), None);
         assert_eq!(Volume::new(1, 4, 4, 16, 1).unwrap().offset(0, 0, 0, 1), 4);
     }

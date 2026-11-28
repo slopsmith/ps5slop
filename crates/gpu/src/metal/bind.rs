@@ -277,6 +277,8 @@ impl Metal {
                     } else if access != Access::Sample {
                         if image.address == 0 || image.kind < 8 {
                             None
+                        } else if image.format == 0 {
+                            self.null_texture(kind)
                         } else {
                             let t = self.storage_image(host, image, kind);
                             if view == View::Bits || program.coded_textures >> slot & 1 != 0 {
@@ -286,7 +288,7 @@ impl Metal {
                                     .and_then(without_srgb)
                             }
                         }
-                    } else if image.address == 0 || image.kind < 8 {
+                    } else if image.address == 0 || image.kind < 8 || image.format == 0 {
                         self.null_texture(kind)
                     } else {
                         let coded = program.coded_textures >> slot & 1 != 0;

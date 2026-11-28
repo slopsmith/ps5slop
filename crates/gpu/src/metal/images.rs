@@ -474,16 +474,18 @@ impl Metal {
     ) -> Option<Retained<Texture>> {
         let (w, h, d) = (image.width, image.height, image.depth);
         let one = w == 1 && h == 1 && d == 1;
-        if image.kind != 10 || image.base_level != 0 || is_compressed(format) {
+        if image.kind != 10 || image.base_level != 0 {
             return None;
         }
+        // Block-compressed formats are laid out in elements of 4x4x1 texels.
+        let e = if is_compressed(format) { 4 } else { 1 };
         let layout = if one {
             None
         } else if image.raw_tile == 5 {
             Some(crate::tiling::Volume::new(
                 bpe,
-                w,
-                h,
+                w.div_ceil(e),
+                h.div_ceil(e),
                 d,
                 image.last_level + 1,
             )?)
@@ -496,6 +498,7 @@ impl Metal {
             return Some(tex.clone());
         }
         let bpe = bpe as usize;
+        // Per level: its size in texels, and its elements in rows.
         let levels: Vec<((u32, u32, u32), Vec<u8>)> = match &layout {
             None => {
                 let mut texel = vec![0u8; bpe];
@@ -511,7 +514,8 @@ impl Metal {
                 }
                 (0..v.levels.len())
                     .map(|l| {
-                        let (lw, lh, ld) = v.levels[l].size;
+                        let size = ((w >> l).max(1), (h >> l).max(1), (d >> l).max(1));
+                        let (lw, lh, ld) = (size.0.div_ceil(e), size.1.div_ceil(e), size.2);
                         let mut linear = vec![0u8; lw as usize * lh as usize * ld as usize * bpe];
                         let mut at = 0;
                         for z in 0..ld {
@@ -525,7 +529,7 @@ impl Metal {
                                 }
                             }
                         }
-                        ((lw, lh, ld), linear)
+                        (size, linear)
                     })
                     .collect()
             }
@@ -550,6 +554,7 @@ impl Metal {
         };
         for (level, ((w, h, d), mut linear)) in levels.into_iter().enumerate() {
             let (w, h, d) = (w as usize, h as usize, d as usize);
+            let (row, rows) = (w.div_ceil(e as usize), h.div_ceil(e as usize));
             unsafe {
                 tex.replaceRegion_mipmapLevel_slice_withBytes_bytesPerRow_bytesPerImage(
                     MTLRegion {
@@ -563,8 +568,8 @@ impl Metal {
                     level,
                     0,
                     NonNull::new(linear.as_mut_ptr())?.cast(),
-                    w * bpe,
-                    w * h * bpe,
+                    row * bpe,
+                    row * rows * bpe,
                 );
             }
         }
@@ -652,6 +657,9 @@ impl Metal {
             d.setHeight(1);
         }
         d.setStorageMode(MTLStorageMode::Shared);
+        // Programs may also bind it for images they store to and read
+        // nothing from (format 0), whose accesses they drop.
+        d.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::ShaderWrite);
         let t = self.device.newTextureWithDescriptor(&d)?;
         let zero = [0u8; 4];
         for slice in 0..slices {

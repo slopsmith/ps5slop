@@ -477,6 +477,11 @@ enum Form {
     Indexed,
     /// Data are 16-bit, two per VGPR.
     D16,
+    /// The image is in `SW_4KB_S` over random bytes, so the hardware reads
+    /// it by its own swizzle and the renderer detiles it by ours.
+    Standard4k,
+    /// The T#'s format field is 0 (`IMG_FMT_INVALID`).
+    NoFormat,
 }
 
 /// How a test's float coordinates are chosen.
@@ -637,6 +642,13 @@ fn case(
     if d16 {
         variant += " d16";
     }
+    let tiled = form == Form::Standard4k;
+    if tiled {
+        variant += " SW_4KB_S";
+    }
+    if form == Form::NoFormat {
+        variant = format!("{} format 0", dim.name);
+    }
     let seed = format!("{} {variant}", op.name);
     let integer = !uses_sampler(op.name);
     let mut case = build(Test {
@@ -660,6 +672,13 @@ fn case(
         inputs: records(&args, dim, writes, integer, coords, &seed),
     });
     let mut table: Vec<u32> = descriptor(dim, fcode, levels).to_vec();
+    const SW_4KB_S: u32 = 5;
+    if tiled {
+        table[3] |= SW_4KB_S << 20;
+    }
+    if form == Form::NoFormat {
+        table[1] &= !(0x1FF << 20);
+    }
     table.extend(sampler(samp));
     let table: Vec<u8> = table.iter().flat_map(|w| w.to_le_bytes()).collect();
     write_pages(&mut case.input, DESC, &table);
@@ -668,6 +687,8 @@ fn case(
         return Some(case);
     }
     let bytes = texture_bytes(dim, bits, fname.starts_with("BC"), levels);
+    // Room for the padding of 4 KiB blocks and a mip tail.
+    let bytes = if tiled { 4 * bytes + 0x1_0000 } else { bytes };
     let mut rng = Rng::new(&format!("texture {fname} {}", dim.name));
     let half = fname.starts_with("16");
     write_pages(
@@ -736,6 +757,21 @@ const SWEEP: [&str; 11] = [
     "image_sample_c_lz",
     "image_gather4",
     "image_gather4_c",
+];
+
+/// Opcodes of [`SWEEP`] that also read 3D images in `SW_4KB_S`, over a
+/// format of each element size and block-compressed ones.
+const STANDARD_4K: [&str; 2] = ["image_load", "image_load_mip"];
+const STANDARD_4K_FORMATS: [&str; 9] = [
+    "8_UNORM",
+    "16_FLOAT",
+    "8_8_8_8_UNORM",
+    "32_32_FLOAT",
+    "32_32_32_32_FLOAT",
+    "BC1_UNORM",
+    "BC3_UNORM",
+    "BC4_UNORM",
+    "BC5_UNORM",
 ];
 
 /// Opcodes of [`SWEEP`] that also run over every format with 16-bit data.
@@ -975,6 +1011,38 @@ fn image_cases() -> Vec<Case> {
             let storable = |f: usize| !(writes && FORMATS[f].0.starts_with("BC"));
             for f in (0..FORMATS.len()).filter(|&f| f != base && storable(f)) {
                 out.extend(case(op, two_d, f, 0, dmask, Coords::Random, Form::Plain));
+            }
+            if matches!(op.name, "image_load" | "image_store" | "image_sample_l") {
+                for dim in [two_d, DIMS[2]] {
+                    out.extend(case(
+                        op,
+                        dim,
+                        base,
+                        0,
+                        dmask,
+                        Coords::Random,
+                        Form::NoFormat,
+                    ));
+                }
+            }
+            if STANDARD_4K.contains(&op.name) {
+                for f in STANDARD_4K_FORMATS {
+                    out.extend(case(
+                        op,
+                        DIMS[2],
+                        format(f),
+                        0,
+                        dmask,
+                        Coords::Random,
+                        Form::Standard4k,
+                    ));
+                }
+            }
+            if op.name == "image_sample_l" {
+                let three_d = DIMS[2];
+                for f in (0..FORMATS.len()).filter(|&f| f != base) {
+                    out.extend(case(op, three_d, f, 0, dmask, Coords::Random, Form::Plain));
+                }
             }
             if D16.contains(&op.name) {
                 for f in (0..FORMATS.len()).filter(|&f| storable(f)) {
