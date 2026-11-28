@@ -601,25 +601,43 @@ fn translate_expanded(
                 .extend([m.srsrc as u16 + 1, m.srsrc as u16 + 3]);
         }
     }
-    let mut tx = Tx::new(req, insts);
-    tx.runs = exp.runs;
-    tx.syms = Some(syms);
-    tx.mem_write = dry.mem_write;
-    tx.read_anywhere = (!dry.movrel).then(|| dry.live_sgprs());
-    tx.atomic_textures = dry
+    let read_anywhere = (!dry.movrel).then(|| dry.live_sgprs());
+    let setup = |masks: (u32, u32)| {
+        let mut tx = Tx::new(req, insts.clone());
+        tx.runs = exp.runs.clone();
+        tx.syms = Some(syms.clone());
+        tx.mem_write = dry.mem_write;
+        tx.read_anywhere = read_anywhere.clone();
+        tx.bits_textures = bits.clone();
+        tx.heap_loads = heap_loads.clone();
+        (tx.atomic_textures, tx.read_write_textures) = masks;
+        tx
+    };
+    let mask = |tx: &Tx, access: Access| {
+        tx.textures
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.3 == access)
+            .fold(0, |m, (i, _)| m | 1 << i)
+    };
+    // Slots of images that atomics or reads and writes share declare other
+    // texel types, so they are found by a pass that numbers slots as the
+    // last one does (the first pass, not knowing descriptor sources, may
+    // merge slots).
+    let mut masks = (0, 0);
+    if dry
         .textures
         .iter()
-        .enumerate()
-        .filter(|(_, t)| t.3 == Access::Atomic)
-        .fold(0, |m, (i, _)| m | 1 << i);
-    tx.bits_textures = bits;
-    tx.heap_loads = heap_loads;
-    tx.read_write_textures = dry
-        .textures
-        .iter()
-        .enumerate()
-        .filter(|(_, t)| t.3 == Access::ReadWrite)
-        .fold(0, |m, (i, _)| m | 1 << i);
+        .any(|t| matches!(t.3, Access::Atomic | Access::ReadWrite))
+    {
+        let mut probe = setup(masks);
+        probe.run()?;
+        masks = (
+            mask(&probe, Access::Atomic),
+            mask(&probe, Access::ReadWrite),
+        );
+    }
+    let mut tx = setup(masks);
     tx.run()?;
     if req.grid_bounds && tx.lockstep && req.threads[1..].iter().any(|&t| t > 1) {
         return Err(err(

@@ -42,7 +42,7 @@ The oracle is `llvm-mc --disassemble -mcpu=gfx1013` from the dev shell; `tests/l
 
 ## Translation model
 
-`translate::translate(&Request) -> Result<Translated, TranslateError>`. The request carries the code, the stage, the register state the program starts with and per-draw choices (integer texture slots, grid bounds, a dropped depth export). The result is one MSL library plus what the renderer must bind: textures, samplers, constant buffers, guest memory, GDS, the loop guard. Binding indices are in `translate::binding`. Translation is two passes: a dry run finds descriptor sources, live SGPRs and image atomics, the second emits MSL.
+`translate::translate(&Request) -> Result<Translated, TranslateError>`. The request carries the code, the stage, the register state the program starts with and per-draw choices (integer texture slots, grid bounds, a dropped depth export). The result is one MSL library plus what the renderer must bind: textures, samplers, constant buffers, guest memory, GDS, the loop guard. Binding indices are in `translate::binding`. Translation is two passes: a dry run finds descriptor sources and live SGPRs, the second emits MSL. Where images take atomics or are both read and written, a pass with the sources known comes between, to find those slots: they declare other texel types, and the dry run, not knowing where descriptors come from, may number slots differently.
 
 ### Lanes and registers
 

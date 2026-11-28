@@ -1132,6 +1132,36 @@ fn samplers_indexed_by_a_buffer_dword_resolve() {
 }
 
 #[test]
+fn an_atomic_image_after_a_reloaded_t_sharp_takes_an_integer_texture() {
+    let code = [
+        0xF40C_0200,
+        0xFA00_0020, // s_load_dwordx8 s[8:15], s[0:1], 0x20
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xF11C_0108,
+        0x00A2_0008, // image_gather4_lz v[0:3], v[8:9], s[8:15], s[20:23] dmask:0x1 dim:2D
+        0xF40C_0200,
+        0xFA00_0040, // s_load_dwordx8 s[8:15], s[0:1], 0x40
+        0xBF8C_C07F, // s_waitcnt lgkmcnt(0)
+        0xF11C_0108,
+        0x00A2_0008, // image_gather4_lz v[0:3], v[8:9], s[8:15], s[20:23] dmask:0x1 dim:2D
+        0xF064_0108,
+        0x0006_0600, // image_atomic_or v6, v[0:1], s[24:31] dmask:0x1 dim:2D
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 32, 32 << 1);
+    assert!(t.resources.iter().any(|r| matches!(
+        r,
+        Resource::Texture {
+            slot: 2,
+            access: Access::Atomic,
+            ..
+        }
+    )));
+    assert!(t.msl.contains("texture2d<uint, access::read_write> t2"));
+    compile(&t.msl);
+}
+
+#[test]
 fn a_sampler_built_by_arithmetic_on_constants_is_a_constant() {
     let code = [
         0x8F0E_9885, // s_lshl_b32 s14, 5, 24
