@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// Branches whose condition is false on the machines programs run on.
+const NEVER_TAKEN: [&str; 2] = ["s_cbranch_cdbgsys", "s_cbranch_cdbgsys_and_user"];
+
 /// The loops of a program as `(first, last)` block leaders: each backward
 /// branch's target and the last block that branches back to it. `None`
 /// when two of them overlap without nesting.
@@ -96,8 +99,16 @@ pub(super) fn writes_exec(inst: &Inst) -> bool {
     }
 }
 
+/// Where a branch goes, if it can be taken.
+///
+/// Branches on the system debug flag are never taken (see `branch_cond`), so
+/// they have no target: titles guard debug code after `s_endpgm` with them,
+/// which would otherwise be decoded and translated.
 pub(super) fn branch_target(pc: usize, inst: &Inst) -> Option<usize> {
     let name = inst.op.name;
+    if NEVER_TAKEN.contains(&name) {
+        return None;
+    }
     match inst.kind {
         Kind::Sopp { simm16 } if name == "s_branch" || name.starts_with("s_cbranch") => {
             Some((pc as i64 + 1 + simm16 as i16 as i64) as usize)
@@ -560,6 +571,7 @@ impl<'a> Tx<'a> {
                     self.line(&format!("{guard}pc = {t}; continue;"));
                 }
             }
+            n if NEVER_TAKEN.contains(&n) => {}
             n if n.starts_with("s_cbranch") => {
                 let t = branch_target(pc, inst).unwrap();
                 let cond = self.branch_cond(pc, n)?;

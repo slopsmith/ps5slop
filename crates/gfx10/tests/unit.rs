@@ -1568,3 +1568,15 @@ fn calls_through_user_sgprs_take_their_target_per_dispatch() {
     assert!(t.msl.contains("1u + v0"));
     compile(&t.msl);
 }
+
+#[test]
+fn code_behind_debug_flag_branches_is_not_translated() {
+    let code = [
+        0xBF97_0001, // s_cbranch_cdbgsys 1
+        0xBF81_0000, // s_endpgm
+        0xBE80_2102, // s_swappc_b64 s[0:1], s[2:3]
+        0xBF81_0000, // s_endpgm
+    ];
+    let t = compute(&code, 0, 0);
+    assert!(!t.msl.contains("s_swappc_b64"), "{}", t.msl);
+}
